@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/sidebar";
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, Briefcase, Users, LogOut, PanelLeft, ChevronRight } from "lucide-react";
+import { LayoutDashboard, Users, LogOut, PanelLeft } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
@@ -30,9 +30,10 @@ import { Button } from "./ui/button";
 
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
-  { icon: Briefcase, label: "Job Postings", path: "/jobs" },
   { icon: Users, label: "Candidates", path: "/candidates" },
 ];
+
+const TANIS_LOGO = "https://d2xsxph8kpxj0f.cloudfront.net/310419663028909162/GKQCuajYkpcdyw75NP8gmu/tanis-logo_3fe319f4.png";
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
 const DEFAULT_WIDTH = 240;
@@ -56,12 +57,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return (
       <div className="flex items-center justify-center min-h-screen bg-background">
         <div className="flex flex-col items-center gap-6 p-8 max-w-sm w-full text-center">
-          <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center">
-            <svg width="22" height="22" viewBox="0 0 28 28" fill="none">
-              <path d="M6 22L14 6L22 22" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M8.5 17H19.5" stroke="white" strokeWidth="2.5" strokeLinecap="round"/>
-            </svg>
-          </div>
+          <img src={TANIS_LOGO} alt="Tanis" className="w-14 h-14 object-contain" />
           <div>
             <h1 className="text-xl font-semibold tracking-tight">Sign in to continue</h1>
             <p className="text-sm text-muted-foreground mt-1.5">Access requires authentication.</p>
@@ -150,15 +146,14 @@ function DashboardLayoutContent({
               </button>
               {!isCollapsed && (
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <div className="w-7 h-7 rounded-lg bg-white/10 flex items-center justify-center shrink-0">
-                    <svg width="14" height="14" viewBox="0 0 28 28" fill="none">
-                      <path d="M6 22L14 6L22 22" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-                      <path d="M8.5 17H19.5" stroke="white" strokeWidth="2.5" strokeLinecap="round"/>
-                    </svg>
-                  </div>
+                  <img
+                    src={TANIS_LOGO}
+                    alt="Tanis"
+                    className="w-7 h-7 object-contain shrink-0 drop-shadow-sm"
+                  />
                   <div className="min-w-0">
-                    <p className="text-sm font-semibold text-sidebar-foreground truncate leading-none">Tanis HR</p>
-                    <p className="text-[10px] text-sidebar-foreground/50 truncate mt-0.5">Recruitment</p>
+                    <p className="text-sm font-bold text-sidebar-foreground truncate leading-none tracking-wide">TANIS</p>
+                    <p className="text-[10px] text-sidebar-foreground/50 truncate mt-0.5 uppercase tracking-widest">Recruitment</p>
                   </div>
                 </div>
               )}

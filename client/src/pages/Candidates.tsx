@@ -56,7 +56,7 @@ const EMPTY_FORM: CandidateForm = {
   name: "",
   email: "",
   phone: "",
-  positionApplied: "",
+  positionApplied: "Call Center Agent",
   resumeLink: "",
   notes: "",
   status: "applied",
@@ -66,7 +66,6 @@ export default function Candidates() {
   const [, navigate] = useLocation();
   const utils = trpc.useUtils();
   const { data: candidates, isLoading } = trpc.candidates.list.useQuery();
-  const { data: jobs } = trpc.jobs.list.useQuery();
 
   const createCandidate = trpc.candidates.create.useMutation({
     onSuccess: () => {
@@ -110,13 +109,12 @@ export default function Candidates() {
     !search ||
     c.name.toLowerCase().includes(search.toLowerCase()) ||
     c.email.toLowerCase().includes(search.toLowerCase()) ||
-    c.positionApplied.toLowerCase().includes(search.toLowerCase())
+    (c.phone ?? "").toLowerCase().includes(search.toLowerCase())
   ) ?? [];
 
   const handleAddSubmit = () => {
     if (!form.name.trim()) { toast.error("Name is required"); return; }
     if (!form.email.trim()) { toast.error("Email is required"); return; }
-    if (!form.positionApplied.trim()) { toast.error("Position is required"); return; }
     createCandidate.mutate({
       name: form.name.trim(),
       email: form.email.trim(),
@@ -134,28 +132,44 @@ export default function Candidates() {
     const reader = new FileReader();
     reader.onload = (ev) => {
       const text = ev.target?.result as string;
-      const lines = text.split("\n").filter((l) => l.trim());
+      // Handle both \r\n and \n line endings
+      const lines = text.split(/\r?\n/).filter((l) => l.trim());
       if (lines.length < 2) { toast.error("CSV must have a header row and at least one data row"); return; }
       const headers = lines[0].split(",").map((h) => h.trim().toLowerCase().replace(/[^a-z]/g, ""));
       const rows: CandidateForm[] = [];
+      let skipped = 0;
       for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
-        const get = (key: string) => cols[headers.indexOf(key)] ?? "";
-        const name = get("name") || get("fullname") || get("candidatename");
-        const email = get("email");
-        const positionApplied = get("position") || get("positionapplied") || get("role") || get("jobtitle");
-        if (!name || !email || !positionApplied) continue;
+        // Handle quoted fields that may contain commas
+        const cols = lines[i].match(/(?:"([^"]*)"|([^,]*))(?:,|$)/g)
+          ?.map((c) => c.replace(/,$/, "").trim().replace(/^"|"$/g, "")) ?? lines[i].split(",").map((c) => c.trim());
+        const get = (key: string) => {
+          const idx = headers.indexOf(key);
+          return idx >= 0 ? (cols[idx] ?? "").trim() : "";
+        };
+        // Name: try header-based first, then fallback to col 0
+        const name = get("name") || get("fullname") || get("candidatename") || cols[0]?.trim() || "";
+        // Email: try header-based first, then scan columns for @ sign
+        const email = get("email") || cols.find((c) => c.includes("@")) || "";
+        // Phone: try header-based first, then col 2 (index 2) if it looks like a phone number
+        const phoneFromHeader = get("phone") || get("phonenumber") || get("mobile") || get("contact");
+        const phoneFromCol = cols[2]?.trim() || "";
+        const isPhoneCol = phoneFromCol && /^[+\d\s\-().]{6,}$/.test(phoneFromCol) && !phoneFromCol.includes("@");
+        const phone = phoneFromHeader || (isPhoneCol ? phoneFromCol : "");
+        // Position: always Call Center Agent for Tanis
+        const positionApplied = get("position") || get("positionapplied") || get("role") || get("jobtitle") || "Call Center Agent";
+        if (!name || !email) { skipped++; continue; }
         rows.push({
           name,
           email,
-          phone: get("phone") || get("phonenumber"),
+          phone,
           positionApplied,
           resumeLink: get("resume") || get("resumelink") || get("cv"),
           notes: get("notes") || get("note"),
           status: "applied",
         });
       }
-      if (rows.length === 0) { toast.error("No valid rows found. Check CSV format."); return; }
+      if (rows.length === 0) { toast.error("No valid rows found. Check that your CSV has name and email columns."); return; }
+      if (skipped > 0) toast.info(`${skipped} row${skipped > 1 ? "s" : ""} skipped (missing name or email)`);
       setCsvRows(rows);
     };
     reader.readAsText(file);
@@ -252,10 +266,7 @@ export default function Candidates() {
                 <Label>Phone</Label>
                 <Input placeholder="+20 100 000 0000" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
               </div>
-              <div className="space-y-1.5 col-span-2">
-                <Label>Position Applied For <span className="text-destructive">*</span></Label>
-                <Input placeholder="e.g. Customer Success Manager" value={form.positionApplied} onChange={(e) => setForm({ ...form, positionApplied: e.target.value })} />
-              </div>
+
               <div className="space-y-1.5 col-span-2">
                 <Label>Resume Link</Label>
                 <Input placeholder="https://drive.google.com/..." value={form.resumeLink} onChange={(e) => setForm({ ...form, resumeLink: e.target.value })} />
@@ -295,9 +306,9 @@ export default function Candidates() {
           <div className="space-y-4 py-2">
             <div className="bg-muted/40 rounded-lg p-4 text-xs text-muted-foreground space-y-1">
               <p className="font-medium text-foreground text-sm mb-2">CSV Format</p>
-              <p>Required columns: <code className="bg-muted px-1 rounded">name</code>, <code className="bg-muted px-1 rounded">email</code>, <code className="bg-muted px-1 rounded">position</code></p>
-              <p>Optional: <code className="bg-muted px-1 rounded">phone</code>, <code className="bg-muted px-1 rounded">resume</code>, <code className="bg-muted px-1 rounded">notes</code></p>
-              <p className="text-muted-foreground/70">All imported candidates start in the "Applied" stage.</p>
+              <p>Required columns: <code className="bg-muted px-1 rounded">name</code>, <code className="bg-muted px-1 rounded">email</code></p>
+              <p>Optional: <code className="bg-muted px-1 rounded">phone</code> (or column 3), <code className="bg-muted px-1 rounded">resume</code>, <code className="bg-muted px-1 rounded">notes</code></p>
+              <p className="text-muted-foreground/70">Position defaults to "Call Center Agent". All candidates start in the "Applied" stage.</p>
             </div>
 
             <div
@@ -319,7 +330,7 @@ export default function Candidates() {
                       <tr>
                         <th className="text-left px-3 py-2 font-medium text-muted-foreground">Name</th>
                         <th className="text-left px-3 py-2 font-medium text-muted-foreground">Email</th>
-                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Position</th>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Phone</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -327,7 +338,7 @@ export default function Candidates() {
                         <tr key={i} className="border-t border-border">
                           <td className="px-3 py-2 font-medium">{r.name}</td>
                           <td className="px-3 py-2 text-muted-foreground">{r.email}</td>
-                          <td className="px-3 py-2 text-muted-foreground">{r.positionApplied}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{r.phone || "—"}</td>
                         </tr>
                       ))}
                     </tbody>

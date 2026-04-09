@@ -16,6 +16,8 @@ import {
   deleteCandidate,
   bulkCreateCandidates,
   getPipelineCounts,
+  getCandidatesAddedSince,
+  getInterviewsScheduledSince,
   listInterviewsByCandidateId,
   createInterview,
   updateInterview,
@@ -71,8 +73,10 @@ export const appRouter = router({
 
   // ─── Dashboard ──────────────────────────────────────────────────────────────
   dashboard: router({
-    pipelineCounts: protectedProcedure.query(async () => {
-      const counts = await getPipelineCounts();
+    pipelineCounts: protectedProcedure
+      .input(z.object({ period: z.enum(["week", "month", "all"]).optional() }).optional())
+      .query(async ({ input }) => {
+      const counts = await getPipelineCounts(input?.period ?? "all");
       // Ensure all stages are represented even if count is 0
       const map: Record<string, number> = {};
       for (const row of counts) {
@@ -83,6 +87,35 @@ export const appRouter = router({
         count: map[stage] ?? 0,
       }));
     }),
+
+    stats: protectedProcedure
+      .input(z.object({ period: z.enum(["week", "month", "all"]).optional() }).optional())
+      .query(async ({ input }) => {
+        const period = input?.period ?? "all";
+        const now = Date.now();
+        let sinceMs: number | null = null;
+        if (period === "week") sinceMs = now - 7 * 24 * 60 * 60 * 1000;
+        else if (period === "month") sinceMs = now - 30 * 24 * 60 * 60 * 1000;
+
+        const [newCandidates, scheduledInterviews] = await Promise.all([
+          sinceMs !== null ? getCandidatesAddedSince(sinceMs) : listCandidates().then((r) => r.length),
+          sinceMs !== null ? getInterviewsScheduledSince(sinceMs) : getInterviewsScheduledSince(0),
+        ]);
+
+        // Count hired in period
+        const pipelineCounts = await getPipelineCounts(period);
+        const hiredCount = pipelineCounts.find((p) => p.status === "hired")?.count ?? 0;
+        const totalInPeriod = pipelineCounts.reduce((s, p) => s + p.count, 0);
+        const conversionRate = totalInPeriod > 0 ? Math.round((hiredCount / totalInPeriod) * 100) : 0;
+
+        return {
+          newCandidates,
+          scheduledInterviews,
+          hiredCount,
+          conversionRate,
+          period,
+        };
+      }),
   }),
 
   // ─── Jobs ────────────────────────────────────────────────────────────────────

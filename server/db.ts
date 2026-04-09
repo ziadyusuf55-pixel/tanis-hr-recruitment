@@ -1,4 +1,4 @@
-import { eq, desc, sql } from "drizzle-orm";
+import { eq, desc, sql, gte, and } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
@@ -159,17 +159,44 @@ export async function bulkCreateCandidates(
   return { count: data.length };
 }
 
-export async function getPipelineCounts() {
+export async function getPipelineCounts(period?: "week" | "month" | "all") {
   const db = await getDb();
   if (!db) return [];
+
+  let sinceMs: number | null = null;
+  const now = Date.now();
+  if (period === "week") sinceMs = now - 7 * 24 * 60 * 60 * 1000;
+  else if (period === "month") sinceMs = now - 30 * 24 * 60 * 60 * 1000;
+
   const result = await db
     .select({
       status: candidates.status,
       count: sql<number>`count(*)`.mapWith(Number),
     })
     .from(candidates)
+    .where(sinceMs !== null ? gte(candidates.createdAt, new Date(sinceMs)) : undefined)
     .groupBy(candidates.status);
   return result;
+}
+
+export async function getCandidatesAddedSince(sinceMs: number) {
+  const db = await getDb();
+  if (!db) return 0;
+  const result = await db
+    .select({ count: sql<number>`count(*)`.mapWith(Number) })
+    .from(candidates)
+    .where(gte(candidates.createdAt, new Date(sinceMs)));
+  return result[0]?.count ?? 0;
+}
+
+export async function getInterviewsScheduledSince(sinceMs: number) {
+  const db = await getDb();
+  if (!db) return 0;
+  const query = db.select({ count: sql<number>`count(*)`.mapWith(Number) }).from(interviews);
+  const result = sinceMs > 0
+    ? await query.where(gte(interviews.createdAt, new Date(sinceMs)))
+    : await query;
+  return result[0]?.count ?? 0;
 }
 
 // ─── Interviews ───────────────────────────────────────────────────────────────

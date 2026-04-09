@@ -4,6 +4,8 @@ import { useEffect } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 
+const TANIS_LOGO = "https://d2xsxph8kpxj0f.cloudfront.net/310419663028909162/GKQCuajYkpcdyw75NP8gmu/tanis-logo_3fe319f4.png";
+
 export default function Login() {
   const { isAuthenticated, loading } = useAuth();
   const [, navigate] = useLocation();
@@ -19,13 +21,10 @@ export default function Login() {
       <div className="w-full max-w-sm">
         {/* Logo / Brand */}
         <div className="text-center mb-10">
-          <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-primary mb-5">
-            <svg width="28" height="28" viewBox="0 0 28 28" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M6 22L14 6L22 22" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-              <path d="M8.5 17H19.5" stroke="white" strokeWidth="2.5" strokeLinecap="round"/>
-            </svg>
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-white shadow-md border border-border mb-5">
+            <img src={TANIS_LOGO} alt="Tanis" className="w-14 h-14 object-contain" />
           </div>
-          <h1 className="text-2xl font-semibold text-foreground tracking-tight">Tanis HR</h1>
+          <h1 className="text-2xl font-bold text-foreground tracking-tight">TANIS</h1>
           <p className="text-sm text-muted-foreground mt-1.5">Recruitment Management System</p>
         </div>
 

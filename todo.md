@@ -36,3 +36,10 @@
 - [x] Responsive design verification
 - [x] Save checkpoint
 - [x] Deliver to user
+
+## Change Requests (Round 2)
+- [x] Add Tanis logo to sidebar and apply Tanis brand colors (dark navy/teal theme)
+- [x] Improve dashboard: add time-period filter (This Week / This Month / All Time) and contextual stats
+- [x] Remove Job Postings tab — all candidates are call center agents, position is fixed
+- [x] Fix CSV import: column 3 is phone number not position — set position to "Call Center Agent" for all imports
+- [x] Rename "Offered" pipeline stage to "Team Invitation Sent" everywhere

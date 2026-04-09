@@ -5,7 +5,6 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Dashboard from "./pages/Dashboard";
-import Jobs from "./pages/Jobs";
 import Candidates from "./pages/Candidates";
 import CandidateDetail from "./pages/CandidateDetail";
 import Login from "./pages/Login";
@@ -50,7 +49,6 @@ function Router() {
     <Switch>
       <Route path="/login" component={Login} />
       <Route path="/" component={() => <ProtectedRoute component={Dashboard} />} />
-      <Route path="/jobs" component={() => <ProtectedRoute component={Jobs} />} />
       <Route path="/candidates" component={() => <ProtectedRoute component={Candidates} />} />
       <Route path="/candidates/:id" component={() => <ProtectedRoute component={CandidateDetail} />} />
       <Route path="/404" component={NotFound} />
