@@ -75,3 +75,8 @@
 ## Change Requests (Round 4)
 - [x] Add delete button on candidate cards (board view) with confirmation dialog
 - [x] Add delete button on candidate rows (list view) with confirmation dialog
+
+## Change Requests (Round 5)
+- [x] Multi-select candidates in list and board views with bulk delete action
+- [x] CSV format: required columns are name + phone only (email optional, all others optional)
+- [x] Manual add form: phone mandatory, email optional, remove resume link field

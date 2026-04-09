@@ -163,7 +163,7 @@ export default function CandidateDetail() {
     if (!candidate) return;
     setEditForm({
       name: candidate.name,
-      email: candidate.email,
+      email: candidate.email ?? "",
       phone: candidate.phone ?? "",
       positionApplied: candidate.positionApplied,
       resumeLink: candidate.resumeLink ?? "",
@@ -176,7 +176,7 @@ export default function CandidateDetail() {
 
   const handleEditSubmit = () => {
     if (!editForm.name.trim()) { toast.error("Name is required"); return; }
-    if (!editForm.email.trim()) { toast.error("Email is required"); return; }
+
     updateCandidate.mutate({
       id,
       name: editForm.name.trim(),

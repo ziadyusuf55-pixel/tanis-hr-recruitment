@@ -1,9 +1,10 @@
-import { trpc } from "@/lib/trpc";
 import { useState, useRef } from "react";
+import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -46,6 +47,8 @@ import {
   Upload,
   Trash2,
   ChevronRight,
+  CheckSquare,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -55,7 +58,6 @@ type CandidateForm = {
   email: string;
   phone: string;
   positionApplied: string;
-  resumeLink: string;
   notes: string;
   status: PipelineStage;
 };
@@ -65,7 +67,6 @@ const EMPTY_FORM: CandidateForm = {
   email: "",
   phone: "",
   positionApplied: "Call Center Agent",
-  resumeLink: "",
   notes: "",
   status: "applied",
 };
@@ -107,9 +108,6 @@ export default function Candidates() {
     onError: () => toast.error("Failed to delete candidate"),
   });
 
-  const [deleteId, setDeleteId] = useState<number | null>(null);
-  const [deleteName, setDeleteName] = useState("");
-
   const updateStatus = trpc.candidates.updateStatus.useMutation({
     onSuccess: () => {
       utils.candidates.list.invalidate();
@@ -117,6 +115,42 @@ export default function Candidates() {
     },
     onError: () => toast.error("Failed to update status"),
   });
+
+  // Single delete
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [deleteName, setDeleteName] = useState("");
+
+  // Multi-select state
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+
+  const toggleSelect = (id: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = (ids: number[]) => {
+    if (ids.every((id) => selected.has(id))) {
+      setSelected((prev) => { const next = new Set(prev); ids.forEach((id) => next.delete(id)); return next; });
+    } else {
+      setSelected((prev) => { const next = new Set(prev); ids.forEach((id) => next.add(id)); return next; });
+    }
+  };
+
+  const clearSelection = () => setSelected(new Set());
+
+  const handleBulkDelete = async () => {
+    const ids = Array.from(selected);
+    for (const id of ids) {
+      await deleteCandidate.mutateAsync({ id });
+    }
+    clearSelection();
+    setBulkDeleteOpen(false);
+    toast.success(`Deleted ${ids.length} candidate${ids.length > 1 ? "s" : ""}`);
+  };
 
   const [view, setView] = useState<"board" | "list">("board");
   const [search, setSearch] = useState("");
@@ -129,19 +163,18 @@ export default function Candidates() {
   const filtered = candidates?.filter((c) =>
     !search ||
     c.name.toLowerCase().includes(search.toLowerCase()) ||
-    c.email.toLowerCase().includes(search.toLowerCase()) ||
+    (c.email ?? "").toLowerCase().includes(search.toLowerCase()) ||
     (c.phone ?? "").toLowerCase().includes(search.toLowerCase())
   ) ?? [];
 
   const handleAddSubmit = () => {
     if (!form.name.trim()) { toast.error("Name is required"); return; }
-    if (!form.email.trim()) { toast.error("Email is required"); return; }
+    if (!form.phone.trim()) { toast.error("Phone is required"); return; }
     createCandidate.mutate({
       name: form.name.trim(),
-      email: form.email.trim(),
-      phone: form.phone.trim() || undefined,
+      email: form.email.trim() || undefined,
+      phone: form.phone.trim(),
       positionApplied: form.positionApplied.trim(),
-      resumeLink: form.resumeLink.trim() || undefined,
       notes: form.notes.trim() || undefined,
       status: form.status,
     });
@@ -153,57 +186,52 @@ export default function Candidates() {
     const reader = new FileReader();
     reader.onload = (ev) => {
       const text = ev.target?.result as string;
-      // Handle both \r\n and \n line endings
       const lines = text.split(/\r?\n/).filter((l) => l.trim());
       if (lines.length < 2) { toast.error("CSV must have a header row and at least one data row"); return; }
       const headers = lines[0].split(",").map((h) => h.trim().toLowerCase().replace(/[^a-z]/g, ""));
       const rows: CandidateForm[] = [];
       let skipped = 0;
       for (let i = 1; i < lines.length; i++) {
-        // Handle quoted fields that may contain commas
         const cols = lines[i].match(/(?:"([^"]*)"|([^,]*))(?:,|$)/g)
           ?.map((c) => c.replace(/,$/, "").trim().replace(/^"|"$/g, "")) ?? lines[i].split(",").map((c) => c.trim());
         const get = (key: string) => {
           const idx = headers.indexOf(key);
           return idx >= 0 ? (cols[idx] ?? "").trim() : "";
         };
-        // Name: try header-based first, then fallback to col 0
+        // Name: header-based first, fallback to col 0
         const name = get("name") || get("fullname") || get("candidatename") || cols[0]?.trim() || "";
-        // Email: try header-based first, then scan columns for @ sign
+        // Email: optional — try header-based, then scan for @
         const email = get("email") || cols.find((c) => c.includes("@")) || "";
-        // Phone: try header-based first, then col 2 (index 2) if it looks like a phone number
-        // Normalize: strip parentheses, dashes, spaces, leading zeros for country code (020 → +20)
+        // Phone normalization
         const normalizePhone = (raw: string): string => {
           if (!raw) return "";
-          // Remove parentheses and common separators
           let p = raw.replace(/[()\-\s]/g, "");
-          // Handle Egyptian country code written as 020... → +20...
           if (/^020\d/.test(p)) p = "+20" + p.slice(3);
-          // Handle 00 prefix international code (0020... → +20...)
           if (/^00\d/.test(p)) p = "+" + p.slice(2);
           return p;
         };
         const phoneFromHeader = get("phone") || get("phonenumber") || get("mobile") || get("contact");
-        const phoneFromCol = cols[2]?.trim() || "";
-        // Accept phone if it contains digits and common phone chars (including parentheses, country codes)
-        const isPhoneCol = phoneFromCol && /^[+\d\s\-().]{6,}$/.test(phoneFromCol) && !phoneFromCol.includes("@");
-        const rawPhone = phoneFromHeader || (isPhoneCol ? phoneFromCol : "");
+        // Scan all columns for a phone-like value if no header match
+        const phoneFromScan = cols.find((c) => {
+          const clean = c.replace(/[()\-\s]/g, "");
+          return /^[+\d]{7,}$/.test(clean) && !c.includes("@");
+        }) || "";
+        const rawPhone = phoneFromHeader || phoneFromScan;
         const phone = normalizePhone(rawPhone);
-        // Position: always Call Center Agent for Tanis
         const positionApplied = get("position") || get("positionapplied") || get("role") || get("jobtitle") || "Call Center Agent";
-        if (!name || !email) { skipped++; continue; }
+        // Required: name + phone
+        if (!name || !phone) { skipped++; continue; }
         rows.push({
           name,
           email,
           phone,
           positionApplied,
-          resumeLink: get("resume") || get("resumelink") || get("cv"),
           notes: get("notes") || get("note"),
           status: "applied",
         });
       }
-      if (rows.length === 0) { toast.error("No valid rows found. Check that your CSV has name and email columns."); return; }
-      if (skipped > 0) toast.info(`${skipped} row${skipped > 1 ? "s" : ""} skipped (missing name or email)`);
+      if (rows.length === 0) { toast.error("No valid rows found. Check that your CSV has name and phone columns."); return; }
+      if (skipped > 0) toast.info(`${skipped} row${skipped > 1 ? "s" : ""} skipped (missing name or phone)`);
       setCsvRows(rows);
     };
     reader.readAsText(file);
@@ -214,14 +242,16 @@ export default function Candidates() {
     bulkImport.mutate(
       csvRows.map((r) => ({
         name: r.name,
-        email: r.email,
+        email: r.email || undefined,
         phone: r.phone || undefined,
         positionApplied: r.positionApplied,
-        resumeLink: r.resumeLink || undefined,
         notes: r.notes || undefined,
       }))
     );
   };
+
+  const filteredIds = filtered.map((c) => c.id);
+  const allFilteredSelected = filteredIds.length > 0 && filteredIds.every((id) => selected.has(id));
 
   return (
     <div className="space-y-6 max-w-full">
@@ -254,13 +284,35 @@ export default function Candidates() {
             className="pl-9 h-9 text-sm"
           />
         </div>
-        <Tabs value={view} onValueChange={(v) => setView(v as "board" | "list")}>
+        <Tabs value={view} onValueChange={(v) => { setView(v as "board" | "list"); clearSelection(); }}>
           <TabsList className="h-9">
             <TabsTrigger value="board" className="text-xs px-3">Board</TabsTrigger>
             <TabsTrigger value="list" className="text-xs px-3">List</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
+
+      {/* Bulk action bar */}
+      {selected.size > 0 && (
+        <div className="flex items-center gap-3 px-4 py-2.5 bg-primary/5 border border-primary/20 rounded-xl">
+          <CheckSquare className="h-4 w-4 text-primary shrink-0" />
+          <span className="text-sm font-medium text-foreground flex-1">
+            {selected.size} candidate{selected.size > 1 ? "s" : ""} selected
+          </span>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs gap-1.5 border-destructive/40 text-destructive hover:bg-destructive/10"
+            onClick={() => setBulkDeleteOpen(true)}
+          >
+            <Trash2 className="h-3 w-3" />
+            Delete Selected
+          </Button>
+          <button onClick={clearSelection} className="p-1 rounded hover:bg-muted text-muted-foreground">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      )}
 
       {/* Content */}
       {isLoading ? (
@@ -270,15 +322,21 @@ export default function Candidates() {
       ) : view === "board" ? (
         <PipelineBoard
           candidates={filtered}
+          selected={selected}
           onMoveStage={(id, status) => updateStatus.mutate({ id, status })}
           onClickCandidate={(id) => navigate(`/candidates/${id}`)}
           onDeleteCandidate={(id, name) => { setDeleteId(id); setDeleteName(name); }}
+          onToggleSelect={toggleSelect}
         />
       ) : (
         <CandidateList
           candidates={filtered}
+          selected={selected}
+          allSelected={allFilteredSelected}
           onClickCandidate={(id) => navigate(`/candidates/${id}`)}
           onDeleteCandidate={(id, name) => { setDeleteId(id); setDeleteName(name); }}
+          onToggleSelect={toggleSelect}
+          onToggleSelectAll={() => toggleSelectAll(filteredIds)}
         />
       )}
 
@@ -295,17 +353,12 @@ export default function Candidates() {
                 <Input placeholder="Jane Smith" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
               </div>
               <div className="space-y-1.5">
-                <Label>Email <span className="text-destructive">*</span></Label>
-                <Input type="email" placeholder="jane@example.com" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Phone</Label>
+                <Label>Phone <span className="text-destructive">*</span></Label>
                 <Input placeholder="+20 100 000 0000" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
               </div>
-
-              <div className="space-y-1.5 col-span-2">
-                <Label>Resume Link</Label>
-                <Input placeholder="https://drive.google.com/..." value={form.resumeLink} onChange={(e) => setForm({ ...form, resumeLink: e.target.value })} />
+              <div className="space-y-1.5">
+                <Label>Email <span className="text-muted-foreground text-xs">(optional)</span></Label>
+                <Input type="email" placeholder="jane@example.com" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
               </div>
               <div className="space-y-1.5">
                 <Label>Pipeline Stage</Label>
@@ -320,7 +373,7 @@ export default function Candidates() {
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label>Notes</Label>
+              <Label>Notes <span className="text-muted-foreground text-xs">(optional)</span></Label>
               <Textarea placeholder="Any additional notes..." value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} />
             </div>
           </div>
@@ -333,7 +386,7 @@ export default function Candidates() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation Dialog */}
+      {/* Single Delete Confirmation */}
       <AlertDialog open={deleteId !== null} onOpenChange={(open) => { if (!open) setDeleteId(null); }}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -354,6 +407,27 @@ export default function Candidates() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Bulk Delete Confirmation */}
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {selected.size} Candidates</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to permanently delete <strong>{selected.size} selected candidate{selected.size > 1 ? "s" : ""}</strong>? This cannot be undone and will remove all their data, notes, and interview history.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={handleBulkDelete}
+            >
+              Delete {selected.size} Candidates
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* CSV Import Dialog */}
       <Dialog open={importOpen} onOpenChange={(v) => { setImportOpen(v); if (!v) setCsvRows([]); }}>
         <DialogContent className="sm:max-w-2xl">
@@ -363,9 +437,9 @@ export default function Candidates() {
           <div className="space-y-4 py-2">
             <div className="bg-muted/40 rounded-lg p-4 text-xs text-muted-foreground space-y-1">
               <p className="font-medium text-foreground text-sm mb-2">CSV Format</p>
-              <p>Required columns: <code className="bg-muted px-1 rounded">name</code>, <code className="bg-muted px-1 rounded">email</code></p>
-              <p>Optional: <code className="bg-muted px-1 rounded">phone</code> (or column 3), <code className="bg-muted px-1 rounded">resume</code>, <code className="bg-muted px-1 rounded">notes</code></p>
-              <p className="text-muted-foreground/70">Position defaults to "Call Center Agent". All candidates start in the "Applied" stage.</p>
+              <p>Required columns: <code className="bg-muted px-1 rounded">name</code>, <code className="bg-muted px-1 rounded">phone</code></p>
+              <p>Optional: <code className="bg-muted px-1 rounded">email</code>, <code className="bg-muted px-1 rounded">notes</code>, <code className="bg-muted px-1 rounded">position</code></p>
+              <p className="text-muted-foreground/70">Phone numbers with country codes (020, +20, 0020) and parentheses are handled automatically. Position defaults to "Call Center Agent".</p>
             </div>
 
             <div
@@ -386,16 +460,16 @@ export default function Candidates() {
                     <thead className="bg-muted/40 sticky top-0">
                       <tr>
                         <th className="text-left px-3 py-2 font-medium text-muted-foreground">Name</th>
-                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Email</th>
                         <th className="text-left px-3 py-2 font-medium text-muted-foreground">Phone</th>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Email</th>
                       </tr>
                     </thead>
                     <tbody>
                       {csvRows.map((r, i) => (
                         <tr key={i} className="border-t border-border">
                           <td className="px-3 py-2 font-medium">{r.name}</td>
-                          <td className="px-3 py-2 text-muted-foreground">{r.email}</td>
                           <td className="px-3 py-2 text-muted-foreground">{r.phone || "—"}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{r.email || "—"}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -421,7 +495,7 @@ export default function Candidates() {
 type CandidateRow = {
   id: number;
   name: string;
-  email: string;
+  email?: string | null;
   phone?: string | null;
   positionApplied: string;
   status: string;
@@ -430,14 +504,18 @@ type CandidateRow = {
 
 function PipelineBoard({
   candidates,
+  selected,
   onMoveStage,
   onClickCandidate,
   onDeleteCandidate,
+  onToggleSelect,
 }: {
   candidates: CandidateRow[];
+  selected: Set<number>;
   onMoveStage: (id: number, stage: PipelineStage) => void;
   onClickCandidate: (id: number) => void;
   onDeleteCandidate: (id: number, name: string) => void;
+  onToggleSelect: (id: number) => void;
 }) {
   return (
     <div className="flex gap-3 overflow-x-auto pb-4 -mx-1 px-1">
@@ -445,7 +523,6 @@ function PipelineBoard({
         const stageCandidates = candidates.filter((c) => c.status === stage);
         return (
           <div key={stage} className={`flex-shrink-0 w-64 rounded-xl border ${STAGE_BG[stage]} flex flex-col`}>
-            {/* Column header */}
             <div className="px-3 py-2.5 flex items-center justify-between border-b border-black/5">
               <div className="flex items-center gap-2">
                 <span className={`w-2 h-2 rounded-full ${STAGE_DOT[stage]}`} />
@@ -455,8 +532,6 @@ function PipelineBoard({
                 {stageCandidates.length}
               </span>
             </div>
-
-            {/* Cards */}
             <div className="p-2 flex flex-col gap-2 flex-1 min-h-[120px]">
               {stageCandidates.length === 0 ? (
                 <div className="flex-1 flex items-center justify-center">
@@ -468,9 +543,11 @@ function PipelineBoard({
                     key={c.id}
                     candidate={c}
                     currentStage={stage}
+                    isSelected={selected.has(c.id)}
                     onMoveStage={onMoveStage}
                     onClick={() => onClickCandidate(c.id)}
                     onDelete={() => onDeleteCandidate(c.id, c.name)}
+                    onToggleSelect={() => onToggleSelect(c.id)}
                   />
                 ))
               )}
@@ -485,30 +562,38 @@ function PipelineBoard({
 function CandidateCard({
   candidate,
   currentStage,
+  isSelected,
   onMoveStage,
   onClick,
   onDelete,
+  onToggleSelect,
 }: {
   candidate: CandidateRow;
   currentStage: PipelineStage;
+  isSelected: boolean;
   onMoveStage: (id: number, stage: PipelineStage) => void;
   onClick: () => void;
   onDelete: () => void;
+  onToggleSelect: () => void;
 }) {
   const initials = candidate.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
 
   return (
     <div
-      className="bg-white rounded-lg p-3 shadow-sm border border-white/80 cursor-pointer hover:shadow-md transition-all group"
+      className={`bg-white rounded-lg p-3 shadow-sm border transition-all group cursor-pointer hover:shadow-md ${isSelected ? "border-primary/50 ring-1 ring-primary/20" : "border-white/80"}`}
       onClick={onClick}
     >
       <div className="flex items-start gap-2.5">
+        {/* Checkbox */}
+        <div onClick={(e) => { e.stopPropagation(); onToggleSelect(); }} className="mt-0.5 shrink-0">
+          <Checkbox checked={isSelected} className="h-3.5 w-3.5" />
+        </div>
         <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-semibold shrink-0 mt-0.5">
           {initials}
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-xs font-semibold text-foreground truncate">{candidate.name}</p>
-          <p className="text-[10px] text-muted-foreground truncate">{candidate.positionApplied}</p>
+          <p className="text-[10px] text-muted-foreground truncate">{candidate.phone || candidate.email || "—"}</p>
         </div>
         <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
           <button
@@ -521,14 +606,12 @@ function CandidateCard({
           <ChevronRight className="h-3 w-3 text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity" />
         </div>
       </div>
-
-      {/* Quick move buttons */}
       <div className="flex gap-1 mt-2.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
         {ACTIVE_STAGES.filter((s) => s !== currentStage).slice(0, 3).map((s) => (
           <button
             key={s}
             onClick={() => onMoveStage(candidate.id, s)}
-            className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full border transition-colors hover:opacity-80 ${getStageMiniClass(s)}`}
+            className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full border transition-colors hover:opacity-80 ${STAGE_BADGE[s] ?? ""}`}
           >
             → {STAGE_LABELS[s]}
           </button>
@@ -540,12 +623,20 @@ function CandidateCard({
 
 function CandidateList({
   candidates,
+  selected,
+  allSelected,
   onClickCandidate,
   onDeleteCandidate,
+  onToggleSelect,
+  onToggleSelectAll,
 }: {
   candidates: CandidateRow[];
+  selected: Set<number>;
+  allSelected: boolean;
   onClickCandidate: (id: number) => void;
   onDeleteCandidate: (id: number, name: string) => void;
+  onToggleSelect: (id: number) => void;
+  onToggleSelectAll: () => void;
 }) {
   if (candidates.length === 0) {
     return (
@@ -562,20 +653,30 @@ function CandidateList({
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b border-border bg-muted/40">
+            <th className="px-4 py-3 w-8">
+              <Checkbox
+                checked={allSelected}
+                onCheckedChange={onToggleSelectAll}
+                className="h-3.5 w-3.5"
+              />
+            </th>
             <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Candidate</th>
-            <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide hidden sm:table-cell">Position</th>
+            <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide hidden sm:table-cell">Phone</th>
             <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">Stage</th>
             <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground uppercase tracking-wide hidden md:table-cell">Added</th>
-            <th className="w-8" />
+            <th className="w-16" />
           </tr>
         </thead>
         <tbody>
           {candidates.map((c, i) => (
             <tr
               key={c.id}
-              className={`group border-b border-border last:border-0 hover:bg-muted/30 cursor-pointer transition-colors ${i % 2 === 0 ? "" : "bg-muted/10"}`}
+              className={`group border-b border-border last:border-0 hover:bg-muted/30 cursor-pointer transition-colors ${selected.has(c.id) ? "bg-primary/5" : i % 2 === 0 ? "" : "bg-muted/10"}`}
               onClick={() => onClickCandidate(c.id)}
             >
+              <td className="px-4 py-3" onClick={(e) => { e.stopPropagation(); onToggleSelect(c.id); }}>
+                <Checkbox checked={selected.has(c.id)} className="h-3.5 w-3.5" />
+              </td>
               <td className="px-4 py-3">
                 <div className="flex items-center gap-2.5">
                   <div className="w-7 h-7 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-semibold shrink-0">
@@ -583,13 +684,13 @@ function CandidateList({
                   </div>
                   <div>
                     <p className="font-medium text-foreground text-xs">{c.name}</p>
-                    <p className="text-[10px] text-muted-foreground">{c.email}</p>
+                    <p className="text-[10px] text-muted-foreground">{c.email || "—"}</p>
                   </div>
                 </div>
               </td>
-              <td className="px-4 py-3 text-muted-foreground text-xs hidden sm:table-cell">{c.positionApplied}</td>
+              <td className="px-4 py-3 text-muted-foreground text-xs hidden sm:table-cell">{c.phone || "—"}</td>
               <td className="px-4 py-3">
-                <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium ${getStageBadgeClass(c.status as PipelineStage)}`}>
+                <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium ${STAGE_BADGE[c.status as PipelineStage] ?? ""}`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${STAGE_DOT[c.status as PipelineStage]}`} />
                   {STAGE_LABELS[c.status as PipelineStage]}
                 </span>
@@ -615,12 +716,4 @@ function CandidateList({
       </table>
     </div>
   );
-}
-
-function getStageBadgeClass(stage: PipelineStage): string {
-  return STAGE_BADGE[stage] ?? "";
-}
-
-function getStageMiniClass(stage: PipelineStage): string {
-  return STAGE_BADGE[stage] ?? "";
 }

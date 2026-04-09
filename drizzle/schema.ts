@@ -50,7 +50,7 @@ export type PipelineStage = (typeof PIPELINE_STAGES)[number];
 export const candidates = mysqlTable("candidates", {
   id: int("id").autoincrement().primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),
-  email: varchar("email", { length: 320 }).notNull(),
+  email: varchar("email", { length: 320 }),
   phone: varchar("phone", { length: 64 }),
   positionApplied: varchar("positionApplied", { length: 255 }).notNull().default("Call Center Agent"),
   resumeLink: text("resumeLink"),

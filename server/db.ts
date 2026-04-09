@@ -85,7 +85,7 @@ export async function getCandidateById(id: number) {
 
 export async function createCandidate(data: {
   name: string;
-  email: string;
+  email?: string;
   phone?: string;
   positionApplied?: string;
   resumeLink?: string;
@@ -143,7 +143,7 @@ export async function deleteCandidate(id: number) {
 export async function bulkInsertCandidates(
   rows: Array<{
     name: string;
-    email: string;
+    email?: string;
     phone?: string;
     positionApplied?: string;
     resumeLink?: string;
@@ -156,7 +156,7 @@ export async function bulkInsertCandidates(
   await db.insert(candidates).values(
     rows.map((r) => ({
       name: r.name,
-      email: r.email,
+      email: r.email ?? undefined,
       phone: r.phone ?? null,
       positionApplied: r.positionApplied ?? "Call Center Agent",
       resumeLink: r.resumeLink ?? null,
