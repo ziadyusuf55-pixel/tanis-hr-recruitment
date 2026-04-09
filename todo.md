@@ -71,3 +71,7 @@
 - [x] Update CandidateDetail: new stage stepper, per-stage notes panel, Meet link + Teams link fields
 - [x] Fix phone parsing: handle 020, +20, parentheses, dashes, spaces in CSV import
 - [x] Update Vitest tests for new pipeline stages
+
+## Change Requests (Round 4)
+- [x] Add delete button on candidate cards (board view) with confirmation dialog
+- [x] Add delete button on candidate rows (list view) with confirmation dialog

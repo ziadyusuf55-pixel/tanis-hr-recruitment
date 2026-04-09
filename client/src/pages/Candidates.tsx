@@ -30,14 +30,21 @@ import {
   PipelineStage,
 } from "@/lib/pipeline";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Users,
   Plus,
   Search,
   Upload,
-  User,
-  Mail,
-  Phone,
-  Link as LinkIcon,
+  Trash2,
   ChevronRight,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -90,6 +97,18 @@ export default function Candidates() {
     },
     onError: () => toast.error("Failed to import candidates"),
   });
+
+  const deleteCandidate = trpc.candidates.delete.useMutation({
+    onSuccess: () => {
+      utils.candidates.list.invalidate();
+      utils.dashboard.kpis.invalidate();
+      toast.success("Candidate deleted");
+    },
+    onError: () => toast.error("Failed to delete candidate"),
+  });
+
+  const [deleteId, setDeleteId] = useState<number | null>(null);
+  const [deleteName, setDeleteName] = useState("");
 
   const updateStatus = trpc.candidates.updateStatus.useMutation({
     onSuccess: () => {
@@ -253,11 +272,13 @@ export default function Candidates() {
           candidates={filtered}
           onMoveStage={(id, status) => updateStatus.mutate({ id, status })}
           onClickCandidate={(id) => navigate(`/candidates/${id}`)}
+          onDeleteCandidate={(id, name) => { setDeleteId(id); setDeleteName(name); }}
         />
       ) : (
         <CandidateList
           candidates={filtered}
           onClickCandidate={(id) => navigate(`/candidates/${id}`)}
+          onDeleteCandidate={(id, name) => { setDeleteId(id); setDeleteName(name); }}
         />
       )}
 
@@ -311,6 +332,27 @@ export default function Candidates() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteId !== null} onOpenChange={(open) => { if (!open) setDeleteId(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Candidate</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete <strong>{deleteName}</strong>? This action cannot be undone and will permanently remove all their data, notes, and interview history.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => { if (deleteId !== null) { deleteCandidate.mutate({ id: deleteId }); setDeleteId(null); } }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* CSV Import Dialog */}
       <Dialog open={importOpen} onOpenChange={(v) => { setImportOpen(v); if (!v) setCsvRows([]); }}>
@@ -390,10 +432,12 @@ function PipelineBoard({
   candidates,
   onMoveStage,
   onClickCandidate,
+  onDeleteCandidate,
 }: {
   candidates: CandidateRow[];
   onMoveStage: (id: number, stage: PipelineStage) => void;
   onClickCandidate: (id: number) => void;
+  onDeleteCandidate: (id: number, name: string) => void;
 }) {
   return (
     <div className="flex gap-3 overflow-x-auto pb-4 -mx-1 px-1">
@@ -426,6 +470,7 @@ function PipelineBoard({
                     currentStage={stage}
                     onMoveStage={onMoveStage}
                     onClick={() => onClickCandidate(c.id)}
+                    onDelete={() => onDeleteCandidate(c.id, c.name)}
                   />
                 ))
               )}
@@ -442,11 +487,13 @@ function CandidateCard({
   currentStage,
   onMoveStage,
   onClick,
+  onDelete,
 }: {
   candidate: CandidateRow;
   currentStage: PipelineStage;
   onMoveStage: (id: number, stage: PipelineStage) => void;
   onClick: () => void;
+  onDelete: () => void;
 }) {
   const initials = candidate.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
 
@@ -463,7 +510,16 @@ function CandidateCard({
           <p className="text-xs font-semibold text-foreground truncate">{candidate.name}</p>
           <p className="text-[10px] text-muted-foreground truncate">{candidate.positionApplied}</p>
         </div>
-        <ChevronRight className="h-3 w-3 text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-0.5" />
+        <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+          <button
+            onClick={onDelete}
+            className="p-1 rounded hover:bg-destructive/10 text-muted-foreground/40 hover:text-destructive transition-colors opacity-0 group-hover:opacity-100"
+            title="Delete candidate"
+          >
+            <Trash2 className="h-3 w-3" />
+          </button>
+          <ChevronRight className="h-3 w-3 text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity" />
+        </div>
       </div>
 
       {/* Quick move buttons */}
@@ -485,9 +541,11 @@ function CandidateCard({
 function CandidateList({
   candidates,
   onClickCandidate,
+  onDeleteCandidate,
 }: {
   candidates: CandidateRow[];
   onClickCandidate: (id: number) => void;
+  onDeleteCandidate: (id: number, name: string) => void;
 }) {
   if (candidates.length === 0) {
     return (
@@ -515,7 +573,7 @@ function CandidateList({
           {candidates.map((c, i) => (
             <tr
               key={c.id}
-              className={`border-b border-border last:border-0 hover:bg-muted/30 cursor-pointer transition-colors ${i % 2 === 0 ? "" : "bg-muted/10"}`}
+              className={`group border-b border-border last:border-0 hover:bg-muted/30 cursor-pointer transition-colors ${i % 2 === 0 ? "" : "bg-muted/10"}`}
               onClick={() => onClickCandidate(c.id)}
             >
               <td className="px-4 py-3">
@@ -540,7 +598,16 @@ function CandidateList({
                 {new Date(c.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
               </td>
               <td className="px-4 py-3">
-                <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40" />
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onDeleteCandidate(c.id, c.name); }}
+                    className="p-1 rounded hover:bg-destructive/10 text-muted-foreground/30 hover:text-destructive transition-colors opacity-0 group-hover:opacity-100"
+                    title="Delete candidate"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                  <ChevronRight className="h-3.5 w-3.5 text-muted-foreground/40" />
+                </div>
               </td>
             </tr>
           ))}
