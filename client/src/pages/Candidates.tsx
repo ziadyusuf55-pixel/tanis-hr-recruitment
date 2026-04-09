@@ -22,10 +22,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   PIPELINE_STAGES,
+  ACTIVE_STAGES,
   STAGE_LABELS,
   STAGE_DOT,
   STAGE_BG,
-  STAGE_HEADER,
+  STAGE_BADGE,
   PipelineStage,
 } from "@/lib/pipeline";
 import {
@@ -70,7 +71,7 @@ export default function Candidates() {
   const createCandidate = trpc.candidates.create.useMutation({
     onSuccess: () => {
       utils.candidates.list.invalidate();
-      utils.dashboard.pipelineCounts.invalidate();
+      utils.dashboard.kpis.invalidate();
       toast.success("Candidate added");
       setAddOpen(false);
       setForm(EMPTY_FORM);
@@ -79,10 +80,11 @@ export default function Candidates() {
   });
 
   const bulkImport = trpc.candidates.bulkImport.useMutation({
-    onSuccess: (res) => {
+    onSuccess: (res: { imported: number } | void) => {
       utils.candidates.list.invalidate();
-      utils.dashboard.pipelineCounts.invalidate();
-      toast.success(`Imported ${res.count} candidates`);
+      utils.dashboard.kpis.invalidate();
+      const count = (res as { imported: number } | undefined)?.imported ?? csvRows.length;
+      toast.success(`Imported ${count} candidates`);
       setImportOpen(false);
       setCsvRows([]);
     },
@@ -92,7 +94,7 @@ export default function Candidates() {
   const updateStatus = trpc.candidates.updateStatus.useMutation({
     onSuccess: () => {
       utils.candidates.list.invalidate();
-      utils.dashboard.pipelineCounts.invalidate();
+      utils.dashboard.kpis.invalidate();
     },
     onError: () => toast.error("Failed to update status"),
   });
@@ -151,10 +153,23 @@ export default function Candidates() {
         // Email: try header-based first, then scan columns for @ sign
         const email = get("email") || cols.find((c) => c.includes("@")) || "";
         // Phone: try header-based first, then col 2 (index 2) if it looks like a phone number
+        // Normalize: strip parentheses, dashes, spaces, leading zeros for country code (020 → +20)
+        const normalizePhone = (raw: string): string => {
+          if (!raw) return "";
+          // Remove parentheses and common separators
+          let p = raw.replace(/[()\-\s]/g, "");
+          // Handle Egyptian country code written as 020... → +20...
+          if (/^020\d/.test(p)) p = "+20" + p.slice(3);
+          // Handle 00 prefix international code (0020... → +20...)
+          if (/^00\d/.test(p)) p = "+" + p.slice(2);
+          return p;
+        };
         const phoneFromHeader = get("phone") || get("phonenumber") || get("mobile") || get("contact");
         const phoneFromCol = cols[2]?.trim() || "";
+        // Accept phone if it contains digits and common phone chars (including parentheses, country codes)
         const isPhoneCol = phoneFromCol && /^[+\d\s\-().]{6,}$/.test(phoneFromCol) && !phoneFromCol.includes("@");
-        const phone = phoneFromHeader || (isPhoneCol ? phoneFromCol : "");
+        const rawPhone = phoneFromHeader || (isPhoneCol ? phoneFromCol : "");
+        const phone = normalizePhone(rawPhone);
         // Position: always Call Center Agent for Tanis
         const positionApplied = get("position") || get("positionapplied") || get("role") || get("jobtitle") || "Call Center Agent";
         if (!name || !email) { skipped++; continue; }
@@ -382,7 +397,7 @@ function PipelineBoard({
 }) {
   return (
     <div className="flex gap-3 overflow-x-auto pb-4 -mx-1 px-1">
-      {PIPELINE_STAGES.map((stage) => {
+      {ACTIVE_STAGES.map((stage) => {
         const stageCandidates = candidates.filter((c) => c.status === stage);
         return (
           <div key={stage} className={`flex-shrink-0 w-64 rounded-xl border ${STAGE_BG[stage]} flex flex-col`}>
@@ -453,7 +468,7 @@ function CandidateCard({
 
       {/* Quick move buttons */}
       <div className="flex gap-1 mt-2.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
-        {PIPELINE_STAGES.filter((s) => s !== currentStage).slice(0, 3).map((s) => (
+        {ACTIVE_STAGES.filter((s) => s !== currentStage).slice(0, 3).map((s) => (
           <button
             key={s}
             onClick={() => onMoveStage(candidate.id, s)}
@@ -536,25 +551,9 @@ function CandidateList({
 }
 
 function getStageBadgeClass(stage: PipelineStage): string {
-  const map: Record<PipelineStage, string> = {
-    applied: "bg-blue-50 text-blue-700",
-    shortlisted: "bg-sky-50 text-sky-700",
-    interviewed: "bg-violet-50 text-violet-700",
-    offered: "bg-amber-50 text-amber-700",
-    hired: "bg-emerald-50 text-emerald-700",
-    rejected: "bg-red-50 text-red-600",
-  };
-  return map[stage] ?? "";
+  return STAGE_BADGE[stage] ?? "";
 }
 
 function getStageMiniClass(stage: PipelineStage): string {
-  const map: Record<PipelineStage, string> = {
-    applied: "bg-blue-50 text-blue-600 border-blue-200",
-    shortlisted: "bg-sky-50 text-sky-600 border-sky-200",
-    interviewed: "bg-violet-50 text-violet-600 border-violet-200",
-    offered: "bg-amber-50 text-amber-600 border-amber-200",
-    hired: "bg-emerald-50 text-emerald-600 border-emerald-200",
-    rejected: "bg-red-50 text-red-500 border-red-200",
-  };
-  return map[stage] ?? "";
+  return STAGE_BADGE[stage] ?? "";
 }

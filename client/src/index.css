@@ -71,13 +71,13 @@
   --border: oklch(0.91 0.006 30);
   --input: oklch(0.91 0.006 30);
   --ring: oklch(0.55 0.22 28);
-  /* Sidebar: dark charcoal with warm tint */
-  --sidebar: oklch(0.16 0.018 30);
-  --sidebar-foreground: oklch(0.93 0.006 30);
-  --sidebar-accent: oklch(0.22 0.018 30);
-  --sidebar-accent-foreground: oklch(0.93 0.006 30);
-  --sidebar-border: oklch(0.26 0.015 30);
-  --sidebar-ring: oklch(0.55 0.22 28);
+  /* Sidebar: Tanis brand deep red-orange */
+  --sidebar: oklch(0.32 0.18 28);          /* deep Tanis red */
+  --sidebar-foreground: oklch(0.97 0.004 30);
+  --sidebar-accent: oklch(0.40 0.18 28);   /* lighter red for hover */
+  --sidebar-accent-foreground: oklch(0.97 0.004 30);
+  --sidebar-border: oklch(0.42 0.16 28);   /* subtle red border */
+  --sidebar-ring: oklch(0.97 0.004 30);
 }
 
 .dark {

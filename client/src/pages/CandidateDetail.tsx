@@ -15,13 +15,6 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -29,9 +22,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  PIPELINE_STAGES,
+  ACTIVE_STAGES,
   STAGE_LABELS,
   STAGE_DOT,
+  STAGE_BADGE,
+  STAGE_DESCRIPTIONS,
   PipelineStage,
 } from "@/lib/pipeline";
 import {
@@ -50,6 +45,8 @@ import {
   XCircle,
   ChevronRight,
   Plus,
+  StickyNote,
+  Send,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -59,6 +56,8 @@ type CandidateEditForm = {
   phone: string;
   positionApplied: string;
   resumeLink: string;
+  meetLink: string;
+  teamsLink: string;
   notes: string;
 };
 
@@ -78,6 +77,10 @@ const EMPTY_INTERVIEW: InterviewForm = {
   notes: "",
 };
 
+function getStageBadgeClass(stage: PipelineStage): string {
+  return STAGE_BADGE[stage] ?? "";
+}
+
 export default function CandidateDetail() {
   const params = useParams<{ id: string }>();
   const id = parseInt(params.id ?? "0");
@@ -85,12 +88,13 @@ export default function CandidateDetail() {
   const { user } = useAuth();
   const utils = trpc.useUtils();
 
-  const { data: candidate, isLoading } = trpc.candidates.byId.useQuery({ id });
-  const { data: interviews, isLoading: interviewsLoading } = trpc.interviews.byCandidateId.useQuery({ candidateId: id });
+  const { data: candidate, isLoading } = trpc.candidates.get.useQuery({ id });
+  const { data: interviews, isLoading: interviewsLoading } = trpc.interviews.listByCandidate.useQuery({ candidateId: id });
+  const { data: stageNotes, isLoading: notesLoading } = trpc.notes.list.useQuery({ candidateId: id });
 
   const updateCandidate = trpc.candidates.update.useMutation({
     onSuccess: () => {
-      utils.candidates.byId.invalidate({ id });
+      utils.candidates.get.invalidate({ id });
       utils.candidates.list.invalidate();
       toast.success("Candidate updated");
       setEditOpen(false);
@@ -100,9 +104,9 @@ export default function CandidateDetail() {
 
   const updateStatus = trpc.candidates.updateStatus.useMutation({
     onSuccess: () => {
-      utils.candidates.byId.invalidate({ id });
+      utils.candidates.get.invalidate({ id });
       utils.candidates.list.invalidate();
-      utils.dashboard.pipelineCounts.invalidate();
+      utils.dashboard.kpis.invalidate();
       toast.success("Stage updated");
     },
     onError: () => toast.error("Failed to update stage"),
@@ -111,7 +115,7 @@ export default function CandidateDetail() {
   const deleteCandidate = trpc.candidates.delete.useMutation({
     onSuccess: () => {
       utils.candidates.list.invalidate();
-      utils.dashboard.pipelineCounts.invalidate();
+      utils.dashboard.kpis.invalidate();
       toast.success("Candidate deleted");
       navigate("/candidates");
     },
@@ -120,7 +124,7 @@ export default function CandidateDetail() {
 
   const scheduleInterview = trpc.interviews.schedule.useMutation({
     onSuccess: () => {
-      utils.interviews.byCandidateId.invalidate({ candidateId: id });
+      utils.interviews.listByCandidate.invalidate({ candidateId: id });
       toast.success("Interview scheduled — email notification sent");
       setInterviewOpen(false);
       setInterviewForm(EMPTY_INTERVIEW);
@@ -128,12 +132,13 @@ export default function CandidateDetail() {
     onError: () => toast.error("Failed to schedule interview"),
   });
 
-  const deleteInterview = trpc.interviews.delete.useMutation({
+  const addNote = trpc.notes.add.useMutation({
     onSuccess: () => {
-      utils.interviews.byCandidateId.invalidate({ candidateId: id });
-      toast.success("Interview removed");
+      utils.notes.list.invalidate({ candidateId: id });
+      toast.success("Note added");
+      setNoteText("");
     },
-    onError: () => toast.error("Failed to remove interview"),
+    onError: () => toast.error("Failed to add note"),
   });
 
   const [editOpen, setEditOpen] = useState(false);
@@ -146,8 +151,13 @@ export default function CandidateDetail() {
     phone: "",
     positionApplied: "",
     resumeLink: "",
+    meetLink: "",
+    teamsLink: "",
     notes: "",
   });
+  const [noteText, setNoteText] = useState("");
+  const [noteStage, setNoteStage] = useState<PipelineStage>("applied");
+  const [activeNotesStage, setActiveNotesStage] = useState<PipelineStage | "all">("all");
 
   const openEdit = () => {
     if (!candidate) return;
@@ -157,6 +167,8 @@ export default function CandidateDetail() {
       phone: candidate.phone ?? "",
       positionApplied: candidate.positionApplied,
       resumeLink: candidate.resumeLink ?? "",
+      meetLink: (candidate as Record<string, unknown>).meetLink as string ?? "",
+      teamsLink: (candidate as Record<string, unknown>).teamsLink as string ?? "",
       notes: candidate.notes ?? "",
     });
     setEditOpen(true);
@@ -167,24 +179,20 @@ export default function CandidateDetail() {
     if (!editForm.email.trim()) { toast.error("Email is required"); return; }
     updateCandidate.mutate({
       id,
-      data: {
-        name: editForm.name.trim(),
-        email: editForm.email.trim(),
-        phone: editForm.phone.trim() || undefined,
-        positionApplied: editForm.positionApplied.trim(),
-        resumeLink: editForm.resumeLink.trim() || undefined,
-        notes: editForm.notes.trim() || undefined,
-      },
+      name: editForm.name.trim(),
+      email: editForm.email.trim(),
+      phone: editForm.phone.trim() || undefined,
+      positionApplied: editForm.positionApplied.trim(),
+      resumeLink: editForm.resumeLink.trim() || undefined,
+      meetLink: editForm.meetLink.trim() || undefined,
+      teamsLink: editForm.teamsLink.trim() || undefined,
+      notes: editForm.notes.trim() || undefined,
     });
   };
 
   const handleScheduleInterview = () => {
     if (!interviewForm.date || !interviewForm.time) {
       toast.error("Date and time are required");
-      return;
-    }
-    if (!user?.email) {
-      toast.error("Recruiter email not found. Please ensure you are logged in.");
       return;
     }
     const scheduledAt = new Date(`${interviewForm.date}T${interviewForm.time}`).getTime();
@@ -196,9 +204,17 @@ export default function CandidateDetail() {
       location: interviewForm.location.trim() || undefined,
       interviewerName: interviewForm.interviewerName.trim() || undefined,
       notes: interviewForm.notes.trim() || undefined,
-      recruiterEmail: user.email,
-      recruiterName: user.name ?? "Recruiter",
+      recruiterEmail: user?.email ?? undefined,
       candidateName: candidate?.name ?? "Candidate",
+    });
+  };
+
+  const handleAddNote = () => {
+    if (!noteText.trim()) { toast.error("Note text is required"); return; }
+    addNote.mutate({
+      candidateId: id,
+      stage: noteStage,
+      note: noteText.trim(),
     });
   };
 
@@ -224,7 +240,11 @@ export default function CandidateDetail() {
     );
   }
 
-  const currentStageIndex = PIPELINE_STAGES.indexOf(candidate.status as PipelineStage);
+  const currentStageIndex = ACTIVE_STAGES.indexOf(candidate.status as (typeof ACTIVE_STAGES)[number]);
+
+  const filteredNotes = activeNotesStage === "all"
+    ? stageNotes ?? []
+    : (stageNotes ?? []).filter((n: { stage: string }) => n.stage === activeNotesStage);
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -265,12 +285,11 @@ export default function CandidateDetail() {
 
       {/* Profile Card */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
-        {/* Header stripe */}
         <div className="h-2 bg-gradient-to-r from-primary/80 to-primary/40" />
         <div className="p-6">
           <div className="flex items-start gap-4">
             <div className="w-14 h-14 rounded-full bg-primary/10 text-primary flex items-center justify-center text-lg font-semibold shrink-0">
-              {candidate.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)}
+              {candidate.name.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2)}
             </div>
             <div className="flex-1 min-w-0">
               <h1 className="text-xl font-semibold tracking-tight text-foreground">{candidate.name}</h1>
@@ -299,14 +318,14 @@ export default function CandidateDetail() {
           <div className="mt-6 pt-5 border-t border-border">
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Pipeline Stage</p>
             <div className="flex items-center gap-1 flex-wrap">
-              {PIPELINE_STAGES.map((stage, idx) => {
+              {ACTIVE_STAGES.map((stage, idx) => {
                 const isActive = candidate.status === stage;
                 const isPast = currentStageIndex > idx && candidate.status !== "rejected";
-                const isRejected = candidate.status === "rejected";
                 return (
                   <div key={stage} className="flex items-center gap-1">
                     <button
                       onClick={() => updateStatus.mutate({ id, status: stage })}
+                      title={STAGE_DESCRIPTIONS[stage]}
                       className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all border ${
                         isActive
                           ? `${getStageBadgeClass(stage)} shadow-sm`
@@ -318,24 +337,153 @@ export default function CandidateDetail() {
                       {isActive && <span className={`w-1.5 h-1.5 rounded-full ${STAGE_DOT[stage]}`} />}
                       {STAGE_LABELS[stage]}
                     </button>
-                    {idx < PIPELINE_STAGES.length - 1 && (
+                    {idx < ACTIVE_STAGES.length - 1 && (
                       <ChevronRight className="h-3 w-3 text-muted-foreground/30 shrink-0" />
                     )}
                   </div>
                 );
               })}
+              {/* Rejected exit */}
+              <button
+                onClick={() => updateStatus.mutate({ id, status: "rejected" })}
+                className={`ml-2 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all border ${
+                  candidate.status === "rejected"
+                    ? `${getStageBadgeClass("rejected")} shadow-sm`
+                    : "bg-transparent text-muted-foreground border-border hover:border-red-300 hover:text-red-600"
+                }`}
+              >
+                {candidate.status === "rejected" && <span className={`w-1.5 h-1.5 rounded-full ${STAGE_DOT["rejected"]}`} />}
+                Rejected
+              </button>
             </div>
+            {/* Current stage description */}
+            <p className="text-xs text-muted-foreground mt-2.5 italic">
+              {STAGE_DESCRIPTIONS[candidate.status as PipelineStage]}
+            </p>
           </div>
         </div>
       </div>
 
-      {/* Notes */}
-      {candidate.notes && (
-        <div className="bg-card border border-border rounded-xl p-5">
-          <h2 className="text-sm font-semibold text-foreground mb-2">Notes</h2>
-          <p className="text-sm text-muted-foreground whitespace-pre-wrap">{candidate.notes}</p>
+      {/* Stage Notes */}
+      <div className="bg-card border border-border rounded-xl overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <div className="flex items-center gap-2">
+            <StickyNote className="h-4 w-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold text-foreground">Stage Notes</h2>
+            {stageNotes && stageNotes.length > 0 && (
+              <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{stageNotes.length}</span>
+            )}
+          </div>
         </div>
-      )}
+
+        {/* Filter tabs */}
+        <div className="flex items-center gap-1 px-5 pt-3 pb-2 flex-wrap">
+          <button
+            onClick={() => setActiveNotesStage("all")}
+            className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
+              activeNotesStage === "all"
+                ? "bg-primary text-primary-foreground border-primary"
+                : "border-border text-muted-foreground hover:border-muted-foreground/40"
+            }`}
+          >
+            All
+          </button>
+          {ACTIVE_STAGES.map((stage) => {
+            const count = (stageNotes ?? []).filter((n: { stage: string }) => n.stage === stage).length;
+            return (
+              <button
+                key={stage}
+                onClick={() => setActiveNotesStage(stage)}
+                className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-all flex items-center gap-1 ${
+                  activeNotesStage === stage
+                    ? `${getStageBadgeClass(stage)} shadow-sm`
+                    : "border-border text-muted-foreground hover:border-muted-foreground/40"
+                }`}
+              >
+                {STAGE_LABELS[stage]}
+                {count > 0 && <span className="opacity-70">{count}</span>}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Notes list */}
+        <div className="px-5 pb-3 min-h-[60px]">
+          {notesLoading ? (
+            <div className="space-y-2 py-2">
+              <Skeleton className="h-12 rounded-lg" />
+              <Skeleton className="h-12 rounded-lg" />
+            </div>
+          ) : filteredNotes.length > 0 ? (
+            <div className="space-y-2 py-2">
+              {filteredNotes.map((note: { id: number; stage: string; note: string; recruiterName?: string | null; createdAt: Date }) => (
+                <div key={note.id} className="flex gap-3 p-3 rounded-lg bg-muted/40 border border-border/50">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium border ${getStageBadgeClass(note.stage as PipelineStage)}`}>
+                        {STAGE_LABELS[note.stage as PipelineStage]}
+                      </span>
+                      {note.recruiterName && (
+                        <span className="text-[10px] text-muted-foreground">{note.recruiterName}</span>
+                      )}
+                      <span className="text-[10px] text-muted-foreground ml-auto">
+                        {new Date(note.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                    </div>
+                    <p className="text-sm text-foreground whitespace-pre-wrap">{note.note}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center py-6 text-center">
+              <StickyNote className="h-6 w-6 text-muted-foreground/30 mb-1.5" />
+              <p className="text-xs text-muted-foreground">No notes yet for this stage</p>
+            </div>
+          )}
+        </div>
+
+        {/* Add note form */}
+        <div className="px-5 pb-4 border-t border-border pt-3">
+          <div className="flex items-start gap-2">
+            <div className="flex-1 space-y-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-muted-foreground">Stage:</span>
+                <div className="flex gap-1 flex-wrap">
+                  {ACTIVE_STAGES.map((stage) => (
+                    <button
+                      key={stage}
+                      onClick={() => setNoteStage(stage)}
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition-all ${
+                        noteStage === stage
+                          ? getStageBadgeClass(stage)
+                          : "border-border text-muted-foreground hover:border-muted-foreground/40"
+                      }`}
+                    >
+                      {STAGE_LABELS[stage]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <Textarea
+                placeholder={`Add a note for the ${STAGE_LABELS[noteStage]} stage...`}
+                rows={2}
+                value={noteText}
+                onChange={(e) => setNoteText(e.target.value)}
+                className="text-sm resize-none"
+              />
+            </div>
+            <Button
+              size="icon"
+              className="h-9 w-9 shrink-0 mt-6"
+              onClick={handleAddNote}
+              disabled={addNote.isPending || !noteText.trim()}
+            >
+              <Send className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      </div>
 
       {/* Interviews */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
@@ -349,57 +497,46 @@ export default function CandidateDetail() {
         {interviewsLoading ? (
           <div className="p-5 space-y-3">
             <Skeleton className="h-16 rounded-lg" />
-            <Skeleton className="h-16 rounded-lg" />
           </div>
         ) : interviews && interviews.length > 0 ? (
           <div className="divide-y divide-border">
-            {interviews.map((interview) => {
+            {interviews.map((interview: { id: number; scheduledAt: number; location?: string | null; interviewerName?: string | null; notes?: string | null; notificationSent?: number | null }) => {
               const d = new Date(interview.scheduledAt);
               const isPast = d < new Date();
               return (
-                <div key={interview.id} className="px-5 py-4 flex items-start justify-between gap-4 group">
-                  <div className="flex items-start gap-3">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${isPast ? "bg-muted" : "bg-primary/10"}`}>
-                      <Calendar className={`h-4 w-4 ${isPast ? "text-muted-foreground" : "text-primary"}`} />
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-foreground">
-                        {d.toLocaleDateString("en-US", { weekday: "short", month: "long", day: "numeric", year: "numeric" })}
-                      </p>
-                      <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                <div key={interview.id} className="px-5 py-4 flex items-start gap-3">
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${isPast ? "bg-muted" : "bg-primary/10"}`}>
+                    <Calendar className={`h-4 w-4 ${isPast ? "text-muted-foreground" : "text-primary"}`} />
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium text-foreground">
+                      {d.toLocaleDateString("en-US", { weekday: "short", month: "long", day: "numeric", year: "numeric" })}
+                    </p>
+                    <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                      <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <Clock className="h-3 w-3" />
+                        {d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
+                      </span>
+                      {interview.location && (
                         <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                          <Clock className="h-3 w-3" />
-                          {d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })}
+                          <MapPin className="h-3 w-3" /> {interview.location}
                         </span>
-                        {interview.location && (
-                          <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                            <MapPin className="h-3 w-3" /> {interview.location}
-                          </span>
-                        )}
-                        {interview.interviewerName && (
-                          <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                            <User className="h-3 w-3" /> {interview.interviewerName}
-                          </span>
-                        )}
-                        {interview.notificationSent === 1 && (
-                          <span className="flex items-center gap-1 text-xs text-emerald-600">
-                            <CheckCircle2 className="h-3 w-3" /> Notified
-                          </span>
-                        )}
-                      </div>
-                      {interview.notes && (
-                        <p className="text-xs text-muted-foreground mt-1">{interview.notes}</p>
+                      )}
+                      {interview.interviewerName && (
+                        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <User className="h-3 w-3" /> {interview.interviewerName}
+                        </span>
+                      )}
+                      {interview.notificationSent === 1 && (
+                        <span className="flex items-center gap-1 text-xs text-emerald-600">
+                          <CheckCircle2 className="h-3 w-3" /> Notified
+                        </span>
                       )}
                     </div>
+                    {interview.notes && (
+                      <p className="text-xs text-muted-foreground mt-1">{interview.notes}</p>
+                    )}
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-destructive"
-                    onClick={() => deleteInterview.mutate({ id: interview.id })}
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </Button>
                 </div>
               );
             })}
@@ -442,16 +579,20 @@ export default function CandidateDetail() {
                 <Input value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} />
               </div>
               <div className="space-y-1.5 col-span-2">
-                <Label>Position Applied For <span className="text-destructive">*</span></Label>
-                <Input value={editForm.positionApplied} onChange={(e) => setEditForm({ ...editForm, positionApplied: e.target.value })} />
-              </div>
-              <div className="space-y-1.5 col-span-2">
                 <Label>Resume Link</Label>
                 <Input placeholder="https://..." value={editForm.resumeLink} onChange={(e) => setEditForm({ ...editForm, resumeLink: e.target.value })} />
               </div>
+              <div className="space-y-1.5">
+                <Label>Google Meet Link</Label>
+                <Input placeholder="https://meet.google.com/..." value={editForm.meetLink} onChange={(e) => setEditForm({ ...editForm, meetLink: e.target.value })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Teams Invitation Link</Label>
+                <Input placeholder="https://teams.microsoft.com/..." value={editForm.teamsLink} onChange={(e) => setEditForm({ ...editForm, teamsLink: e.target.value })} />
+              </div>
             </div>
             <div className="space-y-1.5">
-              <Label>Notes</Label>
+              <Label>General Notes</Label>
               <Textarea rows={3} value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} />
             </div>
           </div>
@@ -495,9 +636,9 @@ export default function CandidateDetail() {
               </div>
             </div>
             <div className="space-y-1.5">
-              <Label>Location</Label>
+              <Label>Location / Meet Link</Label>
               <Input
-                placeholder="e.g. Office, Google Meet, Zoom"
+                placeholder="e.g. Google Meet link or Office"
                 value={interviewForm.location}
                 onChange={(e) => setInterviewForm({ ...interviewForm, location: e.target.value })}
               />
@@ -555,16 +696,4 @@ export default function CandidateDetail() {
       </Dialog>
     </div>
   );
-}
-
-function getStageBadgeClass(stage: PipelineStage): string {
-  const map: Record<PipelineStage, string> = {
-    applied: "bg-blue-50 text-blue-700 border-blue-200",
-    shortlisted: "bg-sky-50 text-sky-700 border-sky-200",
-    interviewed: "bg-violet-50 text-violet-700 border-violet-200",
-    offered: "bg-amber-50 text-amber-700 border-amber-200",
-    hired: "bg-emerald-50 text-emerald-700 border-emerald-200",
-    rejected: "bg-red-50 text-red-600 border-red-200",
-  };
-  return map[stage] ?? "";
 }

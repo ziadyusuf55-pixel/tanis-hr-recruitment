@@ -1,15 +1,12 @@
-import { eq, desc, sql, gte, and } from "drizzle-orm";
+import { and, desc, eq, gte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
-  users,
-  jobs,
+  PipelineStage,
   candidates,
   interviews,
-  InsertJob,
-  InsertCandidate,
-  InsertInterview,
-  PipelineStage,
+  stageNotes,
+  users,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
 
@@ -32,7 +29,7 @@ export async function getDb() {
 export async function upsertUser(user: InsertUser): Promise<void> {
   if (!user.openId) throw new Error("User openId is required for upsert");
   const db = await getDb();
-  if (!db) { console.warn("[Database] Cannot upsert user: database not available"); return; }
+  if (!db) return;
 
   const values: InsertUser = { openId: user.openId };
   const updateSet: Record<string, unknown> = {};
@@ -68,135 +65,134 @@ export async function getUserByOpenId(openId: string) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-  return result.length > 0 ? result[0] : undefined;
-}
-
-// ─── Jobs ─────────────────────────────────────────────────────────────────────
-
-export async function listJobs() {
-  const db = await getDb();
-  if (!db) return [];
-  return db.select().from(jobs).orderBy(desc(jobs.createdAt));
-}
-
-export async function getJobById(id: number) {
-  const db = await getDb();
-  if (!db) return undefined;
-  const result = await db.select().from(jobs).where(eq(jobs.id, id)).limit(1);
-  return result[0];
-}
-
-export async function createJob(data: Omit<InsertJob, "id" | "createdAt" | "updatedAt">) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.insert(jobs).values(data);
-  const result = await db.select().from(jobs).orderBy(desc(jobs.createdAt)).limit(1);
-  return result[0];
-}
-
-export async function updateJob(id: number, data: Partial<Omit<InsertJob, "id" | "createdAt" | "updatedAt">>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(jobs).set(data).where(eq(jobs.id, id));
-  return getJobById(id);
-}
-
-export async function deleteJob(id: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.delete(jobs).where(eq(jobs.id, id));
-  return { success: true };
+  return result[0] ?? undefined;
 }
 
 // ─── Candidates ───────────────────────────────────────────────────────────────
 
-export async function listCandidates(filters?: { status?: PipelineStage; jobId?: number }) {
+export async function listCandidates() {
   const db = await getDb();
   if (!db) return [];
-  let query = db.select().from(candidates).$dynamic();
-  if (filters?.status) {
-    query = query.where(eq(candidates.status, filters.status));
-  }
-  return query.orderBy(desc(candidates.createdAt));
+  return db.select().from(candidates).orderBy(desc(candidates.createdAt));
 }
 
 export async function getCandidateById(id: number) {
   const db = await getDb();
   if (!db) return undefined;
   const result = await db.select().from(candidates).where(eq(candidates.id, id)).limit(1);
-  return result[0];
+  return result[0] ?? undefined;
 }
 
-export async function createCandidate(data: Omit<InsertCandidate, "id" | "createdAt" | "updatedAt">) {
+export async function createCandidate(data: {
+  name: string;
+  email: string;
+  phone?: string;
+  positionApplied?: string;
+  resumeLink?: string;
+  notes?: string;
+  status?: PipelineStage;
+}) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.insert(candidates).values(data);
-  const result = await db.select().from(candidates).orderBy(desc(candidates.createdAt)).limit(1);
-  return result[0];
+  const now = Date.now();
+  const result = await db.insert(candidates).values({
+    name: data.name,
+    email: data.email,
+    phone: data.phone ?? null,
+    positionApplied: data.positionApplied ?? "Call Center Agent",
+    resumeLink: data.resumeLink ?? null,
+    notes: data.notes ?? null,
+    status: data.status ?? "applied",
+    appliedAt: now,
+  });
+  return result;
 }
 
-export async function updateCandidate(id: number, data: Partial<Omit<InsertCandidate, "id" | "createdAt" | "updatedAt">>) {
+export async function updateCandidate(
+  id: number,
+  data: {
+    name?: string;
+    email?: string;
+    phone?: string | null;
+    positionApplied?: string;
+    resumeLink?: string | null;
+    notes?: string | null;
+    meetLink?: string | null;
+    teamsLink?: string | null;
+  }
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.update(candidates).set(data).where(eq(candidates.id, id));
-  return getCandidateById(id);
+}
+
+export async function updateCandidateStatus(id: number, status: PipelineStage) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const extra: Record<string, unknown> = { status };
+  if (status === "accepted") extra.acceptedAt = Date.now();
+  await db.update(candidates).set(extra).where(eq(candidates.id, id));
 }
 
 export async function deleteCandidate(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.delete(candidates).where(eq(candidates.id, id));
-  return { success: true };
 }
 
-export async function bulkCreateCandidates(
-  data: Array<Omit<InsertCandidate, "id" | "createdAt" | "updatedAt">>
+export async function bulkInsertCandidates(
+  rows: Array<{
+    name: string;
+    email: string;
+    phone?: string;
+    positionApplied?: string;
+    resumeLink?: string;
+    notes?: string;
+  }>
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  if (data.length === 0) return { count: 0 };
-  await db.insert(candidates).values(data);
-  return { count: data.length };
+  const now = Date.now();
+  await db.insert(candidates).values(
+    rows.map((r) => ({
+      name: r.name,
+      email: r.email,
+      phone: r.phone ?? null,
+      positionApplied: r.positionApplied ?? "Call Center Agent",
+      resumeLink: r.resumeLink ?? null,
+      notes: r.notes ?? null,
+      status: "applied" as PipelineStage,
+      appliedAt: now,
+    }))
+  );
 }
 
-export async function getPipelineCounts(period?: "week" | "month" | "all") {
+// ─── Stage Notes ──────────────────────────────────────────────────────────────
+
+export async function listNotesByCandidateId(candidateId: number) {
   const db = await getDb();
   if (!db) return [];
-
-  let sinceMs: number | null = null;
-  const now = Date.now();
-  if (period === "week") sinceMs = now - 7 * 24 * 60 * 60 * 1000;
-  else if (period === "month") sinceMs = now - 30 * 24 * 60 * 60 * 1000;
-
-  const result = await db
-    .select({
-      status: candidates.status,
-      count: sql<number>`count(*)`.mapWith(Number),
-    })
-    .from(candidates)
-    .where(sinceMs !== null ? gte(candidates.createdAt, new Date(sinceMs)) : undefined)
-    .groupBy(candidates.status);
-  return result;
+  return db
+    .select()
+    .from(stageNotes)
+    .where(eq(stageNotes.candidateId, candidateId))
+    .orderBy(desc(stageNotes.createdAt));
 }
 
-export async function getCandidatesAddedSince(sinceMs: number) {
+export async function addStageNote(data: {
+  candidateId: number;
+  stage: PipelineStage;
+  note: string;
+  recruiterName?: string;
+}) {
   const db = await getDb();
-  if (!db) return 0;
-  const result = await db
-    .select({ count: sql<number>`count(*)`.mapWith(Number) })
-    .from(candidates)
-    .where(gte(candidates.createdAt, new Date(sinceMs)));
-  return result[0]?.count ?? 0;
-}
-
-export async function getInterviewsScheduledSince(sinceMs: number) {
-  const db = await getDb();
-  if (!db) return 0;
-  const query = db.select({ count: sql<number>`count(*)`.mapWith(Number) }).from(interviews);
-  const result = sinceMs > 0
-    ? await query.where(gte(interviews.createdAt, new Date(sinceMs)))
-    : await query;
-  return result[0]?.count ?? 0;
+  if (!db) throw new Error("Database not available");
+  await db.insert(stageNotes).values({
+    candidateId: data.candidateId,
+    stage: data.stage,
+    note: data.note,
+    recruiterName: data.recruiterName ?? null,
+  });
 }
 
 // ─── Interviews ───────────────────────────────────────────────────────────────
@@ -211,36 +207,102 @@ export async function listInterviewsByCandidateId(candidateId: number) {
     .orderBy(desc(interviews.scheduledAt));
 }
 
-export async function getInterviewById(id: number) {
-  const db = await getDb();
-  if (!db) return undefined;
-  const result = await db.select().from(interviews).where(eq(interviews.id, id)).limit(1);
-  return result[0];
-}
-
-export async function createInterview(data: Omit<InsertInterview, "id" | "createdAt" | "updatedAt">) {
+export async function createInterview(data: {
+  candidateId: number;
+  scheduledAt: number;
+  location?: string;
+  interviewerName?: string;
+  notes?: string;
+}) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  await db.insert(interviews).values(data);
+  await db.insert(interviews).values({
+    candidateId: data.candidateId,
+    scheduledAt: data.scheduledAt,
+    location: data.location ?? null,
+    interviewerName: data.interviewerName ?? null,
+    notes: data.notes ?? null,
+    notificationSent: 0,
+  });
+}
+
+export async function markInterviewNotificationSent(interviewId: number) {
+  const db = await getDb();
+  if (!db) return;
+  await db
+    .update(interviews)
+    .set({ notificationSent: 1 })
+    .where(eq(interviews.id, interviewId));
+}
+
+export async function getInterviewsScheduledSince(sinceMs: number) {
+  const db = await getDb();
+  if (!db) return 0;
+  const query = db.select({ count: sql<number>`count(*)`.mapWith(Number) }).from(interviews);
+  const result = sinceMs > 0
+    ? await query.where(gte(interviews.createdAt, new Date(sinceMs)))
+    : await query;
+  return result[0]?.count ?? 0;
+}
+
+// ─── Dashboard KPIs ───────────────────────────────────────────────────────────
+
+export async function getPipelineCounts(period: "week" | "month" | "all") {
+  const db = await getDb();
+  if (!db) return [];
+  const now = Date.now();
+  let sinceMs: number | null = null;
+  if (period === "week") sinceMs = now - 7 * 24 * 60 * 60 * 1000;
+  else if (period === "month") sinceMs = now - 30 * 24 * 60 * 60 * 1000;
+
+  const query = db
+    .select({
+      status: candidates.status,
+      count: sql<number>`count(*)`.mapWith(Number),
+    })
+    .from(candidates)
+    .groupBy(candidates.status);
+
+  const result = sinceMs !== null
+    ? await query.where(gte(candidates.createdAt, new Date(sinceMs)))
+    : await query;
+
+  return result;
+}
+
+export async function getCandidatesAddedSince(sinceMs: number) {
+  const db = await getDb();
+  if (!db) return 0;
+  const query = db.select({ count: sql<number>`count(*)`.mapWith(Number) }).from(candidates);
+  const result = sinceMs > 0
+    ? await query.where(gte(candidates.createdAt, new Date(sinceMs)))
+    : await query;
+  return result[0]?.count ?? 0;
+}
+
+export async function getAvgTimeToHire(sinceMs: number) {
+  // Average days from appliedAt to acceptedAt for accepted/teams_invitation_sent candidates
+  const db = await getDb();
+  if (!db) return null;
+  const conditions = [
+    sql`\`acceptedAt\` IS NOT NULL`,
+    sql`\`appliedAt\` IS NOT NULL`,
+  ];
+  if (sinceMs > 0) {
+    conditions.push(gte(candidates.createdAt, new Date(sinceMs)));
+  }
   const result = await db
-    .select()
-    .from(interviews)
-    .where(eq(interviews.candidateId, data.candidateId))
-    .orderBy(desc(interviews.createdAt))
-    .limit(1);
-  return result[0];
+    .select({
+      avgMs: sql<number>`AVG(\`acceptedAt\` - \`appliedAt\`)`.mapWith(Number),
+    })
+    .from(candidates)
+    .where(and(...conditions));
+  const avgMs = result[0]?.avgMs ?? null;
+  if (!avgMs) return null;
+  return Math.round(avgMs / (1000 * 60 * 60 * 24)); // convert to days
 }
 
-export async function updateInterview(id: number, data: Partial<Omit<InsertInterview, "id" | "createdAt" | "updatedAt">>) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.update(interviews).set(data).where(eq(interviews.id, id));
-  return getInterviewById(id);
-}
-
-export async function deleteInterview(id: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db.delete(interviews).where(eq(interviews.id, id));
-  return { success: true };
+export async function getStageDropoff(period: "week" | "month" | "all") {
+  // Returns count per stage for funnel visualization
+  return getPipelineCounts(period);
 }

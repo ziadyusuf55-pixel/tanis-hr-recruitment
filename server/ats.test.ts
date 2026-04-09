@@ -2,36 +2,67 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 
-// ─── Mock DB module ────────────────────────────────────────────────────────────
+// ─── Mock DB module ───────────────────────────────────────────────────────────
 vi.mock("./db", () => ({
-  listJobs: vi.fn().mockResolvedValue([]),
-  getJobById: vi.fn().mockResolvedValue({ id: 1, title: "Test Job", status: "open", department: null, location: null, description: null, createdAt: new Date(), updatedAt: new Date() }),
-  createJob: vi.fn().mockResolvedValue({ id: 1, title: "Test Job", status: "open", department: null, location: null, description: null, createdAt: new Date(), updatedAt: new Date() }),
-  updateJob: vi.fn().mockResolvedValue({ id: 1, title: "Updated Job", status: "open", department: null, location: null, description: null, createdAt: new Date(), updatedAt: new Date() }),
-  deleteJob: vi.fn().mockResolvedValue({ success: true }),
-  listCandidates: vi.fn().mockResolvedValue([]),
-  getCandidateById: vi.fn().mockResolvedValue({ id: 1, name: "Jane Doe", email: "jane@example.com", positionApplied: "Engineer", status: "applied", phone: null, jobId: null, resumeLink: null, notes: null, createdAt: new Date(), updatedAt: new Date() }),
-  createCandidate: vi.fn().mockResolvedValue({ id: 1, name: "Jane Doe", email: "jane@example.com", positionApplied: "Engineer", status: "applied", phone: null, jobId: null, resumeLink: null, notes: null, createdAt: new Date(), updatedAt: new Date() }),
-  updateCandidate: vi.fn().mockResolvedValue({ id: 1, name: "Jane Doe", email: "jane@example.com", positionApplied: "Engineer", status: "shortlisted", phone: null, jobId: null, resumeLink: null, notes: null, createdAt: new Date(), updatedAt: new Date() }),
-  deleteCandidate: vi.fn().mockResolvedValue({ success: true }),
-  bulkCreateCandidates: vi.fn().mockResolvedValue({ count: 2 }),
-  getPipelineCounts: vi.fn().mockResolvedValue([{ status: "applied", count: 3 }, { status: "hired", count: 1 }]),
+  listCandidates: vi.fn().mockResolvedValue([
+    {
+      id: 1,
+      name: "Ahmed Hassan",
+      email: "ahmed@example.com",
+      phone: "01012345678",
+      positionApplied: "Call Center Agent",
+      status: "applied",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    },
+  ]),
+  getCandidateById: vi.fn().mockResolvedValue({
+    id: 1,
+    name: "Ahmed Hassan",
+    email: "ahmed@example.com",
+    phone: "01012345678",
+    positionApplied: "Call Center Agent",
+    status: "applied",
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  }),
+  createCandidate: vi.fn().mockResolvedValue({ insertId: 1 }),
+  updateCandidate: vi.fn().mockResolvedValue(undefined),
+  updateCandidateStatus: vi.fn().mockResolvedValue(undefined),
+  deleteCandidate: vi.fn().mockResolvedValue(undefined),
+  bulkInsertCandidates: vi.fn().mockResolvedValue(undefined),
+  listNotesByCandidateId: vi.fn().mockResolvedValue([]),
+  addStageNote: vi.fn().mockResolvedValue(undefined),
   listInterviewsByCandidateId: vi.fn().mockResolvedValue([]),
-  createInterview: vi.fn().mockResolvedValue({ id: 1, candidateId: 1, scheduledAt: Date.now() + 86400000, location: "Office", interviewerName: "HR", notes: null, notificationSent: 0, createdAt: new Date(), updatedAt: new Date() }),
-  updateInterview: vi.fn().mockResolvedValue({ id: 1, notificationSent: 1 }),
-  deleteInterview: vi.fn().mockResolvedValue({ success: true }),
+  createInterview: vi.fn().mockResolvedValue(undefined),
+  markInterviewNotificationSent: vi.fn().mockResolvedValue(undefined),
+  getPipelineCounts: vi.fn().mockResolvedValue([
+    { status: "applied", count: 10 },
+    { status: "whatsapp_sent", count: 7 },
+    { status: "voice_note_reviewed", count: 5 },
+    { status: "interview_scheduled", count: 3 },
+    { status: "accepted", count: 2 },
+    { status: "teams_invitation_sent", count: 1 },
+    { status: "rejected", count: 4 },
+  ]),
+  getCandidatesAddedSince: vi.fn().mockResolvedValue(5),
+  getInterviewsScheduledSince: vi.fn().mockResolvedValue(2),
+  getAvgTimeToHire: vi.fn().mockResolvedValue(7),
+  getStageDropoff: vi.fn().mockResolvedValue([]),
+  upsertUser: vi.fn().mockResolvedValue(undefined),
+  getUserByOpenId: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock("./email", () => ({
   sendInterviewNotification: vi.fn().mockResolvedValue(undefined),
 }));
 
-// ─── Auth context helper ───────────────────────────────────────────────────────
-function createAuthContext(): TrpcContext {
+// ─── Auth context factory ─────────────────────────────────────────────────────
+function makeCtx(overrides: Partial<TrpcContext> = {}): TrpcContext {
   return {
     user: {
       id: 1,
-      openId: "test-user",
+      openId: "recruiter-1",
       email: "recruiter@tanis.com",
       name: "Test Recruiter",
       loginMethod: "manus",
@@ -42,152 +73,246 @@ function createAuthContext(): TrpcContext {
     },
     req: { protocol: "https", headers: {} } as TrpcContext["req"],
     res: { clearCookie: vi.fn() } as unknown as TrpcContext["res"],
+    ...overrides,
   };
 }
 
-// ─── Tests ─────────────────────────────────────────────────────────────────────
+// ─── Auth router ──────────────────────────────────────────────────────────────
+describe("auth router", () => {
+  it("returns null for unauthenticated user", async () => {
+    const caller = appRouter.createCaller(makeCtx({ user: null }));
+    const result = await caller.auth.me();
+    expect(result).toBeNull();
+  });
 
-describe("auth.logout", () => {
-  it("clears session cookie and returns success", async () => {
-    const ctx = createAuthContext();
+  it("returns the current user when authenticated", async () => {
+    const caller = appRouter.createCaller(makeCtx());
+    const result = await caller.auth.me();
+    expect(result?.email).toBe("recruiter@tanis.com");
+  });
+
+  it("clears session cookie on logout", async () => {
     const cleared: string[] = [];
-    (ctx.res as unknown as { clearCookie: (name: string) => void }).clearCookie = (name: string) => cleared.push(name);
+    const ctx = makeCtx();
+    (ctx.res as unknown as { clearCookie: (name: string) => void }).clearCookie = (name) => cleared.push(name);
     const caller = appRouter.createCaller(ctx);
     const result = await caller.auth.logout();
     expect(result.success).toBe(true);
   });
 });
 
-describe("dashboard.pipelineCounts", () => {
-  it("returns counts for all pipeline stages", async () => {
-    const caller = appRouter.createCaller(createAuthContext());
-    const result = await caller.dashboard.pipelineCounts();
-    expect(result).toHaveLength(6);
-    const stages = result.map((r) => r.stage);
-    expect(stages).toContain("applied");
-    expect(stages).toContain("hired");
-    expect(stages).toContain("rejected");
-  });
-
-  it("fills missing stages with count 0", async () => {
-    const caller = appRouter.createCaller(createAuthContext());
-    const result = await caller.dashboard.pipelineCounts();
-    const rejected = result.find((r) => r.stage === "rejected");
-    expect(rejected?.count).toBe(0);
-  });
-});
-
-describe("jobs router", () => {
-  it("lists jobs", async () => {
-    const caller = appRouter.createCaller(createAuthContext());
-    const result = await caller.jobs.list();
-    expect(Array.isArray(result)).toBe(true);
-  });
-
-  it("creates a job with required fields", async () => {
-    const caller = appRouter.createCaller(createAuthContext());
-    const result = await caller.jobs.create({ title: "Test Job" });
-    expect(result).toBeDefined();
-    expect(result?.title).toBe("Test Job");
-  });
-
-  it("updates a job", async () => {
-    const caller = appRouter.createCaller(createAuthContext());
-    const result = await caller.jobs.update({ id: 1, data: { title: "Updated Job" } });
-    expect(result?.title).toBe("Updated Job");
-  });
-
-  it("deletes a job", async () => {
-    const caller = appRouter.createCaller(createAuthContext());
-    const result = await caller.jobs.delete({ id: 1 });
-    expect(result.success).toBe(true);
-  });
-
-  it("rejects job creation without a title", async () => {
-    const caller = appRouter.createCaller(createAuthContext());
-    await expect(caller.jobs.create({ title: "" })).rejects.toThrow();
-  });
-});
-
+// ─── Candidates router ────────────────────────────────────────────────────────
 describe("candidates router", () => {
+  let caller: ReturnType<typeof appRouter.createCaller>;
+
+  beforeEach(() => {
+    caller = appRouter.createCaller(makeCtx());
+  });
+
   it("lists candidates", async () => {
-    const caller = appRouter.createCaller(createAuthContext());
     const result = await caller.candidates.list();
     expect(Array.isArray(result)).toBe(true);
+    expect(result[0]?.name).toBe("Ahmed Hassan");
+  });
+
+  it("gets a candidate by id", async () => {
+    const result = await caller.candidates.get({ id: 1 });
+    expect(result?.email).toBe("ahmed@example.com");
   });
 
   it("creates a candidate with required fields", async () => {
-    const caller = appRouter.createCaller(createAuthContext());
     const result = await caller.candidates.create({
-      name: "Jane Doe",
-      email: "jane@example.com",
-      positionApplied: "Engineer",
+      name: "Sara Ali",
+      email: "sara@example.com",
     });
-    expect(result?.name).toBe("Jane Doe");
-    expect(result?.status).toBe("applied");
+    expect(result).toBeDefined();
   });
 
   it("rejects candidate creation with invalid email", async () => {
-    const caller = appRouter.createCaller(createAuthContext());
     await expect(
-      caller.candidates.create({ name: "Jane", email: "not-an-email", positionApplied: "Engineer" })
+      caller.candidates.create({ name: "Bad", email: "not-an-email" })
     ).rejects.toThrow();
   });
 
-  it("updates candidate status", async () => {
-    const caller = appRouter.createCaller(createAuthContext());
-    const result = await caller.candidates.updateStatus({ id: 1, status: "shortlisted" });
-    expect(result).toBeDefined();
+  it("updates a candidate's status to whatsapp_sent", async () => {
+    const result = await caller.candidates.updateStatus({ id: 1, status: "whatsapp_sent" });
+    expect(result).toBeUndefined();
   });
 
-  it("bulk imports candidates", async () => {
-    const caller = appRouter.createCaller(createAuthContext());
-    const result = await caller.candidates.bulkImport([
-      { name: "Alice", email: "alice@example.com", positionApplied: "Manager" },
-      { name: "Bob", email: "bob@example.com", positionApplied: "Engineer" },
-    ]);
-    expect(result.count).toBe(2);
+  it("updates a candidate's status to voice_note_reviewed", async () => {
+    const result = await caller.candidates.updateStatus({ id: 1, status: "voice_note_reviewed" });
+    expect(result).toBeUndefined();
   });
 
-  it("rejects bulk import with invalid email", async () => {
-    const caller = appRouter.createCaller(createAuthContext());
-    await expect(
-      caller.candidates.bulkImport([{ name: "Alice", email: "bad", positionApplied: "Manager" }])
-    ).rejects.toThrow();
+  it("updates a candidate's status to interview_scheduled", async () => {
+    const result = await caller.candidates.updateStatus({ id: 1, status: "interview_scheduled" });
+    expect(result).toBeUndefined();
+  });
+
+  it("updates a candidate's status to accepted", async () => {
+    const result = await caller.candidates.updateStatus({ id: 1, status: "accepted" });
+    expect(result).toBeUndefined();
+  });
+
+  it("updates a candidate's status to teams_invitation_sent", async () => {
+    const result = await caller.candidates.updateStatus({ id: 1, status: "teams_invitation_sent" });
+    expect(result).toBeUndefined();
+  });
+
+  it("updates a candidate's status to rejected", async () => {
+    const result = await caller.candidates.updateStatus({ id: 1, status: "rejected" });
+    expect(result).toBeUndefined();
   });
 
   it("deletes a candidate", async () => {
-    const caller = appRouter.createCaller(createAuthContext());
     const result = await caller.candidates.delete({ id: 1 });
-    expect(result.success).toBe(true);
+    expect(result).toBeUndefined();
+  });
+
+  it("bulk imports candidates without throwing", async () => {
+    // bulkInsertCandidates returns void; just verify it doesn't throw
+    await expect(
+      caller.candidates.bulkImport([
+        { name: "Candidate A", email: "a@example.com" },
+        { name: "Candidate B", email: "b@example.com" },
+      ])
+    ).resolves.not.toThrow();
+  });
+
+  it("rejects bulk import with invalid email", async () => {
+    await expect(
+      caller.candidates.bulkImport([{ name: "Bad", email: "not-valid" }])
+    ).rejects.toThrow();
   });
 });
 
-describe("interviews router", () => {
-  it("lists interviews by candidate", async () => {
-    const caller = appRouter.createCaller(createAuthContext());
-    const result = await caller.interviews.byCandidateId({ candidateId: 1 });
+// ─── Notes router ─────────────────────────────────────────────────────────────
+describe("notes router", () => {
+  let caller: ReturnType<typeof appRouter.createCaller>;
+
+  beforeEach(() => {
+    caller = appRouter.createCaller(makeCtx());
+  });
+
+  it("lists notes for a candidate", async () => {
+    const result = await caller.notes.list({ candidateId: 1 });
     expect(Array.isArray(result)).toBe(true);
   });
 
-  it("schedules an interview and sends email notification", async () => {
-    const { sendInterviewNotification } = await import("./email");
-    const caller = appRouter.createCaller(createAuthContext());
+  it("adds a note at whatsapp_sent stage", async () => {
+    const result = await caller.notes.add({
+      candidateId: 1,
+      stage: "whatsapp_sent",
+      note: "Sent intro message on WhatsApp",
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it("adds a note at voice_note_reviewed stage", async () => {
+    const result = await caller.notes.add({
+      candidateId: 1,
+      stage: "voice_note_reviewed",
+      note: "Strong sales pitch, clear voice",
+    });
+    expect(result).toBeUndefined();
+  });
+
+  it("rejects empty note text", async () => {
+    await expect(
+      caller.notes.add({ candidateId: 1, stage: "applied", note: "" })
+    ).rejects.toThrow();
+  });
+});
+
+// ─── Interviews router ────────────────────────────────────────────────────────
+describe("interviews router", () => {
+  let caller: ReturnType<typeof appRouter.createCaller>;
+
+  beforeEach(() => {
+    caller = appRouter.createCaller(makeCtx());
+  });
+
+  it("lists interviews for a candidate", async () => {
+    const result = await caller.interviews.listByCandidate({ candidateId: 1 });
+    expect(Array.isArray(result)).toBe(true);
+  });
+
+  it("schedules an interview with all fields", async () => {
     const result = await caller.interviews.schedule({
       candidateId: 1,
       scheduledAt: Date.now() + 86400000,
+      location: "Google Meet",
+      candidateName: "Ahmed Hassan",
       recruiterEmail: "recruiter@tanis.com",
-      recruiterName: "Test Recruiter",
-      candidateName: "Jane Doe",
-      location: "Office",
     });
-    expect(result).toBeDefined();
-    expect(sendInterviewNotification).toHaveBeenCalledOnce();
+    expect(result).toEqual({ success: true });
   });
 
-  it("deletes an interview", async () => {
-    const caller = appRouter.createCaller(createAuthContext());
-    const result = await caller.interviews.delete({ id: 1 });
-    expect(result.success).toBe(true);
+  it("schedules an interview without optional fields", async () => {
+    const result = await caller.interviews.schedule({
+      candidateId: 1,
+      scheduledAt: Date.now() + 86400000,
+    });
+    expect(result).toEqual({ success: true });
+  });
+
+  it("sends email notification when recruiterEmail is provided", async () => {
+    const { sendInterviewNotification } = await import("./email");
+    vi.clearAllMocks();
+    await caller.interviews.schedule({
+      candidateId: 1,
+      scheduledAt: Date.now() + 86400000,
+      recruiterEmail: "recruiter@tanis.com",
+      candidateName: "Ahmed Hassan",
+    });
+    expect(sendInterviewNotification).toHaveBeenCalledOnce();
+  });
+});
+
+// ─── Dashboard KPIs router ────────────────────────────────────────────────────
+describe("dashboard.kpis router", () => {
+  let caller: ReturnType<typeof appRouter.createCaller>;
+
+  beforeEach(() => {
+    caller = appRouter.createCaller(makeCtx());
+  });
+
+  it("returns KPIs for 'month' period", async () => {
+    const result = await caller.dashboard.kpis({ period: "month" });
+    expect(result).toHaveProperty("totalInPipeline");
+    expect(result).toHaveProperty("newCandidates");
+    expect(result).toHaveProperty("teamsInvitationsSent");
+    expect(result).toHaveProperty("conversionRate");
+    expect(result).toHaveProperty("stageCounts");
+  });
+
+  it("returns KPIs for 'week' period", async () => {
+    const result = await caller.dashboard.kpis({ period: "week" });
+    expect(result.stageCounts).toHaveProperty("applied");
+    expect(result.stageCounts).toHaveProperty("whatsapp_sent");
+    expect(result.stageCounts).toHaveProperty("teams_invitation_sent");
+  });
+
+  it("returns KPIs for 'all' period", async () => {
+    const result = await caller.dashboard.kpis({ period: "all" });
+    expect(typeof result.totalInPipeline).toBe("number");
+    expect(typeof result.conversionRate).toBe("number");
+  });
+
+  it("returns pipeline counts via pipelineCounts procedure", async () => {
+    const result = await caller.dashboard.pipelineCounts({ period: "month" });
+    expect(Array.isArray(result)).toBe(true);
+  });
+
+  it("includes all 7 stages in stageCounts", async () => {
+    const result = await caller.dashboard.kpis({ period: "all" });
+    const stages = Object.keys(result.stageCounts);
+    expect(stages).toContain("applied");
+    expect(stages).toContain("whatsapp_sent");
+    expect(stages).toContain("voice_note_reviewed");
+    expect(stages).toContain("interview_scheduled");
+    expect(stages).toContain("accepted");
+    expect(stages).toContain("teams_invitation_sent");
+    expect(stages).toContain("rejected");
   });
 });

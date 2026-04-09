@@ -43,3 +43,31 @@
 - [x] Remove Job Postings tab — all candidates are call center agents, position is fixed
 - [x] Fix CSV import: column 3 is phone number not position — set position to "Call Center Agent" for all imports
 - [x] Rename "Offered" pipeline stage to "Team Invitation Sent" everywhere
+
+## Change Requests (Round 3)
+- [x] Upload white Tanis logo PNG to CDN
+- [x] Update sidebar background color to match Tanis brand (dark red/maroon from logo)
+- [x] Replace sidebar logo with white version
+- [x] Fix phone number parsing: handle country codes (020, +20), parentheses, dashes, spaces
+- [x] Rebuild pipeline stages: Applied → WhatsApp Sent → Voice Note Reviewed → Interview Scheduled → Accepted → Teams Invitation Sent (+ Rejected as universal exit)
+- [x] Update DB schema: migrate candidates.status enum to new stages
+- [x] Add stage_notes table: candidateId, stage, note, createdAt, recruiterName
+- [x] Add tRPC router: notes (add, list by candidate)
+- [x] Update dashboard to reflect new stage names and counts
+- [x] Update Candidates pipeline board with new stages and colors
+- [x] Update CandidateDetail: new stage stepper, per-stage notes UI, Teams link field, Meet link field
+- [x] Update CSV import: remove position field requirement, fix phone parsing
+
+## Change Requests (Round 3 — Full Rebuild)
+- [x] Update DB schema: new pipeline enum (applied, whatsapp_sent, voice_note_reviewed, interview_scheduled, accepted, teams_invitation_sent, rejected)
+- [x] Add stage_notes table (id, candidateId, stage, note, recruiterName, createdAt)
+- [x] Run Drizzle migration for schema changes
+- [x] Update DB helpers: getPipelineCounts, getKPIStats (time-to-hire, conversion, drop-off per stage)
+- [x] Update tRPC routers: candidates (new stages), notes (add, list), dashboard (full KPI stats)
+- [x] Update pipeline.ts constants with new 6 stages + colors
+- [x] Update sidebar: dark red background (#8B1A1A or Tanis brand red), white logo CDN URL
+- [x] Update Dashboard: 4 KPI cards + funnel bar chart + rejection breakdown
+- [x] Update Candidates board: new stage columns with correct colors
+- [x] Update CandidateDetail: new stage stepper, per-stage notes panel, Meet link + Teams link fields
+- [x] Fix phone parsing: handle 020, +20, parentheses, dashes, spaces in CSV import
+- [x] Update Vitest tests for new pipeline stages

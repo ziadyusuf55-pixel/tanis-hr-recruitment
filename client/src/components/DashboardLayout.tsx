@@ -33,7 +33,7 @@ const menuItems = [
   { icon: Users, label: "Candidates", path: "/candidates" },
 ];
 
-const TANIS_LOGO = "https://d2xsxph8kpxj0f.cloudfront.net/310419663028909162/GKQCuajYkpcdyw75NP8gmu/tanis-logo_3fe319f4.png";
+const TANIS_LOGO_WHITE = "https://d2xsxph8kpxj0f.cloudfront.net/310419663028909162/GKQCuajYkpcdyw75NP8gmu/tanis-logo-white_d38279a7.png";
 
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
 const DEFAULT_WIDTH = 240;
@@ -57,7 +57,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return (
       <div className="flex items-center justify-center min-h-screen bg-background">
         <div className="flex flex-col items-center gap-6 p-8 max-w-sm w-full text-center">
-          <img src={TANIS_LOGO} alt="Tanis" className="w-14 h-14 object-contain" />
+          <img src={TANIS_LOGO_WHITE} alt="Tanis" className="w-14 h-14 object-contain" />
           <div>
             <h1 className="text-xl font-semibold tracking-tight">Sign in to continue</h1>
             <p className="text-sm text-muted-foreground mt-1.5">Access requires authentication.</p>
@@ -147,7 +147,7 @@ function DashboardLayoutContent({
               {!isCollapsed && (
                 <div className="flex items-center gap-2.5 min-w-0">
                   <img
-                    src={TANIS_LOGO}
+                    src={TANIS_LOGO_WHITE}
                     alt="Tanis"
                     className="w-7 h-7 object-contain shrink-0 drop-shadow-sm"
                   />

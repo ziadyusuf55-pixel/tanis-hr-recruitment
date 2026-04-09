@@ -7,7 +7,7 @@ import { ENV } from "./_core/env";
 
 interface InterviewNotificationParams {
   recruiterEmail: string;
-  recruiterName: string;
+  recruiterName?: string;
   candidateName: string;
   scheduledAt: number; // UTC ms
   location?: string;
@@ -22,7 +22,7 @@ interface InterviewNotificationParams {
 export async function sendInterviewNotification(params: InterviewNotificationParams): Promise<void> {
   const {
     recruiterEmail,
-    recruiterName,
+    recruiterName = "Recruiter",
     candidateName,
     scheduledAt,
     location,

@@ -28,32 +28,17 @@ export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 
 /**
- * Job postings — open positions that candidates apply for.
- */
-export const jobs = mysqlTable("jobs", {
-  id: int("id").autoincrement().primaryKey(),
-  title: varchar("title", { length: 255 }).notNull(),
-  department: varchar("department", { length: 128 }),
-  location: varchar("location", { length: 128 }),
-  description: text("description"),
-  status: mysqlEnum("status", ["open", "closed", "paused"]).default("open").notNull(),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
-
-export type Job = typeof jobs.$inferSelect;
-export type InsertJob = typeof jobs.$inferInsert;
-
-/**
- * Candidate pipeline stages in strict order:
- * applied → shortlisted → interviewed → offered → hired | rejected
+ * Tanis recruitment pipeline stages (in order):
+ * applied → whatsapp_sent → voice_note_reviewed → interview_scheduled → accepted → teams_invitation_sent
+ * rejected is a universal exit at any stage
  */
 export const PIPELINE_STAGES = [
   "applied",
-  "shortlisted",
-  "interviewed",
-  "offered",
-  "hired",
+  "whatsapp_sent",
+  "voice_note_reviewed",
+  "interview_scheduled",
+  "accepted",
+  "teams_invitation_sent",
   "rejected",
 ] as const;
 
@@ -66,21 +51,26 @@ export const candidates = mysqlTable("candidates", {
   id: int("id").autoincrement().primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),
   email: varchar("email", { length: 320 }).notNull(),
-  phone: varchar("phone", { length: 32 }),
-  positionApplied: varchar("positionApplied", { length: 255 }).notNull(),
-  jobId: int("jobId"),
+  phone: varchar("phone", { length: 64 }),
+  positionApplied: varchar("positionApplied", { length: 255 }).notNull().default("Call Center Agent"),
   resumeLink: text("resumeLink"),
   notes: text("notes"),
+  meetLink: text("meetLink"),       // Google Meet link for interview
+  teamsLink: text("teamsLink"),     // Microsoft Teams training link
   status: mysqlEnum("status", [
     "applied",
-    "shortlisted",
-    "interviewed",
-    "offered",
-    "hired",
+    "whatsapp_sent",
+    "voice_note_reviewed",
+    "interview_scheduled",
+    "accepted",
+    "teams_invitation_sent",
     "rejected",
   ])
     .default("applied")
     .notNull(),
+  // Track when candidate reached each key stage (UTC ms) for time-to-hire KPI
+  appliedAt: bigint("appliedAt", { mode: "number" }),
+  acceptedAt: bigint("acceptedAt", { mode: "number" }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -89,17 +79,40 @@ export type Candidate = typeof candidates.$inferSelect;
 export type InsertCandidate = typeof candidates.$inferInsert;
 
 /**
- * Interview scheduling — one interview record per candidate.
- * Multiple interviews can be created for the same candidate over time.
+ * Per-stage notes — recruiters can log notes at any pipeline stage.
+ * Multiple notes per candidate per stage are supported.
+ */
+export const stageNotes = mysqlTable("stage_notes", {
+  id: int("id").autoincrement().primaryKey(),
+  candidateId: int("candidateId").notNull(),
+  stage: mysqlEnum("stage", [
+    "applied",
+    "whatsapp_sent",
+    "voice_note_reviewed",
+    "interview_scheduled",
+    "accepted",
+    "teams_invitation_sent",
+    "rejected",
+  ]).notNull(),
+  note: text("note").notNull(),
+  recruiterName: varchar("recruiterName", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type StageNote = typeof stageNotes.$inferSelect;
+export type InsertStageNote = typeof stageNotes.$inferInsert;
+
+/**
+ * Interview scheduling — kept for email notification history.
  */
 export const interviews = mysqlTable("interviews", {
   id: int("id").autoincrement().primaryKey(),
   candidateId: int("candidateId").notNull(),
-  scheduledAt: bigint("scheduledAt", { mode: "number" }).notNull(), // UTC ms timestamp
+  scheduledAt: bigint("scheduledAt", { mode: "number" }).notNull(),
   location: varchar("location", { length: 255 }),
   interviewerName: varchar("interviewerName", { length: 255 }),
   notes: text("notes"),
-  notificationSent: int("notificationSent").default(0).notNull(), // 0 = false, 1 = true
+  notificationSent: int("notificationSent").default(0).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
