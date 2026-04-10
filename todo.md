@@ -80,3 +80,7 @@
 - [x] Multi-select candidates in list and board views with bulk delete action
 - [x] CSV format: required columns are name + phone only (email optional, all others optional)
 - [x] Manual add form: phone mandatory, email optional, remove resume link field
+
+## Change Requests (Round 6)
+- [x] Make Tanis logo bigger in sidebar
+- [x] Fix firm name from "TANIS" to "Tanis" in sidebar

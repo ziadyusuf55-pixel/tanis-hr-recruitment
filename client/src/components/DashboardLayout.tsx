@@ -149,10 +149,10 @@ function DashboardLayoutContent({
                   <img
                     src={TANIS_LOGO_WHITE}
                     alt="Tanis"
-                    className="w-7 h-7 object-contain shrink-0 drop-shadow-sm"
+                    className="w-10 h-10 object-contain shrink-0 drop-shadow-sm"
                   />
                   <div className="min-w-0">
-                    <p className="text-sm font-bold text-sidebar-foreground truncate leading-none tracking-wide">TANIS</p>
+                    <p className="text-sm font-bold text-sidebar-foreground truncate leading-none tracking-wide">Tanis</p>
                     <p className="text-[10px] text-sidebar-foreground/50 truncate mt-0.5 uppercase tracking-widest">Recruitment</p>
                   </div>
                 </div>
