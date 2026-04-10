@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
@@ -138,6 +138,58 @@ export async function deleteCandidate(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   await db.delete(candidates).where(eq(candidates.id, id));
+}
+
+/**
+ * Check if a phone number already exists in the candidates table.
+ * Returns the existing candidate record (with their latest stage notes) or null.
+ */
+export async function checkDuplicateByPhone(phone: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const normalized = phone.replace(/[^\d]/g, "");
+  if (!normalized) return null;
+  // Match on last 9 digits to handle country code variations
+  const suffix = normalized.slice(-9);
+  const all = await db.select().from(candidates);
+  const match = all.find((c) => {
+    if (!c.phone) return false;
+    const cp = c.phone.replace(/[^\d]/g, "");
+    return cp.endsWith(suffix);
+  });
+  if (!match) return null;
+  // Fetch rejection notes if rejected
+  const notes = match.status === "rejected"
+    ? await db.select().from(stageNotes)
+        .where(and(eq(stageNotes.candidateId, match.id), eq(stageNotes.stage, "rejected")))
+        .orderBy(desc(stageNotes.createdAt))
+        .limit(3)
+    : [];
+  return { candidate: match, rejectionNotes: notes };
+}
+
+/**
+ * Returns all candidates whose phone number matches a previously rejected candidate.
+ * Used for the Re-applicants tab.
+ */
+export async function getReApplicants() {
+  const db = await getDb();
+  if (!db) return [];
+  // Find all rejected candidates
+  const rejected = await db.select().from(candidates).where(eq(candidates.status, "rejected"));
+  if (rejected.length === 0) return [];
+  // Normalize phones
+  const rejectedPhones = rejected
+    .filter((c) => c.phone)
+    .map((c) => c.phone!.replace(/[^\d]/g, "").slice(-9));
+  if (rejectedPhones.length === 0) return [];
+  // Find active candidates whose phone suffix matches a rejected one
+  const all = await db.select().from(candidates).orderBy(desc(candidates.createdAt));
+  return all.filter((c) => {
+    if (!c.phone) return false;
+    const suffix = c.phone.replace(/[^\d]/g, "").slice(-9);
+    return rejectedPhones.includes(suffix);
+  });
 }
 
 export async function bulkInsertCandidates(

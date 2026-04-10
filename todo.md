@@ -89,3 +89,15 @@
 - [x] WhatsApp quick-copy button on candidate cards (board + list) — pre-fills intro message with name and phone
 - [x] Bulk stage move — extend multi-select bar with "Move to Stage" dropdown
 - [x] Rejection reason — prompt for reason (No-show, Withdrew, Underqualified, Other) when moving to Rejected
+
+## Change Requests (Round 8)
+- [x] Add "Skip to Interview" button on candidate board cards (visible for Applied, WhatsApp Sent, Voice Note Reviewed stages)
+- [x] Add "Skip to Interview" button on candidate list rows (same stage condition)
+- [x] Add "Skip to Interview" shortcut on candidate detail page pipeline stepper
+
+## Change Requests (Round 9)
+- [x] Backend: checkDuplicate procedure — lookup by phone, return existing candidate info + stage + rejection notes
+- [x] Backend: getReApplicants query — candidates whose phone matches a previously rejected candidate
+- [x] Frontend: manual add form — real-time phone duplicate check with warning card showing existing candidate stage and rejection history
+- [x] Frontend: CSV import — flag duplicate rows with warning, show existing candidate info, allow skip or force-import per row
+- [x] Frontend: Candidates page — add "Re-applicants" filter tab showing candidates who applied more than once

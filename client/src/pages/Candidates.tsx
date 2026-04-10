@@ -51,6 +51,8 @@ import {
   X,
   MessageCircle,
   ArrowRight,
+  AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -234,13 +236,30 @@ export default function Candidates() {
   const [form, setForm] = useState<CandidateForm>(EMPTY_FORM);
   const [csvRows, setCsvRows] = useState<CandidateForm[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
+  // Re-applicants tab
+  const [activeTab, setActiveTab] = useState<"all" | "reapplicants">("all");
+  const { data: reApplicants } = trpc.candidates.reApplicants.useQuery();
+  // Duplicate check for manual add form
+  const [phoneCheckVal, setPhoneCheckVal] = useState("");
+  const { data: dupCheck } = trpc.candidates.checkDuplicate.useQuery(
+    { phone: phoneCheckVal },
+    { enabled: phoneCheckVal.replace(/[^\d]/g, "").length >= 9 }
+  );
+  // CSV duplicate flagging
+  type CsvRowWithDup = CandidateForm & { isDuplicate?: boolean; existingName?: string; existingStage?: string; isRejected?: boolean };
+  const [csvRowsWithDups, setCsvRowsWithDups] = useState<CsvRowWithDup[]>([]);
+  const [csvSkipDups, setCsvSkipDups] = useState(true);
 
-  const filtered = candidates?.filter((c) =>
+  const allCandidates = candidates ?? [];
+  const displayCandidates = activeTab === "reapplicants"
+    ? (reApplicants ?? [])
+    : allCandidates;
+  const filtered = displayCandidates.filter((c) =>
     !search ||
     c.name.toLowerCase().includes(search.toLowerCase()) ||
     (c.email ?? "").toLowerCase().includes(search.toLowerCase()) ||
     (c.phone ?? "").toLowerCase().includes(search.toLowerCase())
-  ) ?? [];
+  );
 
   const handleAddSubmit = () => {
     if (!form.name.trim()) { toast.error("Name is required"); return; }
@@ -255,6 +274,14 @@ export default function Candidates() {
     });
   };
 
+  const handlePhoneChange = (val: string) => {
+    setForm({ ...form, phone: val });
+    // Debounce: only trigger check when phone looks complete
+    const digits = val.replace(/[^\d]/g, "");
+    if (digits.length >= 9) setPhoneCheckVal(val);
+    else setPhoneCheckVal("");
+  };
+
   const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -264,8 +291,10 @@ export default function Candidates() {
       const lines = text.split(/\r?\n/).filter((l) => l.trim());
       if (lines.length < 2) { toast.error("CSV must have a header row and at least one data row"); return; }
       const headers = lines[0].split(",").map((h) => h.trim().toLowerCase().replace(/[^a-z]/g, ""));
-      const rows: CandidateForm[] = [];
+      const rows: CsvRowWithDup[] = [];
       let skipped = 0;
+      const existingPhones = (candidates ?? []).map((c) => (c.phone ?? "").replace(/[^\d]/g, "").slice(-9));
+      const rejectedPhones = (candidates ?? []).filter((c) => c.status === "rejected").map((c) => (c.phone ?? "").replace(/[^\d]/g, "").slice(-9));
       for (let i = 1; i < lines.length; i++) {
         const cols = lines[i].match(/(?:"([^"]*)"|([^,]*))(?:,|$)/g)
           ?.map((c) => c.replace(/,$/, "").trim().replace(/^"|"$/g, "")) ?? lines[i].split(",").map((c) => c.trim());
@@ -273,11 +302,8 @@ export default function Candidates() {
           const idx = headers.indexOf(key);
           return idx >= 0 ? (cols[idx] ?? "").trim() : "";
         };
-        // Name: header-based first, fallback to col 0
         const name = get("name") || get("fullname") || get("candidatename") || cols[0]?.trim() || "";
-        // Email: optional — try header-based, then scan for @
         const email = get("email") || cols.find((c) => c.includes("@")) || "";
-        // Phone normalization
         const normalizePhone = (raw: string): string => {
           if (!raw) return "";
           let p = raw.replace(/[()\-\s]/g, "");
@@ -286,7 +312,6 @@ export default function Candidates() {
           return p;
         };
         const phoneFromHeader = get("phone") || get("phonenumber") || get("mobile") || get("contact");
-        // Scan all columns for a phone-like value if no header match
         const phoneFromScan = cols.find((c) => {
           const clean = c.replace(/[()\-\s]/g, "");
           return /^[+\d]{7,}$/.test(clean) && !c.includes("@");
@@ -294,19 +319,27 @@ export default function Candidates() {
         const rawPhone = phoneFromHeader || phoneFromScan;
         const phone = normalizePhone(rawPhone);
         const positionApplied = get("position") || get("positionapplied") || get("role") || get("jobtitle") || "Call Center Agent";
-        // Required: name + phone
         if (!name || !phone) { skipped++; continue; }
+        // Duplicate detection
+        const phoneSuffix = phone.replace(/[^\d]/g, "").slice(-9);
+        const isDuplicate = existingPhones.includes(phoneSuffix);
+        const isRejected = rejectedPhones.includes(phoneSuffix);
+        const existing = isDuplicate ? (candidates ?? []).find((c) => (c.phone ?? "").replace(/[^\d]/g, "").slice(-9) === phoneSuffix) : undefined;
         rows.push({
-          name,
-          email,
-          phone,
-          positionApplied,
+          name, email, phone, positionApplied,
           notes: get("notes") || get("note"),
           status: "applied",
+          isDuplicate,
+          isRejected,
+          existingName: existing?.name,
+          existingStage: existing?.status,
         });
       }
       if (rows.length === 0) { toast.error("No valid rows found. Check that your CSV has name and phone columns."); return; }
       if (skipped > 0) toast.info(`${skipped} row${skipped > 1 ? "s" : ""} skipped (missing name or phone)`);
+      const dupCount = rows.filter((r) => r.isDuplicate).length;
+      if (dupCount > 0) toast.warning(`${dupCount} duplicate${dupCount > 1 ? "s" : ""} detected — review before importing`);
+      setCsvRowsWithDups(rows);
       setCsvRows(rows);
     };
     reader.readAsText(file);
@@ -314,8 +347,12 @@ export default function Candidates() {
   };
 
   const handleImportConfirm = () => {
+    const toImport = csvSkipDups
+      ? csvRowsWithDups.filter((r) => !r.isDuplicate)
+      : csvRowsWithDups;
+    if (toImport.length === 0) { toast.error("No candidates to import after filtering duplicates"); return; }
     bulkImport.mutate(
-      csvRows.map((r) => ({
+      toImport.map((r) => ({
         name: r.name,
         email: r.email || undefined,
         phone: r.phone || undefined,
@@ -359,6 +396,16 @@ export default function Candidates() {
             className="pl-9 h-9 text-sm"
           />
         </div>
+        {/* Re-applicants filter */}
+        <Tabs value={activeTab} onValueChange={(v) => { setActiveTab(v as "all" | "reapplicants"); clearSelection(); }}>
+          <TabsList className="h-9">
+            <TabsTrigger value="all" className="text-xs px-3">All</TabsTrigger>
+            <TabsTrigger value="reapplicants" className="text-xs px-3 gap-1.5">
+              <RefreshCw className="h-3 w-3" />
+              Re-applicants {reApplicants && reApplicants.length > 0 && <span className="bg-amber-500 text-white rounded-full px-1.5 py-0 text-[10px] font-bold">{reApplicants.length}</span>}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
         <Tabs value={view} onValueChange={(v) => { setView(v as "board" | "list"); clearSelection(); }}>
           <TabsList className="h-9">
             <TabsTrigger value="board" className="text-xs px-3">Board</TabsTrigger>
@@ -438,6 +485,7 @@ export default function Candidates() {
           onToggleSelect={toggleSelect}
           onToggleSelectAll={() => toggleSelectAll(filteredIds)}
           onReject={handleReject}
+          onMoveStage={(id, stage) => updateStatus.mutate({ id, status: stage })}
         />
       )}
 
@@ -455,7 +503,20 @@ export default function Candidates() {
               </div>
               <div className="space-y-1.5">
                 <Label>Phone <span className="text-destructive">*</span></Label>
-                <Input placeholder="+20 100 000 0000" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+                <Input placeholder="+20 100 000 0000" value={form.phone} onChange={(e) => handlePhoneChange(e.target.value)} />
+                {/* Duplicate warning */}
+                {dupCheck && (
+                  <div className={`flex items-start gap-2 rounded-lg p-2.5 text-xs mt-1 ${dupCheck.candidate?.status === "rejected" ? "bg-red-50 border border-red-200 text-red-800" : "bg-amber-50 border border-amber-200 text-amber-800"}`}>
+                    <AlertTriangle className={`h-3.5 w-3.5 shrink-0 mt-0.5 ${dupCheck.candidate?.status === "rejected" ? "text-red-500" : "text-amber-500"}`} />
+                    <div>
+                      {dupCheck.candidate?.status === "rejected" ? (
+                        <><strong>Previously rejected:</strong> {dupCheck.candidate.name} was rejected from this pipeline. Review their profile before re-adding.</>
+                      ) : (
+                        <><strong>Duplicate:</strong> {dupCheck.candidate?.name} already exists in the pipeline at stage <strong>{dupCheck.candidate?.status?.replace(/_/g, " ")}</strong>.</>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="space-y-1.5">
                 <Label>Email <span className="text-muted-foreground text-xs">(optional)</span></Label>
@@ -641,24 +702,56 @@ export default function Candidates() {
               <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleCSVUpload} />
             </div>
 
-            {csvRows.length > 0 && (
-              <div>
-                <p className="text-sm font-medium text-foreground mb-2">{csvRows.length} candidates ready to import</p>
+            {csvRowsWithDups.length > 0 && (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-sm font-medium text-foreground">
+                    {csvRowsWithDups.length} candidates ready
+                    {csvRowsWithDups.filter((r) => r.isDuplicate).length > 0 && (
+                      <span className="ml-2 text-amber-600 font-normal text-xs">
+                        ({csvRowsWithDups.filter((r) => r.isDuplicate).length} duplicates detected)
+                      </span>
+                    )}
+                  </p>
+                  {csvRowsWithDups.some((r) => r.isDuplicate) && (
+                    <label className="flex items-center gap-2 text-xs cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={csvSkipDups}
+                        onChange={(e) => setCsvSkipDups(e.target.checked)}
+                        className="rounded"
+                      />
+                      Skip duplicates ({csvRowsWithDups.filter((r) => r.isDuplicate).length})
+                    </label>
+                  )}
+                </div>
                 <div className="border border-border rounded-lg overflow-hidden max-h-48 overflow-y-auto">
                   <table className="w-full text-xs">
                     <thead className="bg-muted/40 sticky top-0">
                       <tr>
                         <th className="text-left px-3 py-2 font-medium text-muted-foreground">Name</th>
                         <th className="text-left px-3 py-2 font-medium text-muted-foreground">Phone</th>
-                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Email</th>
+                        <th className="text-left px-3 py-2 font-medium text-muted-foreground">Status</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {csvRows.map((r, i) => (
-                        <tr key={i} className="border-t border-border">
-                          <td className="px-3 py-2 font-medium">{r.name}</td>
+                      {csvRowsWithDups.map((r, i) => (
+                        <tr key={i} className={`border-t border-border ${r.isDuplicate ? (r.isRejected ? "bg-red-50" : "bg-amber-50") : ""}`}>
+                          <td className="px-3 py-2 font-medium">
+                            {r.name}
+                            {r.isRejected && <span className="ml-1.5 text-[10px] bg-red-100 text-red-700 rounded px-1 py-0.5">Prev. Rejected</span>}
+                          </td>
                           <td className="px-3 py-2 text-muted-foreground">{r.phone || "—"}</td>
-                          <td className="px-3 py-2 text-muted-foreground">{r.email || "—"}</td>
+                          <td className="px-3 py-2">
+                            {r.isDuplicate ? (
+                              <span className="text-amber-700 flex items-center gap-1">
+                                <AlertTriangle className="h-3 w-3" />
+                                Exists as {r.existingName}
+                              </span>
+                            ) : (
+                              <span className="text-emerald-600">New</span>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -669,8 +762,8 @@ export default function Candidates() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setImportOpen(false)}>Cancel</Button>
-            <Button onClick={handleImportConfirm} disabled={csvRows.length === 0 || bulkImport.isPending}>
-              {bulkImport.isPending ? "Importing..." : `Import ${csvRows.length} Candidates`}
+            <Button onClick={handleImportConfirm} disabled={csvRowsWithDups.length === 0 || bulkImport.isPending}>
+              {bulkImport.isPending ? "Importing..." : `Import ${csvSkipDups ? csvRowsWithDups.filter((r) => !r.isDuplicate).length : csvRowsWithDups.length} Candidates`}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -808,7 +901,17 @@ function CandidateCard({
         </div>
       </div>
       <div className="flex gap-1 mt-2.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
-        {ACTIVE_STAGES.filter((s) => s !== currentStage).slice(0, 3).map((s) => (
+        {/* Skip to Interview shortcut — shown when candidate is before interview_scheduled */}
+        {["applied", "whatsapp_sent", "voice_note_reviewed"].includes(currentStage) && (
+          <button
+            onClick={() => onMoveStage(candidate.id, "interview_scheduled")}
+            className="text-[9px] font-medium px-1.5 py-0.5 rounded-full border border-blue-200 bg-blue-50 text-blue-700 transition-colors hover:bg-blue-100 flex items-center gap-0.5"
+            title="Skip directly to Interview Scheduled (email calendar invite sent)"
+          >
+            <ArrowRight className="h-2 w-2" /> Skip to Interview
+          </button>
+        )}
+        {ACTIVE_STAGES.filter((s) => s !== currentStage && s !== "interview_scheduled").slice(0, 2).map((s) => (
           <button
             key={s}
             onClick={() => onMoveStage(candidate.id, s)}
@@ -831,6 +934,7 @@ function CandidateList({
   onToggleSelect,
   onToggleSelectAll,
   onReject,
+  onMoveStage,
 }: {
   candidates: CandidateRow[];
   selected: Set<number>;
@@ -840,6 +944,7 @@ function CandidateList({
   onToggleSelect: (id: number) => void;
   onToggleSelectAll: () => void;
   onReject?: (id: number, name: string) => void;
+  onMoveStage?: (id: number, stage: PipelineStage) => void;
 }) {
   if (candidates.length === 0) {
     return (
@@ -903,6 +1008,16 @@ function CandidateList({
               </td>
               <td className="px-4 py-3">
                 <div className="flex items-center gap-1">
+                  {/* Skip to Interview — shown in list row for early-stage candidates */}
+                  {["applied", "whatsapp_sent", "voice_note_reviewed"].includes(c.status) && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onMoveStage && onMoveStage(c.id, "interview_scheduled"); }}
+                      className="p-1 rounded hover:bg-blue-50 text-muted-foreground/30 hover:text-blue-600 transition-colors opacity-0 group-hover:opacity-100"
+                      title="Skip to Interview Scheduled (calendar email sent)"
+                    >
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();

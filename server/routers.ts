@@ -6,6 +6,7 @@ import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import {
   addStageNote,
   bulkInsertCandidates,
+  checkDuplicateByPhone,
   createCandidate,
   createInterview,
   deleteCandidate,
@@ -14,6 +15,7 @@ import {
   getCandidatesAddedSince,
   getInterviewsScheduledSince,
   getPipelineCounts,
+  getReApplicants,
   listCandidates,
   listInterviewsByCandidateId,
   listNotesByCandidateId,
@@ -108,6 +110,15 @@ export const appRouter = router({
         )
       )
       .mutation(({ input }) => bulkInsertCandidates(input)),
+
+    /** Check if a phone number already exists — used for duplicate prevention */
+    checkDuplicate: protectedProcedure
+      .input(z.object({ phone: z.string() }))
+      .query(({ input }) => checkDuplicateByPhone(input.phone)),
+
+    /** Returns all candidates whose phone matches a previously rejected candidate */
+    reApplicants: protectedProcedure
+      .query(() => getReApplicants()),
   }),
 
   // ─── Stage Notes ─────────────────────────────────────────────────────────────
