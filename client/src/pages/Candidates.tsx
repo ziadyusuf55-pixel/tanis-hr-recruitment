@@ -49,6 +49,8 @@ import {
   ChevronRight,
   CheckSquare,
   X,
+  MessageCircle,
+  ArrowRight,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -115,6 +117,79 @@ export default function Candidates() {
     },
     onError: () => toast.error("Failed to update status"),
   });
+
+  // Rejection reason state
+  const [rejectId, setRejectId] = useState<number | null>(null);
+  const [rejectName, setRejectName] = useState("");
+  const [rejectReason, setRejectReason] = useState("");
+
+  const handleReject = (id: number, name: string) => {
+    setRejectId(id);
+    setRejectName(name);
+    setRejectReason("");
+  };
+
+  const confirmReject = () => {
+    if (rejectId === null) return;
+    updateStatus.mutate({ id: rejectId, status: "rejected" });
+    if (rejectReason.trim()) {
+      addNote.mutate({ candidateId: rejectId, stage: "rejected", note: `Rejection reason: ${rejectReason.trim()}` });
+    }
+    setRejectId(null);
+  };
+
+  const addNote = trpc.notes.add.useMutation();
+
+  // Bulk stage move state
+  const [bulkStageOpen, setBulkStageOpen] = useState(false);
+  const [bulkTargetStage, setBulkTargetStage] = useState<PipelineStage>("whatsapp_sent");
+
+  const handleBulkStageMove = async () => {
+    const ids = Array.from(selected);
+    // If target is rejected, close bulk confirm and open rejection reason dialog for bulk
+    if (bulkTargetStage === "rejected") {
+      setBulkStageOpen(false);
+      setBulkRejectOpen(true);
+      return;
+    }
+    setBulkStageOpen(false);
+    const results = await Promise.allSettled(
+      ids.map((id) => updateStatus.mutateAsync({ id, status: bulkTargetStage }))
+    );
+    const succeeded = results.filter((r) => r.status === "fulfilled").length;
+    const failed = results.filter((r) => r.status === "rejected").length;
+    clearSelection();
+    if (succeeded > 0) toast.success(`Moved ${succeeded} candidate${succeeded > 1 ? "s" : ""} to ${STAGE_LABELS[bulkTargetStage]}`);
+    if (failed > 0) toast.error(`${failed} candidate${failed > 1 ? "s" : ""} failed to update`);
+  };
+
+  // Bulk reject with reason
+  const [bulkRejectOpen, setBulkRejectOpen] = useState(false);
+  const [bulkRejectReason, setBulkRejectReason] = useState("");
+  const [bulkRejectIds, setBulkRejectIds] = useState<number[]>([]);
+
+  const openBulkReject = () => {
+    setBulkRejectIds(Array.from(selected));
+    setBulkRejectReason("");
+    setBulkRejectOpen(true);
+  };
+
+  const confirmBulkReject = async () => {
+    const results = await Promise.allSettled(
+      bulkRejectIds.map(async (id) => {
+        await updateStatus.mutateAsync({ id, status: "rejected" });
+        if (bulkRejectReason.trim()) {
+          await addNote.mutateAsync({ candidateId: id, stage: "rejected", note: `Rejection reason: ${bulkRejectReason.trim()}` });
+        }
+      })
+    );
+    const succeeded = results.filter((r) => r.status === "fulfilled").length;
+    const failed = results.filter((r) => r.status === "rejected").length;
+    clearSelection();
+    setBulkRejectOpen(false);
+    if (succeeded > 0) toast.success(`Rejected ${succeeded} candidate${succeeded > 1 ? "s" : ""}`);
+    if (failed > 0) toast.error(`${failed} candidate${failed > 1 ? "s" : ""} failed to update`);
+  };
 
   // Single delete
   const [deleteId, setDeleteId] = useState<number | null>(null);
@@ -294,11 +369,33 @@ export default function Candidates() {
 
       {/* Bulk action bar */}
       {selected.size > 0 && (
-        <div className="flex items-center gap-3 px-4 py-2.5 bg-primary/5 border border-primary/20 rounded-xl">
+        <div className="flex items-center gap-3 px-4 py-2.5 bg-primary/5 border border-primary/20 rounded-xl flex-wrap">
           <CheckSquare className="h-4 w-4 text-primary shrink-0" />
           <span className="text-sm font-medium text-foreground flex-1">
             {selected.size} candidate{selected.size > 1 ? "s" : ""} selected
           </span>
+          {/* Bulk Move to Stage */}
+          <div className="flex items-center gap-1.5">
+            <Select value={bulkTargetStage} onValueChange={(v) => setBulkTargetStage(v as PipelineStage)}>
+              <SelectTrigger className="h-7 text-xs w-44 bg-white">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {PIPELINE_STAGES.map((s) => (
+                  <SelectItem key={s} value={s} className="text-xs">{STAGE_LABELS[s]}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs gap-1.5"
+              onClick={() => setBulkStageOpen(true)}
+            >
+              <ArrowRight className="h-3 w-3" />
+              Move
+            </Button>
+          </div>
           <Button
             variant="outline"
             size="sm"
@@ -306,7 +403,7 @@ export default function Candidates() {
             onClick={() => setBulkDeleteOpen(true)}
           >
             <Trash2 className="h-3 w-3" />
-            Delete Selected
+            Delete
           </Button>
           <button onClick={clearSelection} className="p-1 rounded hover:bg-muted text-muted-foreground">
             <X className="h-4 w-4" />
@@ -323,7 +420,10 @@ export default function Candidates() {
         <PipelineBoard
           candidates={filtered}
           selected={selected}
-          onMoveStage={(id, status) => updateStatus.mutate({ id, status })}
+          onMoveStage={(id, status) => {
+            if (status === "rejected") { handleReject(id, filtered.find((c) => c.id === id)?.name ?? ""); }
+            else { updateStatus.mutate({ id, status }); }
+          }}
           onClickCandidate={(id) => navigate(`/candidates/${id}`)}
           onDeleteCandidate={(id, name) => { setDeleteId(id); setDeleteName(name); }}
           onToggleSelect={toggleSelect}
@@ -337,6 +437,7 @@ export default function Candidates() {
           onDeleteCandidate={(id, name) => { setDeleteId(id); setDeleteName(name); }}
           onToggleSelect={toggleSelect}
           onToggleSelectAll={() => toggleSelectAll(filteredIds)}
+          onReject={handleReject}
         />
       )}
 
@@ -406,6 +507,94 @@ export default function Candidates() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Rejection Reason Dialog */}
+      <Dialog open={rejectId !== null} onOpenChange={(open) => { if (!open) setRejectId(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reject Candidate</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">You are rejecting <strong>{rejectName}</strong>. Optionally add a reason — it will be saved to their profile notes.</p>
+            <div className="space-y-1.5">
+              <Label>Rejection Reason <span className="text-muted-foreground text-xs">(optional)</span></Label>
+              <Select value={rejectReason} onValueChange={setRejectReason}>
+                <SelectTrigger><SelectValue placeholder="Select a reason..." /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="No-show">No-show — Did not attend interview</SelectItem>
+                  <SelectItem value="Withdrew">Withdrew — Candidate withdrew application</SelectItem>
+                  <SelectItem value="Underqualified">Underqualified — Does not meet requirements</SelectItem>
+                  <SelectItem value="Poor voice note">Poor voice note — Failed initial screening</SelectItem>
+                  <SelectItem value="Not responsive">Not responsive — Did not reply to WhatsApp</SelectItem>
+                  <SelectItem value="Other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRejectId(null)}>Cancel</Button>
+            <Button
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={confirmReject}
+            >
+              Confirm Rejection
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk Stage Move Confirmation */}
+      <AlertDialog open={bulkStageOpen} onOpenChange={setBulkStageOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Move {selected.size} Candidates</AlertDialogTitle>
+            <AlertDialogDescription>
+              Move <strong>{selected.size} selected candidate{selected.size > 1 ? "s" : ""}</strong> to <strong>{STAGE_LABELS[bulkTargetStage]}</strong>?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={handleBulkStageMove}>
+              Move {selected.size} Candidates
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk Reject with Reason Dialog */}
+      <Dialog open={bulkRejectOpen} onOpenChange={(open) => { if (!open) setBulkRejectOpen(false); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Reject {bulkRejectIds.length} Candidates</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">You are rejecting <strong>{bulkRejectIds.length} candidates</strong>. Optionally add a reason — it will be saved to each candidate’s profile.</p>
+            <div className="space-y-1.5">
+              <Label>Rejection Reason <span className="text-muted-foreground text-xs">(optional)</span></Label>
+              <Select value={bulkRejectReason} onValueChange={setBulkRejectReason}>
+                <SelectTrigger><SelectValue placeholder="Select a reason..." /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="No-show">No-show — Did not attend interview</SelectItem>
+                  <SelectItem value="Withdrew">Withdrew — Candidate withdrew application</SelectItem>
+                  <SelectItem value="Underqualified">Underqualified — Does not meet requirements</SelectItem>
+                  <SelectItem value="Poor voice note">Poor voice note — Failed initial screening</SelectItem>
+                  <SelectItem value="Not responsive">Not responsive — Did not reply to WhatsApp</SelectItem>
+                  <SelectItem value="Other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBulkRejectOpen(false)}>Cancel</Button>
+            <Button
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={confirmBulkReject}
+            >
+              Reject {bulkRejectIds.length} Candidates
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Bulk Delete Confirmation */}
       <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
@@ -597,6 +786,18 @@ function CandidateCard({
         </div>
         <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
           <button
+            onClick={() => {
+              const phone = candidate.phone || "";
+              const msg = `Hi ${candidate.name}! 👋 This is Tanis BPO. We came across your profile and would love to tell you about an exciting Call Center Agent opportunity with us. We'd like to know more about you — could you please send us a short voice note introducing yourself and your sales experience? Looking forward to hearing from you! 😊`;
+              const url = `https://wa.me/${phone.replace(/[^\d]/g, "")}?text=${encodeURIComponent(msg)}`;
+              window.open(url, "_blank");
+            }}
+            className="p-1 rounded hover:bg-green-50 text-muted-foreground/40 hover:text-green-600 transition-colors opacity-0 group-hover:opacity-100"
+            title="Open WhatsApp chat"
+          >
+            <MessageCircle className="h-3 w-3" />
+          </button>
+          <button
             onClick={onDelete}
             className="p-1 rounded hover:bg-destructive/10 text-muted-foreground/40 hover:text-destructive transition-colors opacity-0 group-hover:opacity-100"
             title="Delete candidate"
@@ -629,6 +830,7 @@ function CandidateList({
   onDeleteCandidate,
   onToggleSelect,
   onToggleSelectAll,
+  onReject,
 }: {
   candidates: CandidateRow[];
   selected: Set<number>;
@@ -637,6 +839,7 @@ function CandidateList({
   onDeleteCandidate: (id: number, name: string) => void;
   onToggleSelect: (id: number) => void;
   onToggleSelectAll: () => void;
+  onReject?: (id: number, name: string) => void;
 }) {
   if (candidates.length === 0) {
     return (
@@ -700,6 +903,19 @@ function CandidateList({
               </td>
               <td className="px-4 py-3">
                 <div className="flex items-center gap-1">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const phone = c.phone || "";
+                      const msg = `Hi ${c.name}! 👋 This is Tanis BPO. We came across your profile and would love to tell you about an exciting Call Center Agent opportunity with us. We'd like to know more about you — could you please send us a short voice note introducing yourself and your sales experience? Looking forward to hearing from you! 😊`;
+                      const url = `https://wa.me/${phone.replace(/[^\d]/g, "")}?text=${encodeURIComponent(msg)}`;
+                      window.open(url, "_blank");
+                    }}
+                    className="p-1 rounded hover:bg-green-50 text-muted-foreground/30 hover:text-green-600 transition-colors opacity-0 group-hover:opacity-100"
+                    title="Open WhatsApp chat"
+                  >
+                    <MessageCircle className="h-3.5 w-3.5" />
+                  </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); onDeleteCandidate(c.id, c.name); }}
                     className="p-1 rounded hover:bg-destructive/10 text-muted-foreground/30 hover:text-destructive transition-colors opacity-0 group-hover:opacity-100"

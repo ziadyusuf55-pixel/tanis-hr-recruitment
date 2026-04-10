@@ -84,3 +84,8 @@
 ## Change Requests (Round 6)
 - [x] Make Tanis logo bigger in sidebar
 - [x] Fix firm name from "TANIS" to "Tanis" in sidebar
+
+## Change Requests (Round 7)
+- [x] WhatsApp quick-copy button on candidate cards (board + list) — pre-fills intro message with name and phone
+- [x] Bulk stage move — extend multi-select bar with "Move to Stage" dropdown
+- [x] Rejection reason — prompt for reason (No-show, Withdrew, Underqualified, Other) when moving to Rejected
