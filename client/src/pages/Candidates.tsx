@@ -64,6 +64,9 @@ type CandidateForm = {
   positionApplied: string;
   notes: string;
   status: PipelineStage;
+  age: string;
+  location: string;
+  source: string;
 };
 
 const EMPTY_FORM: CandidateForm = {
@@ -73,6 +76,9 @@ const EMPTY_FORM: CandidateForm = {
   positionApplied: "Call Center Agent",
   notes: "",
   status: "applied",
+  age: "",
+  location: "",
+  source: "",
 };
 
 export default function Candidates() {
@@ -133,7 +139,13 @@ export default function Candidates() {
 
   const confirmReject = () => {
     if (rejectId === null) return;
-    updateStatus.mutate({ id: rejectId, status: "rejected" });
+    const candidate = (candidates ?? []).find((c) => c.id === rejectId);
+    updateStatus.mutate({
+      id: rejectId,
+      status: "rejected",
+      fromStage: candidate?.status as PipelineStage | undefined,
+      detail: rejectReason.trim() || undefined,
+    });
     if (rejectReason.trim()) {
       addNote.mutate({ candidateId: rejectId, stage: "rejected", note: `Rejection reason: ${rejectReason.trim()}` });
     }
@@ -179,7 +191,13 @@ export default function Candidates() {
   const confirmBulkReject = async () => {
     const results = await Promise.allSettled(
       bulkRejectIds.map(async (id) => {
-        await updateStatus.mutateAsync({ id, status: "rejected" });
+        const candidate = (candidates ?? []).find((c) => c.id === id);
+        await updateStatus.mutateAsync({
+          id,
+          status: "rejected",
+          fromStage: candidate?.status as PipelineStage | undefined,
+          detail: bulkRejectReason.trim() || undefined,
+        });
         if (bulkRejectReason.trim()) {
           await addNote.mutateAsync({ candidateId: id, stage: "rejected", note: `Rejection reason: ${bulkRejectReason.trim()}` });
         }
@@ -264,6 +282,10 @@ export default function Candidates() {
   const handleAddSubmit = () => {
     if (!form.name.trim()) { toast.error("Name is required"); return; }
     if (!form.phone.trim()) { toast.error("Phone is required"); return; }
+    const ageNum = form.age ? parseInt(form.age) : undefined;
+    if (form.age && (isNaN(ageNum!) || ageNum! < 16 || ageNum! > 80)) {
+      toast.error("Age must be between 16 and 80"); return;
+    }
     createCandidate.mutate({
       name: form.name.trim(),
       email: form.email.trim() || undefined,
@@ -271,6 +293,9 @@ export default function Candidates() {
       positionApplied: form.positionApplied.trim(),
       notes: form.notes.trim() || undefined,
       status: form.status,
+      age: ageNum,
+      location: form.location.trim() || undefined,
+      source: (form.source as "linkedin" | "email" | "referral" | "walk_in" | "other") || undefined,
     });
   };
 
@@ -319,6 +344,12 @@ export default function Candidates() {
         const rawPhone = phoneFromHeader || phoneFromScan;
         const phone = normalizePhone(rawPhone);
         const positionApplied = get("position") || get("positionapplied") || get("role") || get("jobtitle") || "Call Center Agent";
+        const location = get("location") || get("city") || get("address") || "";
+        const rawSource = get("source") || get("channel") || "";
+        const sourceMap: Record<string, string> = { linkedin: "linkedin", email: "email", referral: "referral", "walk-in": "walk_in", walkin: "walk_in", walk_in: "walk_in", other: "other" };
+        const source = sourceMap[rawSource.toLowerCase()] || "";
+        const rawAge = get("age") || "";
+        const age = rawAge && !isNaN(parseInt(rawAge)) ? rawAge : "";
         if (!name || !phone) { skipped++; continue; }
         // Duplicate detection
         const phoneSuffix = phone.replace(/[^\d]/g, "").slice(-9);
@@ -329,6 +360,9 @@ export default function Candidates() {
           name, email, phone, positionApplied,
           notes: get("notes") || get("note"),
           status: "applied",
+          age,
+          location,
+          source,
           isDuplicate,
           isRejected,
           existingName: existing?.name,
@@ -358,6 +392,9 @@ export default function Candidates() {
         phone: r.phone || undefined,
         positionApplied: r.positionApplied,
         notes: r.notes || undefined,
+        age: r.age ? parseInt(r.age) : undefined,
+        location: r.location || undefined,
+        source: (r.source as "linkedin" | "email" | "referral" | "walk_in" | "other") || undefined,
       }))
     );
   };
@@ -469,7 +506,10 @@ export default function Candidates() {
           selected={selected}
           onMoveStage={(id, status) => {
             if (status === "rejected") { handleReject(id, filtered.find((c) => c.id === id)?.name ?? ""); }
-            else { updateStatus.mutate({ id, status }); }
+            else {
+              const candidate = filtered.find((c) => c.id === id);
+              updateStatus.mutate({ id, status, fromStage: candidate?.status as PipelineStage | undefined });
+            }
           }}
           onClickCandidate={(id) => navigate(`/candidates/${id}`)}
           onDeleteCandidate={(id, name) => { setDeleteId(id); setDeleteName(name); }}
@@ -485,7 +525,10 @@ export default function Candidates() {
           onToggleSelect={toggleSelect}
           onToggleSelectAll={() => toggleSelectAll(filteredIds)}
           onReject={handleReject}
-          onMoveStage={(id, stage) => updateStatus.mutate({ id, status: stage })}
+          onMoveStage={(id, stage) => {
+            const candidate = filtered.find((c) => c.id === id);
+            updateStatus.mutate({ id, status: stage, fromStage: candidate?.status as PipelineStage | undefined });
+          }}
         />
       )}
 
@@ -535,6 +578,28 @@ export default function Candidates() {
               </div>
             </div>
             <div className="space-y-1.5">
+              <Label>Age <span className="text-muted-foreground text-xs">(optional)</span></Label>
+              <Input type="number" min={16} max={80} placeholder="e.g. 24" value={form.age} onChange={(e) => setForm({ ...form, age: e.target.value })} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Location <span className="text-muted-foreground text-xs">(optional)</span></Label>
+              <Input placeholder="e.g. Cairo" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
+            </div>
+            <div className="space-y-1.5 col-span-2">
+              <Label>Source <span className="text-muted-foreground text-xs">(optional)</span></Label>
+              <Select value={form.source || "none"} onValueChange={(v) => setForm({ ...form, source: v === "none" ? "" : v })}>
+                <SelectTrigger><SelectValue placeholder="How did they apply?" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">— Not specified —</SelectItem>
+                  <SelectItem value="linkedin">LinkedIn</SelectItem>
+                  <SelectItem value="email">Email</SelectItem>
+                  <SelectItem value="referral">Referral</SelectItem>
+                  <SelectItem value="walk_in">Walk-in</SelectItem>
+                  <SelectItem value="other">Other</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5 col-span-2">
               <Label>Notes <span className="text-muted-foreground text-xs">(optional)</span></Label>
               <Textarea placeholder="Any additional notes..." value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} />
             </div>

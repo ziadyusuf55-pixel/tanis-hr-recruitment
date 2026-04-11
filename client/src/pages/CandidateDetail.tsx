@@ -8,6 +8,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -28,6 +35,7 @@ import {
   STAGE_BADGE,
   STAGE_DESCRIPTIONS,
   PipelineStage,
+  getNextStage,
 } from "@/lib/pipeline";
 import {
   ArrowLeft,
@@ -47,8 +55,16 @@ import {
   Plus,
   StickyNote,
   Send,
+  Star,
+  FileText,
+  Activity,
+  Briefcase,
+  UserCheck,
+  ExternalLink,
 } from "lucide-react";
 import { toast } from "sonner";
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 type CandidateEditForm = {
   name: string;
@@ -59,6 +75,11 @@ type CandidateEditForm = {
   meetLink: string;
   teamsLink: string;
   notes: string;
+  age: string;
+  location: string;
+  source: string;
+  voiceNoteRating: number | null;
+  screeningNotes: string;
 };
 
 type InterviewForm = {
@@ -77,9 +98,119 @@ const EMPTY_INTERVIEW: InterviewForm = {
   notes: "",
 };
 
-function getStageBadgeClass(stage: PipelineStage): string {
-  return STAGE_BADGE[stage] ?? "";
+const SOURCE_LABELS: Record<string, string> = {
+  linkedin: "LinkedIn",
+  email: "Email",
+  referral: "Referral",
+  walk_in: "Walk-in",
+  other: "Other",
+};
+
+// ─── Star Rating Component ────────────────────────────────────────────────────
+
+function StarRating({
+  value,
+  onChange,
+  readonly = false,
+}: {
+  value: number | null;
+  onChange?: (v: number) => void;
+  readonly?: boolean;
+}) {
+  const [hover, setHover] = useState<number | null>(null);
+  return (
+    <div className="flex items-center gap-0.5">
+      {[1, 2, 3, 4, 5].map((star) => {
+        const filled = (hover ?? value ?? 0) >= star;
+        return (
+          <button
+            key={star}
+            type="button"
+            disabled={readonly}
+            onClick={() => onChange?.(star)}
+            onMouseEnter={() => !readonly && setHover(star)}
+            onMouseLeave={() => !readonly && setHover(null)}
+            className={`transition-colors ${readonly ? "cursor-default" : "cursor-pointer"}`}
+          >
+            <Star
+              className={`h-4 w-4 transition-colors ${
+                filled
+                  ? "fill-amber-400 text-amber-400"
+                  : "fill-transparent text-muted-foreground/40"
+              }`}
+            />
+          </button>
+        );
+      })}
+      {value && (
+        <span className="ml-1 text-xs text-muted-foreground font-medium">{value}/5</span>
+      )}
+    </div>
+  );
 }
+
+// ─── Section Card ─────────────────────────────────────────────────────────────
+
+function SectionCard({
+  title,
+  icon,
+  children,
+}: {
+  title: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="bg-card border border-border rounded-xl overflow-hidden">
+      <div className="flex items-center gap-2.5 px-5 py-3.5 border-b border-border/60 bg-muted/20">
+        <span className="text-muted-foreground">{icon}</span>
+        <h3 className="text-sm font-semibold text-foreground tracking-tight">{title}</h3>
+      </div>
+      <div className="p-5">{children}</div>
+    </div>
+  );
+}
+
+// ─── Info Row ─────────────────────────────────────────────────────────────────
+
+function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex items-start gap-2 py-1.5">
+      <span className="text-xs text-muted-foreground w-32 shrink-0 pt-0.5">{label}</span>
+      <span className="text-sm text-foreground font-medium">{value ?? <span className="text-muted-foreground/50 font-normal">—</span>}</span>
+    </div>
+  );
+}
+
+// ─── Activity Icon ────────────────────────────────────────────────────────────
+
+function activityIcon(action: string) {
+  if (action === "stage_change") return <ChevronRight className="h-3.5 w-3.5 text-primary" />;
+  if (action === "candidate_created") return <UserCheck className="h-3.5 w-3.5 text-emerald-500" />;
+  if (action === "interview_scheduled") return <Calendar className="h-3.5 w-3.5 text-violet-500" />;
+  return <Activity className="h-3.5 w-3.5 text-muted-foreground" />;
+}
+
+function activityLabel(entry: {
+  action: string;
+  fromStage?: string | null;
+  toStage?: string | null;
+  detail?: string | null;
+}) {
+  if (entry.action === "candidate_created") {
+    return `Added to pipeline as ${STAGE_LABELS[(entry.toStage as PipelineStage) ?? "applied"] ?? entry.toStage}`;
+  }
+  if (entry.action === "stage_change") {
+    const from = entry.fromStage ? STAGE_LABELS[entry.fromStage as PipelineStage] ?? entry.fromStage : null;
+    const to = entry.toStage ? STAGE_LABELS[entry.toStage as PipelineStage] ?? entry.toStage : null;
+    if (from && to) return `Moved from ${from} → ${to}`;
+    if (to) return `Stage set to ${to}`;
+  }
+  if (entry.action === "interview_scheduled") return "Interview scheduled";
+  return entry.action.replace(/_/g, " ");
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function CandidateDetail() {
   const params = useParams<{ id: string }>();
@@ -91,6 +222,7 @@ export default function CandidateDetail() {
   const { data: candidate, isLoading } = trpc.candidates.get.useQuery({ id });
   const { data: interviews, isLoading: interviewsLoading } = trpc.interviews.listByCandidate.useQuery({ candidateId: id });
   const { data: stageNotes, isLoading: notesLoading } = trpc.notes.list.useQuery({ candidateId: id });
+  const { data: activityEntries } = trpc.activity.list.useQuery({ candidateId: id });
 
   const updateCandidate = trpc.candidates.update.useMutation({
     onSuccess: () => {
@@ -107,6 +239,7 @@ export default function CandidateDetail() {
       utils.candidates.get.invalidate({ id });
       utils.candidates.list.invalidate();
       utils.dashboard.kpis.invalidate();
+      utils.activity.list.invalidate({ candidateId: id });
       toast.success("Stage updated");
     },
     onError: () => toast.error("Failed to update stage"),
@@ -125,6 +258,7 @@ export default function CandidateDetail() {
   const scheduleInterview = trpc.interviews.schedule.useMutation({
     onSuccess: () => {
       utils.interviews.listByCandidate.invalidate({ candidateId: id });
+      utils.activity.list.invalidate({ candidateId: id });
       toast.success("Interview scheduled — email notification sent");
       setInterviewOpen(false);
       setInterviewForm(EMPTY_INTERVIEW);
@@ -141,9 +275,13 @@ export default function CandidateDetail() {
     onError: () => toast.error("Failed to add note"),
   });
 
+  // ─── State ─────────────────────────────────────────────────────────────────
+
   const [editOpen, setEditOpen] = useState(false);
   const [interviewOpen, setInterviewOpen] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
   const [interviewForm, setInterviewForm] = useState<InterviewForm>(EMPTY_INTERVIEW);
   const [editForm, setEditForm] = useState<CandidateEditForm>({
     name: "",
@@ -154,39 +292,61 @@ export default function CandidateDetail() {
     meetLink: "",
     teamsLink: "",
     notes: "",
+    age: "",
+    location: "",
+    source: "",
+    voiceNoteRating: null,
+    screeningNotes: "",
   });
   const [noteText, setNoteText] = useState("");
   const [noteStage, setNoteStage] = useState<PipelineStage>("applied");
   const [activeNotesStage, setActiveNotesStage] = useState<PipelineStage | "all">("all");
 
+  // ─── Handlers ──────────────────────────────────────────────────────────────
+
   const openEdit = () => {
     if (!candidate) return;
+    const c = candidate as Record<string, unknown>;
     setEditForm({
       name: candidate.name,
       email: candidate.email ?? "",
       phone: candidate.phone ?? "",
       positionApplied: candidate.positionApplied,
-      resumeLink: candidate.resumeLink ?? "",
-      meetLink: (candidate as Record<string, unknown>).meetLink as string ?? "",
-      teamsLink: (candidate as Record<string, unknown>).teamsLink as string ?? "",
+      resumeLink: (c.resumeLink as string) ?? "",
+      meetLink: (c.meetLink as string) ?? "",
+      teamsLink: (c.teamsLink as string) ?? "",
       notes: candidate.notes ?? "",
+      age: c.age != null ? String(c.age) : "",
+      location: (c.location as string) ?? "",
+      source: (c.source as string) ?? "",
+      voiceNoteRating: (c.voiceNoteRating as number | null) ?? null,
+      screeningNotes: (c.screeningNotes as string) ?? "",
     });
     setEditOpen(true);
   };
 
   const handleEditSubmit = () => {
     if (!editForm.name.trim()) { toast.error("Name is required"); return; }
-
+    const ageNum = editForm.age ? parseInt(editForm.age) : null;
+    if (editForm.age && (isNaN(ageNum!) || ageNum! < 16 || ageNum! > 80)) {
+      toast.error("Age must be between 16 and 80");
+      return;
+    }
     updateCandidate.mutate({
       id,
       name: editForm.name.trim(),
-      email: editForm.email.trim(),
-      phone: editForm.phone.trim() || undefined,
+      email: editForm.email.trim() || undefined,
+      phone: editForm.phone.trim() || null,
       positionApplied: editForm.positionApplied.trim(),
-      resumeLink: editForm.resumeLink.trim() || undefined,
-      meetLink: editForm.meetLink.trim() || undefined,
-      teamsLink: editForm.teamsLink.trim() || undefined,
-      notes: editForm.notes.trim() || undefined,
+      resumeLink: editForm.resumeLink.trim() || null,
+      meetLink: editForm.meetLink.trim() || null,
+      teamsLink: editForm.teamsLink.trim() || null,
+      notes: editForm.notes.trim() || null,
+      age: ageNum,
+      location: editForm.location.trim() || null,
+      source: (editForm.source as "linkedin" | "email" | "referral" | "walk_in" | "other") || null,
+      voiceNoteRating: editForm.voiceNoteRating,
+      screeningNotes: editForm.screeningNotes.trim() || null,
     });
   };
 
@@ -197,7 +357,6 @@ export default function CandidateDetail() {
     }
     const scheduledAt = new Date(`${interviewForm.date}T${interviewForm.time}`).getTime();
     if (isNaN(scheduledAt)) { toast.error("Invalid date or time"); return; }
-
     scheduleInterview.mutate({
       candidateId: id,
       scheduledAt,
@@ -211,18 +370,39 @@ export default function CandidateDetail() {
 
   const handleAddNote = () => {
     if (!noteText.trim()) { toast.error("Note text is required"); return; }
-    addNote.mutate({
-      candidateId: id,
-      stage: noteStage,
-      note: noteText.trim(),
-    });
+    addNote.mutate({ candidateId: id, stage: noteStage, note: noteText.trim() });
   };
+
+  const handleAdvanceStage = () => {
+    if (!candidate) return;
+    const next = getNextStage(candidate.status as PipelineStage);
+    if (!next) return;
+    updateStatus.mutate({ id, status: next, fromStage: candidate.status as PipelineStage });
+  };
+
+  const handleReject = () => {
+    if (!candidate) return;
+    updateStatus.mutate({
+      id,
+      status: "rejected",
+      fromStage: candidate.status as PipelineStage,
+      detail: rejectReason.trim() || undefined,
+    });
+    if (rejectReason.trim()) {
+      addNote.mutate({ candidateId: id, stage: "rejected", note: `Rejection reason: ${rejectReason.trim()}` });
+    }
+    setRejectOpen(false);
+    setRejectReason("");
+  };
+
+  // ─── Loading / Not Found ────────────────────────────────────────────────────
 
   if (isLoading) {
     return (
       <div className="space-y-6 max-w-4xl">
         <Skeleton className="h-8 w-48" />
         <Skeleton className="h-40 rounded-xl" />
+        <Skeleton className="h-32 rounded-xl" />
         <Skeleton className="h-32 rounded-xl" />
       </div>
     );
@@ -240,15 +420,27 @@ export default function CandidateDetail() {
     );
   }
 
+  const c = candidate as Record<string, unknown>;
   const currentStageIndex = ACTIVE_STAGES.indexOf(candidate.status as (typeof ACTIVE_STAGES)[number]);
+  const nextStage = getNextStage(candidate.status as PipelineStage);
+  const isRejected = candidate.status === "rejected";
 
   const filteredNotes = activeNotesStage === "all"
     ? stageNotes ?? []
     : (stageNotes ?? []).filter((n: { stage: string }) => n.stage === activeNotesStage);
 
+  const REJECTION_PRESETS = [
+    "Not a good fit for the role",
+    "Communication skills below threshold",
+    "Voice note quality insufficient",
+    "Did not show up for interview",
+    "Withdrew application",
+    "Hired by another company",
+  ];
+
   return (
-    <div className="space-y-6 max-w-4xl">
-      {/* Back + Actions */}
+    <div className="space-y-5 max-w-4xl">
+      {/* ── Header ── */}
       <div className="flex items-center justify-between gap-4">
         <button
           onClick={() => navigate("/candidates")}
@@ -258,6 +450,18 @@ export default function CandidateDetail() {
           Candidates
         </button>
         <div className="flex items-center gap-2">
+          {!isRejected && nextStage && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleAdvanceStage}
+              disabled={updateStatus.isPending}
+              className="gap-1.5 h-9 text-xs"
+            >
+              Move to {STAGE_LABELS[nextStage]}
+              <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
+          )}
           <Button size="sm" variant="outline" onClick={() => setInterviewOpen(true)} className="gap-2 h-9">
             <Calendar className="h-3.5 w-3.5" /> Schedule Interview
           </Button>
@@ -267,10 +471,21 @@ export default function CandidateDetail() {
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-40">
+            <DropdownMenuContent align="end" className="w-44">
               <DropdownMenuItem onClick={openEdit} className="cursor-pointer">
                 <Pencil className="mr-2 h-3.5 w-3.5" /> Edit Profile
               </DropdownMenuItem>
+              {!isRejected && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => setRejectOpen(true)}
+                    className="text-destructive focus:text-destructive cursor-pointer"
+                  >
+                    <XCircle className="mr-2 h-3.5 w-3.5" /> Reject Candidate
+                  </DropdownMenuItem>
+                </>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={() => setDeleteConfirm(true)}
@@ -283,232 +498,239 @@ export default function CandidateDetail() {
         </div>
       </div>
 
-      {/* Profile Card */}
+      {/* ── Profile Hero ── */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="h-2 bg-gradient-to-r from-primary/80 to-primary/40" />
+        <div className="h-1.5 bg-gradient-to-r from-primary/80 via-primary/50 to-primary/20" />
         <div className="p-6">
           <div className="flex items-start gap-4">
             <div className="w-14 h-14 rounded-full bg-primary/10 text-primary flex items-center justify-center text-lg font-semibold shrink-0">
               {candidate.name.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2)}
             </div>
             <div className="flex-1 min-w-0">
-              <h1 className="text-xl font-semibold tracking-tight text-foreground">{candidate.name}</h1>
-              <p className="text-sm text-muted-foreground mt-0.5">{candidate.positionApplied}</p>
-              <div className="flex items-center gap-3 mt-3 flex-wrap">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div>
+                  <h1 className="text-xl font-semibold tracking-tight text-foreground">{candidate.name}</h1>
+                  <p className="text-sm text-muted-foreground mt-0.5">{candidate.positionApplied}</p>
+                </div>
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${STAGE_BADGE[candidate.status as PipelineStage]}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${STAGE_DOT[candidate.status as PipelineStage]}`} />
+                  {STAGE_LABELS[candidate.status as PipelineStage]}
+                </span>
+              </div>
+              <div className="flex items-center gap-4 mt-3 flex-wrap">
                 {candidate.email && (
                   <a href={`mailto:${candidate.email}`} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
                     <Mail className="h-3 w-3" /> {candidate.email}
                   </a>
                 )}
                 {candidate.phone && (
-                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <a href={`tel:${candidate.phone}`} className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors">
                     <Phone className="h-3 w-3" /> {candidate.phone}
-                  </span>
-                )}
-                {candidate.resumeLink && (
-                  <a href={candidate.resumeLink} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 text-xs text-primary hover:underline">
-                    <LinkIcon className="h-3 w-3" /> View Resume
                   </a>
                 )}
+                {(c.location as string | null) && (
+                  <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                    <MapPin className="h-3 w-3" /> {String(c.location)}
+                  </span>
+                )}
               </div>
             </div>
           </div>
+        </div>
+      </div>
 
-          {/* Pipeline stepper */}
-          <div className="mt-6 pt-5 border-t border-border">
-            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">Pipeline Stage</p>
-            <div className="flex items-center gap-1 flex-wrap">
-              {ACTIVE_STAGES.map((stage, idx) => {
-                const isActive = candidate.status === stage;
-                const isPast = currentStageIndex > idx && candidate.status !== "rejected";
-                return (
-                  <div key={stage} className="flex items-center gap-1">
-                    <button
-                      onClick={() => updateStatus.mutate({ id, status: stage })}
-                      title={STAGE_DESCRIPTIONS[stage]}
-                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all border ${
-                        isActive
-                          ? `${getStageBadgeClass(stage)} shadow-sm`
-                          : isPast
-                          ? "bg-muted/60 text-muted-foreground/60 border-transparent"
-                          : "bg-transparent text-muted-foreground border-border hover:border-muted-foreground/40"
-                      }`}
-                    >
-                      {isActive && <span className={`w-1.5 h-1.5 rounded-full ${STAGE_DOT[stage]}`} />}
+      {/* ── Pipeline Stepper ── */}
+      {!isRejected && (
+        <div className="bg-card border border-border rounded-xl p-5">
+          <div className="flex items-center gap-0 overflow-x-auto pb-1">
+            {ACTIVE_STAGES.map((stage, idx) => {
+              const done = idx < currentStageIndex;
+              const active = idx === currentStageIndex;
+              return (
+                <div key={stage} className="flex items-center min-w-0">
+                  <button
+                    onClick={() => {
+                      if (!active && !done) return;
+                      if (active) return;
+                      updateStatus.mutate({ id, status: stage, fromStage: candidate.status as PipelineStage });
+                    }}
+                    className={`flex flex-col items-center gap-1 px-2 py-1 rounded-lg transition-colors min-w-[72px] ${
+                      active
+                        ? "bg-primary/10"
+                        : done
+                        ? "opacity-60 hover:opacity-80"
+                        : "opacity-30"
+                    }`}
+                  >
+                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-semibold ${
+                      done
+                        ? "bg-primary/20 text-primary"
+                        : active
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground"
+                    }`}>
+                      {done ? <CheckCircle2 className="h-3.5 w-3.5" /> : idx + 1}
+                    </div>
+                    <span className={`text-[10px] font-medium text-center leading-tight ${active ? "text-primary" : "text-muted-foreground"}`}>
                       {STAGE_LABELS[stage]}
-                    </button>
-                    {idx < ACTIVE_STAGES.length - 1 && (
-                      <ChevronRight className="h-3 w-3 text-muted-foreground/30 shrink-0" />
-                    )}
-                  </div>
-                );
-              })}
-              {/* Rejected exit */}
-              <button
-                onClick={() => updateStatus.mutate({ id, status: "rejected" })}
-                className={`ml-2 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all border ${
-                  candidate.status === "rejected"
-                    ? `${getStageBadgeClass("rejected")} shadow-sm`
-                    : "bg-transparent text-muted-foreground border-border hover:border-red-300 hover:text-red-600"
-                }`}
-              >
-                {candidate.status === "rejected" && <span className={`w-1.5 h-1.5 rounded-full ${STAGE_DOT["rejected"]}`} />}
-                Rejected
-              </button>
-            </div>
-            {/* Current stage description */}
-            <p className="text-xs text-muted-foreground mt-2.5 italic">
+                    </span>
+                  </button>
+                  {idx < ACTIVE_STAGES.length - 1 && (
+                    <div className={`h-px w-4 shrink-0 mx-0.5 ${idx < currentStageIndex ? "bg-primary/40" : "bg-border"}`} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {STAGE_DESCRIPTIONS[candidate.status as PipelineStage] && (
+            <p className="text-xs text-muted-foreground mt-3 pl-1">
               {STAGE_DESCRIPTIONS[candidate.status as PipelineStage]}
             </p>
-          </div>
-        </div>
-      </div>
-
-      {/* Stage Notes */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-          <div className="flex items-center gap-2">
-            <StickyNote className="h-4 w-4 text-muted-foreground" />
-            <h2 className="text-sm font-semibold text-foreground">Stage Notes</h2>
-            {stageNotes && stageNotes.length > 0 && (
-              <span className="text-xs text-muted-foreground bg-muted px-1.5 py-0.5 rounded-full">{stageNotes.length}</span>
-            )}
-          </div>
-        </div>
-
-        {/* Filter tabs */}
-        <div className="flex items-center gap-1 px-5 pt-3 pb-2 flex-wrap">
-          <button
-            onClick={() => setActiveNotesStage("all")}
-            className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-all ${
-              activeNotesStage === "all"
-                ? "bg-primary text-primary-foreground border-primary"
-                : "border-border text-muted-foreground hover:border-muted-foreground/40"
-            }`}
-          >
-            All
-          </button>
-          {ACTIVE_STAGES.map((stage) => {
-            const count = (stageNotes ?? []).filter((n: { stage: string }) => n.stage === stage).length;
-            return (
-              <button
-                key={stage}
-                onClick={() => setActiveNotesStage(stage)}
-                className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-all flex items-center gap-1 ${
-                  activeNotesStage === stage
-                    ? `${getStageBadgeClass(stage)} shadow-sm`
-                    : "border-border text-muted-foreground hover:border-muted-foreground/40"
-                }`}
-              >
-                {STAGE_LABELS[stage]}
-                {count > 0 && <span className="opacity-70">{count}</span>}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Notes list */}
-        <div className="px-5 pb-3 min-h-[60px]">
-          {notesLoading ? (
-            <div className="space-y-2 py-2">
-              <Skeleton className="h-12 rounded-lg" />
-              <Skeleton className="h-12 rounded-lg" />
-            </div>
-          ) : filteredNotes.length > 0 ? (
-            <div className="space-y-2 py-2">
-              {filteredNotes.map((note: { id: number; stage: string; note: string; recruiterName?: string | null; createdAt: Date }) => (
-                <div key={note.id} className="flex gap-3 p-3 rounded-lg bg-muted/40 border border-border/50">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1 flex-wrap">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium border ${getStageBadgeClass(note.stage as PipelineStage)}`}>
-                        {STAGE_LABELS[note.stage as PipelineStage]}
-                      </span>
-                      {note.recruiterName && (
-                        <span className="text-[10px] text-muted-foreground">{note.recruiterName}</span>
-                      )}
-                      <span className="text-[10px] text-muted-foreground ml-auto">
-                        {new Date(note.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                      </span>
-                    </div>
-                    <p className="text-sm text-foreground whitespace-pre-wrap">{note.note}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center py-6 text-center">
-              <StickyNote className="h-6 w-6 text-muted-foreground/30 mb-1.5" />
-              <p className="text-xs text-muted-foreground">No notes yet for this stage</p>
-            </div>
           )}
         </div>
+      )}
 
-        {/* Add note form */}
-        <div className="px-5 pb-4 border-t border-border pt-3">
-          <div className="flex items-start gap-2">
-            <div className="flex-1 space-y-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs text-muted-foreground">Stage:</span>
-                <div className="flex gap-1 flex-wrap">
-                  {ACTIVE_STAGES.map((stage) => (
-                    <button
-                      key={stage}
-                      onClick={() => setNoteStage(stage)}
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-medium border transition-all ${
-                        noteStage === stage
-                          ? getStageBadgeClass(stage)
-                          : "border-border text-muted-foreground hover:border-muted-foreground/40"
-                      }`}
-                    >
-                      {STAGE_LABELS[stage]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <Textarea
-                placeholder={`Add a note for the ${STAGE_LABELS[noteStage]} stage...`}
-                rows={2}
-                value={noteText}
-                onChange={(e) => setNoteText(e.target.value)}
-                className="text-sm resize-none"
-              />
-            </div>
-            <Button
-              size="icon"
-              className="h-9 w-9 shrink-0 mt-6"
-              onClick={handleAddNote}
-              disabled={addNote.isPending || !noteText.trim()}
-            >
-              <Send className="h-3.5 w-3.5" />
-            </Button>
+      {/* ── Two-Column Layout ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+        {/* ── Personal Info ── */}
+        <SectionCard title="Personal Information" icon={<User className="h-4 w-4" />}>
+          <div className="divide-y divide-border/50">
+            <InfoRow label="Full Name" value={candidate.name} />
+            <InfoRow label="Phone" value={candidate.phone ? (
+              <a href={`tel:${candidate.phone}`} className="hover:text-primary transition-colors">{candidate.phone}</a>
+            ) : null} />
+            <InfoRow label="Email" value={candidate.email ? (
+              <a href={`mailto:${candidate.email}`} className="hover:text-primary transition-colors">{candidate.email}</a>
+            ) : null} />
+            <InfoRow label="Age" value={c.age != null ? `${c.age} years` : null} />
+            <InfoRow label="Location" value={c.location as string | null} />
           </div>
-        </div>
+        </SectionCard>
+
+        {/* ── Application Info ── */}
+        <SectionCard title="Application Details" icon={<Briefcase className="h-4 w-4" />}>
+          <div className="divide-y divide-border/50">
+            <InfoRow label="Position" value={candidate.positionApplied} />
+            <InfoRow label="Source" value={c.source ? SOURCE_LABELS[c.source as string] ?? c.source as string : null} />
+            <InfoRow label="Date Applied" value={
+              c.appliedAt
+                ? new Date(c.appliedAt as number).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+                : new Date(candidate.createdAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
+            } />
+            <InfoRow label="Current Stage" value={
+              <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border ${STAGE_BADGE[candidate.status as PipelineStage]}`}>
+                {STAGE_LABELS[candidate.status as PipelineStage]}
+              </span>
+            } />
+            {(c.resumeLink as string | null) && (
+              <InfoRow label="CV / Resume" value={
+                <a href={String(c.resumeLink)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-primary hover:underline">
+                  View CV <ExternalLink className="h-3 w-3" />
+                </a>
+              } />
+            )}
+          </div>
+        </SectionCard>
+
+        {/* ── Screening Results ── */}
+        <SectionCard title="Screening Results" icon={<Star className="h-4 w-4" />}>
+          <div className="space-y-4">
+            <div>
+              <p className="text-xs text-muted-foreground mb-1.5">Voice Note Rating</p>
+              {c.voiceNoteRating != null ? (
+                <StarRating value={c.voiceNoteRating as number} readonly />
+              ) : (
+                <span className="text-sm text-muted-foreground/50">Not rated yet</span>
+              )}
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground mb-1.5">Screening Comments</p>
+              {c.screeningNotes ? (
+                <p className="text-sm text-foreground leading-relaxed">{c.screeningNotes as string}</p>
+              ) : (
+                <span className="text-sm text-muted-foreground/50">No screening comments</span>
+              )}
+            </div>
+            {candidate.notes && (
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">General Notes</p>
+                <p className="text-sm text-foreground leading-relaxed">{candidate.notes}</p>
+              </div>
+            )}
+          </div>
+        </SectionCard>
+
+        {/* ── Links ── */}
+        <SectionCard title="Communication Links" icon={<LinkIcon className="h-4 w-4" />}>
+          <div className="space-y-3">
+            {c.meetLink ? (
+              <a
+                href={c.meetLink as string}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2.5 p-3 rounded-lg border border-border hover:bg-muted/40 transition-colors group"
+              >
+                <div className="w-8 h-8 rounded-lg bg-blue-50 flex items-center justify-center shrink-0">
+                  <Calendar className="h-4 w-4 text-blue-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-foreground">Google Meet</p>
+                  <p className="text-xs text-muted-foreground truncate">{c.meetLink as string}</p>
+                </div>
+                <ExternalLink className="h-3.5 w-3.5 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
+              </a>
+            ) : (
+              <p className="text-sm text-muted-foreground/50">No Meet link set</p>
+            )}
+            {c.teamsLink ? (
+              <a
+                href={c.teamsLink as string}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2.5 p-3 rounded-lg border border-border hover:bg-muted/40 transition-colors group"
+              >
+                <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center shrink-0">
+                  <Send className="h-4 w-4 text-indigo-600" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-xs font-medium text-foreground">Microsoft Teams</p>
+                  <p className="text-xs text-muted-foreground truncate">{c.teamsLink as string}</p>
+                </div>
+                <ExternalLink className="h-3.5 w-3.5 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
+              </a>
+            ) : (
+              !c.meetLink && null
+            )}
+            {!c.meetLink && !c.teamsLink && (
+              <p className="text-sm text-muted-foreground/50">No links added yet</p>
+            )}
+          </div>
+        </SectionCard>
       </div>
 
-      {/* Interviews */}
-      <div className="bg-card border border-border rounded-xl overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-          <h2 className="text-sm font-semibold text-foreground">Interviews</h2>
-          <Button size="sm" variant="outline" onClick={() => setInterviewOpen(true)} className="gap-1.5 h-8 text-xs">
-            <Plus className="h-3 w-3" /> Schedule
-          </Button>
-        </div>
-
+      {/* ── Interviews ── */}
+      <SectionCard title="Interviews" icon={<Calendar className="h-4 w-4" />}>
         {interviewsLoading ? (
-          <div className="p-5 space-y-3">
-            <Skeleton className="h-16 rounded-lg" />
-          </div>
+          <Skeleton className="h-16 rounded-lg" />
         ) : interviews && interviews.length > 0 ? (
-          <div className="divide-y divide-border">
-            {interviews.map((interview: { id: number; scheduledAt: number; location?: string | null; interviewerName?: string | null; notes?: string | null; notificationSent?: number | null }) => {
+          <div className="divide-y divide-border/50">
+            {interviews.map((interview: {
+              id: number;
+              scheduledAt: number;
+              location?: string | null;
+              interviewerName?: string | null;
+              notes?: string | null;
+              notificationSent?: number | null;
+            }) => {
               const d = new Date(interview.scheduledAt);
               const isPast = d < new Date();
               return (
-                <div key={interview.id} className="px-5 py-4 flex items-start gap-3">
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${isPast ? "bg-muted" : "bg-primary/10"}`}>
+                <div key={interview.id} className="py-3 flex items-start gap-3 first:pt-0 last:pb-0">
+                  <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${isPast ? "bg-muted" : "bg-primary/10"}`}>
                     <Calendar className={`h-4 w-4 ${isPast ? "text-muted-foreground" : "text-primary"}`} />
                   </div>
-                  <div>
+                  <div className="flex-1">
                     <p className="text-sm font-medium text-foreground">
                       {d.toLocaleDateString("en-US", { weekday: "short", month: "long", day: "numeric", year: "numeric" })}
                     </p>
@@ -542,7 +764,7 @@ export default function CandidateDetail() {
             })}
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center py-10 text-center">
+          <div className="flex flex-col items-center justify-center py-8 text-center">
             <Calendar className="h-8 w-8 text-muted-foreground/30 mb-2" />
             <p className="text-sm text-muted-foreground">No interviews scheduled</p>
             <Button size="sm" variant="ghost" onClick={() => setInterviewOpen(true)} className="mt-2 text-xs gap-1">
@@ -550,47 +772,246 @@ export default function CandidateDetail() {
             </Button>
           </div>
         )}
-      </div>
+      </SectionCard>
 
-      {/* Metadata */}
-      <div className="text-xs text-muted-foreground/60 flex gap-4">
+      {/* ── Stage Notes ── */}
+      <SectionCard title="Stage Notes" icon={<StickyNote className="h-4 w-4" />}>
+        {/* Stage filter tabs */}
+        <div className="flex gap-1 flex-wrap mb-4">
+          {(["all", ...ACTIVE_STAGES, "rejected"] as const).map((s) => (
+            <button
+              key={s}
+              onClick={() => setActiveNotesStage(s as PipelineStage | "all")}
+              className={`px-2.5 py-1 rounded-full text-xs font-medium transition-colors ${
+                activeNotesStage === s
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+              }`}
+            >
+              {s === "all" ? "All" : STAGE_LABELS[s as PipelineStage]}
+            </button>
+          ))}
+        </div>
+
+        {/* Notes list */}
+        {notesLoading ? (
+          <Skeleton className="h-16 rounded-lg" />
+        ) : filteredNotes.length > 0 ? (
+          <div className="space-y-2 mb-4">
+            {filteredNotes.map((note: { id: number; stage: string; note: string; recruiterName?: string | null; createdAt: Date | string }) => (
+              <div key={note.id} className="bg-muted/30 rounded-lg px-4 py-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium border ${STAGE_BADGE[note.stage as PipelineStage] ?? ""}`}>
+                    {STAGE_LABELS[note.stage as PipelineStage] ?? note.stage}
+                  </span>
+                  {note.recruiterName && (
+                    <span className="text-xs text-muted-foreground">{note.recruiterName}</span>
+                  )}
+                  <span className="text-xs text-muted-foreground/60 ml-auto">
+                    {new Date(note.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                  </span>
+                </div>
+                <p className="text-sm text-foreground leading-relaxed">{note.note}</p>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground/50 mb-4">No notes for this filter</p>
+        )}
+
+        {/* Add note */}
+        <div className="border-t border-border/60 pt-4 space-y-2">
+          <div className="flex gap-2">
+            <Select value={noteStage} onValueChange={(v) => setNoteStage(v as PipelineStage)}>
+              <SelectTrigger className="w-44 h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {([...ACTIVE_STAGES, "rejected"] as const).map((s) => (
+                  <SelectItem key={s} value={s} className="text-xs">
+                    {STAGE_LABELS[s]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex gap-2">
+            <Textarea
+              placeholder="Add a note for this stage..."
+              rows={2}
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              className="text-sm resize-none"
+            />
+            <Button size="sm" onClick={handleAddNote} disabled={addNote.isPending} className="self-end h-9 gap-1">
+              <Send className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+      </SectionCard>
+
+      {/* ── Activity Timeline ── */}
+      <SectionCard title="Activity Timeline" icon={<Activity className="h-4 w-4" />}>
+        {!activityEntries || activityEntries.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-8 text-center">
+            <Activity className="h-8 w-8 text-muted-foreground/30 mb-2" />
+            <p className="text-sm text-muted-foreground">No activity recorded yet</p>
+          </div>
+        ) : (
+          <div className="relative">
+            {/* Timeline line */}
+            <div className="absolute left-[15px] top-2 bottom-2 w-px bg-border/60" />
+            <div className="space-y-4">
+              {activityEntries.map((entry: {
+                id: number;
+                action: string;
+                fromStage?: string | null;
+                toStage?: string | null;
+                detail?: string | null;
+                performedBy?: string | null;
+                createdAt: Date | string;
+              }) => (
+                <div key={entry.id} className="flex items-start gap-3 pl-1">
+                  <div className="w-8 h-8 rounded-full bg-background border border-border flex items-center justify-center shrink-0 z-10">
+                    {activityIcon(entry.action)}
+                  </div>
+                  <div className="flex-1 min-w-0 pt-1">
+                    <p className="text-sm text-foreground font-medium leading-snug">
+                      {activityLabel(entry)}
+                    </p>
+                    {entry.detail && (
+                      <p className="text-xs text-muted-foreground mt-0.5 italic">"{entry.detail}"</p>
+                    )}
+                    <div className="flex items-center gap-2 mt-1">
+                      {entry.performedBy && (
+                        <span className="text-xs text-muted-foreground">{entry.performedBy}</span>
+                      )}
+                      <span className="text-xs text-muted-foreground/60">
+                        {new Date(entry.createdAt).toLocaleString("en-US", {
+                          month: "short",
+                          day: "numeric",
+                          year: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </SectionCard>
+
+      {/* ── Metadata ── */}
+      <div className="text-xs text-muted-foreground/50 flex gap-4 pb-2">
         <span>Added {new Date(candidate.createdAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</span>
         <span>Updated {new Date(candidate.updatedAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</span>
       </div>
 
+      {/* ─────────────────────── Dialogs ─────────────────────── */}
+
       {/* Edit Dialog */}
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="sm:max-w-lg">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Edit Candidate</DialogTitle>
+            <DialogTitle>Edit Candidate Profile</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4 py-2">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5 col-span-2">
-                <Label>Full Name <span className="text-destructive">*</span></Label>
-                <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Email <span className="text-destructive">*</span></Label>
-                <Input type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Phone</Label>
-                <Input value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} />
-              </div>
-              <div className="space-y-1.5 col-span-2">
-                <Label>Resume Link</Label>
-                <Input placeholder="https://..." value={editForm.resumeLink} onChange={(e) => setEditForm({ ...editForm, resumeLink: e.target.value })} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Google Meet Link</Label>
-                <Input placeholder="https://meet.google.com/..." value={editForm.meetLink} onChange={(e) => setEditForm({ ...editForm, meetLink: e.target.value })} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Teams Invitation Link</Label>
-                <Input placeholder="https://teams.microsoft.com/..." value={editForm.teamsLink} onChange={(e) => setEditForm({ ...editForm, teamsLink: e.target.value })} />
+          <div className="space-y-5 py-2">
+            {/* Personal */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Personal Information</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5 col-span-2">
+                  <Label>Full Name <span className="text-destructive">*</span></Label>
+                  <Input value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Email</Label>
+                  <Input type="email" value={editForm.email} onChange={(e) => setEditForm({ ...editForm, email: e.target.value })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Phone</Label>
+                  <Input value={editForm.phone} onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Age</Label>
+                  <Input type="number" min={16} max={80} placeholder="e.g. 24" value={editForm.age} onChange={(e) => setEditForm({ ...editForm, age: e.target.value })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Location</Label>
+                  <Input placeholder="e.g. Cairo, Alexandria" value={editForm.location} onChange={(e) => setEditForm({ ...editForm, location: e.target.value })} />
+                </div>
               </div>
             </div>
+
+            {/* Application */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Application Details</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Source</Label>
+                  <Select value={editForm.source || "none"} onValueChange={(v) => setEditForm({ ...editForm, source: v === "none" ? "" : v })}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select source" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">— Not specified —</SelectItem>
+                      <SelectItem value="linkedin">LinkedIn</SelectItem>
+                      <SelectItem value="email">Email</SelectItem>
+                      <SelectItem value="referral">Referral</SelectItem>
+                      <SelectItem value="walk_in">Walk-in</SelectItem>
+                      <SelectItem value="other">Other</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label>CV / Resume Link</Label>
+                  <Input placeholder="https://..." value={editForm.resumeLink} onChange={(e) => setEditForm({ ...editForm, resumeLink: e.target.value })} />
+                </div>
+              </div>
+            </div>
+
+            {/* Screening */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Screening Results</p>
+              <div className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label>Voice Note Rating</Label>
+                  <StarRating
+                    value={editForm.voiceNoteRating}
+                    onChange={(v) => setEditForm({ ...editForm, voiceNoteRating: v })}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Screening Comments</Label>
+                  <Textarea
+                    rows={2}
+                    placeholder="Notes from voice note review..."
+                    value={editForm.screeningNotes}
+                    onChange={(e) => setEditForm({ ...editForm, screeningNotes: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Links */}
+            <div>
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Communication Links</p>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <Label>Google Meet Link</Label>
+                  <Input placeholder="https://meet.google.com/..." value={editForm.meetLink} onChange={(e) => setEditForm({ ...editForm, meetLink: e.target.value })} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label>Teams Invitation Link</Label>
+                  <Input placeholder="https://teams.microsoft.com/..." value={editForm.teamsLink} onChange={(e) => setEditForm({ ...editForm, teamsLink: e.target.value })} />
+                </div>
+              </div>
+            </div>
+
+            {/* Notes */}
             <div className="space-y-1.5">
               <Label>General Notes</Label>
               <Textarea rows={3} value={editForm.notes} onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })} />
@@ -668,6 +1089,48 @@ export default function CandidateDetail() {
             <Button variant="outline" onClick={() => setInterviewOpen(false)}>Cancel</Button>
             <Button onClick={handleScheduleInterview} disabled={scheduleInterview.isPending}>
               {scheduleInterview.isPending ? "Scheduling..." : "Schedule Interview"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reject Dialog */}
+      <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Reject Candidate</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <p className="text-sm text-muted-foreground">
+              Select a reason for rejecting <strong>{candidate.name}</strong>:
+            </p>
+            <div className="grid gap-1.5">
+              {REJECTION_PRESETS.map((preset) => (
+                <button
+                  key={preset}
+                  onClick={() => setRejectReason(preset)}
+                  className={`text-left text-sm px-3 py-2 rounded-lg border transition-colors ${
+                    rejectReason === preset
+                      ? "border-destructive/60 bg-destructive/5 text-destructive"
+                      : "border-border hover:bg-muted/40"
+                  }`}
+                >
+                  {preset}
+                </button>
+              ))}
+            </div>
+            <Textarea
+              placeholder="Or write a custom reason..."
+              rows={2}
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              className="text-sm"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRejectOpen(false)}>Cancel</Button>
+            <Button variant="destructive" onClick={handleReject} disabled={updateStatus.isPending}>
+              {updateStatus.isPending ? "Rejecting..." : "Confirm Rejection"}
             </Button>
           </DialogFooter>
         </DialogContent>

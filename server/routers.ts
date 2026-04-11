@@ -16,9 +16,11 @@ import {
   getInterviewsScheduledSince,
   getPipelineCounts,
   getReApplicants,
+  listActivityByCandidateId,
   listCandidates,
   listInterviewsByCandidateId,
   listNotesByCandidateId,
+  logActivity,
   markInterviewNotificationSent,
   updateCandidate,
   updateCandidateStatus,
@@ -65,9 +67,24 @@ export const appRouter = router({
           resumeLink: z.string().optional(),
           notes: z.string().optional(),
           status: PIPELINE_STAGES_ZOD.optional(),
+          age: z.number().int().min(16).max(80).optional(),
+          location: z.string().optional(),
+          source: z.enum(["linkedin", "email", "referral", "walk_in", "other"]).optional(),
         })
       )
-      .mutation(({ input }) => createCandidate(input)),
+      .mutation(async ({ input, ctx }) => {
+        const result = await createCandidate(input);
+        const insertId = (result as unknown as { insertId: number }).insertId;
+        if (insertId) {
+          await logActivity({
+            candidateId: insertId,
+            action: "candidate_created",
+            toStage: input.status ?? "applied",
+            performedBy: ctx.user?.name ?? undefined,
+          });
+        }
+        return result;
+      }),
 
     update: protectedProcedure
       .input(
@@ -81,6 +98,11 @@ export const appRouter = router({
           notes: z.string().nullable().optional(),
           meetLink: z.string().nullable().optional(),
           teamsLink: z.string().nullable().optional(),
+          age: z.number().int().min(16).max(80).nullable().optional(),
+          location: z.string().nullable().optional(),
+          source: z.enum(["linkedin", "email", "referral", "walk_in", "other"]).nullable().optional(),
+          voiceNoteRating: z.number().int().min(1).max(5).nullable().optional(),
+          screeningNotes: z.string().nullable().optional(),
         })
       )
       .mutation(({ input }) => {
@@ -89,8 +111,24 @@ export const appRouter = router({
       }),
 
     updateStatus: protectedProcedure
-      .input(z.object({ id: z.number(), status: PIPELINE_STAGES_ZOD }))
-      .mutation(({ input }) => updateCandidateStatus(input.id, input.status)),
+      .input(z.object({
+        id: z.number(),
+        status: PIPELINE_STAGES_ZOD,
+        fromStage: PIPELINE_STAGES_ZOD.optional(),
+        detail: z.string().optional(), // e.g. rejection reason
+      }))
+      .mutation(async ({ input, ctx }) => {
+        await updateCandidateStatus(input.id, input.status);
+        await logActivity({
+          candidateId: input.id,
+          action: "stage_change",
+          fromStage: input.fromStage,
+          toStage: input.status,
+          detail: input.detail,
+          performedBy: ctx.user?.name ?? undefined,
+        });
+        return { success: true };
+      }),
 
     delete: protectedProcedure
       .input(z.object({ id: z.number() }))
@@ -106,6 +144,9 @@ export const appRouter = router({
             positionApplied: z.string().optional(),
             resumeLink: z.string().optional(),
             notes: z.string().optional(),
+            age: z.number().int().min(16).max(80).optional(),
+            location: z.string().optional(),
+            source: z.enum(["linkedin", "email", "referral", "walk_in", "other"]).optional(),
           })
         )
       )
@@ -120,8 +161,14 @@ export const appRouter = router({
     reApplicants: protectedProcedure
       .query(() => getReApplicants()),
   }),
+  // ─── Activity Log ──────────────────────────────────────────────────────────────
+  activity: router({
+    list: protectedProcedure
+      .input(z.object({ candidateId: z.number() }))
+      .query(({ input }) => listActivityByCandidateId(input.candidateId)),
+  }),
 
-  // ─── Stage Notes ─────────────────────────────────────────────────────────────
+  // ─── Stage Notes ──────────────────────────────────────────────────────────────
   notes: router({
     list: protectedProcedure
       .input(z.object({ candidateId: z.number() }))

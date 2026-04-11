@@ -51,6 +51,10 @@ vi.mock("./db", () => ({
   getStageDropoff: vi.fn().mockResolvedValue([]),
   upsertUser: vi.fn().mockResolvedValue(undefined),
   getUserByOpenId: vi.fn().mockResolvedValue(undefined),
+  logActivity: vi.fn().mockResolvedValue(undefined),
+  listActivityByCandidateId: vi.fn().mockResolvedValue([]),
+  checkDuplicateByPhone: vi.fn().mockResolvedValue(null),
+  getReApplicants: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("./email", () => ({
@@ -136,32 +140,32 @@ describe("candidates router", () => {
 
   it("updates a candidate's status to whatsapp_sent", async () => {
     const result = await caller.candidates.updateStatus({ id: 1, status: "whatsapp_sent" });
-    expect(result).toBeUndefined();
+    expect(result).toEqual({ success: true });
   });
 
   it("updates a candidate's status to voice_note_reviewed", async () => {
     const result = await caller.candidates.updateStatus({ id: 1, status: "voice_note_reviewed" });
-    expect(result).toBeUndefined();
+    expect(result).toEqual({ success: true });
   });
 
   it("updates a candidate's status to interview_scheduled", async () => {
     const result = await caller.candidates.updateStatus({ id: 1, status: "interview_scheduled" });
-    expect(result).toBeUndefined();
+    expect(result).toEqual({ success: true });
   });
 
   it("updates a candidate's status to accepted", async () => {
     const result = await caller.candidates.updateStatus({ id: 1, status: "accepted" });
-    expect(result).toBeUndefined();
+    expect(result).toEqual({ success: true });
   });
 
   it("updates a candidate's status to teams_invitation_sent", async () => {
     const result = await caller.candidates.updateStatus({ id: 1, status: "teams_invitation_sent" });
-    expect(result).toBeUndefined();
+    expect(result).toEqual({ success: true });
   });
 
   it("updates a candidate's status to rejected", async () => {
     const result = await caller.candidates.updateStatus({ id: 1, status: "rejected" });
-    expect(result).toBeUndefined();
+    expect(result).toEqual({ success: true });
   });
 
   it("deletes a candidate", async () => {

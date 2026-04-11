@@ -101,3 +101,18 @@
 - [x] Frontend: manual add form — real-time phone duplicate check with warning card showing existing candidate stage and rejection history
 - [x] Frontend: CSV import — flag duplicate rows with warning, show existing candidate info, allow skip or force-import per row
 - [x] Frontend: Candidates page — add "Re-applicants" filter tab showing candidates who applied more than once
+
+## Change Requests (Round 10 — Rich Candidate Profile)
+- [x] DB schema: add age, location, source, voiceNoteRating, resumeLink fields to candidates table
+- [x] DB schema: add activity_log table (id, candidateId, action, fromStage, toStage, performedBy, createdAt)
+- [x] Run migration for new schema fields
+- [x] Backend: update createCandidate and updateCandidate helpers to handle new fields
+- [x] Backend: add logActivity helper to record stage changes and key actions
+- [x] Backend: update updateStatus procedure to auto-log activity on every stage change
+- [x] Backend: add activity.listByCandidate tRPC procedure
+- [x] Frontend: rebuild CandidateDetail with Personal Info section (age, location, source, resumeLink)
+- [x] Frontend: add Screening Results section (voice note rating 1-5 stars + screening comments)
+- [x] Frontend: add Activity Timeline section showing full stage change history with timestamps
+- [x] Frontend: update manual add form to include source, age, location fields
+- [x] Frontend: update edit form to include all new fields
+- [x] Frontend: update CSV import to optionally map source column

@@ -3,6 +3,7 @@ import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
   PipelineStage,
+  activityLog,
   candidates,
   interviews,
   stageNotes,
@@ -91,6 +92,9 @@ export async function createCandidate(data: {
   resumeLink?: string;
   notes?: string;
   status?: PipelineStage;
+  age?: number;
+  location?: string;
+  source?: "linkedin" | "email" | "referral" | "walk_in" | "other";
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -104,6 +108,9 @@ export async function createCandidate(data: {
     notes: data.notes ?? null,
     status: data.status ?? "applied",
     appliedAt: now,
+    age: data.age ?? null,
+    location: data.location ?? null,
+    source: data.source ?? null,
   });
   return result;
 }
@@ -119,6 +126,11 @@ export async function updateCandidate(
     notes?: string | null;
     meetLink?: string | null;
     teamsLink?: string | null;
+    age?: number | null;
+    location?: string | null;
+    source?: "linkedin" | "email" | "referral" | "walk_in" | "other" | null;
+    voiceNoteRating?: number | null;
+    screeningNotes?: string | null;
   }
 ) {
   const db = await getDb();
@@ -200,6 +212,9 @@ export async function bulkInsertCandidates(
     positionApplied?: string;
     resumeLink?: string;
     notes?: string;
+    age?: number;
+    location?: string;
+    source?: "linkedin" | "email" | "referral" | "walk_in" | "other";
   }>
 ) {
   const db = await getDb();
@@ -213,10 +228,45 @@ export async function bulkInsertCandidates(
       positionApplied: r.positionApplied ?? "Call Center Agent",
       resumeLink: r.resumeLink ?? null,
       notes: r.notes ?? null,
+      age: r.age ?? null,
+      location: r.location ?? null,
+      source: r.source ?? null,
       status: "applied" as PipelineStage,
       appliedAt: now,
     }))
   );
+}
+
+// ─── Activity Log ─────────────────────────────────────────────────────────────
+
+export async function logActivity(data: {
+  candidateId: number;
+  action: string;
+  fromStage?: string;
+  toStage?: string;
+  detail?: string;
+  performedBy?: string;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  await db.insert(activityLog).values({
+    candidateId: data.candidateId,
+    action: data.action,
+    fromStage: data.fromStage ?? null,
+    toStage: data.toStage ?? null,
+    detail: data.detail ?? null,
+    performedBy: data.performedBy ?? null,
+  });
+}
+
+export async function listActivityByCandidateId(candidateId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(activityLog)
+    .where(eq(activityLog.candidateId, candidateId))
+    .orderBy(desc(activityLog.createdAt));
 }
 
 // ─── Stage Notes ──────────────────────────────────────────────────────────────
