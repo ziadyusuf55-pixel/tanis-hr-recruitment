@@ -137,3 +137,14 @@
 - [x] Frontend: show Wave badge on candidate board cards and list rows
 - [x] Frontend: add Wave filter dropdown on Candidates page toolbar
 - [x] Frontend: update CSV import to parse optional wave column
+
+## Change Requests (Round 13)
+- [x] Add "WhatsApp Sent" quick-action button to board cards (visible for Applied stage)
+- [x] Add "Interview Scheduled" quick-action button to board cards (visible for Voice Note Reviewed stage)
+- [x] Add "WhatsApp Sent" quick-action button to list rows (same stage condition)
+- [x] Add "Interview Scheduled" quick-action button to list rows (same stage condition)
+- [x] Backend: add uploadCv tRPC mutation to handle CV file upload to S3 and save URL on candidate
+- [x] DB: add cvUrl and cvFileName columns to candidates table
+- [x] Run migration for cvUrl and cvFileName columns
+- [x] Frontend: add CV Attachment section to CandidateDetail (upload button, file name, download/preview link)
+- [x] Frontend: CV upload shows file name and a clickable link to open/download the file

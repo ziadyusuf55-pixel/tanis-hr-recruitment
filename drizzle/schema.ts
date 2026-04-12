@@ -73,7 +73,9 @@ export const candidates = mysqlTable("candidates", {
   location: varchar("location", { length: 255 }),
   source: mysqlEnum("source", ["linkedin", "email", "referral", "walk_in", "other"]),
   voiceNoteRating: int("voiceNoteRating"),   // 1-5 stars
-  screeningNotes: text("screeningNotes"),    // recruiter screening comments
+  screeningNotes: text("screeningNotes"),
+  cvUrl: varchar("cvUrl", { length: 1024 }),
+  cvFileName: varchar("cvFileName", { length: 255 }),
   wave: int("wave"),                         // recruitment wave number (1, 2, 3...)
   // Track when candidate reached each key stage (UTC ms) for time-to-hire KPI
   appliedAt: bigint("appliedAt", { mode: "number" }),

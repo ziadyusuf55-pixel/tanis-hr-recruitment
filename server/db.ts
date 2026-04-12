@@ -134,6 +134,8 @@ export async function updateCandidate(
     voiceNoteRating?: number | null;
     screeningNotes?: string | null;
     wave?: number | null;
+    cvUrl?: string | null;
+    cvFileName?: string | null;
   }
 ) {
   const db = await getDb();

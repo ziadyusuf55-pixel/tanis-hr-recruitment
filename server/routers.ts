@@ -163,6 +163,31 @@ export const appRouter = router({
     /** Returns all candidates whose phone matches a previously rejected candidate */
     reApplicants: protectedProcedure
       .query(() => getReApplicants()),
+
+    /** Upload a CV file and attach it to a candidate */
+    uploadCv: protectedProcedure
+      .input(
+        z.object({
+          id: z.number(),
+          fileBase64: z.string(),   // base64-encoded file content
+          fileName: z.string(),
+          mimeType: z.string(),
+        })
+      )
+      .mutation(async ({ input }) => {
+        const { storagePut } = await import("./storage");
+        const buffer = Buffer.from(input.fileBase64, "base64");
+        const ext = input.fileName.split(".").pop() ?? "pdf";
+        const key = `cvs/${input.id}-${Date.now()}.${ext}`;
+        const { url } = await storagePut(key, buffer, input.mimeType);
+        await updateCandidate(input.id, { cvUrl: url, cvFileName: input.fileName });
+        return { url, fileName: input.fileName };
+      }),
+
+    /** Remove CV attachment from a candidate */
+    removeCv: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(({ input }) => updateCandidate(input.id, { cvUrl: null, cvFileName: null })),
   }),
   // ─── Activity Log ──────────────────────────────────────────────────────────────
   activity: router({

@@ -1018,7 +1018,7 @@ function CandidateCard({
         </div>
       </div>
       <div className="flex gap-1 mt-2.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
-          {/* No Show — shown when candidate has an interview scheduled */}
+        {/* No Show — shown when candidate has an interview scheduled */}
         {currentStage === "interview_scheduled" && (
           <button
             onClick={() => onNoShow(candidate.id, candidate.name)}
@@ -1028,25 +1028,36 @@ function CandidateCard({
             <UserX className="h-2 w-2" /> No Show
           </button>
         )}
-        {/* Skip to Interview shortcut — shown when candidate is before interview_scheduled */}
-        {["applied", "whatsapp_sent", "voice_note_reviewed"].includes(currentStage) && (
+        {/* WhatsApp Sent — shown when candidate is in Applied stage */}
+        {currentStage === "applied" && (
+          <button
+            onClick={() => onMoveStage(candidate.id, "whatsapp_sent")}
+            className="text-[9px] font-medium px-1.5 py-0.5 rounded-full border border-green-200 bg-green-50 text-green-700 transition-colors hover:bg-green-100 flex items-center gap-0.5"
+            title="Mark WhatsApp message as sent"
+          >
+            <MessageCircle className="h-2 w-2" /> WA Sent
+          </button>
+        )}
+        {/* Interview Scheduled — shown when candidate is in Voice Note Reviewed stage */}
+        {currentStage === "voice_note_reviewed" && (
+          <button
+            onClick={() => onMoveStage(candidate.id, "interview_scheduled")}
+            className="text-[9px] font-medium px-1.5 py-0.5 rounded-full border border-purple-200 bg-purple-50 text-purple-700 transition-colors hover:bg-purple-100 flex items-center gap-0.5"
+            title="Mark as Interview Scheduled"
+          >
+            <ArrowRight className="h-2 w-2" /> Interview Scheduled
+          </button>
+        )}
+        {/* Skip to Interview shortcut — shown when candidate is in Applied or WhatsApp Sent stage */}
+        {["applied", "whatsapp_sent"].includes(currentStage) && (
           <button
             onClick={() => onMoveStage(candidate.id, "interview_scheduled")}
             className="text-[9px] font-medium px-1.5 py-0.5 rounded-full border border-blue-200 bg-blue-50 text-blue-700 transition-colors hover:bg-blue-100 flex items-center gap-0.5"
-            title="Skip directly to Interview Scheduled (email calendar invite sent)"
+            title="Skip directly to Interview Scheduled"
           >
             <ArrowRight className="h-2 w-2" /> Skip to Interview
           </button>
         )}
-        {ACTIVE_STAGES.filter((s) => s !== currentStage && s !== "interview_scheduled").slice(0, 2).map((s) => (
-          <button
-            key={s}
-            onClick={() => onMoveStage(candidate.id, s)}
-            className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full border transition-colors hover:opacity-80 ${STAGE_BADGE[s] ?? ""}`}
-          >
-            → {STAGE_LABELS[s]}
-          </button>
-        ))}
       </div>
     </div>
   );
@@ -1152,12 +1163,32 @@ function CandidateList({
                       <UserX className="h-3.5 w-3.5" />
                     </button>
                   )}
-                  {/* Skip to Interview — shown in list row for early-stage candidates */}
-                  {["applied", "whatsapp_sent", "voice_note_reviewed"].includes(c.status) && (
+                  {/* WA Sent — shown for Applied candidates */}
+                  {c.status === "applied" && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onMoveStage && onMoveStage(c.id, "whatsapp_sent"); }}
+                      className="p-1 rounded hover:bg-green-50 text-muted-foreground/30 hover:text-green-600 transition-colors opacity-0 group-hover:opacity-100"
+                      title="Mark WhatsApp message as sent"
+                    >
+                      <MessageCircle className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  {/* Interview Scheduled — shown for Voice Note Reviewed candidates */}
+                  {c.status === "voice_note_reviewed" && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onMoveStage && onMoveStage(c.id, "interview_scheduled"); }}
+                      className="p-1 rounded hover:bg-purple-50 text-muted-foreground/30 hover:text-purple-600 transition-colors opacity-0 group-hover:opacity-100"
+                      title="Mark as Interview Scheduled"
+                    >
+                      <ArrowRight className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  {/* Skip to Interview — shown for Applied or WhatsApp Sent candidates */}
+                  {["applied", "whatsapp_sent"].includes(c.status) && (
                     <button
                       onClick={(e) => { e.stopPropagation(); onMoveStage && onMoveStage(c.id, "interview_scheduled"); }}
                       className="p-1 rounded hover:bg-blue-50 text-muted-foreground/30 hover:text-blue-600 transition-colors opacity-0 group-hover:opacity-100"
-                      title="Skip to Interview Scheduled (calendar email sent)"
+                      title="Skip to Interview Scheduled"
                     >
                       <ArrowRight className="h-3.5 w-3.5" />
                     </button>

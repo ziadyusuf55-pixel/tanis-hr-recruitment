@@ -63,6 +63,10 @@ import {
   ExternalLink,
   UserX,
   Layers,
+  Paperclip,
+  Upload,
+  X as XIcon,
+  Download,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -267,6 +271,22 @@ export default function CandidateDetail() {
       setInterviewForm(EMPTY_INTERVIEW);
     },
     onError: () => toast.error("Failed to schedule interview"),
+  });
+
+  const uploadCv = trpc.candidates.uploadCv.useMutation({
+    onSuccess: () => {
+      utils.candidates.get.invalidate({ id });
+      toast.success("CV uploaded successfully");
+    },
+    onError: () => toast.error("Failed to upload CV"),
+  });
+
+  const removeCv = trpc.candidates.removeCv.useMutation({
+    onSuccess: () => {
+      utils.candidates.get.invalidate({ id });
+      toast.success("CV removed");
+    },
+    onError: () => toast.error("Failed to remove CV"),
   });
 
   const addNote = trpc.notes.add.useMutation({
@@ -523,10 +543,104 @@ export default function CandidateDetail() {
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        </div>
+         </div>
       </div>
 
-      {/* ── Profile Hero ── */}
+      {/* ── CV Attachment ── */}
+      <SectionCard title="CV / Resume Attachment" icon={<Paperclip className="h-4 w-4" />}>
+        {(() => {
+          const cvUrl = c.cvUrl as string | null;
+          const cvFileName = c.cvFileName as string | null;
+          return (
+            <div className="space-y-3">
+              {cvUrl ? (
+                <div className="flex items-center gap-3 p-3 rounded-lg border border-border bg-muted/20">
+                  <div className="w-10 h-10 rounded-lg bg-red-50 flex items-center justify-center shrink-0">
+                    <FileText className="h-5 w-5 text-red-500" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{cvFileName ?? "CV File"}</p>
+                    <p className="text-xs text-muted-foreground">Uploaded CV</p>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 gap-1.5 text-xs"
+                      onClick={() => window.open(cvUrl, "_blank")}
+                    >
+                      <Download className="h-3.5 w-3.5" /> Open
+                    </Button>
+                    <Button
+                      size="icon"
+                      variant="ghost"
+                      className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                      onClick={() => removeCv.mutate({ id })}
+                      disabled={removeCv.isPending}
+                    >
+                      <XIcon className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-6 border-2 border-dashed border-border rounded-lg text-center">
+                  <Paperclip className="h-8 w-8 text-muted-foreground/30 mb-2" />
+                  <p className="text-sm text-muted-foreground mb-3">No CV attached yet</p>
+                  <label className="cursor-pointer">
+                    <input
+                      type="file"
+                      accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+                      className="hidden"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        if (file.size > 10 * 1024 * 1024) { toast.error("File too large (max 10 MB)"); return; }
+                        const reader = new FileReader();
+                        reader.onload = () => {
+                          const base64 = (reader.result as string).split(",")[1];
+                          uploadCv.mutate({ id, fileBase64: base64, fileName: file.name, mimeType: file.type });
+                        };
+                        reader.readAsDataURL(file);
+                      }}
+                    />
+                    <Button size="sm" variant="outline" className="gap-1.5 pointer-events-none" disabled={uploadCv.isPending}>
+                      <Upload className="h-3.5 w-3.5" />
+                      {uploadCv.isPending ? "Uploading..." : "Upload CV"}
+                    </Button>
+                  </label>
+                  <p className="text-xs text-muted-foreground/60 mt-2">PDF, Word, or image — max 10 MB</p>
+                </div>
+              )}
+              {/* Replace button when CV already exists */}
+              {cvUrl && (
+                <label className="cursor-pointer block">
+                  <input
+                    type="file"
+                    accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      if (file.size > 10 * 1024 * 1024) { toast.error("File too large (max 10 MB)"); return; }
+                      const reader = new FileReader();
+                      reader.onload = () => {
+                        const base64 = (reader.result as string).split(",")[1];
+                        uploadCv.mutate({ id, fileBase64: base64, fileName: file.name, mimeType: file.type });
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                  <Button size="sm" variant="ghost" className="gap-1.5 text-xs text-muted-foreground pointer-events-none" disabled={uploadCv.isPending}>
+                    <Upload className="h-3.5 w-3.5" /> Replace CV
+                  </Button>
+                </label>
+              )}
+            </div>
+          );
+        })()}
+      </SectionCard>
+
+      {/* ── Interviews ── */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="h-1.5 bg-gradient-to-r from-primary/80 via-primary/50 to-primary/20" />
         <div className="p-6">
