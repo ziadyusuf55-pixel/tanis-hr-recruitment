@@ -285,10 +285,19 @@ export default function Candidates() {
   // Derive unique wave numbers from all candidates for the filter dropdown
   const waveNumbers = Array.from(new Set(allCandidates.map((c) => (c as unknown as { wave?: number }).wave).filter(Boolean) as number[])).sort((a, b) => a - b);
   const filtered = displayCandidates.filter((c) => {
-    const matchesSearch = !search ||
-      c.name.toLowerCase().includes(search.toLowerCase()) ||
-      (c.email ?? "").toLowerCase().includes(search.toLowerCase()) ||
-      (c.phone ?? "").toLowerCase().includes(search.toLowerCase());
+    const matchesSearch = !search || (() => {
+      const q = search.toLowerCase();
+      if (c.name.toLowerCase().includes(q)) return true;
+      if ((c.email ?? "").toLowerCase().includes(q)) return true;
+      // Phone suffix matching: strip non-digits from both query and stored number,
+      // then check if the stored number ends with the query digits (handles partial entry)
+      const qDigits = q.replace(/\D/g, "");
+      const storedDigits = (c.phone ?? "").replace(/\D/g, "");
+      if (qDigits.length >= 4 && storedDigits.endsWith(qDigits)) return true;
+      // Fallback: plain substring match on raw phone string
+      if ((c.phone ?? "").toLowerCase().includes(q)) return true;
+      return false;
+    })();
     const matchesWave = waveFilter === "all" || (c as unknown as { wave?: number }).wave === parseInt(waveFilter);
     return matchesSearch && matchesWave;
   });

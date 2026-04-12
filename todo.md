@@ -148,3 +148,7 @@
 - [x] Run migration for cvUrl and cvFileName columns
 - [x] Frontend: add CV Attachment section to CandidateDetail (upload button, file name, download/preview link)
 - [x] Frontend: CV upload shows file name and a clickable link to open/download the file
+
+## Change Requests (Round 14 — Phone Search Suffix Matching)
+- [x] Fix candidate search: phone matching should use last 8 digits suffix so "03424945" matches "01003424945"
+- [x] Apply same suffix logic to the search bar in both board view and list view
