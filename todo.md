@@ -116,3 +116,24 @@
 - [x] Frontend: update manual add form to include source, age, location fields
 - [x] Frontend: update edit form to include all new fields
 - [x] Frontend: update CSV import to optionally map source column
+
+## Change Requests (Round 11)
+- [x] Add "No Show" quick-action button to candidate board cards (visible for Interview Scheduled stage)
+- [x] Add "No Show" quick-action button to candidate list rows (same stage condition)
+- [x] Add "No Show" button to CandidateDetail page pipeline stepper / action bar
+- [x] No Show action: rejects candidate with pre-filled reason "No-show — Did not attend interview", still requires confirmation
+- [x] Make rejection reason a required free-text field (not a dropdown, not optional) in single reject dialog
+- [x] Make rejection reason required in bulk reject dialog
+- [x] Disable "Confirm Rejection" button until reason is filled in (both single and bulk)
+- [x] Update CandidateDetail rejection flow to also require a reason
+
+## Change Requests (Round 12 — Wave Categorization)
+- [x] DB schema: add wave field (nullable integer, e.g. 1, 2, 3...) to candidates table
+- [x] Run Drizzle migration for wave field
+- [x] Backend: update createCandidate, updateCandidate, bulkInsertCandidates to accept wave
+- [x] Backend: update tRPC create/update/bulkImport input schemas to include optional wave
+- [x] Frontend: add Wave field (number input or select) to Add Candidate form
+- [x] Frontend: add Wave field to CandidateDetail edit form
+- [x] Frontend: show Wave badge on candidate board cards and list rows
+- [x] Frontend: add Wave filter dropdown on Candidates page toolbar
+- [x] Frontend: update CSV import to parse optional wave column

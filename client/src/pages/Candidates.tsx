@@ -53,6 +53,7 @@ import {
   ArrowRight,
   AlertTriangle,
   RefreshCw,
+  UserX,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -67,6 +68,7 @@ type CandidateForm = {
   age: string;
   location: string;
   source: string;
+  wave: string;
 };
 
 const EMPTY_FORM: CandidateForm = {
@@ -79,6 +81,7 @@ const EMPTY_FORM: CandidateForm = {
   age: "",
   location: "",
   source: "",
+  wave: "",
 };
 
 export default function Candidates() {
@@ -130,26 +133,33 @@ export default function Candidates() {
   const [rejectId, setRejectId] = useState<number | null>(null);
   const [rejectName, setRejectName] = useState("");
   const [rejectReason, setRejectReason] = useState("");
+  // No Show: pre-fill reason and open reject dialog
+  const [isNoShow, setIsNoShow] = useState(false);
 
-  const handleReject = (id: number, name: string) => {
+  const handleReject = (id: number, name: string, prefillReason?: string) => {
     setRejectId(id);
     setRejectName(name);
-    setRejectReason("");
+    setRejectReason(prefillReason ?? "");
+    setIsNoShow(!!prefillReason);
+  };
+
+  const handleNoShow = (id: number, name: string) => {
+    handleReject(id, name, "No-show — Did not attend interview");
   };
 
   const confirmReject = () => {
     if (rejectId === null) return;
+    if (!rejectReason.trim()) { toast.error("Please enter a rejection reason"); return; }
     const candidate = (candidates ?? []).find((c) => c.id === rejectId);
     updateStatus.mutate({
       id: rejectId,
       status: "rejected",
       fromStage: candidate?.status as PipelineStage | undefined,
-      detail: rejectReason.trim() || undefined,
+      detail: rejectReason.trim(),
     });
-    if (rejectReason.trim()) {
-      addNote.mutate({ candidateId: rejectId, stage: "rejected", note: `Rejection reason: ${rejectReason.trim()}` });
-    }
+    addNote.mutate({ candidateId: rejectId, stage: "rejected", note: `Rejection reason: ${rejectReason.trim()}` });
     setRejectId(null);
+    setIsNoShow(false);
   };
 
   const addNote = trpc.notes.add.useMutation();
@@ -189,6 +199,7 @@ export default function Candidates() {
   };
 
   const confirmBulkReject = async () => {
+    if (!bulkRejectReason.trim()) { toast.error("Please enter a rejection reason"); return; }
     const results = await Promise.allSettled(
       bulkRejectIds.map(async (id) => {
         const candidate = (candidates ?? []).find((c) => c.id === id);
@@ -196,11 +207,9 @@ export default function Candidates() {
           id,
           status: "rejected",
           fromStage: candidate?.status as PipelineStage | undefined,
-          detail: bulkRejectReason.trim() || undefined,
+          detail: bulkRejectReason.trim(),
         });
-        if (bulkRejectReason.trim()) {
-          await addNote.mutateAsync({ candidateId: id, stage: "rejected", note: `Rejection reason: ${bulkRejectReason.trim()}` });
-        }
+        await addNote.mutateAsync({ candidateId: id, stage: "rejected", note: `Rejection reason: ${bulkRejectReason.trim()}` });
       })
     );
     const succeeded = results.filter((r) => r.status === "fulfilled").length;
@@ -249,6 +258,7 @@ export default function Candidates() {
 
   const [view, setView] = useState<"board" | "list">("board");
   const [search, setSearch] = useState("");
+  const [waveFilter, setWaveFilter] = useState<string>("all");
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [form, setForm] = useState<CandidateForm>(EMPTY_FORM);
@@ -272,12 +282,16 @@ export default function Candidates() {
   const displayCandidates = activeTab === "reapplicants"
     ? (reApplicants ?? [])
     : allCandidates;
-  const filtered = displayCandidates.filter((c) =>
-    !search ||
-    c.name.toLowerCase().includes(search.toLowerCase()) ||
-    (c.email ?? "").toLowerCase().includes(search.toLowerCase()) ||
-    (c.phone ?? "").toLowerCase().includes(search.toLowerCase())
-  );
+  // Derive unique wave numbers from all candidates for the filter dropdown
+  const waveNumbers = Array.from(new Set(allCandidates.map((c) => (c as unknown as { wave?: number }).wave).filter(Boolean) as number[])).sort((a, b) => a - b);
+  const filtered = displayCandidates.filter((c) => {
+    const matchesSearch = !search ||
+      c.name.toLowerCase().includes(search.toLowerCase()) ||
+      (c.email ?? "").toLowerCase().includes(search.toLowerCase()) ||
+      (c.phone ?? "").toLowerCase().includes(search.toLowerCase());
+    const matchesWave = waveFilter === "all" || (c as unknown as { wave?: number }).wave === parseInt(waveFilter);
+    return matchesSearch && matchesWave;
+  });
 
   const handleAddSubmit = () => {
     if (!form.name.trim()) { toast.error("Name is required"); return; }
@@ -285,6 +299,10 @@ export default function Candidates() {
     const ageNum = form.age ? parseInt(form.age) : undefined;
     if (form.age && (isNaN(ageNum!) || ageNum! < 16 || ageNum! > 80)) {
       toast.error("Age must be between 16 and 80"); return;
+    }
+    const waveNum = form.wave ? parseInt(form.wave) : undefined;
+    if (form.wave && (isNaN(waveNum!) || waveNum! < 1)) {
+      toast.error("Wave must be a positive number"); return;
     }
     createCandidate.mutate({
       name: form.name.trim(),
@@ -296,6 +314,7 @@ export default function Candidates() {
       age: ageNum,
       location: form.location.trim() || undefined,
       source: (form.source as "linkedin" | "email" | "referral" | "walk_in" | "other") || undefined,
+      wave: waveNum,
     });
   };
 
@@ -350,6 +369,8 @@ export default function Candidates() {
         const source = sourceMap[rawSource.toLowerCase()] || "";
         const rawAge = get("age") || "";
         const age = rawAge && !isNaN(parseInt(rawAge)) ? rawAge : "";
+        const rawWave = get("wave") || "";
+        const wave = rawWave && !isNaN(parseInt(rawWave)) && parseInt(rawWave) >= 1 ? rawWave : "";
         if (!name || !phone) { skipped++; continue; }
         // Duplicate detection
         const phoneSuffix = phone.replace(/[^\d]/g, "").slice(-9);
@@ -363,6 +384,7 @@ export default function Candidates() {
           age,
           location,
           source,
+          wave,
           isDuplicate,
           isRejected,
           existingName: existing?.name,
@@ -395,6 +417,7 @@ export default function Candidates() {
         age: r.age ? parseInt(r.age) : undefined,
         location: r.location || undefined,
         source: (r.source as "linkedin" | "email" | "referral" | "walk_in" | "other") || undefined,
+        wave: r.wave ? parseInt(r.wave) : undefined,
       }))
     );
   };
@@ -433,6 +456,20 @@ export default function Candidates() {
             className="pl-9 h-9 text-sm"
           />
         </div>
+        {/* Wave filter */}
+        {waveNumbers.length > 0 && (
+          <Select value={waveFilter} onValueChange={setWaveFilter}>
+            <SelectTrigger className="h-9 w-36 text-xs">
+              <SelectValue placeholder="All Waves" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all" className="text-xs">All Waves</SelectItem>
+              {waveNumbers.map((w) => (
+                <SelectItem key={w} value={String(w)} className="text-xs">Wave {w}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         {/* Re-applicants filter */}
         <Tabs value={activeTab} onValueChange={(v) => { setActiveTab(v as "all" | "reapplicants"); clearSelection(); }}>
           <TabsList className="h-9">
@@ -511,6 +548,7 @@ export default function Candidates() {
               updateStatus.mutate({ id, status, fromStage: candidate?.status as PipelineStage | undefined });
             }
           }}
+          onNoShow={(id, name) => handleNoShow(id, name)}
           onClickCandidate={(id) => navigate(`/candidates/${id}`)}
           onDeleteCandidate={(id, name) => { setDeleteId(id); setDeleteName(name); }}
           onToggleSelect={toggleSelect}
@@ -525,6 +563,7 @@ export default function Candidates() {
           onToggleSelect={toggleSelect}
           onToggleSelectAll={() => toggleSelectAll(filteredIds)}
           onReject={handleReject}
+          onNoShow={handleNoShow}
           onMoveStage={(id, stage) => {
             const candidate = filtered.find((c) => c.id === id);
             updateStatus.mutate({ id, status: stage, fromStage: candidate?.status as PipelineStage | undefined });
@@ -600,6 +639,10 @@ export default function Candidates() {
               </Select>
             </div>
             <div className="space-y-1.5 col-span-2">
+              <Label>Wave <span className="text-muted-foreground text-xs">(optional)</span></Label>
+              <Input type="number" min={1} placeholder="e.g. 1" value={form.wave} onChange={(e) => setForm({ ...form, wave: e.target.value })} />
+            </div>
+            <div className="space-y-1.5 col-span-2">
               <Label>Notes <span className="text-muted-foreground text-xs">(optional)</span></Label>
               <Textarea placeholder="Any additional notes..." value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} />
             </div>
@@ -635,35 +678,36 @@ export default function Candidates() {
       </AlertDialog>
 
       {/* Rejection Reason Dialog */}
-      <Dialog open={rejectId !== null} onOpenChange={(open) => { if (!open) setRejectId(null); }}>
+      <Dialog open={rejectId !== null} onOpenChange={(open) => { if (!open) { setRejectId(null); setIsNoShow(false); } }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Reject Candidate</DialogTitle>
+            <DialogTitle>{isNoShow ? "Mark as No-Show" : "Reject Candidate"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            <p className="text-sm text-muted-foreground">You are rejecting <strong>{rejectName}</strong>. Optionally add a reason — it will be saved to their profile notes.</p>
+            <p className="text-sm text-muted-foreground">
+              {isNoShow
+                ? <><strong>{rejectName}</strong> will be marked as a no-show and rejected from the pipeline.</>  
+                : <>You are rejecting <strong>{rejectName}</strong>. A reason is required and will be saved to their profile.</>}
+            </p>
             <div className="space-y-1.5">
-              <Label>Rejection Reason <span className="text-muted-foreground text-xs">(optional)</span></Label>
-              <Select value={rejectReason} onValueChange={setRejectReason}>
-                <SelectTrigger><SelectValue placeholder="Select a reason..." /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="No-show">No-show — Did not attend interview</SelectItem>
-                  <SelectItem value="Withdrew">Withdrew — Candidate withdrew application</SelectItem>
-                  <SelectItem value="Underqualified">Underqualified — Does not meet requirements</SelectItem>
-                  <SelectItem value="Poor voice note">Poor voice note — Failed initial screening</SelectItem>
-                  <SelectItem value="Not responsive">Not responsive — Did not reply to WhatsApp</SelectItem>
-                  <SelectItem value="Other">Other</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label>Rejection Reason <span className="text-destructive">*</span></Label>
+              <Input
+                placeholder="e.g. Did not meet language requirements"
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                autoFocus={!isNoShow}
+              />
+              <p className="text-xs text-muted-foreground">This will be logged in the candidate's activity timeline.</p>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRejectId(null)}>Cancel</Button>
+            <Button variant="outline" onClick={() => { setRejectId(null); setIsNoShow(false); }}>Cancel</Button>
             <Button
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={confirmReject}
+              disabled={!rejectReason.trim()}
             >
-              Confirm Rejection
+              {isNoShow ? "Confirm No-Show" : "Confirm Rejection"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -694,20 +738,16 @@ export default function Candidates() {
             <DialogTitle>Reject {bulkRejectIds.length} Candidates</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            <p className="text-sm text-muted-foreground">You are rejecting <strong>{bulkRejectIds.length} candidates</strong>. Optionally add a reason — it will be saved to each candidate’s profile.</p>
+            <p className="text-sm text-muted-foreground">You are rejecting <strong>{bulkRejectIds.length} candidates</strong>. A reason is required and will be saved to each candidate's profile.</p>
             <div className="space-y-1.5">
-              <Label>Rejection Reason <span className="text-muted-foreground text-xs">(optional)</span></Label>
-              <Select value={bulkRejectReason} onValueChange={setBulkRejectReason}>
-                <SelectTrigger><SelectValue placeholder="Select a reason..." /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="No-show">No-show — Did not attend interview</SelectItem>
-                  <SelectItem value="Withdrew">Withdrew — Candidate withdrew application</SelectItem>
-                  <SelectItem value="Underqualified">Underqualified — Does not meet requirements</SelectItem>
-                  <SelectItem value="Poor voice note">Poor voice note — Failed initial screening</SelectItem>
-                  <SelectItem value="Not responsive">Not responsive — Did not reply to WhatsApp</SelectItem>
-                  <SelectItem value="Other">Other</SelectItem>
-                </SelectContent>
-              </Select>
+              <Label>Rejection Reason <span className="text-destructive">*</span></Label>
+              <Input
+                placeholder="e.g. Did not meet language requirements"
+                value={bulkRejectReason}
+                onChange={(e) => setBulkRejectReason(e.target.value)}
+                autoFocus
+              />
+              <p className="text-xs text-muted-foreground">This will be logged in each candidate's activity timeline.</p>
             </div>
           </div>
           <DialogFooter>
@@ -715,6 +755,7 @@ export default function Candidates() {
             <Button
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={confirmBulkReject}
+              disabled={!bulkRejectReason.trim()}
             >
               Reject {bulkRejectIds.length} Candidates
             </Button>
@@ -847,12 +888,14 @@ type CandidateRow = {
   positionApplied: string;
   status: string;
   createdAt: Date;
+  wave?: number | null;
 };
 
 function PipelineBoard({
   candidates,
   selected,
   onMoveStage,
+  onNoShow,
   onClickCandidate,
   onDeleteCandidate,
   onToggleSelect,
@@ -860,6 +903,7 @@ function PipelineBoard({
   candidates: CandidateRow[];
   selected: Set<number>;
   onMoveStage: (id: number, stage: PipelineStage) => void;
+  onNoShow: (id: number, name: string) => void;
   onClickCandidate: (id: number) => void;
   onDeleteCandidate: (id: number, name: string) => void;
   onToggleSelect: (id: number) => void;
@@ -892,6 +936,7 @@ function PipelineBoard({
                     currentStage={stage}
                     isSelected={selected.has(c.id)}
                     onMoveStage={onMoveStage}
+                    onNoShow={onNoShow}
                     onClick={() => onClickCandidate(c.id)}
                     onDelete={() => onDeleteCandidate(c.id, c.name)}
                     onToggleSelect={() => onToggleSelect(c.id)}
@@ -911,6 +956,7 @@ function CandidateCard({
   currentStage,
   isSelected,
   onMoveStage,
+  onNoShow,
   onClick,
   onDelete,
   onToggleSelect,
@@ -919,6 +965,7 @@ function CandidateCard({
   currentStage: PipelineStage;
   isSelected: boolean;
   onMoveStage: (id: number, stage: PipelineStage) => void;
+  onNoShow: (id: number, name: string) => void;
   onClick: () => void;
   onDelete: () => void;
   onToggleSelect: () => void;
@@ -939,7 +986,12 @@ function CandidateCard({
           {initials}
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-xs font-semibold text-foreground truncate">{candidate.name}</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-xs font-semibold text-foreground truncate">{candidate.name}</p>
+            {candidate.wave && (
+              <span className="text-[9px] font-bold px-1 py-0 rounded bg-indigo-100 text-indigo-700 shrink-0">W{candidate.wave}</span>
+            )}
+          </div>
           <p className="text-[10px] text-muted-foreground truncate">{candidate.phone || candidate.email || "—"}</p>
         </div>
         <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
@@ -966,6 +1018,16 @@ function CandidateCard({
         </div>
       </div>
       <div className="flex gap-1 mt-2.5 flex-wrap" onClick={(e) => e.stopPropagation()}>
+          {/* No Show — shown when candidate has an interview scheduled */}
+        {currentStage === "interview_scheduled" && (
+          <button
+            onClick={() => onNoShow(candidate.id, candidate.name)}
+            className="text-[9px] font-medium px-1.5 py-0.5 rounded-full border border-red-200 bg-red-50 text-red-700 transition-colors hover:bg-red-100 flex items-center gap-0.5"
+            title="Mark as no-show"
+          >
+            <UserX className="h-2 w-2" /> No Show
+          </button>
+        )}
         {/* Skip to Interview shortcut — shown when candidate is before interview_scheduled */}
         {["applied", "whatsapp_sent", "voice_note_reviewed"].includes(currentStage) && (
           <button
@@ -999,6 +1061,7 @@ function CandidateList({
   onToggleSelect,
   onToggleSelectAll,
   onReject,
+  onNoShow,
   onMoveStage,
 }: {
   candidates: CandidateRow[];
@@ -1009,6 +1072,7 @@ function CandidateList({
   onToggleSelect: (id: number) => void;
   onToggleSelectAll: () => void;
   onReject?: (id: number, name: string) => void;
+  onNoShow?: (id: number, name: string) => void;
   onMoveStage?: (id: number, stage: PipelineStage) => void;
 }) {
   if (candidates.length === 0) {
@@ -1056,7 +1120,12 @@ function CandidateList({
                     {c.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)}
                   </div>
                   <div>
-                    <p className="font-medium text-foreground text-xs">{c.name}</p>
+                    <div className="flex items-center gap-1.5">
+                      <p className="font-medium text-foreground text-xs">{c.name}</p>
+                      {c.wave && (
+                        <span className="text-[9px] font-bold px-1 py-0 rounded bg-indigo-100 text-indigo-700">W{c.wave}</span>
+                      )}
+                    </div>
                     <p className="text-[10px] text-muted-foreground">{c.email || "—"}</p>
                   </div>
                 </div>
@@ -1073,6 +1142,16 @@ function CandidateList({
               </td>
               <td className="px-4 py-3">
                 <div className="flex items-center gap-1">
+                  {/* No Show — shown for interview_scheduled candidates */}
+                  {c.status === "interview_scheduled" && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onNoShow && onNoShow(c.id, c.name); }}
+                      className="p-1 rounded hover:bg-red-50 text-muted-foreground/30 hover:text-red-600 transition-colors opacity-0 group-hover:opacity-100"
+                      title="Mark as no-show"
+                    >
+                      <UserX className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                   {/* Skip to Interview — shown in list row for early-stage candidates */}
                   {["applied", "whatsapp_sent", "voice_note_reviewed"].includes(c.status) && (
                     <button

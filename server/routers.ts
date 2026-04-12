@@ -70,6 +70,7 @@ export const appRouter = router({
           age: z.number().int().min(16).max(80).optional(),
           location: z.string().optional(),
           source: z.enum(["linkedin", "email", "referral", "walk_in", "other"]).optional(),
+          wave: z.number().int().min(1).optional(),
         })
       )
       .mutation(async ({ input, ctx }) => {
@@ -103,6 +104,7 @@ export const appRouter = router({
           source: z.enum(["linkedin", "email", "referral", "walk_in", "other"]).nullable().optional(),
           voiceNoteRating: z.number().int().min(1).max(5).nullable().optional(),
           screeningNotes: z.string().nullable().optional(),
+          wave: z.number().int().min(1).nullable().optional(),
         })
       )
       .mutation(({ input }) => {
@@ -147,6 +149,7 @@ export const appRouter = router({
             age: z.number().int().min(16).max(80).optional(),
             location: z.string().optional(),
             source: z.enum(["linkedin", "email", "referral", "walk_in", "other"]).optional(),
+            wave: z.number().int().min(1).optional(),
           })
         )
       )

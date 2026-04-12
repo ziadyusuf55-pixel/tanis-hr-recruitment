@@ -74,6 +74,7 @@ export const candidates = mysqlTable("candidates", {
   source: mysqlEnum("source", ["linkedin", "email", "referral", "walk_in", "other"]),
   voiceNoteRating: int("voiceNoteRating"),   // 1-5 stars
   screeningNotes: text("screeningNotes"),    // recruiter screening comments
+  wave: int("wave"),                         // recruitment wave number (1, 2, 3...)
   // Track when candidate reached each key stage (UTC ms) for time-to-hire KPI
   appliedAt: bigint("appliedAt", { mode: "number" }),
   acceptedAt: bigint("acceptedAt", { mode: "number" }),

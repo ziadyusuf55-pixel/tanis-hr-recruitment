@@ -61,6 +61,8 @@ import {
   Briefcase,
   UserCheck,
   ExternalLink,
+  UserX,
+  Layers,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -78,6 +80,7 @@ type CandidateEditForm = {
   age: string;
   location: string;
   source: string;
+  wave: string;
   voiceNoteRating: number | null;
   screeningNotes: string;
 };
@@ -282,6 +285,7 @@ export default function CandidateDetail() {
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
+  const [isNoShow, setIsNoShow] = useState(false);
   const [interviewForm, setInterviewForm] = useState<InterviewForm>(EMPTY_INTERVIEW);
   const [editForm, setEditForm] = useState<CandidateEditForm>({
     name: "",
@@ -295,6 +299,7 @@ export default function CandidateDetail() {
     age: "",
     location: "",
     source: "",
+    wave: "",
     voiceNoteRating: null,
     screeningNotes: "",
   });
@@ -319,6 +324,7 @@ export default function CandidateDetail() {
       age: c.age != null ? String(c.age) : "",
       location: (c.location as string) ?? "",
       source: (c.source as string) ?? "",
+      wave: c.wave != null ? String(c.wave) : "",
       voiceNoteRating: (c.voiceNoteRating as number | null) ?? null,
       screeningNotes: (c.screeningNotes as string) ?? "",
     });
@@ -331,6 +337,10 @@ export default function CandidateDetail() {
     if (editForm.age && (isNaN(ageNum!) || ageNum! < 16 || ageNum! > 80)) {
       toast.error("Age must be between 16 and 80");
       return;
+    }
+    const waveNum = editForm.wave ? parseInt(editForm.wave) : null;
+    if (editForm.wave && (isNaN(waveNum!) || waveNum! < 1)) {
+      toast.error("Wave must be a positive number"); return;
     }
     updateCandidate.mutate({
       id,
@@ -345,6 +355,7 @@ export default function CandidateDetail() {
       age: ageNum,
       location: editForm.location.trim() || null,
       source: (editForm.source as "linkedin" | "email" | "referral" | "walk_in" | "other") || null,
+      wave: waveNum,
       voiceNoteRating: editForm.voiceNoteRating,
       screeningNotes: editForm.screeningNotes.trim() || null,
     });
@@ -382,17 +393,23 @@ export default function CandidateDetail() {
 
   const handleReject = () => {
     if (!candidate) return;
+    if (!rejectReason.trim()) { toast.error("Please enter a rejection reason"); return; }
     updateStatus.mutate({
       id,
       status: "rejected",
       fromStage: candidate.status as PipelineStage,
-      detail: rejectReason.trim() || undefined,
+      detail: rejectReason.trim(),
     });
-    if (rejectReason.trim()) {
-      addNote.mutate({ candidateId: id, stage: "rejected", note: `Rejection reason: ${rejectReason.trim()}` });
-    }
+    addNote.mutate({ candidateId: id, stage: "rejected", note: `Rejection reason: ${rejectReason.trim()}` });
     setRejectOpen(false);
     setRejectReason("");
+    setIsNoShow(false);
+  };
+
+  const handleNoShow = () => {
+    setRejectReason("No-show — Did not attend interview");
+    setIsNoShow(true);
+    setRejectOpen(true);
   };
 
   // ─── Loading / Not Found ────────────────────────────────────────────────────
@@ -449,7 +466,7 @@ export default function CandidateDetail() {
           <ArrowLeft className="h-3.5 w-3.5" />
           Candidates
         </button>
-        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2">
           {!isRejected && nextStage && (
             <Button
               size="sm"
@@ -460,6 +477,17 @@ export default function CandidateDetail() {
             >
               Move to {STAGE_LABELS[nextStage]}
               <ChevronRight className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          {/* No Show — only when interview is scheduled */}
+          {candidate.status === "interview_scheduled" && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleNoShow}
+              className="gap-1.5 h-9 text-xs border-red-200 text-red-600 hover:bg-red-50 hover:border-red-300"
+            >
+              <UserX className="h-3.5 w-3.5" /> No Show
             </Button>
           )}
           <Button size="sm" variant="outline" onClick={() => setInterviewOpen(true)} className="gap-2 h-9">
@@ -479,7 +507,7 @@ export default function CandidateDetail() {
                 <>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
-                    onClick={() => setRejectOpen(true)}
+                    onClick={() => { setIsNoShow(false); setRejectReason(""); setRejectOpen(true); }}
                     className="text-destructive focus:text-destructive cursor-pointer"
                   >
                     <XCircle className="mr-2 h-3.5 w-3.5" /> Reject Candidate
@@ -605,6 +633,13 @@ export default function CandidateDetail() {
             ) : null} />
             <InfoRow label="Age" value={c.age != null ? `${c.age} years` : null} />
             <InfoRow label="Location" value={c.location as string | null} />
+            {c.wave != null && (
+              <InfoRow label="Wave" value={
+                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold bg-indigo-100 text-indigo-700 border border-indigo-200">
+                  <Layers className="h-3 w-3" /> Wave {String(c.wave)}
+                </span>
+              } />
+            )}
           </div>
         </SectionCard>
 
@@ -967,6 +1002,10 @@ export default function CandidateDetail() {
                   </Select>
                 </div>
                 <div className="space-y-1.5">
+                  <Label>Wave <span className="text-muted-foreground text-xs">(optional)</span></Label>
+                  <Input type="number" min={1} placeholder="e.g. 1" value={editForm.wave} onChange={(e) => setEditForm({ ...editForm, wave: e.target.value })} />
+                </div>
+                <div className="space-y-1.5">
                   <Label>CV / Resume Link</Label>
                   <Input placeholder="https://..." value={editForm.resumeLink} onChange={(e) => setEditForm({ ...editForm, resumeLink: e.target.value })} />
                 </div>
@@ -1094,43 +1133,54 @@ export default function CandidateDetail() {
         </DialogContent>
       </Dialog>
 
-      {/* Reject Dialog */}
-      <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
+      {/* Reject / No Show Dialog */}
+      <Dialog open={rejectOpen} onOpenChange={(open) => { if (!open) { setRejectOpen(false); setIsNoShow(false); } }}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>Reject Candidate</DialogTitle>
+            <DialogTitle>{isNoShow ? "Mark as No-Show" : "Reject Candidate"}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3 py-1">
             <p className="text-sm text-muted-foreground">
-              Select a reason for rejecting <strong>{candidate.name}</strong>:
+              {isNoShow
+                ? <><strong>{candidate.name}</strong> will be marked as a no-show and rejected from the pipeline.</>
+                : <>Rejecting <strong>{candidate.name}</strong>. A reason is required.</>}
             </p>
-            <div className="grid gap-1.5">
-              {REJECTION_PRESETS.map((preset) => (
-                <button
-                  key={preset}
-                  onClick={() => setRejectReason(preset)}
-                  className={`text-left text-sm px-3 py-2 rounded-lg border transition-colors ${
-                    rejectReason === preset
-                      ? "border-destructive/60 bg-destructive/5 text-destructive"
-                      : "border-border hover:bg-muted/40"
-                  }`}
-                >
-                  {preset}
-                </button>
-              ))}
+            {!isNoShow && (
+              <div className="grid gap-1.5">
+                {REJECTION_PRESETS.map((preset) => (
+                  <button
+                    key={preset}
+                    onClick={() => setRejectReason(preset)}
+                    className={`text-left text-sm px-3 py-2 rounded-lg border transition-colors ${
+                      rejectReason === preset
+                        ? "border-destructive/60 bg-destructive/5 text-destructive"
+                        : "border-border hover:bg-muted/40"
+                    }`}
+                  >
+                    {preset}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <Label>Rejection Reason <span className="text-destructive">*</span></Label>
+              <Input
+                placeholder="e.g. Did not meet language requirements"
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                autoFocus={isNoShow}
+              />
+              <p className="text-xs text-muted-foreground">This will be logged in the activity timeline.</p>
             </div>
-            <Textarea
-              placeholder="Or write a custom reason..."
-              rows={2}
-              value={rejectReason}
-              onChange={(e) => setRejectReason(e.target.value)}
-              className="text-sm"
-            />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setRejectOpen(false)}>Cancel</Button>
-            <Button variant="destructive" onClick={handleReject} disabled={updateStatus.isPending}>
-              {updateStatus.isPending ? "Rejecting..." : "Confirm Rejection"}
+            <Button variant="outline" onClick={() => { setRejectOpen(false); setIsNoShow(false); }}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={handleReject}
+              disabled={updateStatus.isPending || !rejectReason.trim()}
+            >
+              {updateStatus.isPending ? "Rejecting..." : isNoShow ? "Confirm No-Show" : "Confirm Rejection"}
             </Button>
           </DialogFooter>
         </DialogContent>

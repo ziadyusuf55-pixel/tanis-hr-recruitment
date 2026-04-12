@@ -95,6 +95,7 @@ export async function createCandidate(data: {
   age?: number;
   location?: string;
   source?: "linkedin" | "email" | "referral" | "walk_in" | "other";
+  wave?: number;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -111,6 +112,7 @@ export async function createCandidate(data: {
     age: data.age ?? null,
     location: data.location ?? null,
     source: data.source ?? null,
+    wave: data.wave ?? null,
   });
   return result;
 }
@@ -131,6 +133,7 @@ export async function updateCandidate(
     source?: "linkedin" | "email" | "referral" | "walk_in" | "other" | null;
     voiceNoteRating?: number | null;
     screeningNotes?: string | null;
+    wave?: number | null;
   }
 ) {
   const db = await getDb();
@@ -215,6 +218,7 @@ export async function bulkInsertCandidates(
     age?: number;
     location?: string;
     source?: "linkedin" | "email" | "referral" | "walk_in" | "other";
+    wave?: number;
   }>
 ) {
   const db = await getDb();
@@ -231,6 +235,7 @@ export async function bulkInsertCandidates(
       age: r.age ?? null,
       location: r.location ?? null,
       source: r.source ?? null,
+      wave: r.wave ?? null,
       status: "applied" as PipelineStage,
       appliedAt: now,
     }))
