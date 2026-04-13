@@ -152,3 +152,33 @@
 ## Change Requests (Round 14 — Phone Search Suffix Matching)
 - [x] Fix candidate search: phone matching should use last 8 digits suffix so "03424945" matches "01003424945"
 - [x] Apply same suffix logic to the search bar in both board view and list view
+
+## Change Requests (Round 15 — Pipeline + Training)
+- [x] Remove "Re-applicants" filter tab from Candidates page
+- [x] Add "Rejected" as a visible column in the Kanban pipeline board
+- [x] DB schema: add training_batches table (id, name, trainerName, startDate, notes, createdAt)
+- [x] DB schema: add batch_candidates table (id, batchId, candidateId, assignedAt)
+- [x] Run migration for training_batches and batch_candidates
+- [x] Backend: tRPC batches.create (name, trainerName, startDate, notes)
+- [x] Backend: tRPC batches.list (all batches with candidate count)
+- [x] Backend: tRPC batches.getById (batch details + assigned candidates)
+- [x] Backend: tRPC batches.assignCandidate (batchId, candidateId)
+- [x] Backend: tRPC batches.removeCandidate (batchId, candidateId)
+- [x] Backend: tRPC batches.delete (batchId)
+- [x] Frontend: add Training page in sidebar navigation
+- [x] Frontend: Training page — list of batches as cards (name, trainer, start date, candidate count)
+- [x] Frontend: Training page — create new batch dialog (name, trainer name, start date, notes)
+- [x] Frontend: Training page — batch detail view showing all assigned candidates
+- [x] Frontend: Training page — assign candidate to batch (search accepted candidates and add)
+- [x] Frontend: Training page — remove candidate from batch
+- [x] Frontend: Candidate detail page — show which batch the candidate is assigned to (if any)
+
+## Change Requests (Round 16 — Tanis Hub + Trainee Code + Timeline + Rejected Column)
+- [x] Rename system: update app title to "Tanis Hub" in sidebar, login page, and page title
+- [x] DB: add traineeCode column to batch_candidates table
+- [x] Run migration for traineeCode column
+- [x] Backend: add setTraineeCode tRPC procedure (batchId, candidateId, code)
+- [x] Frontend: Training batch detail — show trainee code column, allow trainer to assign/edit code per agent
+- [x] Frontend: Candidates page — add Timeline view tab (chronological list of all activity log entries across all candidates)
+- [x] Frontend: Fix duplicate-key React warning from "rejected" appearing in both ACTIVE_STAGES and pipeline board
+- [x] Mark Round 15 items as completed

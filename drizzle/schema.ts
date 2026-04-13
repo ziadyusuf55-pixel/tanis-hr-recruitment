@@ -146,3 +146,36 @@ export const activityLog = mysqlTable("activity_log", {
 
 export type ActivityLog = typeof activityLog.$inferSelect;
 export type InsertActivityLog = typeof activityLog.$inferInsert;
+
+/**
+ * Training batches — groups of accepted candidates assigned to a training cohort.
+ * Trainers create batches; recruiters assign candidates to them.
+ */
+export const trainingBatches = mysqlTable("training_batches", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),          // e.g. "Batch 1", "Wave 2 - June"
+  trainerName: varchar("trainerName", { length: 255 }),      // name of the trainer running the batch
+  startDate: bigint("startDate", { mode: "number" }),        // UTC ms timestamp of training start
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type TrainingBatch = typeof trainingBatches.$inferSelect;
+export type InsertTrainingBatch = typeof trainingBatches.$inferInsert;
+
+/**
+ * Junction table linking candidates to training batches.
+ * A candidate can only be in one batch at a time (enforced at app level).
+ */
+export const batchCandidates = mysqlTable("batch_candidates", {
+  // traineeCode is assigned by the trainer after the agent joins the batch
+  id: int("id").autoincrement().primaryKey(),
+  batchId: int("batchId").notNull(),
+  candidateId: int("candidateId").notNull(),
+  traineeCode: varchar("traineeCode", { length: 100 }),
+  assignedAt: timestamp("assignedAt").defaultNow().notNull(),
+});
+
+export type BatchCandidate = typeof batchCandidates.$inferSelect;
+export type InsertBatchCandidate = typeof batchCandidates.$inferInsert;

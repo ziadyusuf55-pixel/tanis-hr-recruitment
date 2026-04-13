@@ -52,8 +52,8 @@ import {
   MessageCircle,
   ArrowRight,
   AlertTriangle,
-  RefreshCw,
   UserX,
+  Clock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -256,7 +256,8 @@ export default function Candidates() {
     toast.success(`Deleted ${ids.length} candidate${ids.length > 1 ? "s" : ""}`);
   };
 
-  const [view, setView] = useState<"board" | "list">("board");
+  const [view, setView] = useState<"board" | "list" | "timeline">("board");
+  const { data: allActivity = [] } = trpc.activity.listAll.useQuery({ limit: 300 });
   const [search, setSearch] = useState("");
   const [waveFilter, setWaveFilter] = useState<string>("all");
   const [addOpen, setAddOpen] = useState(false);
@@ -264,9 +265,6 @@ export default function Candidates() {
   const [form, setForm] = useState<CandidateForm>(EMPTY_FORM);
   const [csvRows, setCsvRows] = useState<CandidateForm[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
-  // Re-applicants tab
-  const [activeTab, setActiveTab] = useState<"all" | "reapplicants">("all");
-  const { data: reApplicants } = trpc.candidates.reApplicants.useQuery();
   // Duplicate check for manual add form
   const [phoneCheckVal, setPhoneCheckVal] = useState("");
   const { data: dupCheck } = trpc.candidates.checkDuplicate.useQuery(
@@ -279,9 +277,7 @@ export default function Candidates() {
   const [csvSkipDups, setCsvSkipDups] = useState(true);
 
   const allCandidates = candidates ?? [];
-  const displayCandidates = activeTab === "reapplicants"
-    ? (reApplicants ?? [])
-    : allCandidates;
+  const displayCandidates = allCandidates;
   // Derive unique wave numbers from all candidates for the filter dropdown
   const waveNumbers = Array.from(new Set(allCandidates.map((c) => (c as unknown as { wave?: number }).wave).filter(Boolean) as number[])).sort((a, b) => a - b);
   const filtered = displayCandidates.filter((c) => {
@@ -479,20 +475,11 @@ export default function Candidates() {
             </SelectContent>
           </Select>
         )}
-        {/* Re-applicants filter */}
-        <Tabs value={activeTab} onValueChange={(v) => { setActiveTab(v as "all" | "reapplicants"); clearSelection(); }}>
-          <TabsList className="h-9">
-            <TabsTrigger value="all" className="text-xs px-3">All</TabsTrigger>
-            <TabsTrigger value="reapplicants" className="text-xs px-3 gap-1.5">
-              <RefreshCw className="h-3 w-3" />
-              Re-applicants {reApplicants && reApplicants.length > 0 && <span className="bg-amber-500 text-white rounded-full px-1.5 py-0 text-[10px] font-bold">{reApplicants.length}</span>}
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
-        <Tabs value={view} onValueChange={(v) => { setView(v as "board" | "list"); clearSelection(); }}>
+        <Tabs value={view} onValueChange={(v) => { setView(v as "board" | "list" | "timeline"); clearSelection(); }}>
           <TabsList className="h-9">
             <TabsTrigger value="board" className="text-xs px-3">Board</TabsTrigger>
             <TabsTrigger value="list" className="text-xs px-3">List</TabsTrigger>
+            <TabsTrigger value="timeline" className="text-xs px-3 gap-1.5"><Clock className="h-3.5 w-3.5" />Timeline</TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
@@ -562,7 +549,7 @@ export default function Candidates() {
           onDeleteCandidate={(id, name) => { setDeleteId(id); setDeleteName(name); }}
           onToggleSelect={toggleSelect}
         />
-      ) : (
+      ) : view === "list" ? (
         <CandidateList
           candidates={filtered}
           selected={selected}
@@ -578,6 +565,52 @@ export default function Candidates() {
             updateStatus.mutate({ id, status: stage, fromStage: candidate?.status as PipelineStage | undefined });
           }}
         />
+      ) : (
+        /* Timeline view */
+        <div className="max-w-2xl mx-auto">
+          {allActivity.length === 0 ? (
+            <div className="text-center py-20 text-muted-foreground">
+              <Clock className="h-10 w-10 mx-auto mb-3 opacity-25" />
+              <p className="font-medium">No activity yet</p>
+              <p className="text-sm mt-1">Stage changes and actions will appear here</p>
+            </div>
+          ) : (
+            <div className="relative">
+              <div className="absolute left-4 top-0 bottom-0 w-px bg-border" />
+              <div className="space-y-0">
+                {(allActivity as Array<{ id: number; candidateId: number; candidateName: string | null; action: string; fromStage: string | null; toStage: string | null; detail: string | null; performedBy: string | null; createdAt: Date }>).map((entry) => (
+                  <div key={entry.id} className="relative flex gap-4 pb-5 pl-10">
+                    <div className="absolute left-2.5 top-1.5 h-3 w-3 rounded-full border-2 border-background bg-primary/60 ring-1 ring-primary/20" />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <button
+                            onClick={() => navigate(`/candidates/${entry.candidateId}`)}
+                            className="text-sm font-medium text-foreground hover:text-primary hover:underline truncate block"
+                          >
+                            {entry.candidateName ?? `Candidate #${entry.candidateId}`}
+                          </button>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {entry.action === "stage_change" && entry.fromStage && entry.toStage
+                              ? `${STAGE_LABELS[entry.fromStage as PipelineStage] ?? entry.fromStage} → ${STAGE_LABELS[entry.toStage as PipelineStage] ?? entry.toStage}`
+                              : entry.action.replace(/_/g, " ")}
+                            {entry.detail ? ` — ${entry.detail}` : ""}
+                          </p>
+                          {entry.performedBy && (
+                            <p className="text-xs text-muted-foreground/60 mt-0.5">by {entry.performedBy}</p>
+                          )}
+                        </div>
+                        <span className="text-[10px] text-muted-foreground/60 whitespace-nowrap shrink-0">
+                          {new Date(entry.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       {/* Add Candidate Dialog */}

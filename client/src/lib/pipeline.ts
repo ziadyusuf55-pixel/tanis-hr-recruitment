@@ -10,7 +10,7 @@ export const PIPELINE_STAGES = [
 
 export type PipelineStage = (typeof PIPELINE_STAGES)[number];
 
-// Active stages (not rejected) — shown as pipeline columns
+// All stages shown as pipeline columns (including rejected)
 export const ACTIVE_STAGES = [
   "applied",
   "whatsapp_sent",
@@ -18,6 +18,7 @@ export const ACTIVE_STAGES = [
   "interview_scheduled",
   "accepted",
   "teams_invitation_sent",
+  "rejected",
 ] as const;
 
 export const STAGE_LABELS: Record<PipelineStage, string> = {

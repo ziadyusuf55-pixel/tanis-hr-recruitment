@@ -24,10 +24,10 @@ export default function Login() {
         <img src={TANIS_LOGO_WHITE} alt="Tanis" className="w-36 object-contain" />
         <div className="space-y-4">
           <h1 className="text-4xl font-bold text-white leading-tight">
-            Recruitment<br />Management<br />System
+            Tanis Hub
           </h1>
           <p className="text-white/70 text-base max-w-xs">
-            Streamline your hiring pipeline — from first contact to team invitation.
+            Your all-in-one platform for recruitment, onboarding, and training operations.
           </p>
         </div>
         <p className="text-white/40 text-xs">© {new Date().getFullYear()} Tanis. All rights reserved.</p>
@@ -47,7 +47,7 @@ export default function Login() {
           <div className="space-y-2">
             <h2 className="text-2xl font-semibold tracking-tight text-foreground">Welcome back</h2>
             <p className="text-sm text-muted-foreground">
-              Sign in to access the Tanis recruitment dashboard.
+              Sign in to access Tanis Hub.
             </p>
           </div>
 

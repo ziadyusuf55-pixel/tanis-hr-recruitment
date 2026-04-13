@@ -7,6 +7,7 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import Dashboard from "./pages/Dashboard";
 import Candidates from "./pages/Candidates";
 import CandidateDetail from "./pages/CandidateDetail";
+import Training from "./pages/Training";
 import Login from "./pages/Login";
 import { useAuth } from "./_core/hooks/useAuth";
 import { getLoginUrl } from "./const";
@@ -51,6 +52,7 @@ function Router() {
       <Route path="/" component={() => <ProtectedRoute component={Dashboard} />} />
       <Route path="/candidates" component={() => <ProtectedRoute component={Candidates} />} />
       <Route path="/candidates/:id" component={() => <ProtectedRoute component={CandidateDetail} />} />
+      <Route path="/training" component={() => <ProtectedRoute component={Training} />} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

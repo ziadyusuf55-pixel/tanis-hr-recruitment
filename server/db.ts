@@ -4,9 +4,11 @@ import {
   InsertUser,
   PipelineStage,
   activityLog,
+  batchCandidates,
   candidates,
   interviews,
   stageNotes,
+  trainingBatches,
   users,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
@@ -276,6 +278,28 @@ export async function listActivityByCandidateId(candidateId: number) {
     .orderBy(desc(activityLog.createdAt));
 }
 
+export async function listAllActivity(limit = 200) {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
+    .select({
+      id: activityLog.id,
+      candidateId: activityLog.candidateId,
+      action: activityLog.action,
+      fromStage: activityLog.fromStage,
+      toStage: activityLog.toStage,
+      detail: activityLog.detail,
+      performedBy: activityLog.performedBy,
+      createdAt: activityLog.createdAt,
+      candidateName: candidates.name,
+    })
+    .from(activityLog)
+    .leftJoin(candidates, eq(activityLog.candidateId, candidates.id))
+    .orderBy(desc(activityLog.createdAt))
+    .limit(limit);
+  return rows;
+}
+
 // ─── Stage Notes ──────────────────────────────────────────────────────────────
 
 export async function listNotesByCandidateId(candidateId: number) {
@@ -414,4 +438,125 @@ export async function getAvgTimeToHire(sinceMs: number) {
 export async function getStageDropoff(period: "week" | "month" | "all") {
   // Returns count per stage for funnel visualization
   return getPipelineCounts(period);
+}
+
+// ─── Training Batches ─────────────────────────────────────────────────────────
+
+export async function listBatches() {
+  const db = await getDb();
+  if (!db) return [];
+  const batches = await db.select().from(trainingBatches).orderBy(desc(trainingBatches.createdAt));
+  // Get candidate counts per batch
+  const counts = await db
+    .select({
+      batchId: batchCandidates.batchId,
+      count: sql<number>`count(*)`.mapWith(Number),
+    })
+    .from(batchCandidates)
+    .groupBy(batchCandidates.batchId);
+  const countMap = Object.fromEntries(counts.map((c) => [c.batchId, c.count]));
+  return batches.map((b) => ({ ...b, candidateCount: countMap[b.id] ?? 0 }));
+}
+
+export async function getBatchById(id: number) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(trainingBatches).where(eq(trainingBatches.id, id)).limit(1);
+  return result[0] ?? undefined;
+}
+
+export async function createBatch(data: {
+  name: string;
+  trainerName?: string;
+  startDate?: number;
+  notes?: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(trainingBatches).values({
+    name: data.name,
+    trainerName: data.trainerName ?? null,
+    startDate: data.startDate ?? null,
+    notes: data.notes ?? null,
+  });
+  return result;
+}
+
+export async function updateBatch(id: number, data: {
+  name?: string;
+  trainerName?: string | null;
+  startDate?: number | null;
+  notes?: string | null;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(trainingBatches).set(data).where(eq(trainingBatches.id, id));
+}
+
+export async function deleteBatch(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Remove all candidate assignments first
+  await db.delete(batchCandidates).where(eq(batchCandidates.batchId, id));
+  await db.delete(trainingBatches).where(eq(trainingBatches.id, id));
+}
+
+export async function listCandidatesInBatch(batchId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  // Join batch_candidates with candidates to get full candidate info
+  const rows = await db
+    .select()
+    .from(batchCandidates)
+    .where(eq(batchCandidates.batchId, batchId));
+  if (rows.length === 0) return [];
+  const ids = rows.map((r) => r.candidateId);
+  const cands = await db.select().from(candidates).where(inArray(candidates.id, ids));
+  // Merge traineeCode from batchCandidates into each candidate row
+  return cands.map((c) => ({
+    ...c,
+    traineeCode: rows.find((r) => r.candidateId === c.id)?.traineeCode ?? null,
+  }));
+}
+
+export async function setTraineeCode(batchId: number, candidateId: number, code: string | null) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(batchCandidates)
+    .set({ traineeCode: code })
+    .where(and(eq(batchCandidates.batchId, batchId), eq(batchCandidates.candidateId, candidateId)));
+}
+
+export async function assignCandidateToBatch(batchId: number, candidateId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  // Remove from any existing batch first (one batch per candidate)
+  await db.delete(batchCandidates).where(eq(batchCandidates.candidateId, candidateId));
+  await db.insert(batchCandidates).values({ batchId, candidateId });
+}
+
+export async function removeCandidateFromBatch(batchId: number, candidateId: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .delete(batchCandidates)
+    .where(and(eq(batchCandidates.batchId, batchId), eq(batchCandidates.candidateId, candidateId)));
+}
+
+export async function getCandidateBatch(candidateId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const row = await db
+    .select()
+    .from(batchCandidates)
+    .where(eq(batchCandidates.candidateId, candidateId))
+    .limit(1);
+  if (!row[0]) return null;
+  const batch = await db
+    .select()
+    .from(trainingBatches)
+    .where(eq(trainingBatches.id, row[0].batchId))
+    .limit(1);
+  return batch[0] ?? null;
 }

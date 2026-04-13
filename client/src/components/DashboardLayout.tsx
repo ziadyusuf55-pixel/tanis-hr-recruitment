@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/sidebar";
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, Users, LogOut, PanelLeft } from "lucide-react";
+import { LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
@@ -31,6 +31,7 @@ import { Button } from "./ui/button";
 const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
   { icon: Users, label: "Candidates", path: "/candidates" },
+  { icon: GraduationCap, label: "Training", path: "/training" },
 ];
 
 const TANIS_LOGO_WHITE = "https://d2xsxph8kpxj0f.cloudfront.net/310419663028909162/GKQCuajYkpcdyw75NP8gmu/tanis-logo-white_d38279a7.png";
@@ -152,8 +153,8 @@ function DashboardLayoutContent({
                     className="w-10 h-10 object-contain shrink-0 drop-shadow-sm"
                   />
                   <div className="min-w-0">
-                    <p className="text-sm font-bold text-sidebar-foreground truncate leading-none tracking-wide">Tanis</p>
-                    <p className="text-[10px] text-sidebar-foreground/50 truncate mt-0.5 uppercase tracking-widest">Recruitment</p>
+                    <p className="text-sm font-bold text-sidebar-foreground truncate leading-none tracking-wide">Tanis Hub</p>
+                    <p className="text-[10px] text-sidebar-foreground/50 truncate mt-0.5 uppercase tracking-widest">Operations</p>
                   </div>
                 </div>
               )}

@@ -640,7 +640,7 @@ export default function CandidateDetail() {
         })()}
       </SectionCard>
 
-      {/* ── Interviews ── */}
+      {/* --- Interviews --- */}
       <div className="bg-card border border-border rounded-xl overflow-hidden">
         <div className="h-1.5 bg-gradient-to-r from-primary/80 via-primary/50 to-primary/20" />
         <div className="p-6">
@@ -858,7 +858,7 @@ export default function CandidateDetail() {
         </SectionCard>
       </div>
 
-      {/* ── Interviews ── */}
+      {/* --- Interviews --- */}
       <SectionCard title="Interviews" icon={<Calendar className="h-4 w-4" />}>
         {interviewsLoading ? (
           <Skeleton className="h-16 rounded-lg" />

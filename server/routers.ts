@@ -5,23 +5,34 @@ import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import {
   addStageNote,
+  assignCandidateToBatch,
   bulkInsertCandidates,
   checkDuplicateByPhone,
+  createBatch,
   createCandidate,
   createInterview,
+  deleteBatch,
   deleteCandidate,
   getAvgTimeToHire,
+  getBatchById,
+  getCandidateBatch,
   getCandidateById,
   getCandidatesAddedSince,
   getInterviewsScheduledSince,
   getPipelineCounts,
   getReApplicants,
   listActivityByCandidateId,
+  listAllActivity,
+  listBatches,
   listCandidates,
+  listCandidatesInBatch,
   listInterviewsByCandidateId,
   listNotesByCandidateId,
   logActivity,
   markInterviewNotificationSent,
+  removeCandidateFromBatch,
+  setTraineeCode,
+  updateBatch,
   updateCandidate,
   updateCandidateStatus,
 } from "./db";
@@ -49,7 +60,59 @@ export const appRouter = router({
     }),
   }),
 
-  // ─── Candidates ─────────────────────────────────────────────────────────────
+  // ─── Training Batches ─────────────────────────────────────────────────────────
+  batches: router({
+    list: protectedProcedure.query(() => listBatches()),
+
+    get: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .query(({ input }) => getBatchById(input.id)),
+
+    create: protectedProcedure
+      .input(z.object({
+        name: z.string().min(1),
+        trainerName: z.string().optional(),
+        startDate: z.number().optional(),
+        notes: z.string().optional(),
+      }))
+      .mutation(({ input }) => createBatch(input)),
+
+    update: protectedProcedure
+      .input(z.object({
+        id: z.number(),
+        name: z.string().min(1).optional(),
+        trainerName: z.string().nullable().optional(),
+        startDate: z.number().nullable().optional(),
+        notes: z.string().nullable().optional(),
+      }))
+      .mutation(({ input: { id, ...data } }) => updateBatch(id, data)),
+
+    delete: protectedProcedure
+      .input(z.object({ id: z.number() }))
+      .mutation(({ input }) => deleteBatch(input.id)),
+
+    listCandidates: protectedProcedure
+      .input(z.object({ batchId: z.number() }))
+      .query(({ input }) => listCandidatesInBatch(input.batchId)),
+
+    assignCandidate: protectedProcedure
+      .input(z.object({ batchId: z.number(), candidateId: z.number() }))
+      .mutation(({ input }) => assignCandidateToBatch(input.batchId, input.candidateId)),
+
+    removeCandidate: protectedProcedure
+      .input(z.object({ batchId: z.number(), candidateId: z.number() }))
+      .mutation(({ input }) => removeCandidateFromBatch(input.batchId, input.candidateId)),
+
+    setTraineeCode: protectedProcedure
+      .input(z.object({ batchId: z.number(), candidateId: z.number(), code: z.string().nullable() }))
+      .mutation(({ input }) => setTraineeCode(input.batchId, input.candidateId, input.code)),
+
+    getCandidateBatch: protectedProcedure
+      .input(z.object({ candidateId: z.number() }))
+      .query(({ input }) => getCandidateBatch(input.candidateId)),
+  }),
+
+  // ─── Candidates ─────────────────────────────────────────────────────────
   candidates: router({
     list: protectedProcedure.query(() => listCandidates()),
 
@@ -194,6 +257,10 @@ export const appRouter = router({
     list: protectedProcedure
       .input(z.object({ candidateId: z.number() }))
       .query(({ input }) => listActivityByCandidateId(input.candidateId)),
+
+    listAll: protectedProcedure
+      .input(z.object({ limit: z.number().optional() }))
+      .query(({ input }) => listAllActivity(input.limit ?? 200)),
   }),
 
   // ─── Stage Notes ──────────────────────────────────────────────────────────────
@@ -345,3 +412,4 @@ export const appRouter = router({
 });
 
 export type AppRouter = typeof appRouter;
+
