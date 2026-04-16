@@ -257,7 +257,9 @@ export default function Candidates() {
   };
 
   const [view, setView] = useState<"board" | "list" | "timeline">("board");
+  const [showRejected, setShowRejected] = useState(false);
   const { data: allActivity = [] } = trpc.activity.listAll.useQuery({ limit: 300 });
+  const { data: batchAssignments = {} } = trpc.batches.allAssignments.useQuery();
   const [search, setSearch] = useState("");
   const [waveFilter, setWaveFilter] = useState<string>("all");
   const [addOpen, setAddOpen] = useState(false);
@@ -277,10 +279,11 @@ export default function Candidates() {
   const [csvSkipDups, setCsvSkipDups] = useState(true);
 
   const allCandidates = candidates ?? [];
-  const displayCandidates = allCandidates;
   // Derive unique wave numbers from all candidates for the filter dropdown
   const waveNumbers = Array.from(new Set(allCandidates.map((c) => (c as unknown as { wave?: number }).wave).filter(Boolean) as number[])).sort((a, b) => a - b);
-  const filtered = displayCandidates.filter((c) => {
+  const filtered = allCandidates.filter((c) => {
+    // If showRejected is active, only show rejected; otherwise hide rejected
+    if (showRejected) return c.status === "rejected";
     const matchesSearch = !search || (() => {
       const q = search.toLowerCase();
       if (c.name.toLowerCase().includes(q)) return true;
@@ -297,6 +300,7 @@ export default function Candidates() {
     const matchesWave = waveFilter === "all" || (c as unknown as { wave?: number }).wave === parseInt(waveFilter);
     return matchesSearch && matchesWave;
   });
+  const rejectedCount = allCandidates.filter((c) => c.status === "rejected").length;
 
   const handleAddSubmit = () => {
     if (!form.name.trim()) { toast.error("Name is required"); return; }
@@ -475,13 +479,26 @@ export default function Candidates() {
             </SelectContent>
           </Select>
         )}
-        <Tabs value={view} onValueChange={(v) => { setView(v as "board" | "list" | "timeline"); clearSelection(); }}>
-          <TabsList className="h-9">
-            <TabsTrigger value="board" className="text-xs px-3">Board</TabsTrigger>
-            <TabsTrigger value="list" className="text-xs px-3">List</TabsTrigger>
-            <TabsTrigger value="timeline" className="text-xs px-3 gap-1.5"><Clock className="h-3.5 w-3.5" />Timeline</TabsTrigger>
-          </TabsList>
-        </Tabs>
+        <button
+          onClick={() => { setShowRejected((v) => !v); clearSelection(); }}
+          className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-colors ${
+            showRejected
+              ? "bg-red-600 border-red-600 text-white hover:bg-red-700"
+              : "bg-white border-border text-muted-foreground hover:text-foreground hover:border-red-300 hover:bg-red-50"
+          }`}
+        >
+          <UserX className="h-3.5 w-3.5" />
+          Rejected{rejectedCount > 0 && <span className={`ml-0.5 rounded-full px-1.5 py-0 text-[10px] font-bold ${showRejected ? "bg-white/20 text-white" : "bg-red-100 text-red-700"}`}>{rejectedCount}</span>}
+        </button>
+        {!showRejected && (
+          <Tabs value={view} onValueChange={(v) => { setView(v as "board" | "list" | "timeline"); clearSelection(); }}>
+            <TabsList className="h-9">
+              <TabsTrigger value="board" className="text-xs px-3">Board</TabsTrigger>
+              <TabsTrigger value="list" className="text-xs px-3">List</TabsTrigger>
+              <TabsTrigger value="timeline" className="text-xs px-3 gap-1.5"><Clock className="h-3.5 w-3.5" />Timeline</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        )}
       </div>
 
       {/* Bulk action bar */}
@@ -533,6 +550,17 @@ export default function Candidates() {
         <div className="grid grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => <Skeleton key={i} className="h-64 rounded-xl" />)}
         </div>
+      ) : showRejected ? (
+        <CandidateList
+          candidates={filtered}
+          selected={selected}
+          allSelected={allFilteredSelected}
+          onClickCandidate={(id) => navigate(`/candidates/${id}`)}
+          onDeleteCandidate={(id, name) => { setDeleteId(id); setDeleteName(name); }}
+          onToggleSelect={toggleSelect}
+          onToggleSelectAll={() => toggleSelectAll(filteredIds)}
+          batchAssignments={batchAssignments as Record<number, string>}
+        />
       ) : view === "board" ? (
         <PipelineBoard
           candidates={filtered}
@@ -548,6 +576,7 @@ export default function Candidates() {
           onClickCandidate={(id) => navigate(`/candidates/${id}`)}
           onDeleteCandidate={(id, name) => { setDeleteId(id); setDeleteName(name); }}
           onToggleSelect={toggleSelect}
+          batchAssignments={batchAssignments as Record<number, string>}
         />
       ) : view === "list" ? (
         <CandidateList
@@ -564,6 +593,7 @@ export default function Candidates() {
             const candidate = filtered.find((c) => c.id === id);
             updateStatus.mutate({ id, status: stage, fromStage: candidate?.status as PipelineStage | undefined });
           }}
+          batchAssignments={batchAssignments as Record<number, string>}
         />
       ) : (
         /* Timeline view */
@@ -941,6 +971,7 @@ function PipelineBoard({
   onClickCandidate,
   onDeleteCandidate,
   onToggleSelect,
+  batchAssignments = {},
 }: {
   candidates: CandidateRow[];
   selected: Set<number>;
@@ -949,6 +980,7 @@ function PipelineBoard({
   onClickCandidate: (id: number) => void;
   onDeleteCandidate: (id: number, name: string) => void;
   onToggleSelect: (id: number) => void;
+  batchAssignments?: Record<number, string>;
 }) {
   return (
     <div className="flex gap-3 overflow-x-auto pb-4 -mx-1 px-1">
@@ -982,6 +1014,7 @@ function PipelineBoard({
                     onClick={() => onClickCandidate(c.id)}
                     onDelete={() => onDeleteCandidate(c.id, c.name)}
                     onToggleSelect={() => onToggleSelect(c.id)}
+                    batchName={batchAssignments[c.id]}
                   />
                 ))
               )}
@@ -1002,6 +1035,7 @@ function CandidateCard({
   onClick,
   onDelete,
   onToggleSelect,
+  batchName,
 }: {
   candidate: CandidateRow;
   currentStage: PipelineStage;
@@ -1011,6 +1045,7 @@ function CandidateCard({
   onClick: () => void;
   onDelete: () => void;
   onToggleSelect: () => void;
+  batchName?: string;
 }) {
   const initials = candidate.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2);
 
@@ -1028,10 +1063,13 @@ function CandidateCard({
           {initials}
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1 flex-wrap">
             <p className="text-xs font-semibold text-foreground truncate">{candidate.name}</p>
             {candidate.wave && (
               <span className="text-[9px] font-bold px-1 py-0 rounded bg-indigo-100 text-indigo-700 shrink-0">W{candidate.wave}</span>
+            )}
+            {batchName && (
+              <span className="text-[9px] font-bold px-1 py-0 rounded bg-emerald-100 text-emerald-700 shrink-0">{batchName}</span>
             )}
           </div>
           <p className="text-[10px] text-muted-foreground truncate">{candidate.phone || candidate.email || "—"}</p>
@@ -1116,6 +1154,7 @@ function CandidateList({
   onReject,
   onNoShow,
   onMoveStage,
+  batchAssignments = {},
 }: {
   candidates: CandidateRow[];
   selected: Set<number>;
@@ -1127,6 +1166,7 @@ function CandidateList({
   onReject?: (id: number, name: string) => void;
   onNoShow?: (id: number, name: string) => void;
   onMoveStage?: (id: number, stage: PipelineStage) => void;
+  batchAssignments?: Record<number, string>;
 }) {
   if (candidates.length === 0) {
     return (
@@ -1173,10 +1213,13 @@ function CandidateList({
                     {c.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)}
                   </div>
                   <div>
-                    <div className="flex items-center gap-1.5">
+                    <div className="flex items-center gap-1 flex-wrap">
                       <p className="font-medium text-foreground text-xs">{c.name}</p>
                       {c.wave && (
                         <span className="text-[9px] font-bold px-1 py-0 rounded bg-indigo-100 text-indigo-700">W{c.wave}</span>
+                      )}
+                      {batchAssignments[c.id] && (
+                        <span className="text-[9px] font-bold px-1 py-0 rounded bg-emerald-100 text-emerald-700">{batchAssignments[c.id]}</span>
                       )}
                     </div>
                     <p className="text-[10px] text-muted-foreground">{c.email || "—"}</p>

@@ -75,10 +75,10 @@ export default function Training() {
   );
   const selectedBatch = batches.find((b) => b.id === selectedBatchId);
 
-  // All accepted candidates (for assignment)
+  // Only Teams Invitation Sent candidates can be assigned to training batches
   const { data: allCandidates = [] } = trpc.candidates.list.useQuery();
   const acceptedCandidates = (allCandidates as unknown as BatchCandidate[]).filter(
-    (c) => c.status === "accepted" || c.status === "teams_invitation_sent"
+    (c) => c.status === "teams_invitation_sent"
   );
 
   // Mutations
@@ -197,7 +197,7 @@ export default function Training() {
           <div className="text-center py-16 text-muted-foreground">
             <Users className="h-10 w-10 mx-auto mb-3 opacity-30" />
             <p className="font-medium">No agents assigned yet</p>
-            <p className="text-sm mt-1">Click "Add Agent" to assign accepted candidates to this batch</p>
+            <p className="text-sm mt-1">Click "Add Agent" to assign agents who have received their Teams invitation</p>
           </div>
         ) : (
           <div className="rounded-lg border overflow-hidden">
@@ -306,8 +306,8 @@ export default function Training() {
               {assignableCandidates.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-6">
                   {acceptedCandidates.length === 0
-                    ? "No accepted candidates available"
-                    : "All accepted candidates are already assigned or no matches"}
+                    ? "No agents with Teams Invitation Sent status available"
+                    : "All eligible agents are already assigned or no matches"}
                 </p>
               ) : (
                 assignableCandidates.map((c) => (
@@ -368,7 +368,7 @@ export default function Training() {
             Training Batches
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Organise accepted agents into training cohorts and assign trainee codes
+            Organise agents (Teams Invitation Sent) into training cohorts and assign trainee codes
           </p>
         </div>
         <Button onClick={() => setCreateOpen(true)} className="gap-1.5">

@@ -560,3 +560,20 @@ export async function getCandidateBatch(candidateId: number) {
     .limit(1);
   return batch[0] ?? null;
 }
+
+export async function getAllBatchAssignments(): Promise<Record<number, string>> {
+  const db = await getDb();
+  if (!db) return {};
+  const rows = await db
+    .select({
+      candidateId: batchCandidates.candidateId,
+      batchName: trainingBatches.name,
+    })
+    .from(batchCandidates)
+    .innerJoin(trainingBatches, eq(batchCandidates.batchId, trainingBatches.id));
+  const map: Record<number, string> = {};
+  for (const row of rows) {
+    map[row.candidateId] = row.batchName;
+  }
+  return map;
+}

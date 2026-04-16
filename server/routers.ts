@@ -30,6 +30,7 @@ import {
   listNotesByCandidateId,
   logActivity,
   markInterviewNotificationSent,
+  getAllBatchAssignments,
   removeCandidateFromBatch,
   setTraineeCode,
   updateBatch,
@@ -110,6 +111,9 @@ export const appRouter = router({
     getCandidateBatch: protectedProcedure
       .input(z.object({ candidateId: z.number() }))
       .query(({ input }) => getCandidateBatch(input.candidateId)),
+
+    allAssignments: protectedProcedure
+      .query(() => getAllBatchAssignments()),
   }),
 
   // ─── Candidates ─────────────────────────────────────────────────────────
