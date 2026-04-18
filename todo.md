@@ -184,8 +184,14 @@
 - [x] Mark Round 15 items as completed
 
 ## Change Requests (Round 17)
-- [ ] Candidates page: add "Show Rejected" quick-filter button in toolbar that instantly filters to rejected candidates only (toggleable, highlighted when active)
-- [ ] Training page: restrict "Assign Agent" dialog to only show candidates with status = teams_invitation_sent (not all accepted)
-- [ ] Backend: add tRPC query to get all batch assignments (candidateId → batchName) so candidate cards can show batch indicator
-- [ ] Candidates board cards: show a small batch badge (e.g. "Batch 1") if the candidate is assigned to a training batch
-- [ ] Candidates list rows: show the same batch badge in the row
+- [x] Candidates page: add "Show Rejected" quick-filter button in toolbar that instantly filters to rejected candidates only (toggleable, highlighted when active)
+- [x] Training page: restrict "Assign Agent" dialog to only show candidates with status = teams_invitation_sent (not all accepted)
+- [x] Backend: add tRPC query to get all batch assignments (candidateId → batchName) so candidate cards can show batch indicator
+- [x] Candidates board cards: show a small batch badge (e.g. "Batch 1") if the candidate is assigned to a training batch
+- [x] Candidates list rows: show the same batch badge in the row
+
+## Change Requests (Round 18 — CSV Import Fix)
+- [x] CSV parser: make phone optional — only skip rows where name is missing (not phone)
+- [x] CSV parser: fix email validation in tRPC router to accept empty/missing emails gracefully
+- [x] CSV parser: improve error messages so recruiter knows exactly what went wrong
+- [x] CSV parser: handle rows where email is invalid format without crashing the whole import

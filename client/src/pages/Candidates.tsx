@@ -109,7 +109,7 @@ export default function Candidates() {
       setImportOpen(false);
       setCsvRows([]);
     },
-    onError: () => toast.error("Failed to import candidates"),
+    onError: (err) => toast.error(`Import failed: ${err.message || "Please check your CSV format and try again"}`),
   });
 
   const deleteCandidate = trpc.candidates.delete.useMutation({
@@ -380,7 +380,7 @@ export default function Candidates() {
         const age = rawAge && !isNaN(parseInt(rawAge)) ? rawAge : "";
         const rawWave = get("wave") || "";
         const wave = rawWave && !isNaN(parseInt(rawWave)) && parseInt(rawWave) >= 1 ? rawWave : "";
-        if (!name || !phone) { skipped++; continue; }
+        if (!name) { skipped++; continue; }
         // Duplicate detection
         const phoneSuffix = phone.replace(/[^\d]/g, "").slice(-9);
         const isDuplicate = existingPhones.includes(phoneSuffix);
@@ -400,8 +400,8 @@ export default function Candidates() {
           existingStage: existing?.status,
         });
       }
-      if (rows.length === 0) { toast.error("No valid rows found. Check that your CSV has name and phone columns."); return; }
-      if (skipped > 0) toast.info(`${skipped} row${skipped > 1 ? "s" : ""} skipped (missing name or phone)`);
+      if (rows.length === 0) { toast.error("No valid rows found. Make sure your CSV has a 'name' column with at least one non-empty value."); return; }
+      if (skipped > 0) toast.info(`${skipped} row${skipped > 1 ? "s" : ""} skipped (missing name)`);
       const dupCount = rows.filter((r) => r.isDuplicate).length;
       if (dupCount > 0) toast.warning(`${dupCount} duplicate${dupCount > 1 ? "s" : ""} detected — review before importing`);
       setCsvRowsWithDups(rows);
@@ -416,10 +416,11 @@ export default function Candidates() {
       ? csvRowsWithDups.filter((r) => !r.isDuplicate)
       : csvRowsWithDups;
     if (toImport.length === 0) { toast.error("No candidates to import after filtering duplicates"); return; }
+    const isValidEmail = (e: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e);
     bulkImport.mutate(
       toImport.map((r) => ({
         name: r.name,
-        email: r.email || undefined,
+        email: r.email && isValidEmail(r.email) ? r.email : undefined,
         phone: r.phone || undefined,
         positionApplied: r.positionApplied,
         notes: r.notes || undefined,

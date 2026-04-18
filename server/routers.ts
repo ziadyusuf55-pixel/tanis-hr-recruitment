@@ -208,7 +208,7 @@ export const appRouter = router({
         z.array(
           z.object({
             name: z.string().min(1),
-            email: z.string().email().optional(),
+            email: z.string().optional(),
             phone: z.string().optional(),
             positionApplied: z.string().optional(),
             resumeLink: z.string().optional(),
