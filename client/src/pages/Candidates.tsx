@@ -282,8 +282,8 @@ export default function Candidates() {
   // Derive unique wave numbers from all candidates for the filter dropdown
   const waveNumbers = Array.from(new Set(allCandidates.map((c) => (c as unknown as { wave?: number }).wave).filter(Boolean) as number[])).sort((a, b) => a - b);
   const filtered = allCandidates.filter((c) => {
-    // If showRejected is active, only show rejected; otherwise hide rejected
-    if (showRejected) return c.status === "rejected";
+    // If showRejected is active, show rejected + blacklisted; otherwise hide both
+    if (showRejected) return c.status === "rejected" || c.status === "blacklisted";
     const matchesSearch = !search || (() => {
       const q = search.toLowerCase();
       if (c.name.toLowerCase().includes(q)) return true;
@@ -300,7 +300,7 @@ export default function Candidates() {
     const matchesWave = waveFilter === "all" || (c as unknown as { wave?: number }).wave === parseInt(waveFilter);
     return matchesSearch && matchesWave;
   });
-  const rejectedCount = allCandidates.filter((c) => c.status === "rejected").length;
+  const rejectedCount = allCandidates.filter((c) => c.status === "rejected" || c.status === "blacklisted").length;
 
   const handleAddSubmit = () => {
     if (!form.name.trim()) { toast.error("Name is required"); return; }
@@ -489,7 +489,7 @@ export default function Candidates() {
           }`}
         >
           <UserX className="h-3.5 w-3.5" />
-          Rejected{rejectedCount > 0 && <span className={`ml-0.5 rounded-full px-1.5 py-0 text-[10px] font-bold ${showRejected ? "bg-white/20 text-white" : "bg-red-100 text-red-700"}`}>{rejectedCount}</span>}
+          Rejected / Blacklisted{rejectedCount > 0 && <span className={`ml-0.5 rounded-full px-1.5 py-0 text-[10px] font-bold ${showRejected ? "bg-white/20 text-white" : "bg-red-100 text-red-700"}`}>{rejectedCount}</span>}
         </button>
         {!showRejected && (
           <Tabs value={view} onValueChange={(v) => { setView(v as "board" | "list"); clearSelection(); }}>

@@ -197,10 +197,10 @@
 - [x] CSV parser: handle rows where email is invalid format without crashing the whole import
 
 ## Change Requests (Round 19)
-- [ ] Add "blacklisted" as a valid pipeline status in pipeline.ts (STAGE_LABELS, STAGE_COLORS)
-- [ ] DB schema: update candidates status enum to include "blacklisted"
-- [ ] Backend: allow blacklisted as a valid status in updateStatus procedure
-- [ ] Frontend: add Blacklist button/option on candidate detail action bar
-- [ ] Frontend: show Blacklisted column in the pipeline board
-- [ ] Frontend: show blacklisted candidates in the Rejected quick-filter view
-- [ ] Remove Timeline view tab from the Candidates page toolbar
+- [x] Add "blacklisted" as a valid pipeline status in pipeline.ts (STAGE_LABELS, STAGE_COLORS)
+- [x] DB schema: update candidates status enum to include "blacklisted"
+- [x] Backend: allow blacklisted as a valid status in updateStatus procedure
+- [x] Frontend: add Blacklist button/option on candidate detail action bar
+- [x] Frontend: show Blacklisted column in the pipeline board
+- [x] Frontend: show blacklisted candidates in the Rejected quick-filter view
+- [x] Remove Timeline view tab from the Candidates page toolbar
