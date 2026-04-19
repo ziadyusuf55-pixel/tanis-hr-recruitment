@@ -47,6 +47,7 @@ const PIPELINE_STAGES_ZOD = z.enum([
   "accepted",
   "teams_invitation_sent",
   "rejected",
+  "blacklisted",
 ]);
 
 export const appRouter = router({
@@ -368,9 +369,10 @@ export const appRouter = router({
         const acceptedCount = pipelineCounts.find((p) => p.status === "accepted")?.count ?? 0;
         const teamsCount = pipelineCounts.find((p) => p.status === "teams_invitation_sent")?.count ?? 0;
         const rejectedCount = pipelineCounts.find((p) => p.status === "rejected")?.count ?? 0;
+        const blacklistedCount = pipelineCounts.find((p) => p.status === "blacklisted")?.count ?? 0;
 
-        // Conversion rate: Applied → Accepted (of all non-rejected)
-        const activeTotal = totalInPipeline - rejectedCount;
+        // Conversion rate: Applied → Accepted (of all non-rejected/blacklisted)
+        const activeTotal = totalInPipeline - rejectedCount - blacklistedCount;
         const conversionRate = activeTotal > 0 ? Math.round((acceptedCount + teamsCount) / activeTotal * 100) : 0;
 
         // WhatsApp response rate: whatsapp_sent+ / applied+
@@ -407,6 +409,7 @@ export const appRouter = router({
             accepted: acceptedCount,
             teams_invitation_sent: teamsCount,
             rejected: rejectedCount,
+            blacklisted: blacklistedCount,
           },
           // Scheduled interviews
           scheduledInterviews,

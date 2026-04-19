@@ -27,6 +27,8 @@ const FUNNEL_COLORS: Record<string, string> = {
   interview_scheduled: "#7c3aed",
   accepted: "#10b981",
   teams_invitation_sent: "#4f46e5",
+  rejected: "#ef4444",
+  blacklisted: "#374151",
 };
 
 export default function Dashboard() {

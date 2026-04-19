@@ -67,6 +67,7 @@ import {
   Upload,
   X as XIcon,
   Download,
+  Ban,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -426,6 +427,18 @@ export default function CandidateDetail() {
     setIsNoShow(false);
   };
 
+  const handleBlacklist = () => {
+    if (!candidate) return;
+    updateStatus.mutate({
+      id,
+      status: "blacklisted",
+      fromStage: candidate.status as PipelineStage,
+      detail: "Candidate blacklisted",
+    });
+    addNote.mutate({ candidateId: id, stage: "blacklisted", note: "Candidate has been blacklisted" });
+    toast.success("Candidate blacklisted");
+  };
+
   const handleNoShow = () => {
     setRejectReason("No-show — Did not attend interview");
     setIsNoShow(true);
@@ -461,6 +474,7 @@ export default function CandidateDetail() {
   const currentStageIndex = ACTIVE_STAGES.indexOf(candidate.status as (typeof ACTIVE_STAGES)[number]);
   const nextStage = getNextStage(candidate.status as PipelineStage);
   const isRejected = candidate.status === "rejected";
+  const isBlacklisted = candidate.status === "blacklisted";
 
   const filteredNotes = activeNotesStage === "all"
     ? stageNotes ?? []
@@ -523,7 +537,7 @@ export default function CandidateDetail() {
               <DropdownMenuItem onClick={openEdit} className="cursor-pointer">
                 <Pencil className="mr-2 h-3.5 w-3.5" /> Edit Profile
               </DropdownMenuItem>
-              {!isRejected && (
+              {!isRejected && !isBlacklisted && (
                 <>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
@@ -531,6 +545,12 @@ export default function CandidateDetail() {
                     className="text-destructive focus:text-destructive cursor-pointer"
                   >
                     <XCircle className="mr-2 h-3.5 w-3.5" /> Reject Candidate
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={handleBlacklist}
+                    className="text-destructive focus:text-destructive cursor-pointer"
+                  >
+                    <Ban className="mr-2 h-3.5 w-3.5" /> Blacklist Candidate
                   </DropdownMenuItem>
                 </>
               )}

@@ -40,6 +40,7 @@ export const PIPELINE_STAGES = [
   "accepted",
   "teams_invitation_sent",
   "rejected",
+  "blacklisted",
 ] as const;
 
 export type PipelineStage = (typeof PIPELINE_STAGES)[number];
@@ -65,6 +66,7 @@ export const candidates = mysqlTable("candidates", {
     "accepted",
     "teams_invitation_sent",
     "rejected",
+    "blacklisted",
   ])
     .default("applied")
     .notNull(),
@@ -102,6 +104,7 @@ export const stageNotes = mysqlTable("stage_notes", {
     "accepted",
     "teams_invitation_sent",
     "rejected",
+    "blacklisted",
   ]).notNull(),
   note: text("note").notNull(),
   recruiterName: varchar("recruiterName", { length: 255 }),

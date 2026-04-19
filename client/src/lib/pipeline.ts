@@ -6,11 +6,12 @@ export const PIPELINE_STAGES = [
   "accepted",
   "teams_invitation_sent",
   "rejected",
+  "blacklisted",
 ] as const;
 
 export type PipelineStage = (typeof PIPELINE_STAGES)[number];
 
-// All stages shown as pipeline columns (including rejected)
+// All stages shown as pipeline columns (including rejected and blacklisted)
 export const ACTIVE_STAGES = [
   "applied",
   "whatsapp_sent",
@@ -19,6 +20,7 @@ export const ACTIVE_STAGES = [
   "accepted",
   "teams_invitation_sent",
   "rejected",
+  "blacklisted",
 ] as const;
 
 export const STAGE_LABELS: Record<PipelineStage, string> = {
@@ -29,6 +31,7 @@ export const STAGE_LABELS: Record<PipelineStage, string> = {
   accepted: "Accepted",
   teams_invitation_sent: "Teams Invitation Sent",
   rejected: "Rejected",
+  blacklisted: "Blacklisted",
 };
 
 export const STAGE_SHORT_LABELS: Record<PipelineStage, string> = {
@@ -39,6 +42,7 @@ export const STAGE_SHORT_LABELS: Record<PipelineStage, string> = {
   accepted: "Accepted",
   teams_invitation_sent: "Teams Invite",
   rejected: "Rejected",
+  blacklisted: "Blacklisted",
 };
 
 export const STAGE_DESCRIPTIONS: Record<PipelineStage, string> = {
@@ -49,6 +53,7 @@ export const STAGE_DESCRIPTIONS: Record<PipelineStage, string> = {
   accepted: "Interview passed — candidate accepted",
   teams_invitation_sent: "Microsoft Teams training invitation sent",
   rejected: "Candidate rejected",
+  blacklisted: "Candidate blacklisted — do not re-hire",
 };
 
 export const STAGE_COLORS: Record<PipelineStage, string> = {
@@ -59,6 +64,7 @@ export const STAGE_COLORS: Record<PipelineStage, string> = {
   accepted: "stage-accepted",
   teams_invitation_sent: "stage-teams",
   rejected: "stage-rejected",
+  blacklisted: "stage-blacklisted",
 };
 
 export const STAGE_BG: Record<PipelineStage, string> = {
@@ -69,6 +75,7 @@ export const STAGE_BG: Record<PipelineStage, string> = {
   accepted: "bg-emerald-50 border-emerald-200",
   teams_invitation_sent: "bg-indigo-50 border-indigo-200",
   rejected: "bg-red-50 border-red-200",
+  blacklisted: "bg-gray-100 border-gray-300",
 };
 
 export const STAGE_HEADER: Record<PipelineStage, string> = {
@@ -79,6 +86,7 @@ export const STAGE_HEADER: Record<PipelineStage, string> = {
   accepted: "bg-emerald-600",
   teams_invitation_sent: "bg-indigo-600",
   rejected: "bg-red-500",
+  blacklisted: "bg-gray-700",
 };
 
 export const STAGE_DOT: Record<PipelineStage, string> = {
@@ -89,6 +97,7 @@ export const STAGE_DOT: Record<PipelineStage, string> = {
   accepted: "bg-emerald-500",
   teams_invitation_sent: "bg-indigo-500",
   rejected: "bg-red-500",
+  blacklisted: "bg-gray-600",
 };
 
 export const STAGE_BADGE: Record<PipelineStage, string> = {
@@ -99,11 +108,19 @@ export const STAGE_BADGE: Record<PipelineStage, string> = {
   accepted: "bg-emerald-50 text-emerald-700 border-emerald-200",
   teams_invitation_sent: "bg-indigo-50 text-indigo-700 border-indigo-200",
   rejected: "bg-red-50 text-red-700 border-red-200",
+  blacklisted: "bg-gray-100 text-gray-700 border-gray-300",
 };
 
-/** Returns the next stage in the pipeline (excluding rejected) */
+/** Returns the next stage in the pipeline (excluding rejected/blacklisted) */
 export function getNextStage(current: PipelineStage): PipelineStage | null {
-  const forward = ACTIVE_STAGES;
+  const forward = [
+    "applied",
+    "whatsapp_sent",
+    "voice_note_reviewed",
+    "interview_scheduled",
+    "accepted",
+    "teams_invitation_sent",
+  ] as const;
   const idx = forward.indexOf(current as (typeof forward)[number]);
   if (idx === -1 || idx === forward.length - 1) return null;
   return forward[idx + 1];

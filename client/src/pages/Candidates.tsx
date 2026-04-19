@@ -256,7 +256,7 @@ export default function Candidates() {
     toast.success(`Deleted ${ids.length} candidate${ids.length > 1 ? "s" : ""}`);
   };
 
-  const [view, setView] = useState<"board" | "list" | "timeline">("board");
+  const [view, setView] = useState<"board" | "list">("board");
   const [showRejected, setShowRejected] = useState(false);
   const { data: allActivity = [] } = trpc.activity.listAll.useQuery({ limit: 300 });
   const { data: batchAssignments = {} } = trpc.batches.allAssignments.useQuery();
@@ -492,11 +492,10 @@ export default function Candidates() {
           Rejected{rejectedCount > 0 && <span className={`ml-0.5 rounded-full px-1.5 py-0 text-[10px] font-bold ${showRejected ? "bg-white/20 text-white" : "bg-red-100 text-red-700"}`}>{rejectedCount}</span>}
         </button>
         {!showRejected && (
-          <Tabs value={view} onValueChange={(v) => { setView(v as "board" | "list" | "timeline"); clearSelection(); }}>
+          <Tabs value={view} onValueChange={(v) => { setView(v as "board" | "list"); clearSelection(); }}>
             <TabsList className="h-9">
               <TabsTrigger value="board" className="text-xs px-3">Board</TabsTrigger>
               <TabsTrigger value="list" className="text-xs px-3">List</TabsTrigger>
-              <TabsTrigger value="timeline" className="text-xs px-3 gap-1.5"><Clock className="h-3.5 w-3.5" />Timeline</TabsTrigger>
             </TabsList>
           </Tabs>
         )}
@@ -596,53 +595,7 @@ export default function Candidates() {
           }}
           batchAssignments={batchAssignments as Record<number, string>}
         />
-      ) : (
-        /* Timeline view */
-        <div className="max-w-2xl mx-auto">
-          {allActivity.length === 0 ? (
-            <div className="text-center py-20 text-muted-foreground">
-              <Clock className="h-10 w-10 mx-auto mb-3 opacity-25" />
-              <p className="font-medium">No activity yet</p>
-              <p className="text-sm mt-1">Stage changes and actions will appear here</p>
-            </div>
-          ) : (
-            <div className="relative">
-              <div className="absolute left-4 top-0 bottom-0 w-px bg-border" />
-              <div className="space-y-0">
-                {(allActivity as Array<{ id: number; candidateId: number; candidateName: string | null; action: string; fromStage: string | null; toStage: string | null; detail: string | null; performedBy: string | null; createdAt: Date }>).map((entry) => (
-                  <div key={entry.id} className="relative flex gap-4 pb-5 pl-10">
-                    <div className="absolute left-2.5 top-1.5 h-3 w-3 rounded-full border-2 border-background bg-primary/60 ring-1 ring-primary/20" />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <button
-                            onClick={() => navigate(`/candidates/${entry.candidateId}`)}
-                            className="text-sm font-medium text-foreground hover:text-primary hover:underline truncate block"
-                          >
-                            {entry.candidateName ?? `Candidate #${entry.candidateId}`}
-                          </button>
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            {entry.action === "stage_change" && entry.fromStage && entry.toStage
-                              ? `${STAGE_LABELS[entry.fromStage as PipelineStage] ?? entry.fromStage} → ${STAGE_LABELS[entry.toStage as PipelineStage] ?? entry.toStage}`
-                              : entry.action.replace(/_/g, " ")}
-                            {entry.detail ? ` — ${entry.detail}` : ""}
-                          </p>
-                          {entry.performedBy && (
-                            <p className="text-xs text-muted-foreground/60 mt-0.5">by {entry.performedBy}</p>
-                          )}
-                        </div>
-                        <span className="text-[10px] text-muted-foreground/60 whitespace-nowrap shrink-0">
-                          {new Date(entry.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+      ) : null}
 
       {/* Add Candidate Dialog */}
       <Dialog open={addOpen} onOpenChange={(v) => { setAddOpen(v); if (!v) setForm(EMPTY_FORM); }}>
