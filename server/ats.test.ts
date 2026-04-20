@@ -42,7 +42,7 @@ vi.mock("./db", () => ({
     { status: "voice_note_reviewed", count: 5 },
     { status: "interview_scheduled", count: 3 },
     { status: "accepted", count: 2 },
-    { status: "teams_invitation_sent", count: 1 },
+    { status: "whatsapp_group_added", count: 1 },
     { status: "rejected", count: 4 },
   ]),
   getCandidatesAddedSince: vi.fn().mockResolvedValue(5),
@@ -158,8 +158,8 @@ describe("candidates router", () => {
     expect(result).toEqual({ success: true });
   });
 
-  it("updates a candidate's status to teams_invitation_sent", async () => {
-    const result = await caller.candidates.updateStatus({ id: 1, status: "teams_invitation_sent" });
+  it("updates a candidate's status to whatsapp_group_added", async () => {
+    const result = await caller.candidates.updateStatus({ id: 1, status: "whatsapp_group_added" });
     expect(result).toEqual({ success: true });
   });
 
@@ -287,7 +287,7 @@ describe("dashboard.kpis router", () => {
     const result = await caller.dashboard.kpis({ period: "month" });
     expect(result).toHaveProperty("totalInPipeline");
     expect(result).toHaveProperty("newCandidates");
-    expect(result).toHaveProperty("teamsInvitationsSent");
+    expect(result).toHaveProperty("whatsappGroupAdded");
     expect(result).toHaveProperty("conversionRate");
     expect(result).toHaveProperty("stageCounts");
   });
@@ -296,7 +296,7 @@ describe("dashboard.kpis router", () => {
     const result = await caller.dashboard.kpis({ period: "week" });
     expect(result.stageCounts).toHaveProperty("applied");
     expect(result.stageCounts).toHaveProperty("whatsapp_sent");
-    expect(result.stageCounts).toHaveProperty("teams_invitation_sent");
+    expect(result.stageCounts).toHaveProperty("whatsapp_group_added");
   });
 
   it("returns KPIs for 'all' period", async () => {
@@ -318,7 +318,7 @@ describe("dashboard.kpis router", () => {
     expect(stages).toContain("voice_note_reviewed");
     expect(stages).toContain("interview_scheduled");
     expect(stages).toContain("accepted");
-    expect(stages).toContain("teams_invitation_sent");
+    expect(stages).toContain("whatsapp_group_added");
     expect(stages).toContain("rejected");
   });
 });

@@ -26,7 +26,7 @@ const FUNNEL_COLORS: Record<string, string> = {
   voice_note_reviewed: "#3b82f6",
   interview_scheduled: "#7c3aed",
   accepted: "#10b981",
-  teams_invitation_sent: "#4f46e5",
+  whatsapp_group_added: "#0d9488",
   rejected: "#ef4444",
   blacklisted: "#374151",
 };
@@ -76,7 +76,7 @@ export default function Dashboard() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard title="Total in Pipeline" value={kpis?.totalInPipeline} icon={<Users className="h-4 w-4" />} isLoading={isLoading} color="text-slate-600" bgColor="bg-slate-100" />
         <KPICard title="New Candidates" value={kpis?.newCandidates} icon={<UserCheck className="h-4 w-4" />} isLoading={isLoading} color="text-blue-600" bgColor="bg-blue-100" />
-        <KPICard title="Teams Invitations Sent" value={kpis?.teamsInvitationsSent} icon={<Send className="h-4 w-4" />} isLoading={isLoading} color="text-indigo-600" bgColor="bg-indigo-100" />
+        <KPICard title="WhatsApp Group Added" value={kpis?.whatsappGroupAdded} icon={<Send className="h-4 w-4" />} isLoading={isLoading} color="text-teal-600" bgColor="bg-teal-100" />
         <KPICard
           title="Avg. Time to Hire"
           value={kpis?.avgTimeToHireDays != null ? `${kpis.avgTimeToHireDays}d` : "—"}

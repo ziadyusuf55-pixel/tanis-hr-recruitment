@@ -859,11 +859,11 @@ export default function CandidateDetail() {
                 rel="noopener noreferrer"
                 className="flex items-center gap-2.5 p-3 rounded-lg border border-border hover:bg-muted/40 transition-colors group"
               >
-                <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center shrink-0">
-                  <Send className="h-4 w-4 text-indigo-600" />
+                <div className="w-8 h-8 rounded-lg bg-teal-50 flex items-center justify-center shrink-0">
+                  <Send className="h-4 w-4 text-teal-600" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-foreground">Microsoft Teams</p>
+                  <p className="text-xs font-medium text-foreground">WhatsApp Group</p>
                   <p className="text-xs text-muted-foreground truncate">{c.teamsLink as string}</p>
                 </div>
                 <ExternalLink className="h-3.5 w-3.5 text-muted-foreground/40 group-hover:text-muted-foreground transition-colors" />
@@ -1178,8 +1178,8 @@ export default function CandidateDetail() {
                   <Input placeholder="https://meet.google.com/..." value={editForm.meetLink} onChange={(e) => setEditForm({ ...editForm, meetLink: e.target.value })} />
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Teams Invitation Link</Label>
-                  <Input placeholder="https://teams.microsoft.com/..." value={editForm.teamsLink} onChange={(e) => setEditForm({ ...editForm, teamsLink: e.target.value })} />
+                  <Label>WhatsApp Group Link</Label>
+                  <Input placeholder="https://chat.whatsapp.com/..." value={editForm.teamsLink} onChange={(e) => setEditForm({ ...editForm, teamsLink: e.target.value })} />
                 </div>
               </div>
             </div>

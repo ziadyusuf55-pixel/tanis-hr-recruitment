@@ -29,8 +29,8 @@ export type InsertUser = typeof users.$inferInsert;
 
 /**
  * Tanis recruitment pipeline stages (in order):
- * applied → whatsapp_sent → voice_note_reviewed → interview_scheduled → accepted → teams_invitation_sent
- * rejected is a universal exit at any stage
+ * applied → whatsapp_sent → voice_note_reviewed → interview_scheduled → accepted → whatsapp_group_added
+ * rejected / blacklisted are universal exits at any stage
  */
 export const PIPELINE_STAGES = [
   "applied",
@@ -38,7 +38,7 @@ export const PIPELINE_STAGES = [
   "voice_note_reviewed",
   "interview_scheduled",
   "accepted",
-  "teams_invitation_sent",
+  "whatsapp_group_added",
   "rejected",
   "blacklisted",
 ] as const;
@@ -57,14 +57,14 @@ export const candidates = mysqlTable("candidates", {
   resumeLink: text("resumeLink"),
   notes: text("notes"),
   meetLink: text("meetLink"),       // Google Meet link for interview
-  teamsLink: text("teamsLink"),     // Microsoft Teams training link
+  teamsLink: text("teamsLink"),     // kept for legacy, unused
   status: mysqlEnum("status", [
     "applied",
     "whatsapp_sent",
     "voice_note_reviewed",
     "interview_scheduled",
     "accepted",
-    "teams_invitation_sent",
+    "whatsapp_group_added",
     "rejected",
     "blacklisted",
   ])
@@ -102,7 +102,7 @@ export const stageNotes = mysqlTable("stage_notes", {
     "voice_note_reviewed",
     "interview_scheduled",
     "accepted",
-    "teams_invitation_sent",
+    "whatsapp_group_added",
     "rejected",
     "blacklisted",
   ]).notNull(),
@@ -159,7 +159,9 @@ export const trainingBatches = mysqlTable("training_batches", {
   name: varchar("name", { length: 255 }).notNull(),          // e.g. "Batch 1", "Wave 2 - June"
   trainerName: varchar("trainerName", { length: 255 }),      // name of the trainer running the batch
   startDate: bigint("startDate", { mode: "number" }),        // UTC ms timestamp of training start
-  notes: text("notes"),
+  endDate: bigint("endDate", { mode: "number" }),            // UTC ms timestamp of training end
+  batchNotes: text("batchNotes"),                            // what has been completed / not (free text)
+  notes: text("notes"),                                      // general batch notes (kept for compat)
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -172,11 +174,13 @@ export type InsertTrainingBatch = typeof trainingBatches.$inferInsert;
  * A candidate can only be in one batch at a time (enforced at app level).
  */
 export const batchCandidates = mysqlTable("batch_candidates", {
-  // traineeCode is assigned by the trainer after the agent joins the batch
   id: int("id").autoincrement().primaryKey(),
   batchId: int("batchId").notNull(),
   candidateId: int("candidateId").notNull(),
   traineeCode: varchar("traineeCode", { length: 100 }),
+  trainerNotes: text("trainerNotes"),                        // per-agent trainer notes
+  attendedSessions: int("attendedSessions").default(0),      // number of sessions attended
+  totalSessions: int("totalSessions").default(0),            // total sessions in the batch
   assignedAt: timestamp("assignedAt").defaultNow().notNull(),
 });
 

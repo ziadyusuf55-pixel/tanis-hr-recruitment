@@ -32,6 +32,8 @@ import {
   markInterviewNotificationSent,
   getAllBatchAssignments,
   removeCandidateFromBatch,
+  setAttendance,
+  setTrainerNotes,
   setTraineeCode,
   updateBatch,
   updateCandidate,
@@ -45,7 +47,7 @@ const PIPELINE_STAGES_ZOD = z.enum([
   "voice_note_reviewed",
   "interview_scheduled",
   "accepted",
-  "teams_invitation_sent",
+  "whatsapp_group_added",
   "rejected",
   "blacklisted",
 ]);
@@ -75,7 +77,9 @@ export const appRouter = router({
         name: z.string().min(1),
         trainerName: z.string().optional(),
         startDate: z.number().optional(),
+        endDate: z.number().optional(),
         notes: z.string().optional(),
+        batchNotes: z.string().optional(),
       }))
       .mutation(({ input }) => createBatch(input)),
 
@@ -85,7 +89,9 @@ export const appRouter = router({
         name: z.string().min(1).optional(),
         trainerName: z.string().nullable().optional(),
         startDate: z.number().nullable().optional(),
+        endDate: z.number().nullable().optional(),
         notes: z.string().nullable().optional(),
+        batchNotes: z.string().nullable().optional(),
       }))
       .mutation(({ input: { id, ...data } }) => updateBatch(id, data)),
 
@@ -108,6 +114,18 @@ export const appRouter = router({
     setTraineeCode: protectedProcedure
       .input(z.object({ batchId: z.number(), candidateId: z.number(), code: z.string().nullable() }))
       .mutation(({ input }) => setTraineeCode(input.batchId, input.candidateId, input.code)),
+
+    setTrainerNotes: protectedProcedure
+      .input(z.object({ batchId: z.number(), candidateId: z.number(), notes: z.string().nullable() }))
+      .mutation(({ input }) => setTrainerNotes(input.batchId, input.candidateId, input.notes)),
+
+    setAttendance: protectedProcedure
+      .input(z.object({ batchId: z.number(), candidateId: z.number(), attendedSessions: z.number().int().min(0), totalSessions: z.number().int().min(0) }))
+      .mutation(({ input }) => setAttendance(input.batchId, input.candidateId, input.attendedSessions, input.totalSessions)),
+
+    updateBatchNotes: protectedProcedure
+      .input(z.object({ id: z.number(), batchNotes: z.string().nullable() }))
+      .mutation(({ input }) => updateBatch(input.id, { batchNotes: input.batchNotes })),
 
     getCandidateBatch: protectedProcedure
       .input(z.object({ candidateId: z.number() }))
@@ -367,33 +385,33 @@ export const appRouter = router({
         const voiceNoteCount = pipelineCounts.find((p) => p.status === "voice_note_reviewed")?.count ?? 0;
         const interviewCount = pipelineCounts.find((p) => p.status === "interview_scheduled")?.count ?? 0;
         const acceptedCount = pipelineCounts.find((p) => p.status === "accepted")?.count ?? 0;
-        const teamsCount = pipelineCounts.find((p) => p.status === "teams_invitation_sent")?.count ?? 0;
+        const whatsappGroupCount = pipelineCounts.find((p) => p.status === "whatsapp_group_added")?.count ?? 0;
         const rejectedCount = pipelineCounts.find((p) => p.status === "rejected")?.count ?? 0;
         const blacklistedCount = pipelineCounts.find((p) => p.status === "blacklisted")?.count ?? 0;
 
         // Conversion rate: Applied → Accepted (of all non-rejected/blacklisted)
         const activeTotal = totalInPipeline - rejectedCount - blacklistedCount;
-        const conversionRate = activeTotal > 0 ? Math.round((acceptedCount + teamsCount) / activeTotal * 100) : 0;
+        const conversionRate = activeTotal > 0 ? Math.round((acceptedCount + whatsappGroupCount) / activeTotal * 100) : 0;
 
         // WhatsApp response rate: whatsapp_sent+ / applied+
-        const respondedToWhatsApp = whatsappCount + voiceNoteCount + interviewCount + acceptedCount + teamsCount + rejectedCount;
+        const respondedToWhatsApp = whatsappCount + voiceNoteCount + interviewCount + acceptedCount + whatsappGroupCount + rejectedCount;
         const whatsappResponseRate = newCandidates > 0 ? Math.round(respondedToWhatsApp / Math.max(newCandidates, 1) * 100) : 0;
 
         // Voice note pass rate
         const voiceNotePassRate = whatsappCount > 0
-          ? Math.round((voiceNoteCount + interviewCount + acceptedCount + teamsCount) / Math.max(whatsappCount + voiceNoteCount + interviewCount + acceptedCount + teamsCount, 1) * 100)
+          ? Math.round((voiceNoteCount + interviewCount + acceptedCount + whatsappGroupCount) / Math.max(whatsappCount + voiceNoteCount + interviewCount + acceptedCount + whatsappGroupCount, 1) * 100)
           : 0;
 
         // Interview show rate (those who reached interview stage)
         const interviewShowRate = voiceNoteCount > 0
-          ? Math.round((interviewCount + acceptedCount + teamsCount) / Math.max(voiceNoteCount + interviewCount + acceptedCount + teamsCount, 1) * 100)
+          ? Math.round((interviewCount + acceptedCount + whatsappGroupCount) / Math.max(voiceNoteCount + interviewCount + acceptedCount + whatsappGroupCount, 1) * 100)
           : 0;
 
         return {
           // Top cards
           totalInPipeline,
           newCandidates,
-          teamsInvitationsSent: teamsCount,
+          whatsappGroupAdded: whatsappGroupCount,
           avgTimeToHireDays: avgTimeToHire,
           // Rates
           conversionRate,
@@ -407,7 +425,7 @@ export const appRouter = router({
             voice_note_reviewed: voiceNoteCount,
             interview_scheduled: interviewCount,
             accepted: acceptedCount,
-            teams_invitation_sent: teamsCount,
+            whatsapp_group_added: whatsappGroupCount,
             rejected: rejectedCount,
             blacklisted: blacklistedCount,
           },
