@@ -205,19 +205,18 @@
 - [x] Frontend: show blacklisted candidates in the Rejected quick-filter view
 - [x] Remove Timeline view tab from the Candidates page toolbar
 
-## Round 20 — WhatsApp Group Added Stage + Training Improvements
-- [x] Rename pipeline stage `teams_invitation_sent` → `whatsapp_group_added` in DB enum migration
-- [x] Update PIPELINE_STAGES_ZOD, STAGE_LABELS, STAGE_COLORS, ACTIVE_STAGES in pipeline.ts and shared/
-- [x] Update Training page: allow assigning candidates from `whatsapp_group_added` stage
-- [x] DB: add startDate and endDate fields to trainingBatches table
-- [x] DB: add trainerNotes field to batchCandidates table (per-agent notes)
-- [x] DB: add batchNotes field to trainingBatches table (what has been completed/not)
-- [x] DB: add attendance tracking per agent in batchCandidates (attendedSessions, totalSessions)
-- [x] Backend: update all batch-related DB helpers and tRPC procedures for new fields
-- [x] Frontend: Training batch detail — show/edit trainer notes per agent
-- [x] Frontend: Training batch detail — show/edit batch notes (completed topics checklist or free text)
-- [x] Frontend: Training batch detail — show/edit attendance per agent
-- [x] Frontend: Training batch detail — "Copy all phone numbers" button for WhatsApp group creation
-- [x] Frontend: Training batch create/edit — add startDate, endDate fields
-- [x] Update Dashboard funnel chart to use new stage label "WhatsApp Group Added"
-- [x] Update all Vitest tests to use new stage name
+## Round 21 — Bug Fixes + No Answer Status
+- [ ] Fix routers.ts: rename stale `teams_invitation_sent` key to `whatsapp_group_added` in KPI stageCounts
+- [ ] Fix routers.ts: `whatsappGroupAdded` KPI card (was `teamsInvitationsSent`)
+- [ ] Fix getPipelineCounts: rejected/blacklisted counts should always be all-time (not filtered by period)
+- [ ] Fix Dashboard.tsx: rename FUNNEL_COLORS key from `teams_invitation_sent` to `whatsapp_group_added`
+- [ ] DB: add `no_answer` to candidates status enum
+- [ ] Run migration to add no_answer to DB enum
+- [ ] Backend: allow `no_answer` as valid status in updateStatus procedure
+- [ ] Update pipeline.ts: add `no_answer` to STAGE_LABELS, STAGE_COLORS, etc.
+- [ ] Frontend: add "No Answer" quick-action button on board cards (visible for Applied, WhatsApp Sent stages)
+- [ ] Frontend: add "No Answer" quick-action button on list rows (same stages)
+- [ ] Frontend: add "No Answer" option on CandidateDetail action bar
+- [ ] Frontend: show "No Answer" column in pipeline board
+- [ ] Frontend: "No Answer" candidates visible in Rejected quick-filter (or separate filter)
+- [ ] Update Vitest tests for no_answer stage

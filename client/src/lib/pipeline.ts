@@ -51,7 +51,7 @@ export const STAGE_DESCRIPTIONS: Record<PipelineStage, string> = {
   voice_note_reviewed: "Voice note received and reviewed — ready for interview",
   interview_scheduled: "Google Meet interview link sent",
   accepted: "Interview passed — candidate accepted",
-  whatsapp_group_added: "Added to WhatsApp group — location shared, coordination in progress",
+  whatsapp_group_added: "Added to WhatsApp training group",
   rejected: "Candidate rejected",
   blacklisted: "Candidate blacklisted — do not re-hire",
 };
@@ -62,7 +62,7 @@ export const STAGE_COLORS: Record<PipelineStage, string> = {
   voice_note_reviewed: "stage-voice",
   interview_scheduled: "stage-interview",
   accepted: "stage-accepted",
-  whatsapp_group_added: "stage-wa-group",
+  whatsapp_group_added: "stage-whatsapp-group",
   rejected: "stage-rejected",
   blacklisted: "stage-blacklisted",
 };
@@ -111,7 +111,7 @@ export const STAGE_BADGE: Record<PipelineStage, string> = {
   blacklisted: "bg-gray-100 text-gray-700 border-gray-300",
 };
 
-/** Returns the next stage in the pipeline (excluding rejected/blacklisted) */
+/** Returns the next stage in the forward pipeline (excluding rejected/blacklisted) */
 export function getNextStage(current: PipelineStage): PipelineStage | null {
   const forward = [
     "applied",

@@ -49,6 +49,8 @@ vi.mock("./db", () => ({
   getInterviewsScheduledSince: vi.fn().mockResolvedValue(2),
   getAvgTimeToHire: vi.fn().mockResolvedValue(7),
   getStageDropoff: vi.fn().mockResolvedValue([]),
+  getNoAnswerCount: vi.fn().mockResolvedValue(0),
+  setSubStatus: vi.fn().mockResolvedValue(undefined),
   upsertUser: vi.fn().mockResolvedValue(undefined),
   getUserByOpenId: vi.fn().mockResolvedValue(undefined),
   logActivity: vi.fn().mockResolvedValue(undefined),

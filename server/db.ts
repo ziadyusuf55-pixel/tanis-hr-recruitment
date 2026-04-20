@@ -403,6 +403,36 @@ export async function getPipelineCounts(period: "week" | "month" | "all") {
   return result;
 }
 
+export async function getNoAnswerCount() {
+  const db = await getDb();
+  if (!db) return 0;
+  try {
+    // Use raw SQL since subStatus column may not exist yet in DB
+    const result = await db.execute(
+      sql`SELECT COUNT(*) as count FROM candidates WHERE subStatus = 'no_answer'`
+    );
+    const rows = (result as unknown as Array<Array<{ count: number }>>)[0] ?? [];
+    return Number(rows[0]?.count ?? 0);
+  } catch {
+    return 0; // Column doesn't exist yet
+  }
+}
+
+export async function setSubStatus(id: number, subStatus: string | null) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  try {
+    // Use raw SQL since subStatus column may not exist yet in DB
+    if (subStatus === null) {
+      await db.execute(sql`UPDATE candidates SET subStatus = NULL WHERE id = ${id}`);
+    } else {
+      await db.execute(sql`UPDATE candidates SET subStatus = ${subStatus} WHERE id = ${id}`);
+    }
+  } catch (err) {
+    throw new Error("No Answer feature requires DB migration. Please contact support.");
+  }
+}
+
 export async function getCandidatesAddedSince(sinceMs: number) {
   const db = await getDb();
   if (!db) return 0;
@@ -414,7 +444,7 @@ export async function getCandidatesAddedSince(sinceMs: number) {
 }
 
 export async function getAvgTimeToHire(sinceMs: number) {
-  // Average days from appliedAt to acceptedAt for accepted/whatsapp_group_added candidates
+  // Average days from appliedAt to acceptedAt for accepted/teams_invitation_sent candidates
   const db = await getDb();
   if (!db) return null;
   const conditions = [
@@ -469,9 +499,7 @@ export async function createBatch(data: {
   name: string;
   trainerName?: string;
   startDate?: number;
-  endDate?: number;
   notes?: string;
-  batchNotes?: string;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -479,9 +507,7 @@ export async function createBatch(data: {
     name: data.name,
     trainerName: data.trainerName ?? null,
     startDate: data.startDate ?? null,
-    endDate: data.endDate ?? null,
     notes: data.notes ?? null,
-    batchNotes: data.batchNotes ?? null,
   });
   return result;
 }
@@ -490,9 +516,7 @@ export async function updateBatch(id: number, data: {
   name?: string;
   trainerName?: string | null;
   startDate?: number | null;
-  endDate?: number | null;
   notes?: string | null;
-  batchNotes?: string | null;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -518,17 +542,11 @@ export async function listCandidatesInBatch(batchId: number) {
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.candidateId);
   const cands = await db.select().from(candidates).where(inArray(candidates.id, ids));
-  // Merge batch-specific fields from batchCandidates into each candidate row
-  return cands.map((c) => {
-    const bc = rows.find((r) => r.candidateId === c.id);
-    return {
-      ...c,
-      traineeCode: bc?.traineeCode ?? null,
-      trainerNotes: bc?.trainerNotes ?? null,
-      attendedSessions: bc?.attendedSessions ?? 0,
-      totalSessions: bc?.totalSessions ?? 0,
-    };
-  });
+  // Merge traineeCode from batchCandidates into each candidate row
+  return cands.map((c) => ({
+    ...c,
+    traineeCode: rows.find((r) => r.candidateId === c.id)?.traineeCode ?? null,
+  }));
 }
 
 export async function setTraineeCode(batchId: number, candidateId: number, code: string | null) {
@@ -537,24 +555,6 @@ export async function setTraineeCode(batchId: number, candidateId: number, code:
   await db
     .update(batchCandidates)
     .set({ traineeCode: code })
-    .where(and(eq(batchCandidates.batchId, batchId), eq(batchCandidates.candidateId, candidateId)));
-}
-
-export async function setTrainerNotes(batchId: number, candidateId: number, notes: string | null) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db
-    .update(batchCandidates)
-    .set({ trainerNotes: notes })
-    .where(and(eq(batchCandidates.batchId, batchId), eq(batchCandidates.candidateId, candidateId)));
-}
-
-export async function setAttendance(batchId: number, candidateId: number, attendedSessions: number, totalSessions: number) {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  await db
-    .update(batchCandidates)
-    .set({ attendedSessions, totalSessions })
     .where(and(eq(batchCandidates.batchId, batchId), eq(batchCandidates.candidateId, candidateId)));
 }
 
