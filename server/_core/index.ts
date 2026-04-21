@@ -128,32 +128,6 @@ async function startServer() {
     }
   });
 
-  // Round 23 migration — add no_answer to stage_notes enum
-  app.post("/api/run-migration-round23", async (_req, res) => {
-    res.setTimeout(120000);
-    try {
-      const { getDb } = await import("../db");
-      const db = await getDb();
-      if (!db) { res.status(500).json({ error: "DB not available" }); return; }
-      const { sql } = await import("drizzle-orm");
-      const results: string[] = [];
-
-      // Check if stage_notes.stage already has no_answer
-      const [cols] = await db.execute(sql`SHOW COLUMNS FROM \`stage_notes\` LIKE 'stage'`) as unknown as Array<Array<{Type: string}>>;
-      const colInfo = cols?.[0];
-      if (colInfo?.Type?.includes('no_answer')) {
-        results.push("stage_notes.stage already has no_answer");
-      } else {
-        await db.execute(sql`ALTER TABLE \`stage_notes\` MODIFY COLUMN \`stage\` ENUM('applied','whatsapp_sent','no_answer','voice_note_reviewed','interview_scheduled','accepted','whatsapp_group_added','rejected','blacklisted') NOT NULL`);
-        results.push("stage_notes.stage updated with no_answer");
-      }
-
-      res.json({ ok: true, results });
-    } catch (err: unknown) {
-      res.status(500).json({ error: String(err) });
-    }
-  });
-
   // tRPC API
   app.use(
     "/api/trpc",
