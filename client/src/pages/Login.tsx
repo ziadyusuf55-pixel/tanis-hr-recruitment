@@ -107,14 +107,14 @@ export default function Login() {
           <div className="mt-auto mb-auto pt-16">
             <div className="inline-flex items-center gap-2 bg-white/10 border border-white/20 rounded-full px-4 py-1.5 mb-6">
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span className="text-white/80 text-xs font-medium tracking-wide uppercase">Recruitment Platform</span>
+              <span className="text-white/80 text-xs font-medium tracking-wide uppercase">Tanis hub</span>
             </div>
             <h1
               className="text-5xl font-extrabold text-white leading-[1.1] tracking-tight"
               style={{ fontFamily: "'Sora', sans-serif" }}
             >
-              Hire smarter.<br />
-              <span className="text-white/50">Train faster.</span>
+              Local Voices<br />
+              <span className="text-white/50">Global Impact</span>
             </h1>
             <p className="mt-5 text-white/60 text-base leading-relaxed max-w-sm">
               Tanis Hub is your all-in-one platform for managing the full agent lifecycle — from first application to active deployment.
