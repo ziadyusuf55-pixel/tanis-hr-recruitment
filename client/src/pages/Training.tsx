@@ -37,6 +37,7 @@ import {
   Check,
   X,
 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
 
 type Batch = {
@@ -57,6 +58,7 @@ type BatchCandidate = {
   status: string;
   wave: number | null;
   traineeCode?: string | null;
+  slackJoined?: boolean;
 };
 
 const EMPTY_FORM = { name: "", trainerName: "", startDate: "", notes: "" };
@@ -100,6 +102,13 @@ export default function Training() {
   });
   const setTraineeCode = trpc.batches.setTraineeCode.useMutation({
     onSuccess: () => { utils.batches.listCandidates.invalidate({ batchId: selectedBatchId! }); toast.success("Trainee code saved"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const toggleSlackJoined = trpc.batches.toggleSlackJoined.useMutation({
+    onSuccess: (_data, vars) => {
+      utils.batches.listCandidates.invalidate({ batchId: selectedBatchId! });
+      toast.success(vars.value ? "Marked as Slack joined" : "Marked as not joined");
+    },
     onError: (e) => toast.error(e.message),
   });
 
@@ -210,6 +219,7 @@ export default function Training() {
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">
                     <span className="flex items-center gap-1.5"><Hash className="h-3.5 w-3.5" /> Trainee Code</span>
                   </th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Slack</th>
                   <th className="px-4 py-3 w-10"></th>
                 </tr>
               </thead>
@@ -268,6 +278,23 @@ export default function Training() {
                           </button>
                         </div>
                       )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2">
+                        <Switch
+                          checked={c.slackJoined ?? false}
+                          onCheckedChange={(val) => {
+                            if (!selectedBatchId) return;
+                            toggleSlackJoined.mutate({ batchId: selectedBatchId, candidateId: c.id, value: val });
+                          }}
+                          className="data-[state=checked]:bg-[#4A154B]"
+                        />
+                        <span className={`text-xs font-medium ${
+                          c.slackJoined ? "text-[#4A154B]" : "text-muted-foreground"
+                        }`}>
+                          {c.slackJoined ? "Joined" : "Pending"}
+                        </span>
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <Button

@@ -7,6 +7,7 @@ import {
   varchar,
   bigint,
   decimal,
+  boolean,
 } from "drizzle-orm/mysql-core";
 
 /**
@@ -183,6 +184,7 @@ export const batchCandidates = mysqlTable("batch_candidates", {
   batchId: int("batchId").notNull(),
   candidateId: int("candidateId").notNull(),
   traineeCode: varchar("traineeCode", { length: 100 }),
+  slackJoined: boolean("slackJoined").default(false).notNull(),
   assignedAt: timestamp("assignedAt").defaultNow().notNull(),
 });
 

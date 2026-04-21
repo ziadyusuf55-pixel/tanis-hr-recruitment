@@ -542,10 +542,11 @@ export async function listCandidatesInBatch(batchId: number) {
   if (rows.length === 0) return [];
   const ids = rows.map((r) => r.candidateId);
   const cands = await db.select().from(candidates).where(inArray(candidates.id, ids));
-  // Merge traineeCode from batchCandidates into each candidate row
+  // Merge traineeCode and slackJoined from batchCandidates into each candidate row
   return cands.map((c) => ({
     ...c,
     traineeCode: rows.find((r) => r.candidateId === c.id)?.traineeCode ?? null,
+    slackJoined: rows.find((r) => r.candidateId === c.id)?.slackJoined ?? false,
   }));
 }
 
@@ -555,6 +556,15 @@ export async function setTraineeCode(batchId: number, candidateId: number, code:
   await db
     .update(batchCandidates)
     .set({ traineeCode: code })
+    .where(and(eq(batchCandidates.batchId, batchId), eq(batchCandidates.candidateId, candidateId)));
+}
+
+export async function toggleSlackJoined(batchId: number, candidateId: number, value: boolean) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(batchCandidates)
+    .set({ slackJoined: value })
     .where(and(eq(batchCandidates.batchId, batchId), eq(batchCandidates.candidateId, candidateId)));
 }
 

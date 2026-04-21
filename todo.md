@@ -246,3 +246,11 @@
 - [x] Ensure all 3 modes (welcome, admin, agent) have polished UI
 - [x] Keep all existing logic intact (OAuth admin, agent JWT login)
 - [x] 40/40 tests still passing
+
+## Round 25 — Slack Joined Button in Training
+
+- [x] DB: add `slackJoined` boolean column to `batchCandidates` table
+- [x] Run migration SQL to add the column (via webdev_execute_sql)
+- [x] Backend: add `toggleSlackJoined` tRPC mutation
+- [x] Frontend: add Slack Joined toggle button per agent row in Training batch detail
+- [x] 40/40 tests passing

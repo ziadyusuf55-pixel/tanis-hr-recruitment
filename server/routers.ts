@@ -34,6 +34,7 @@ import {
   getAllBatchAssignments,
   removeCandidateFromBatch,
   setTraineeCode,
+  toggleSlackJoined,
   updateBatch,
   updateCandidate,
   updateCandidateStatus,
@@ -124,6 +125,10 @@ const batchesRouter = router({
     getCandidateBatch: protectedProcedure
       .input(z.object({ candidateId: z.number() }))
       .query(({ input }) => getCandidateBatch(input.candidateId)),
+
+    toggleSlackJoined: protectedProcedure
+      .input(z.object({ batchId: z.number(), candidateId: z.number(), value: z.boolean() }))
+      .mutation(({ input }) => toggleSlackJoined(input.batchId, input.candidateId, input.value)),
 
   allAssignments: protectedProcedure
     .query(() => getAllBatchAssignments()),
