@@ -607,3 +607,146 @@ export async function getAllBatchAssignments(): Promise<Record<number, string>> 
   }
   return map;
 }
+
+// ─── Agent Credentials ────────────────────────────────────────────────────────
+
+export async function getAgentCredentialByCandidateId(candidateId: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const { agentCredentials } = await import("../drizzle/schema");
+  const result = await db.select().from(agentCredentials).where(eq(agentCredentials.candidateId, candidateId)).limit(1);
+  return result[0] ?? null;
+}
+
+export async function getAgentCredentialByTraineeCode(traineeCode: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const { agentCredentials } = await import("../drizzle/schema");
+  const result = await db.select().from(agentCredentials).where(eq(agentCredentials.traineeCode, traineeCode)).limit(1);
+  return result[0] ?? null;
+}
+
+export async function upsertAgentCredential(candidateId: number, traineeCode: string, passwordHash: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { agentCredentials } = await import("../drizzle/schema");
+  // Try insert first, update if exists
+  const existing = await getAgentCredentialByCandidateId(candidateId);
+  if (existing) {
+    await db.update(agentCredentials)
+      .set({ traineeCode, passwordHash })
+      .where(eq(agentCredentials.candidateId, candidateId));
+  } else {
+    await db.insert(agentCredentials).values({ candidateId, traineeCode, passwordHash });
+  }
+}
+
+// ─── Payroll Records ──────────────────────────────────────────────────────────
+
+export async function getPayrollByCandidateId(candidateId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const { payrollRecords } = await import("../drizzle/schema");
+  return db.select().from(payrollRecords)
+    .where(eq(payrollRecords.candidateId, candidateId))
+    .orderBy(desc(payrollRecords.month));
+}
+
+export async function upsertPayrollRecord(data: {
+  candidateId: number;
+  month: string;
+  grossSalary?: number | null;
+  deductions?: number | null;
+  netPay?: number | null;
+  paymentDate?: number | null;
+  status?: "pending" | "paid" | "on_hold";
+  notes?: string | null;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { payrollRecords } = await import("../drizzle/schema");
+  const existing = await db.select({ id: payrollRecords.id })
+    .from(payrollRecords)
+    .where(and(eq(payrollRecords.candidateId, data.candidateId), eq(payrollRecords.month, data.month)))
+    .limit(1);
+  if (existing[0]) {
+    await db.update(payrollRecords).set({
+      grossSalary: data.grossSalary != null ? String(data.grossSalary) : null,
+      deductions: data.deductions != null ? String(data.deductions) : null,
+      netPay: data.netPay != null ? String(data.netPay) : null,
+      paymentDate: data.paymentDate ?? null,
+      status: data.status ?? "pending",
+      notes: data.notes ?? null,
+    }).where(eq(payrollRecords.id, existing[0].id));
+  } else {
+    await db.insert(payrollRecords).values({
+      candidateId: data.candidateId,
+      month: data.month,
+      grossSalary: data.grossSalary != null ? String(data.grossSalary) : null,
+      deductions: data.deductions != null ? String(data.deductions) : null,
+      netPay: data.netPay != null ? String(data.netPay) : null,
+      paymentDate: data.paymentDate ?? null,
+      status: data.status ?? "pending",
+      notes: data.notes ?? null,
+    });
+  }
+}
+
+export async function deletePayrollRecord(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { payrollRecords } = await import("../drizzle/schema");
+  await db.delete(payrollRecords).where(eq(payrollRecords.id, id));
+}
+
+// ─── Performance Records ──────────────────────────────────────────────────────
+
+export async function getPerformanceByCandidateId(candidateId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const { performanceRecords } = await import("../drizzle/schema");
+  return db.select().from(performanceRecords)
+    .where(eq(performanceRecords.candidateId, candidateId))
+    .orderBy(desc(performanceRecords.period));
+}
+
+export async function upsertPerformanceRecord(data: {
+  candidateId: number;
+  period: string;
+  callsMade?: number | null;
+  leadsGenerated?: number | null;
+  targetsHit?: number | null;
+  totalTargets?: number | null;
+  qualityScore?: number | null;
+  attendanceRate?: number | null;
+  notes?: string | null;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { performanceRecords } = await import("../drizzle/schema");
+  const existing = await db.select({ id: performanceRecords.id })
+    .from(performanceRecords)
+    .where(and(eq(performanceRecords.candidateId, data.candidateId), eq(performanceRecords.period, data.period)))
+    .limit(1);
+  const values = {
+    callsMade: data.callsMade ?? null,
+    leadsGenerated: data.leadsGenerated ?? null,
+    targetsHit: data.targetsHit ?? null,
+    totalTargets: data.totalTargets ?? null,
+    qualityScore: data.qualityScore != null ? String(data.qualityScore) : null,
+    attendanceRate: data.attendanceRate != null ? String(data.attendanceRate) : null,
+    notes: data.notes ?? null,
+  };
+  if (existing[0]) {
+    await db.update(performanceRecords).set(values).where(eq(performanceRecords.id, existing[0].id));
+  } else {
+    await db.insert(performanceRecords).values({ candidateId: data.candidateId, period: data.period, ...values });
+  }
+}
+
+export async function deletePerformanceRecord(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { performanceRecords } = await import("../drizzle/schema");
+  await db.delete(performanceRecords).where(eq(performanceRecords.id, id));
+}

@@ -9,6 +9,7 @@ import Candidates from "./pages/Candidates";
 import CandidateDetail from "./pages/CandidateDetail";
 import Training from "./pages/Training";
 import Login from "./pages/Login";
+import AgentPortal from "./pages/AgentPortal";
 import { useAuth } from "./_core/hooks/useAuth";
 import { getLoginUrl } from "./const";
 import { useEffect } from "react";
@@ -53,6 +54,7 @@ function Router() {
       <Route path="/candidates" component={() => <ProtectedRoute component={Candidates} />} />
       <Route path="/candidates/:id" component={() => <ProtectedRoute component={CandidateDetail} />} />
       <Route path="/training" component={() => <ProtectedRoute component={Training} />} />
+      <Route path="/agent" component={AgentPortal} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>

@@ -231,6 +231,33 @@ export default function CandidateDetail() {
   const { data: interviews, isLoading: interviewsLoading } = trpc.interviews.listByCandidate.useQuery({ candidateId: id });
   const { data: stageNotes, isLoading: notesLoading } = trpc.notes.list.useQuery({ candidateId: id });
   const { data: activityEntries } = trpc.activity.list.useQuery({ candidateId: id });
+  const { data: credentials, refetch: refetchCredentials } = trpc.agent.hasCredentials.useQuery({ candidateId: id });
+  const { data: performanceRecords } = trpc.agent.getPerformance.useQuery({ candidateId: id });
+
+  const generateCredentialsMutation = trpc.agent.generateCredentials.useMutation({
+    onSuccess: () => {
+      refetchCredentials();
+      toast.success("Agent credentials generated");
+    },
+    onError: () => toast.error("Failed to generate credentials"),
+  });
+
+  const upsertPerformanceMutation = trpc.agent.upsertPerformance.useMutation({
+    onSuccess: () => {
+      utils.agent.getPerformance.invalidate({ candidateId: id });
+      toast.success("Performance record saved");
+      setPerfDialogOpen(false);
+    },
+    onError: () => toast.error("Failed to save performance record"),
+  });
+
+  const deletePerformanceMutation = trpc.agent.deletePerformance.useMutation({
+    onSuccess: () => {
+      utils.agent.getPerformance.invalidate({ candidateId: id });
+      toast.success("Performance record deleted");
+    },
+    onError: () => toast.error("Failed to delete performance record"),
+  });
 
   const updateCandidate = trpc.candidates.update.useMutation({
     onSuccess: () => {
@@ -327,6 +354,9 @@ export default function CandidateDetail() {
   const [noteText, setNoteText] = useState("");
   const [noteStage, setNoteStage] = useState<PipelineStage>("applied");
   const [activeNotesStage, setActiveNotesStage] = useState<PipelineStage | "all">("all");
+  const [showGeneratedPassword, setShowGeneratedPassword] = useState<string | null>(null);
+  const [perfDialogOpen, setPerfDialogOpen] = useState(false);
+  const [perfForm, setPerfForm] = useState({ period: "", callsMade: "", leadsGenerated: "", targetsHit: "", totalTargets: "", qualityScore: "", attendanceRate: "", notes: "" });
 
   // ─── Handlers ──────────────────────────────────────────────────────────────
 
@@ -1073,6 +1103,132 @@ export default function CandidateDetail() {
         )}
       </SectionCard>
 
+      {/* ── Agent Credentials ── */}
+      <SectionCard title="Agent Portal Access" icon={<UserCheck className="h-4 w-4" />}>
+        <div className="space-y-4">
+          {credentials?.exists ? (
+            <div className="space-y-3">
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-4 w-4 text-green-500" />
+                <span className="text-sm font-medium text-foreground">Credentials active</span>
+              </div>
+              <div className="flex items-center gap-2 p-3 bg-muted rounded-lg">
+                <span className="text-xs text-muted-foreground">Trainee ID:</span>
+                <span className="text-sm font-mono font-semibold">{credentials.traineeCode}</span>
+              </div>
+              {showGeneratedPassword && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
+                  <p className="text-xs font-semibold text-amber-800">New password generated — share this once:</p>
+                  <div className="flex items-center gap-2">
+                    <code className="text-sm font-mono font-bold text-amber-900 bg-amber-100 px-2 py-1 rounded">{showGeneratedPassword}</code>
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { navigator.clipboard.writeText(showGeneratedPassword!); toast.success("Password copied"); }}>
+                      Copy
+                    </Button>
+                  </div>
+                  <p className="text-xs text-amber-700">This password will not be shown again.</p>
+                </div>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={async () => {
+                  const tc2 = (candidate as Record<string, unknown>)?.traineeCode as string | null;
+                  if (!tc2) { toast.error("No Trainee ID assigned"); return; }
+                  const result = await generateCredentialsMutation.mutateAsync({ candidateId: id, traineeCode: tc2 });
+                  setShowGeneratedPassword(result.password);
+                }}
+                disabled={generateCredentialsMutation.isPending}
+              >
+                Regenerate Password
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">No agent portal access yet. Generate credentials to allow this candidate to log in as an agent.</p>
+              {!(candidate as Record<string, unknown>)?.traineeCode && (
+                <p className="text-xs text-amber-600">⚠ Assign a Trainee ID first before generating credentials.</p>
+              )}
+              <Button
+                size="sm"
+                onClick={async () => {
+                  const tc = (candidate as Record<string, unknown>)?.traineeCode as string | null;
+                  if (!tc) { toast.error("Assign a Trainee ID first"); return; }
+                  const result = await generateCredentialsMutation.mutateAsync({ candidateId: id, traineeCode: tc });
+                  setShowGeneratedPassword(result.password);
+                }}
+                disabled={generateCredentialsMutation.isPending}
+                className="text-white"
+                style={{ background: "oklch(0.32 0.18 28)" }}
+              >
+                Generate Credentials
+              </Button>
+              {showGeneratedPassword && (
+                <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
+                  <p className="text-xs font-semibold text-amber-800">Credentials created — share this password once:</p>
+                  <div className="flex items-center gap-2">
+                    <code className="text-sm font-mono font-bold text-amber-900 bg-amber-100 px-2 py-1 rounded">{showGeneratedPassword}</code>
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { navigator.clipboard.writeText(showGeneratedPassword!); toast.success("Password copied"); }}>
+                      Copy
+                    </Button>
+                  </div>
+                  <p className="text-xs text-amber-700">This password will not be shown again.</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </SectionCard>
+
+      {/* ── Performance ── */}
+      <SectionCard title="Performance" icon={<Activity className="h-4 w-4" />}>
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted-foreground">Operations performance records per period</p>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => { setPerfForm({ period: "", callsMade: "", leadsGenerated: "", targetsHit: "", totalTargets: "", qualityScore: "", attendanceRate: "", notes: "" }); setPerfDialogOpen(true); }}
+            >
+              <Plus className="h-3.5 w-3.5 mr-1" /> Add Record
+            </Button>
+          </div>
+          {!performanceRecords || performanceRecords.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-8 text-center">
+              <Activity className="h-8 w-8 text-muted-foreground/30 mb-2" />
+              <p className="text-sm text-muted-foreground">No performance records yet</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {performanceRecords.map((rec: Record<string, unknown>) => (
+                <div key={rec.id as number} className="p-4 border border-border rounded-lg space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-sm">{rec.period as string}</span>
+                    <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive hover:text-destructive" onClick={() => deletePerformanceMutation.mutate({ id: rec.id as number })}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {[
+                      { label: "Calls Made", value: rec.callsMade },
+                      { label: "Leads Generated", value: rec.leadsGenerated },
+                      { label: "Targets Hit", value: rec.targetsHit != null ? `${rec.targetsHit} / ${rec.totalTargets ?? "?"}` : null },
+                      { label: "Quality Score", value: rec.qualityScore != null ? `${rec.qualityScore}%` : null },
+                      { label: "Attendance Rate", value: rec.attendanceRate != null ? `${rec.attendanceRate}%` : null },
+                    ].map(({ label, value }) => value != null && (
+                      <div key={label} className="space-y-0.5">
+                        <p className="text-xs text-muted-foreground">{label}</p>
+                        <p className="text-sm font-medium">{String(value)}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {rec.notes != null && <p className="text-xs text-muted-foreground italic">{String(rec.notes)}</p>}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </SectionCard>
+
       {/* ── Metadata ── */}
       <div className="text-xs text-muted-foreground/50 flex gap-4 pb-2">
         <span>Added {new Date(candidate.createdAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })}</span>
@@ -1315,6 +1471,73 @@ export default function CandidateDetail() {
               disabled={updateStatus.isPending || !rejectReason.trim()}
             >
               {updateStatus.isPending ? "Rejecting..." : isNoShow ? "Confirm No-Show" : "Confirm Rejection"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Performance Record Dialog */}
+      <Dialog open={perfDialogOpen} onOpenChange={setPerfDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Add Performance Record</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <Label>Period <span className="text-destructive">*</span></Label>
+              <Input placeholder="e.g. April 2026, Week 1" value={perfForm.period} onChange={(e) => setPerfForm({ ...perfForm, period: e.target.value })} />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Calls Made</Label>
+                <Input type="number" min={0} placeholder="0" value={perfForm.callsMade} onChange={(e) => setPerfForm({ ...perfForm, callsMade: e.target.value })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Leads Generated</Label>
+                <Input type="number" min={0} placeholder="0" value={perfForm.leadsGenerated} onChange={(e) => setPerfForm({ ...perfForm, leadsGenerated: e.target.value })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Targets Hit</Label>
+                <Input type="number" min={0} placeholder="0" value={perfForm.targetsHit} onChange={(e) => setPerfForm({ ...perfForm, targetsHit: e.target.value })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Total Targets</Label>
+                <Input type="number" min={0} placeholder="0" value={perfForm.totalTargets} onChange={(e) => setPerfForm({ ...perfForm, totalTargets: e.target.value })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Quality Score (%)</Label>
+                <Input type="number" min={0} max={100} placeholder="0-100" value={perfForm.qualityScore} onChange={(e) => setPerfForm({ ...perfForm, qualityScore: e.target.value })} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Attendance Rate (%)</Label>
+                <Input type="number" min={0} max={100} placeholder="0-100" value={perfForm.attendanceRate} onChange={(e) => setPerfForm({ ...perfForm, attendanceRate: e.target.value })} />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Notes</Label>
+              <Textarea placeholder="Optional notes..." value={perfForm.notes} onChange={(e) => setPerfForm({ ...perfForm, notes: e.target.value })} rows={2} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPerfDialogOpen(false)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                if (!perfForm.period.trim()) { toast.error("Period is required"); return; }
+                upsertPerformanceMutation.mutate({
+                  candidateId: id,
+                  period: perfForm.period.trim(),
+                  callsMade: perfForm.callsMade ? parseInt(perfForm.callsMade) : null,
+                  leadsGenerated: perfForm.leadsGenerated ? parseInt(perfForm.leadsGenerated) : null,
+                  targetsHit: perfForm.targetsHit ? parseInt(perfForm.targetsHit) : null,
+                  totalTargets: perfForm.totalTargets ? parseInt(perfForm.totalTargets) : null,
+                  qualityScore: perfForm.qualityScore ? parseFloat(perfForm.qualityScore) : null,
+                  attendanceRate: perfForm.attendanceRate ? parseFloat(perfForm.attendanceRate) : null,
+                  notes: perfForm.notes.trim() || null,
+                });
+              }}
+              disabled={upsertPerformanceMutation.isPending}
+            >
+              {upsertPerformanceMutation.isPending ? "Saving..." : "Save Record"}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -206,17 +206,35 @@
 - [x] Remove Timeline view tab from the Candidates page toolbar
 
 ## Round 21 — Bug Fixes + No Answer Status
-- [ ] Fix routers.ts: rename stale `teams_invitation_sent` key to `whatsapp_group_added` in KPI stageCounts
-- [ ] Fix routers.ts: `whatsappGroupAdded` KPI card (was `teamsInvitationsSent`)
-- [ ] Fix getPipelineCounts: rejected/blacklisted counts should always be all-time (not filtered by period)
-- [ ] Fix Dashboard.tsx: rename FUNNEL_COLORS key from `teams_invitation_sent` to `whatsapp_group_added`
-- [ ] DB: add `no_answer` to candidates status enum
-- [ ] Run migration to add no_answer to DB enum
-- [ ] Backend: allow `no_answer` as valid status in updateStatus procedure
-- [ ] Update pipeline.ts: add `no_answer` to STAGE_LABELS, STAGE_COLORS, etc.
-- [ ] Frontend: add "No Answer" quick-action button on board cards (visible for Applied, WhatsApp Sent stages)
-- [ ] Frontend: add "No Answer" quick-action button on list rows (same stages)
-- [ ] Frontend: add "No Answer" option on CandidateDetail action bar
-- [ ] Frontend: show "No Answer" column in pipeline board
-- [ ] Frontend: "No Answer" candidates visible in Rejected quick-filter (or separate filter)
-- [ ] Update Vitest tests for no_answer stage
+- [x] Fix routers.ts: rename stale `teams_invitation_sent` key to `whatsapp_group_added` in KPI stageCounts
+- [x] Fix routers.ts: `whatsappGroupAdded` KPI card (was `teamsInvitationsSent`)
+- [x] Fix getPipelineCounts: rejected/blacklisted counts should always be all-time (not filtered by period)
+- [x] Fix Dashboard.tsx: rename FUNNEL_COLORS key from `teams_invitation_sent` to `whatsapp_group_added`
+- [ ] DB: add `no_answer` to candidates status enum (TiDB DDL timeout — pending)
+- [ ] Run migration to add no_answer to DB enum (TiDB DDL timeout — pending)
+- [ ] Backend: allow `no_answer` as valid status in updateStatus procedure (pending DB)
+- [x] Update pipeline.ts: add `no_answer` to STAGE_LABELS, STAGE_COLORS (using subStatus approach)
+- [x] Frontend: add "No Answer" quick-action button on board cards (using subStatus)
+- [x] Frontend: add "No Answer" quick-action button on list rows (using subStatus)
+- [x] Frontend: add "No Answer" option on CandidateDetail action bar
+- [x] Frontend: show "No Answer" badge on candidate cards
+- [x] Update Vitest tests for no_answer stage
+
+## Round 22 — Agent Portal + Welcome Screen + Performance Tab
+
+- [x] DB: create agent_credentials table (candidateId FK, traineeCode, passwordHash, generatedAt)
+- [x] DB: create payroll_records table (candidateId, month, grossSalary, deductions, netPay, paymentDate, status, notes)
+- [x] DB: create performance_records table (candidateId, period, callsMade, leadsGenerated, targetsHit, qualityScore, attendanceRate, notes)
+- [x] Backend: agentLogin procedure (traineeCode + password → JWT session cookie)
+- [x] Backend: agentMe procedure (returns agent profile from session)
+- [x] Backend: generateAgentCredentials procedure (auto-generate password, hash it, store, return plain text once)
+- [x] Backend: payroll CRUD procedures (getPayroll, upsertPayrollRecord)
+- [x] Backend: performance CRUD procedures (getPerformance, upsertPerformanceRecord)
+- [x] Frontend: Welcome screen — two login cards (Admin OAuth + Agent Trainee ID/Password)
+- [x] Frontend: Agent portal layout with sidebar (Profile, Training, Payroll tabs)
+- [x] Frontend: Agent Profile tab — name, trainee ID, position, location, join date
+- [x] Frontend: Agent Training tab — batch info, attendance, trainer notes
+- [x] Frontend: Agent Payroll tab — monthly records table (read-only for agent)
+- [x] Frontend: Admin CandidateDetail — "Generate Credentials" button shows password once
+- [x] Frontend: Admin CandidateDetail — Performance tab (admin can add/edit monthly records)
+- [x] Write vitest tests for agent auth and payroll procedures (10 new tests, 40 total)

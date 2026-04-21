@@ -1,4 +1,6 @@
 import { COOKIE_NAME } from "@shared/const";
+import bcrypt from "bcryptjs";
+import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
@@ -24,7 +26,6 @@ import {
   listActivityByCandidateId,
   listAllActivity,
   listBatches,
-  listCandidates,
   listCandidatesInBatch,
   listInterviewsByCandidateId,
   listNotesByCandidateId,
@@ -38,8 +39,20 @@ import {
   updateCandidateStatus,
   getNoAnswerCount,
   setSubStatus,
+  listCandidates,
+  getAgentCredentialByCandidateId,
+  getAgentCredentialByTraineeCode,
+  upsertAgentCredential,
+  getPayrollByCandidateId,
+  upsertPayrollRecord,
+  deletePayrollRecord,
+  getPerformanceByCandidateId,
+  upsertPerformanceRecord,
+  deletePerformanceRecord,
 } from "./db";
 import { sendInterviewNotification } from "./email";
+import { ENV } from "./_core/env";
+import jwt from "jsonwebtoken";
 
 const PIPELINE_STAGES_ZOD = z.enum([
   "applied",
@@ -52,20 +65,16 @@ const PIPELINE_STAGES_ZOD = z.enum([
   "blacklisted",
 ]);
 
-export const appRouter = router({
-  system: systemRouter,
-
-  auth: router({
-    me: publicProcedure.query((opts) => opts.ctx.user),
-    logout: publicProcedure.mutation(({ ctx }) => {
-      const cookieOptions = getSessionCookieOptions(ctx.req);
-      ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
-      return { success: true } as const;
-    }),
+const authRouter = router({
+  me: publicProcedure.query((opts) => opts.ctx.user),
+  logout: publicProcedure.mutation(({ ctx }) => {
+    const cookieOptions = getSessionCookieOptions(ctx.req);
+    ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
+    return { success: true } as const;
   }),
+});
 
-  // ─── Training Batches ─────────────────────────────────────────────────────────
-  batches: router({
+const batchesRouter = router({
     list: protectedProcedure.query(() => listBatches()),
 
     get: protectedProcedure
@@ -115,13 +124,12 @@ export const appRouter = router({
       .input(z.object({ candidateId: z.number() }))
       .query(({ input }) => getCandidateBatch(input.candidateId)),
 
-    allAssignments: protectedProcedure
-      .query(() => getAllBatchAssignments()),
-  }),
+  allAssignments: protectedProcedure
+    .query(() => getAllBatchAssignments()),
+});
 
-  // ─── Candidates ─────────────────────────────────────────────────────────
-  candidates: router({
-    list: protectedProcedure.query(() => listCandidates()),
+const candidatesRouter = router({
+  list: protectedProcedure.query(() => listCandidates()),
 
     get: protectedProcedure
       .input(z.object({ id: z.number() }))
@@ -272,46 +280,44 @@ export const appRouter = router({
       }),
 
     /** Remove CV attachment from a candidate */
-    removeCv: protectedProcedure
-      .input(z.object({ id: z.number() }))
-      .mutation(({ input }) => updateCandidate(input.id, { cvUrl: null, cvFileName: null })),
-  }),
-  // ─── Activity Log ──────────────────────────────────────────────────────────────
-  activity: router({
+  removeCv: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(({ input }) => updateCandidate(input.id, { cvUrl: null, cvFileName: null })),
+});
+
+const activityRouter = router({
     list: protectedProcedure
       .input(z.object({ candidateId: z.number() }))
       .query(({ input }) => listActivityByCandidateId(input.candidateId)),
 
-    listAll: protectedProcedure
-      .input(z.object({ limit: z.number().optional() }))
-      .query(({ input }) => listAllActivity(input.limit ?? 200)),
-  }),
+  listAll: protectedProcedure
+    .input(z.object({ limit: z.number().optional() }))
+    .query(({ input }) => listAllActivity(input.limit ?? 200)),
+});
 
-  // ─── Stage Notes ──────────────────────────────────────────────────────────────
-  notes: router({
+const notesRouter = router({
     list: protectedProcedure
       .input(z.object({ candidateId: z.number() }))
       .query(({ input }) => listNotesByCandidateId(input.candidateId)),
 
-    add: protectedProcedure
-      .input(
-        z.object({
-          candidateId: z.number(),
-          stage: PIPELINE_STAGES_ZOD,
-          note: z.string().min(1),
-          recruiterName: z.string().optional(),
-        })
-      )
-      .mutation(({ input, ctx }) =>
-        addStageNote({
-          ...input,
-          recruiterName: input.recruiterName ?? ctx.user?.name ?? undefined,
-        })
-      ),
-  }),
+  add: protectedProcedure
+    .input(
+      z.object({
+        candidateId: z.number(),
+        stage: PIPELINE_STAGES_ZOD,
+        note: z.string().min(1),
+        recruiterName: z.string().optional(),
+      })
+    )
+    .mutation(({ input, ctx }) =>
+      addStageNote({
+        ...input,
+        recruiterName: input.recruiterName ?? ctx.user?.name ?? undefined,
+      })
+    ),
+});
 
-  // ─── Interviews ──────────────────────────────────────────────────────────────
-  interviews: router({
+const interviewsRouter = router({
     listByCandidate: protectedProcedure
       .input(z.object({ candidateId: z.number() }))
       .query(({ input }) => listInterviewsByCandidateId(input.candidateId)),
@@ -355,10 +361,9 @@ export const appRouter = router({
 
         return { success: true };
       }),
-  }),
+});
 
-  // ─── Dashboard KPIs ──────────────────────────────────────────────────────────
-  dashboard: router({
+const dashboardRouter = router({
     pipelineCounts: protectedProcedure
       .input(z.object({ period: z.enum(["week", "month", "all"]).default("month") }))
       .query(({ input }) => getPipelineCounts(input.period)),
@@ -439,7 +444,203 @@ export const appRouter = router({
           scheduledInterviews,
         };
       }),
+});
+
+// ─── Agent Portal Router ─────────────────────────────────────────────────────
+
+const AGENT_COOKIE = "tanis_agent_session";
+
+function generatePassword(traineeCode: string): string {
+  // Auto-generate: traineeCode + 4 random digits, e.g. TN0042-2847
+  const digits = Math.floor(1000 + Math.random() * 9000);
+  return `${traineeCode}-${digits}`;
+}
+
+const agentRouter = router({
+  // Generate credentials for a candidate — called by admin from CandidateDetail
+  generateCredentials: protectedProcedure
+    .input(z.object({ candidateId: z.number(), traineeCode: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      const plainPassword = generatePassword(input.traineeCode);
+      const passwordHash = await bcrypt.hash(plainPassword, 10);
+      await upsertAgentCredential(input.candidateId, input.traineeCode, passwordHash);
+      // Return plain password ONCE — admin must share it with agent
+      return { traineeCode: input.traineeCode, password: plainPassword };
+    }),
+
+  // Check if credentials exist for a candidate
+  hasCredentials: protectedProcedure
+    .input(z.object({ candidateId: z.number() }))
+    .query(async ({ input }) => {
+      const cred = await getAgentCredentialByCandidateId(input.candidateId);
+      return { exists: !!cred, traineeCode: cred?.traineeCode ?? null };
+    }),
+
+  // Agent login — public procedure (no admin auth needed)
+  login: publicProcedure
+    .input(z.object({ traineeCode: z.string().min(1), password: z.string().min(1) }))
+    .mutation(async ({ input, ctx }) => {
+      const cred = await getAgentCredentialByTraineeCode(input.traineeCode);
+      if (!cred) throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid Trainee ID or password" });
+      const valid = await bcrypt.compare(input.password, cred.passwordHash);
+      if (!valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid Trainee ID or password" });
+      // Create a signed JWT for the agent session
+      const token = jwt.sign(
+        { candidateId: cred.candidateId, traineeCode: cred.traineeCode, type: "agent" },
+        ENV.cookieSecret,
+        { expiresIn: "30d" }
+      );
+      ctx.res.cookie(AGENT_COOKIE, token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "lax",
+        maxAge: 30 * 24 * 60 * 60 * 1000,
+        path: "/",
+      });
+      return { success: true, traineeCode: cred.traineeCode, candidateId: cred.candidateId };
+    }),
+
+  // Agent logout
+  logout: publicProcedure.mutation(async ({ ctx }) => {
+    ctx.res.clearCookie(AGENT_COOKIE, { path: "/" });
+    return { success: true };
   }),
+
+  // Get current agent session info (from cookie)
+  me: publicProcedure.query(async ({ ctx }) => {
+    const token = ctx.req.cookies?.[AGENT_COOKIE];
+    if (!token) return null;
+    try {
+      const payload = jwt.verify(token, ENV.cookieSecret) as { candidateId: number; traineeCode: string; type: string };
+      if (payload.type !== "agent") return null;
+      const candidate = await getCandidateById(payload.candidateId);
+      if (!candidate) return null;
+      // Get batch info
+      const batch = await getCandidateBatch(payload.candidateId);
+      let batchDetail = null;
+      if (batch) {
+        const batchCands = await listCandidatesInBatch(batch.id);
+        const myEntry = batchCands.find((c) => (c as Record<string, unknown>).candidateId === payload.candidateId);
+        batchDetail = {
+          id: batch.id,
+          name: batch.name,
+          trainerName: batch.trainerName,
+          startDate: batch.startDate,
+          notes: batch.notes,
+          traineeCode: myEntry?.traineeCode ?? payload.traineeCode,
+          attendedSessions: (myEntry as Record<string, unknown>)?.attendedSessions ?? null,
+          totalSessions: (myEntry as Record<string, unknown>)?.totalSessions ?? null,
+          trainerNotes: (myEntry as Record<string, unknown>)?.trainerNotes ?? null,
+        };
+      }
+      return {
+        candidateId: payload.candidateId,
+        traineeCode: payload.traineeCode,
+        name: candidate.name,
+        phone: candidate.phone,
+        email: candidate.email,
+        positionApplied: candidate.positionApplied,
+        location: candidate.location,
+        age: candidate.age,
+        createdAt: candidate.createdAt,
+        batch: batchDetail,
+      };
+    } catch {
+      return null;
+    }
+  }),
+
+  // Payroll — agent can read their own, admin can read/write any
+  getPayroll: publicProcedure
+    .input(z.object({ candidateId: z.number() }))
+    .query(async ({ input, ctx }) => {
+      // Allow if admin OR if agent session matches candidateId
+      const agentToken = ctx.req.cookies?.[AGENT_COOKIE];
+      let isAgent = false;
+      if (agentToken) {
+        try {
+          const p = jwt.verify(agentToken, ENV.cookieSecret) as { candidateId: number; type: string };
+          isAgent = p.type === "agent" && p.candidateId === input.candidateId;
+        } catch { /* invalid token */ }
+      }
+      if (!ctx.user && !isAgent) throw new TRPCError({ code: "UNAUTHORIZED" });
+      return getPayrollByCandidateId(input.candidateId);
+    }),
+
+  upsertPayroll: protectedProcedure
+    .input(z.object({
+      candidateId: z.number(),
+      month: z.string().regex(/^\d{4}-\d{2}$/),
+      grossSalary: z.number().nullable().optional(),
+      deductions: z.number().nullable().optional(),
+      netPay: z.number().nullable().optional(),
+      paymentDate: z.number().nullable().optional(),
+      status: z.enum(["pending", "paid", "on_hold"]).optional(),
+      notes: z.string().nullable().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      await upsertPayrollRecord(input);
+      return { success: true };
+    }),
+
+  deletePayroll: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      await deletePayrollRecord(input.id);
+      return { success: true };
+    }),
+
+  // Performance — agent can read their own, admin can read/write any
+  getPerformance: publicProcedure
+    .input(z.object({ candidateId: z.number() }))
+    .query(async ({ input, ctx }) => {
+      const agentToken = ctx.req.cookies?.[AGENT_COOKIE];
+      let isAgent = false;
+      if (agentToken) {
+        try {
+          const p = jwt.verify(agentToken, ENV.cookieSecret) as { candidateId: number; type: string };
+          isAgent = p.type === "agent" && p.candidateId === input.candidateId;
+        } catch { /* invalid token */ }
+      }
+      if (!ctx.user && !isAgent) throw new TRPCError({ code: "UNAUTHORIZED" });
+      return getPerformanceByCandidateId(input.candidateId);
+    }),
+
+  upsertPerformance: protectedProcedure
+    .input(z.object({
+      candidateId: z.number(),
+      period: z.string().regex(/^\d{4}-\d{2}$/),
+      callsMade: z.number().nullable().optional(),
+      leadsGenerated: z.number().nullable().optional(),
+      targetsHit: z.number().nullable().optional(),
+      totalTargets: z.number().nullable().optional(),
+      qualityScore: z.number().nullable().optional(),
+      attendanceRate: z.number().nullable().optional(),
+      notes: z.string().nullable().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      await upsertPerformanceRecord(input);
+      return { success: true };
+    }),
+
+  deletePerformance: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      await deletePerformanceRecord(input.id);
+      return { success: true };
+    }),
+});
+
+export const appRouter = router({
+  auth: authRouter,
+  candidates: candidatesRouter,
+  notes: notesRouter,
+  interviews: interviewsRouter,
+  activity: activityRouter,
+  dashboard: dashboardRouter,
+  batches: batchesRouter,
+  system: systemRouter,
+  agent: agentRouter,
 });
 
 export type AppRouter = typeof appRouter;

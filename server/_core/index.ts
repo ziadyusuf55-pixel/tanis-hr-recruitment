@@ -57,6 +57,77 @@ async function startServer() {
       res.status(500).json({ error: String(err) });
     }
   });
+  // Round 22 migration — create agent portal tables
+  app.post("/api/run-migration-round22", async (_req, res) => {
+    res.setTimeout(120000);
+    try {
+      const { getDb } = await import("../db");
+      const db = await getDb();
+      if (!db) { res.status(500).json({ error: "DB not available" }); return; }
+      const { sql } = await import("drizzle-orm");
+      const results: string[] = [];
+
+      // agent_credentials
+      const ac = (await db.execute(sql`SHOW TABLES LIKE 'agent_credentials'`) as unknown as Array<unknown[]>)[0] ?? [];
+      if (ac.length === 0) {
+        await db.execute(sql`CREATE TABLE agent_credentials (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          candidateId INT NOT NULL UNIQUE,
+          traineeCode VARCHAR(100) NOT NULL UNIQUE,
+          passwordHash VARCHAR(255) NOT NULL,
+          generatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+          updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
+        )`);
+        results.push("agent_credentials created");
+      } else { results.push("agent_credentials already exists"); }
+
+      // payroll_records
+      const pr = (await db.execute(sql`SHOW TABLES LIKE 'payroll_records'`) as unknown as Array<unknown[]>)[0] ?? [];
+      if (pr.length === 0) {
+        await db.execute(sql`CREATE TABLE payroll_records (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          candidateId INT NOT NULL,
+          month VARCHAR(7) NOT NULL,
+          grossSalary DECIMAL(10,2),
+          deductions DECIMAL(10,2) DEFAULT 0,
+          netPay DECIMAL(10,2),
+          paymentDate BIGINT,
+          status ENUM('pending','paid','on_hold') DEFAULT 'pending' NOT NULL,
+          notes TEXT,
+          createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+          updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+          UNIQUE KEY uq_payroll_candidate_month (candidateId, month)
+        )`);
+        results.push("payroll_records created");
+      } else { results.push("payroll_records already exists"); }
+
+      // performance_records
+      const perf = (await db.execute(sql`SHOW TABLES LIKE 'performance_records'`) as unknown as Array<unknown[]>)[0] ?? [];
+      if (perf.length === 0) {
+        await db.execute(sql`CREATE TABLE performance_records (
+          id INT AUTO_INCREMENT PRIMARY KEY,
+          candidateId INT NOT NULL,
+          period VARCHAR(7) NOT NULL,
+          callsMade INT,
+          leadsGenerated INT,
+          targetsHit INT,
+          totalTargets INT,
+          qualityScore DECIMAL(4,1),
+          attendanceRate DECIMAL(5,2),
+          notes TEXT,
+          createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+          updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+          UNIQUE KEY uq_perf_candidate_period (candidateId, period)
+        )`);
+        results.push("performance_records created");
+      } else { results.push("performance_records already exists"); }
+
+      res.json({ ok: true, results });
+    } catch (err: unknown) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",

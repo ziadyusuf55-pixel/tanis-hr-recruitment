@@ -6,6 +6,7 @@ import {
   timestamp,
   varchar,
   bigint,
+  decimal,
 } from "drizzle-orm/mysql-core";
 
 /**
@@ -184,3 +185,62 @@ export const batchCandidates = mysqlTable("batch_candidates", {
 
 export type BatchCandidate = typeof batchCandidates.$inferSelect;
 export type InsertBatchCandidate = typeof batchCandidates.$inferInsert;
+
+/**
+ * Agent credentials — stores hashed password for agent portal login.
+ * Trainee code is the username; password is auto-generated and shown once.
+ */
+export const agentCredentials = mysqlTable("agent_credentials", {
+  id: int("id").autoincrement().primaryKey(),
+  candidateId: int("candidateId").notNull().unique(), // FK to candidates.id
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull().unique(), // login username
+  passwordHash: varchar("passwordHash", { length: 255 }).notNull(),
+  generatedAt: timestamp("generatedAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AgentCredential = typeof agentCredentials.$inferSelect;
+export type InsertAgentCredential = typeof agentCredentials.$inferInsert;
+
+/**
+ * Payroll records — monthly payroll entries per agent.
+ * Admin fills these in; agents can view their own records in the portal.
+ */
+export const payrollRecords = mysqlTable("payroll_records", {
+  id: int("id").autoincrement().primaryKey(),
+  candidateId: int("candidateId").notNull(),
+  month: varchar("month", { length: 7 }).notNull(), // format: "2025-06"
+  grossSalary: decimal("grossSalary", { precision: 10, scale: 2 }),
+  deductions: decimal("deductions", { precision: 10, scale: 2 }).default("0"),
+  netPay: decimal("netPay", { precision: 10, scale: 2 }),
+  paymentDate: bigint("paymentDate", { mode: "number" }), // UTC ms
+  status: mysqlEnum("status", ["pending", "paid", "on_hold"]).default("pending").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PayrollRecord = typeof payrollRecords.$inferSelect;
+export type InsertPayrollRecord = typeof payrollRecords.$inferInsert;
+
+/**
+ * Performance records — monthly operational KPIs per agent (post-training).
+ * Admin fills these in; agents can view their own records in the portal.
+ */
+export const performanceRecords = mysqlTable("performance_records", {
+  id: int("id").autoincrement().primaryKey(),
+  candidateId: int("candidateId").notNull(),
+  period: varchar("period", { length: 7 }).notNull(), // format: "2025-06"
+  callsMade: int("callsMade"),
+  leadsGenerated: int("leadsGenerated"),
+  targetsHit: int("targetsHit"),
+  totalTargets: int("totalTargets"),
+  qualityScore: decimal("qualityScore", { precision: 4, scale: 1 }), // e.g. 8.5 out of 10
+  attendanceRate: decimal("attendanceRate", { precision: 5, scale: 2 }), // e.g. 95.50 (%)
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type PerformanceRecord = typeof performanceRecords.$inferSelect;
+export type InsertPerformanceRecord = typeof performanceRecords.$inferInsert;
