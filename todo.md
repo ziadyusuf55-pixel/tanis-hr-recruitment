@@ -210,9 +210,9 @@
 - [x] Fix routers.ts: `whatsappGroupAdded` KPI card (was `teamsInvitationsSent`)
 - [x] Fix getPipelineCounts: rejected/blacklisted counts should always be all-time (not filtered by period)
 - [x] Fix Dashboard.tsx: rename FUNNEL_COLORS key from `teams_invitation_sent` to `whatsapp_group_added`
-- [ ] DB: add `no_answer` to candidates status enum (TiDB DDL timeout — pending)
-- [ ] Run migration to add no_answer to DB enum (TiDB DDL timeout — pending)
-- [ ] Backend: allow `no_answer` as valid status in updateStatus procedure (pending DB)
+- [x] DB: add `no_answer` to candidates status enum (confirmed in DB — done in Round 23)
+- [x] Run migration to add no_answer to DB enum (done in Round 23 via migration endpoint)
+- [x] Backend: allow `no_answer` as valid status in updateStatus procedure (PIPELINE_STAGES_ZOD updated in Round 23)
 - [x] Update pipeline.ts: add `no_answer` to STAGE_LABELS, STAGE_COLORS (using subStatus approach)
 - [x] Frontend: add "No Answer" quick-action button on board cards (using subStatus)
 - [x] Frontend: add "No Answer" quick-action button on list rows (using subStatus)

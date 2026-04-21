@@ -57,6 +57,7 @@ import jwt from "jsonwebtoken";
 const PIPELINE_STAGES_ZOD = z.enum([
   "applied",
   "whatsapp_sent",
+  "no_answer",
   "voice_note_reviewed",
   "interview_scheduled",
   "accepted",
