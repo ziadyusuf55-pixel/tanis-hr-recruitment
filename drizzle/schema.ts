@@ -36,6 +36,7 @@ export type InsertUser = typeof users.$inferInsert;
 export const PIPELINE_STAGES = [
   "applied",
   "whatsapp_sent",
+  "no_answer",
   "voice_note_reviewed",
   "interview_scheduled",
   "accepted",
@@ -62,6 +63,7 @@ export const candidates = mysqlTable("candidates", {
   status: mysqlEnum("status", [
     "applied",
     "whatsapp_sent",
+    "no_answer",
     "voice_note_reviewed",
     "interview_scheduled",
     "accepted",
@@ -102,6 +104,7 @@ export const stageNotes = mysqlTable("stage_notes", {
   stage: mysqlEnum("stage", [
     "applied",
     "whatsapp_sent",
+    "no_answer",
     "voice_note_reviewed",
     "interview_scheduled",
     "accepted",

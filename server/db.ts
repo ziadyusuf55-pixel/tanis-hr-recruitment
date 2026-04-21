@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, notInArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
@@ -73,10 +73,29 @@ export async function getUserByOpenId(openId: string) {
 
 // ─── Candidates ───────────────────────────────────────────────────────────────
 
-export async function listCandidates() {
+export async function listCandidates(opts?: { includeAssignedToBatch?: boolean }) {
   const db = await getDb();
   if (!db) return [];
-  return db.select().from(candidates).orderBy(desc(candidates.createdAt));
+
+  if (opts?.includeAssignedToBatch) {
+    return db.select().from(candidates).orderBy(desc(candidates.createdAt));
+  }
+
+  // Get all candidateIds that are assigned to any training batch
+  const assigned = await db
+    .select({ candidateId: batchCandidates.candidateId })
+    .from(batchCandidates);
+  const assignedIds = assigned.map((r) => r.candidateId);
+
+  if (assignedIds.length === 0) {
+    return db.select().from(candidates).orderBy(desc(candidates.createdAt));
+  }
+
+  return db
+    .select()
+    .from(candidates)
+    .where(notInArray(candidates.id, assignedIds))
+    .orderBy(desc(candidates.createdAt));
 }
 
 export async function getCandidateById(id: number) {

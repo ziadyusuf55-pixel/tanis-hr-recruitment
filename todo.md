@@ -210,9 +210,9 @@
 - [x] Fix routers.ts: `whatsappGroupAdded` KPI card (was `teamsInvitationsSent`)
 - [x] Fix getPipelineCounts: rejected/blacklisted counts should always be all-time (not filtered by period)
 - [x] Fix Dashboard.tsx: rename FUNNEL_COLORS key from `teams_invitation_sent` to `whatsapp_group_added`
-- [ ] DB: add `no_answer` to candidates status enum (TiDB DDL timeout — pending)
-- [ ] Run migration to add no_answer to DB enum (TiDB DDL timeout — pending)
-- [ ] Backend: allow `no_answer` as valid status in updateStatus procedure (pending DB)
+- [x] DB: add `no_answer` to candidates status enum (confirmed in DB — previous ALTER succeeded silently)
+- [x] Run migration to add no_answer to DB enum
+- [x] Backend: allow `no_answer` as valid status in updateStatus procedure (PIPELINE_STAGES_ZOD updated)
 - [x] Update pipeline.ts: add `no_answer` to STAGE_LABELS, STAGE_COLORS (using subStatus approach)
 - [x] Frontend: add "No Answer" quick-action button on board cards (using subStatus)
 - [x] Frontend: add "No Answer" quick-action button on list rows (using subStatus)
@@ -238,3 +238,13 @@
 - [x] Frontend: Admin CandidateDetail — "Generate Credentials" button shows password once
 - [x] Frontend: Admin CandidateDetail — Performance tab (admin can add/edit monthly records)
 - [x] Write vitest tests for agent auth and payroll procedures (10 new tests, 40 total)
+
+## Round 23 — Batch Agents Hidden from Candidates + Credentials from Training
+
+- [x] Backend: update listCandidates query to exclude candidates who are assigned to any training batch (unless a showAll flag is passed)
+- [x] Frontend: Candidates page — batch-assigned agents no longer appear in board/list views
+- [x] Frontend: Training batch detail — add "Generate Credentials" button per agent row (calls agent.generateCredentials, shows password once)
+- [x] Fix no_answer: add to schema enum, pipeline constants as real stage, Candidates.tsx button now moves to no_answer stage
+- [x] Fix routers.ts: add no_answer to KPI stageCounts
+- [x] Update stage_notes DB enum to include no_answer (migration ran successfully)
+- [x] All 40 tests pass

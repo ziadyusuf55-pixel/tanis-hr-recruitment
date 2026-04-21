@@ -36,6 +36,9 @@ import {
   Pencil,
   Check,
   X,
+  KeyRound,
+  Copy,
+  ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -76,7 +79,8 @@ export default function Training() {
   const selectedBatch = batches.find((b) => b.id === selectedBatchId);
 
   // Only WhatsApp Group Added candidates can be assigned to training batches
-  const { data: allCandidates = [] } = trpc.candidates.list.useQuery();
+  // includeAssignedToBatch: true so the assign dialog shows all eligible candidates regardless of batch
+  const { data: allCandidates = [] } = trpc.candidates.list.useQuery({ includeAssignedToBatch: true });
   const acceptedCandidates = (allCandidates as unknown as BatchCandidate[]).filter(
     (c) => c.status === "whatsapp_group_added"
   );
@@ -113,6 +117,39 @@ export default function Training() {
   // Trainee code inline editing
   const [editingCodeId, setEditingCodeId] = useState<number | null>(null);
   const [editingCodeValue, setEditingCodeValue] = useState("");
+
+  // Credentials generation
+  const [credDialogCandidateId, setCredDialogCandidateId] = useState<number | null>(null);
+  const [generatedPassword, setGeneratedPassword] = useState<string | null>(null);
+  const [generatedTraineeCode, setGeneratedTraineeCode] = useState<string | null>(null);
+  const [credCopied, setCredCopied] = useState(false);
+
+  const generateCredentials = trpc.agent.generateCredentials.useMutation({
+    onSuccess: (data) => {
+      setGeneratedPassword(data.password);
+      setGeneratedTraineeCode(data.traineeCode);
+      toast.success("Credentials generated — save the password now!");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const handleGenerateCredentials = (candidateId: number, traineeCode: string | null | undefined) => {
+    if (!traineeCode) {
+      toast.error("Assign a Trainee Code first before generating credentials");
+      return;
+    }
+    setCredDialogCandidateId(candidateId);
+    setGeneratedPassword(null);
+    setGeneratedTraineeCode(null);
+    setCredCopied(false);
+    generateCredentials.mutate({ candidateId, traineeCode });
+  };
+
+  const handleCopyCreds = (traineeCode: string, password: string) => {
+    navigator.clipboard.writeText(`Trainee ID: ${traineeCode}\nPassword: ${password}`);
+    setCredCopied(true);
+    setTimeout(() => setCredCopied(false), 2000);
+  };
 
   const handleCreate = () => {
     if (!form.name.trim()) { toast.error("Batch name is required"); return; }
@@ -210,6 +247,9 @@ export default function Training() {
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">
                     <span className="flex items-center gap-1.5"><Hash className="h-3.5 w-3.5" /> Trainee Code</span>
                   </th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">
+                    <span className="flex items-center gap-1.5"><KeyRound className="h-3.5 w-3.5" /> Credentials</span>
+                  </th>
                   <th className="px-4 py-3 w-10"></th>
                 </tr>
               </thead>
@@ -268,6 +308,19 @@ export default function Training() {
                           </button>
                         </div>
                       )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 gap-1.5 text-xs"
+                        onClick={() => handleGenerateCredentials(c.id, c.traineeCode)}
+                        disabled={generateCredentials.isPending && credDialogCandidateId === c.id}
+                        title={c.traineeCode ? "Generate / regenerate portal credentials" : "Assign a Trainee Code first"}
+                      >
+                        <KeyRound className="h-3 w-3" />
+                        {generateCredentials.isPending && credDialogCandidateId === c.id ? "Generating..." : "Generate"}
+                      </Button>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <Button
@@ -331,6 +384,48 @@ export default function Training() {
                 ))
               )}
             </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Credentials dialog */}
+        <Dialog open={credDialogCandidateId !== null} onOpenChange={(o) => { if (!o) { setCredDialogCandidateId(null); setGeneratedPassword(null); setGeneratedTraineeCode(null); } }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <ShieldCheck className="h-5 w-5 text-green-600" />
+                Agent Portal Credentials
+              </DialogTitle>
+            </DialogHeader>
+            {generateCredentials.isPending ? (
+              <div className="py-8 text-center text-muted-foreground text-sm">Generating credentials...</div>
+            ) : generatedPassword ? (
+              <div className="space-y-4 py-2">
+                <div className="rounded-lg bg-amber-50 border border-amber-200 p-4 space-y-3">
+                  <p className="text-xs font-medium text-amber-800 flex items-center gap-1.5">
+                    <span className="text-base">⚠️</span> Save this password now — it won't be shown again
+                  </p>
+                  <div className="space-y-2">
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-0.5">Trainee ID (Login)</p>
+                      <p className="font-mono text-sm font-semibold bg-white border rounded px-2 py-1">{generatedTraineeCode}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-0.5">Password</p>
+                      <p className="font-mono text-sm font-semibold bg-white border rounded px-2 py-1 tracking-wider">{generatedPassword}</p>
+                    </div>
+                  </div>
+                </div>
+                <Button
+                  className="w-full gap-2"
+                  variant="outline"
+                  onClick={() => handleCopyCreds(generatedTraineeCode!, generatedPassword)}
+                >
+                  {credCopied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+                  {credCopied ? "Copied!" : "Copy Trainee ID + Password"}
+                </Button>
+                <p className="text-xs text-center text-muted-foreground">Share these credentials with the agent to access the portal at /agent</p>
+              </div>
+            ) : null}
           </DialogContent>
         </Dialog>
 
