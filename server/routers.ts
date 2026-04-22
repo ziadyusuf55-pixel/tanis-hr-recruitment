@@ -2,6 +2,7 @@ import { COOKIE_NAME } from "@shared/const";
 import bcrypt from "bcryptjs";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
+import { parse as parseCookieHeader } from "cookie";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
@@ -504,6 +505,12 @@ const dashboardRouter = router({
 
 /// ─── Agent Portal Router ─────────────────────────────────────────────────────
 const AGENT_COOKIE = "tanis_agent_session";
+// Helper: parse a named cookie from req.headers.cookie (no cookie-parser needed)
+function getAgentCookieFromReq(req: { headers: { cookie?: string } }): string | undefined {
+  if (!req.headers.cookie) return undefined;
+  const parsed = parseCookieHeader(req.headers.cookie);
+  return parsed[AGENT_COOKIE];
+}
 function generatePassword(traineeCode: string): string {
   const digits = Math.floor(1000 + Math.random() * 9000);
   return `${traineeCode}-${digits}`;
@@ -543,12 +550,10 @@ const agentRouter = router({
         ENV.cookieSecret,
         { expiresIn: "30d" }
       );
+      const agentCookieOpts = getSessionCookieOptions(ctx.req);
       ctx.res.cookie(AGENT_COOKIE, token, {
-        httpOnly: true,
-        secure: process.env.NODE_ENV === "production",
-        sameSite: "lax",
+        ...agentCookieOpts,
         maxAge: 30 * 24 * 60 * 60 * 1000,
-        path: "/",
       });
       return { success: true, traineeCode: cred.traineeCode, candidateId: cred.candidateId };
     }),
@@ -572,7 +577,7 @@ const agentRouter = router({
 
   // Get current agent session info (from cookie)
   me: publicProcedure.query(async ({ ctx }) => {
-    const token = ctx.req.cookies?.[AGENT_COOKIE];
+    const token = getAgentCookieFromReq(ctx.req);
     if (!token) return null;
     try {
       const payload = jwt.verify(token, ENV.cookieSecret) as { candidateId: number; traineeCode: string; type: string };
@@ -619,7 +624,7 @@ const agentRouter = router({
     .input(z.object({ candidateId: z.number() }))
     .query(async ({ input, ctx }) => {
       // Allow if admin OR if agent session matches candidateId
-      const agentToken = ctx.req.cookies?.[AGENT_COOKIE];
+      const agentToken = getAgentCookieFromReq(ctx.req);
       let isAgent = false;
       if (agentToken) {
         try {
@@ -658,7 +663,7 @@ const agentRouter = router({
   getPerformance: publicProcedure
     .input(z.object({ candidateId: z.number() }))
     .query(async ({ input, ctx }) => {
-      const agentToken = ctx.req.cookies?.[AGENT_COOKIE];
+      const agentToken = getAgentCookieFromReq(ctx.req);
       let isAgent = false;
       if (agentToken) {
         try {
@@ -706,7 +711,7 @@ const requestsRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       // Must be authenticated as agent
-      const agentToken = ctx.req.cookies?.[AGENT_COOKIE];
+      const agentToken = getAgentCookieFromReq(ctx.req);
       if (!agentToken) throw new TRPCError({ code: "UNAUTHORIZED", message: "Not authenticated as agent" });
       let payload: { candidateId: number; traineeCode: string; type: string };
       try {
@@ -742,7 +747,7 @@ const requestsRouter = router({
 
   // Agent: list own requests
   listMine: publicProcedure.query(async ({ ctx }) => {
-    const agentToken = ctx.req.cookies?.[AGENT_COOKIE];
+    const agentToken = getAgentCookieFromReq(ctx.req);
     if (!agentToken) return [];
     try {
       const payload = jwt.verify(agentToken, ENV.cookieSecret) as { candidateId: number; type: string };

@@ -332,3 +332,12 @@
 - [x] Root cause found: `requests.submit` and `requests.listMine` used hardcoded `agent_session` cookie name instead of the `AGENT_COOKIE` constant (`tanis_agent_session`) — caused agent request submissions to fail with UNAUTHORIZED even after successful login
 - [x] Fixed both procedures to use `ctx.req.cookies?.[AGENT_COOKIE]`
 - [x] 40/40 tests still passing
+
+## Round 29b — Deep Fix: Agent Cookie Not Parsed (req.cookies undefined)
+
+- [x] Root cause: Express has no `cookie-parser` middleware, so `req.cookies` is always `undefined`. All 5 agent cookie reads used `ctx.req.cookies?.[AGENT_COOKIE]` which always returned `undefined` — login appeared to succeed but agent.me always returned null, causing immediate redirect back to login
+- [x] Fix: Added `getAgentCookieFromReq()` helper that parses `req.headers.cookie` directly using the `cookie` package (already installed), same approach used by the SDK
+- [x] Replaced all 5 `ctx.req.cookies?.[AGENT_COOKIE]` calls with `getAgentCookieFromReq(ctx.req)`
+- [x] Also aligned agent login cookie options to use `getSessionCookieOptions()` (sameSite:none, secure based on x-forwarded-proto) matching the OAuth cookie approach — ensures cookies work on HTTPS deployed site
+- [x] End-to-end test confirmed: login returns 200 + sets cookie, agent.me returns full agent profile
+- [x] 40/40 tests passing
