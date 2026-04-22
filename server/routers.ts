@@ -50,7 +50,12 @@ import {
   getPerformanceByCandidateId,
   upsertPerformanceRecord,
   deletePerformanceRecord,
+  createAgentRequest,
+  listAgentRequestsByCandidate,
+  listAllAgentRequests,
+  updateAgentRequestStatus,
 } from "./db";
+import { notifyOwner } from "./_core/notification";
 import { sendInterviewNotification } from "./email";
 import { ENV } from "./_core/env";
 import jwt from "jsonwebtoken";
@@ -637,6 +642,66 @@ const agentRouter = router({
     }),
 });
 
+const requestsRouter = router({
+  // Agent: submit a new request
+  submit: publicProcedure
+    .input(z.object({
+      type: z.enum(["leave", "salary", "schedule", "complaint", "other"]),
+      subject: z.string().min(1).max(255),
+      message: z.string().min(1),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      // Must be authenticated as agent
+      const agentToken = ctx.req.cookies?.agent_session;
+      if (!agentToken) throw new TRPCError({ code: "UNAUTHORIZED", message: "Not authenticated as agent" });
+      let payload: { candidateId: number; traineeCode: string; type: string };
+      try {
+        payload = jwt.verify(agentToken, ENV.cookieSecret) as typeof payload;
+      } catch {
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid agent session" });
+      }
+      if (payload.type !== "agent") throw new TRPCError({ code: "UNAUTHORIZED", message: "Not an agent session" });
+      await createAgentRequest({
+        candidateId: payload.candidateId,
+        traineeCode: payload.traineeCode,
+        type: input.type,
+        subject: input.subject,
+        message: input.message,
+      });
+      // Notify admin
+      await notifyOwner({
+        title: `New Request from Agent ${payload.traineeCode}`,
+        content: `Type: ${input.type}\nSubject: ${input.subject}\n\n${input.message}`,
+      }).catch(() => {});
+      return { success: true };
+    }),
+
+  // Agent: list own requests
+  listMine: publicProcedure.query(async ({ ctx }) => {
+    const agentToken = ctx.req.cookies?.agent_session;
+    if (!agentToken) return [];
+    try {
+      const payload = jwt.verify(agentToken, ENV.cookieSecret) as { candidateId: number; type: string };
+      if (payload.type !== "agent") return [];
+      return listAgentRequestsByCandidate(payload.candidateId);
+    } catch {
+      return [];
+    }
+  }),
+
+  // Admin: list all requests
+  listAll: protectedProcedure.query(() => listAllAgentRequests()),
+
+  // Admin: update status and/or reply
+  updateStatus: protectedProcedure
+    .input(z.object({
+      id: z.number(),
+      status: z.enum(["pending", "in_progress", "resolved", "rejected"]),
+      adminReply: z.string().optional(),
+    }))
+    .mutation(({ input }) => updateAgentRequestStatus(input.id, input.status, input.adminReply ?? null)),
+});
+
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -647,6 +712,7 @@ export const appRouter = router({
   batches: batchesRouter,
   system: systemRouter,
   agent: agentRouter,
+  requests: requestsRouter,
 });
 
 export type AppRouter = typeof appRouter;

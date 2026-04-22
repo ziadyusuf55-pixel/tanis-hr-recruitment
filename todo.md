@@ -254,3 +254,18 @@
 - [x] Backend: add `toggleSlackJoined` tRPC mutation
 - [x] Frontend: add Slack Joined toggle button per agent row in Training batch detail
 - [x] 40/40 tests passing
+
+## Round 26 — Request Center + Agent Login Fix + Pipeline Column Hide
+
+- [x] DB: create `agent_requests` table (candidateId, traineeCode, type, subject, message, status, adminReply, createdAt, updatedAt)
+- [x] Run migration SQL to create the table (migrate-agent-requests.mjs)
+- [x] Backend: requestsRouter — submit (agent), listMine (agent), listAll (admin), updateStatus+reply (admin)
+- [x] Request types: Leave/Day off, Salary inquiry, Schedule change, General complaint, Other
+- [x] Request statuses: Pending, In Progress, Resolved, Rejected
+- [x] Admin can reply with a message visible to the agent
+- [x] Notify admin (notifyOwner) when a new request is submitted
+- [x] Frontend (Agent Portal): new Requests tab — submit form + list own requests with status badges + admin reply visible
+- [x] Frontend (Admin): new Requests page in sidebar (Inbox icon) — stats cards, request list, detail dialog
+- [x] Fix agent login: only 1 credential exists (T-5555); credentials must be generated per agent from Training batch detail
+- [x] Pipeline board: EyeOff button per column header — click to collapse to narrow strip, click again to expand
+- [x] 40/40 tests passing

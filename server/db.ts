@@ -4,6 +4,7 @@ import {
   InsertUser,
   PipelineStage,
   activityLog,
+  agentRequests,
   batchCandidates,
   candidates,
   interviews,
@@ -759,4 +760,58 @@ export async function deletePerformanceRecord(id: number) {
   if (!db) throw new Error("Database not available");
   const { performanceRecords } = await import("../drizzle/schema");
   await db.delete(performanceRecords).where(eq(performanceRecords.id, id));
+}
+
+// ─── Agent Requests ────────────────────────────────────────────────────────
+
+export async function createAgentRequest(data: {
+  candidateId: number;
+  traineeCode: string;
+  type: "leave" | "salary" | "schedule" | "complaint" | "other";
+  subject: string;
+  message: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const result = await db.insert(agentRequests).values({
+    candidateId: data.candidateId,
+    traineeCode: data.traineeCode,
+    type: data.type,
+    subject: data.subject,
+    message: data.message,
+    status: "pending",
+  });
+  return result;
+}
+
+export async function listAgentRequestsByCandidate(candidateId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(agentRequests)
+    .where(eq(agentRequests.candidateId, candidateId))
+    .orderBy(desc(agentRequests.createdAt));
+}
+
+export async function listAllAgentRequests() {
+  const db = await getDb();
+  if (!db) return [];
+  return db
+    .select()
+    .from(agentRequests)
+    .orderBy(desc(agentRequests.createdAt));
+}
+
+export async function updateAgentRequestStatus(
+  id: number,
+  status: "pending" | "in_progress" | "resolved" | "rejected",
+  adminReply?: string | null
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db
+    .update(agentRequests)
+    .set({ status, ...(adminReply !== undefined ? { adminReply } : {}) })
+    .where(eq(agentRequests.id, id));
 }

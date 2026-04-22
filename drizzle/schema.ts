@@ -249,3 +249,23 @@ export const performanceRecords = mysqlTable("performance_records", {
 
 export type PerformanceRecord = typeof performanceRecords.$inferSelect;
 export type InsertPerformanceRecord = typeof performanceRecords.$inferInsert;
+
+/**
+ * Agent requests — submitted by agents via the Request Center in their portal.
+ * Admin can view, update status, and reply.
+ */
+export const agentRequests = mysqlTable("agent_requests", {
+  id: int("id").autoincrement().primaryKey(),
+  candidateId: int("candidateId").notNull(), // FK to candidates.id
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
+  type: mysqlEnum("type", ["leave", "salary", "schedule", "complaint", "other"]).notNull(),
+  subject: varchar("subject", { length: 255 }).notNull(),
+  message: text("message").notNull(),
+  status: mysqlEnum("status", ["pending", "in_progress", "resolved", "rejected"]).default("pending").notNull(),
+  adminReply: text("adminReply"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export type AgentRequest = typeof agentRequests.$inferSelect;
+export type InsertAgentRequest = typeof agentRequests.$inferInsert;

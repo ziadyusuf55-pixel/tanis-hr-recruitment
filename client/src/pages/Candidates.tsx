@@ -54,6 +54,7 @@ import {
   AlertTriangle,
   UserX,
   Clock,
+  EyeOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -271,6 +272,12 @@ export default function Candidates() {
 
   const [view, setView] = useState<"board" | "list">("board");
   const [showRejected, setShowRejected] = useState(false);
+  const [hiddenStages, setHiddenStages] = useState<Set<string>>(new Set());
+  const toggleHideStage = (stage: string) => setHiddenStages((prev) => {
+    const next = new Set(prev);
+    if (next.has(stage)) next.delete(stage); else next.add(stage);
+    return next;
+  });
   const { data: allActivity = [] } = trpc.activity.listAll.useQuery({ limit: 300 });
   const { data: batchAssignments = {} } = trpc.batches.allAssignments.useQuery();
   const [search, setSearch] = useState("");
@@ -578,6 +585,8 @@ export default function Candidates() {
         <PipelineBoard
           candidates={filtered}
           selected={selected}
+          hiddenStages={hiddenStages}
+          onToggleHideStage={toggleHideStage}
           onMoveStage={(id, status) => {
             if (status === "rejected") { handleReject(id, filtered.find((c) => c.id === id)?.name ?? ""); }
             else {
@@ -942,6 +951,8 @@ function PipelineBoard({
   onDeleteCandidate,
   onToggleSelect,
   batchAssignments = {},
+  hiddenStages = new Set(),
+  onToggleHideStage,
 }: {
   candidates: CandidateRow[];
   selected: Set<number>;
@@ -952,45 +963,81 @@ function PipelineBoard({
   onDeleteCandidate: (id: number, name: string) => void;
   onToggleSelect: (id: number) => void;
   batchAssignments?: Record<number, string>;
+  hiddenStages?: Set<string>;
+  onToggleHideStage?: (stage: string) => void;
 }) {
   return (
     <div className="flex gap-3 overflow-x-auto pb-4 -mx-1 px-1">
       {ACTIVE_STAGES.map((stage) => {
         const stageCandidates = candidates.filter((c) => c.status === stage);
+        const isHidden = hiddenStages.has(stage);
         return (
-          <div key={stage} className={`flex-shrink-0 w-64 rounded-xl border ${STAGE_BG[stage]} flex flex-col`}>
-            <div className="px-3 py-2.5 flex items-center justify-between border-b border-black/5">
-              <div className="flex items-center gap-2">
+          <div key={stage} className={`flex-shrink-0 rounded-xl border flex flex-col transition-all ${
+            isHidden ? "w-12 " + STAGE_BG[stage] : "w-64 " + STAGE_BG[stage]
+          }`}>
+            {isHidden ? (
+              // Collapsed column — vertical label + count
+              <button
+                onClick={() => onToggleHideStage?.(stage)}
+                className="flex flex-col items-center justify-center gap-2 py-4 flex-1 w-full hover:bg-black/5 transition-colors rounded-xl"
+                title={`Show ${STAGE_LABELS[stage]}`}
+              >
                 <span className={`w-2 h-2 rounded-full ${STAGE_DOT[stage]}`} />
-                <span className="text-xs font-semibold text-foreground">{STAGE_LABELS[stage]}</span>
-              </div>
-              <span className="text-xs font-medium text-muted-foreground bg-white/60 rounded-full px-2 py-0.5">
-                {stageCandidates.length}
-              </span>
-            </div>
-            <div className="p-2 flex flex-col gap-2 flex-1 min-h-[120px]">
-              {stageCandidates.length === 0 ? (
-                <div className="flex-1 flex items-center justify-center">
-                  <p className="text-xs text-muted-foreground/50">No candidates</p>
+                <span
+                  className="text-xs font-semibold text-foreground"
+                  style={{ writingMode: "vertical-rl", textOrientation: "mixed", transform: "rotate(180deg)" }}
+                >
+                  {STAGE_LABELS[stage]}
+                </span>
+                <span className="text-xs font-medium text-muted-foreground bg-white/60 rounded-full px-1.5 py-0.5">
+                  {stageCandidates.length}
+                </span>
+              </button>
+            ) : (
+              <>
+                <div className="px-3 py-2.5 flex items-center justify-between border-b border-black/5">
+                  <div className="flex items-center gap-2">
+                    <span className={`w-2 h-2 rounded-full ${STAGE_DOT[stage]}`} />
+                    <span className="text-xs font-semibold text-foreground">{STAGE_LABELS[stage]}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-medium text-muted-foreground bg-white/60 rounded-full px-2 py-0.5">
+                      {stageCandidates.length}
+                    </span>
+                    <button
+                      onClick={() => onToggleHideStage?.(stage)}
+                      className="w-5 h-5 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-black/10 transition-colors"
+                      title="Hide column"
+                    >
+                      <EyeOff className="w-3 h-3" />
+                    </button>
+                  </div>
                 </div>
-              ) : (
-                stageCandidates.map((c) => (
-                  <CandidateCard
-                    key={c.id}
-                    candidate={c}
-                    currentStage={stage}
-                    isSelected={selected.has(c.id)}
-                    onMoveStage={onMoveStage}
-                    onNoShow={onNoShow}
-                    onNoAnswer={onNoAnswer}
-                    onClick={() => onClickCandidate(c.id)}
-                    onDelete={() => onDeleteCandidate(c.id, c.name)}
-                    onToggleSelect={() => onToggleSelect(c.id)}
-                    batchName={batchAssignments[c.id]}
-                  />
-                ))
-              )}
-            </div>
+                <div className="p-2 flex flex-col gap-2 flex-1 min-h-[120px]">
+                  {stageCandidates.length === 0 ? (
+                    <div className="flex-1 flex items-center justify-center">
+                      <p className="text-xs text-muted-foreground/50">No candidates</p>
+                    </div>
+                  ) : (
+                    stageCandidates.map((c) => (
+                      <CandidateCard
+                        key={c.id}
+                        candidate={c}
+                        currentStage={stage}
+                        isSelected={selected.has(c.id)}
+                        onMoveStage={onMoveStage}
+                        onNoShow={onNoShow}
+                        onNoAnswer={onNoAnswer}
+                        onClick={() => onClickCandidate(c.id)}
+                        onDelete={() => onDeleteCandidate(c.id, c.name)}
+                        onToggleSelect={() => onToggleSelect(c.id)}
+                        batchName={batchAssignments[c.id]}
+                      />
+                    ))
+                  )}
+                </div>
+              </>
+            )}
           </div>
         );
       })}
