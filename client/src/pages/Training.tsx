@@ -39,7 +39,7 @@ import {
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { KeyRound, Copy } from "lucide-react";
+import { KeyRound, Copy, RotateCcw } from "lucide-react";
 
 type Batch = {
   id: number;
@@ -106,6 +106,12 @@ export default function Training() {
     onError: (e) => toast.error(e.message),
   });
   const [bulkCredentials, setBulkCredentials] = useState<Array<{ traineeCode: string; password: string }> | null>(null);
+  const [resetResult, setResetResult] = useState<{ traineeCode: string; password: string } | null>(null);
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const resetPasswordMutation = trpc.agent.resetPassword.useMutation({
+    onSuccess: (data) => { setResetResult(data); setResetDialogOpen(true); },
+    onError: (e) => toast.error(e.message),
+  });
   const bulkGenerateMutation = trpc.batches.bulkGenerateCredentials.useMutation({
     onSuccess: (data) => {
       if (data.generated === 0) {
@@ -319,15 +325,27 @@ export default function Training() {
                       </div>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0 text-muted-foreground hover:text-red-600 hover:bg-red-50"
-                        onClick={() => removeCandidate.mutate({ batchId: selectedBatch.id, candidateId: c.id })}
-                        title="Remove from batch"
-                      >
-                        <UserMinus className="h-3.5 w-3.5" />
-                      </Button>
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-amber-600 hover:bg-amber-50"
+                          onClick={() => resetPasswordMutation.mutate({ candidateId: c.id })}
+                          title="Reset password"
+                          disabled={resetPasswordMutation.isPending}
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-red-600 hover:bg-red-50"
+                          onClick={() => removeCandidate.mutate({ batchId: selectedBatch.id, candidateId: c.id })}
+                          title="Remove from batch"
+                        >
+                          <UserMinus className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -403,6 +421,37 @@ export default function Training() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        {/* Reset Password Dialog */}
+        <Dialog open={resetDialogOpen} onOpenChange={(o) => { setResetDialogOpen(o); if (!o) setResetResult(null); }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2"><RotateCcw className="h-5 w-5 text-amber-600" /> Password Reset</DialogTitle>
+            </DialogHeader>
+            {resetResult && (
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">New credentials generated. Share these with the agent — the password is shown only once.</p>
+                <div className="rounded-lg border bg-muted/30 p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">Trainee ID</span>
+                    <span className="font-mono text-sm font-medium">{resetResult.traineeCode}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs text-muted-foreground">New Password</span>
+                    <span className="font-mono text-sm font-medium text-amber-700">{resetResult.password}</span>
+                  </div>
+                </div>
+                <Button
+                  className="w-full gap-2"
+                  variant="outline"
+                  onClick={() => { navigator.clipboard.writeText(`Trainee ID: ${resetResult!.traineeCode}\nPassword: ${resetResult!.password}`); toast.success("Copied to clipboard!"); }}
+                >
+                  <Copy className="h-4 w-4" /> Copy Credentials
+                </Button>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
 
         {/* Bulk Credentials Dialog */}
         <Dialog open={bulkCredentials !== null} onOpenChange={(o) => !o && setBulkCredentials(null)}>

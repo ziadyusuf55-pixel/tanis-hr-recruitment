@@ -320,3 +320,9 @@
 - [x] Frontend (Agent Portal): notification bell in header — unread count badge, dropdown list
 
 - [x] 40/40 tests passing
+
+## Round 28 — Agent Password Reset
+
+- [x] Backend: add `agent.resetPassword` procedure (admin only) — generates new random password, bcrypt hashes it, updates agent_credentials, returns plain password
+- [x] Frontend (Training batch detail): amber RotateCcw button per agent row — shows new password in a copy dialog (shown only once)
+- [x] 40/40 tests passing

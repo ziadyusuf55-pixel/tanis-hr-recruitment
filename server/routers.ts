@@ -553,6 +553,17 @@ const agentRouter = router({
       return { success: true, traineeCode: cred.traineeCode, candidateId: cred.candidateId };
     }),
 
+  // Reset agent password — admin only, generates a new random password
+  resetPassword: protectedProcedure
+    .input(z.object({ candidateId: z.number() }))
+    .mutation(async ({ input }) => {
+      const cred = await getAgentCredentialByCandidateId(input.candidateId);
+      if (!cred) throw new TRPCError({ code: "NOT_FOUND", message: "No credentials found for this agent" });
+      const newPassword = generatePassword(cred.traineeCode);
+      const passwordHash = await bcrypt.hash(newPassword, 10);
+      await upsertAgentCredential(input.candidateId, cred.traineeCode, passwordHash);
+      return { traineeCode: cred.traineeCode, password: newPassword };
+    }),
   // Agent logout
   logout: publicProcedure.mutation(async ({ ctx }) => {
     ctx.res.clearCookie(AGENT_COOKIE, { path: "/" });
