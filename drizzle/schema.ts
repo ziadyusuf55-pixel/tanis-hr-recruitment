@@ -258,9 +258,10 @@ export const agentRequests = mysqlTable("agent_requests", {
   id: int("id").autoincrement().primaryKey(),
   candidateId: int("candidateId").notNull(), // FK to candidates.id
   traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
-  type: mysqlEnum("type", ["leave", "salary", "schedule", "complaint", "other"]).notNull(),
+  type: mysqlEnum("type", ["leave", "salary", "schedule", "complaint", "resignation", "day_off", "other"]).notNull(),
   subject: varchar("subject", { length: 255 }).notNull(),
   message: text("message").notNull(),
+  requestedDate: bigint("requestedDate", { mode: "number" }), // UTC ms timestamp for date-based requests (leave, day_off, resignation last day)
   status: mysqlEnum("status", ["pending", "in_progress", "resolved", "rejected"]).default("pending").notNull(),
   adminReply: text("adminReply"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -269,3 +270,84 @@ export const agentRequests = mysqlTable("agent_requests", {
 
 export type AgentRequest = typeof agentRequests.$inferSelect;
 export type InsertAgentRequest = typeof agentRequests.$inferInsert;
+
+/**
+ * Admin accounts — email/password admins invited by the owner.
+ * The Manus OAuth owner is separate; these are additional admins.
+ */
+export const adminAccounts = mysqlTable("admin_accounts", {
+  id: int("id").autoincrement().primaryKey(),
+  email: varchar("email", { length: 255 }).notNull().unique(),
+  name: varchar("name", { length: 255 }).notNull(),
+  passwordHash: varchar("passwordHash", { length: 255 }).notNull(),
+  role: mysqlEnum("role", ["admin", "viewer"]).default("admin").notNull(),
+  isActive: boolean("isActive").default(true).notNull(),
+  forcePasswordChange: boolean("forcePasswordChange").default(true).notNull(),
+  invitedBy: varchar("invitedBy", { length: 255 }), // email of inviter
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AdminAccount = typeof adminAccounts.$inferSelect;
+export type InsertAdminAccount = typeof adminAccounts.$inferInsert;
+
+/**
+ * Admin invites — one-time tokens sent to new admins.
+ * Token expires in 48 hours; usedAt is set when accepted.
+ */
+export const adminInvites = mysqlTable("admin_invites", {
+  id: int("id").autoincrement().primaryKey(),
+  email: varchar("email", { length: 255 }).notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  token: varchar("token", { length: 128 }).notNull().unique(),
+  expiresAt: bigint("expiresAt", { mode: "number" }).notNull(), // UTC ms
+  usedAt: bigint("usedAt", { mode: "number" }), // null = not yet used
+  invitedBy: varchar("invitedBy", { length: 255 }).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type AdminInvite = typeof adminInvites.$inferSelect;
+export type InsertAdminInvite = typeof adminInvites.$inferInsert;
+
+/**
+ * Login attempts — tracks failed agent/admin logins for rate limiting.
+ */
+export const loginAttempts = mysqlTable("login_attempts", {
+  id: int("id").autoincrement().primaryKey(),
+  identifier: varchar("identifier", { length: 255 }).notNull(), // traineeCode or email
+  attemptType: mysqlEnum("attemptType", ["agent", "admin"]).notNull(),
+  failedAt: bigint("failedAt", { mode: "number" }).notNull(), // UTC ms
+  ipAddress: varchar("ipAddress", { length: 64 }),
+});
+export type LoginAttempt = typeof loginAttempts.$inferSelect;
+
+/**
+ * Referrals — agents refer external candidates to join Tanis.
+ * A candidate record is auto-created with source="referred" when submitted.
+ */
+export const referrals = mysqlTable("referrals", {
+  id: int("id").autoincrement().primaryKey(),
+  referrerCandidateId: int("referrerCandidateId").notNull(), // agent who referred
+  refereeName: varchar("refereeName", { length: 255 }).notNull(),
+  refereePhone: varchar("refereePhone", { length: 50 }).notNull(),
+  refereeNote: text("refereeNote"),
+  createdCandidateId: int("createdCandidateId"), // FK to candidates.id once created
+  status: mysqlEnum("status", ["pending", "contacted", "hired", "rejected"]).default("pending").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type Referral = typeof referrals.$inferSelect;
+export type InsertReferral = typeof referrals.$inferInsert;
+
+/**
+ * Agent notifications — in-app alerts for agents (request replied, referral status changed).
+ */
+export const agentNotifications = mysqlTable("agent_notifications", {
+  id: int("id").autoincrement().primaryKey(),
+  candidateId: int("candidateId").notNull(), // FK to candidates.id
+  message: varchar("message", { length: 500 }).notNull(),
+  type: mysqlEnum("type", ["request_reply", "referral_update", "general"]).default("general").notNull(),
+  relatedId: int("relatedId"), // requestId or referralId
+  isRead: boolean("isRead").default(false).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type AgentNotification = typeof agentNotifications.$inferSelect;
+export type InsertAgentNotification = typeof agentNotifications.$inferInsert;

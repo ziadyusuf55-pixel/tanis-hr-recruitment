@@ -22,7 +22,7 @@ import {
 } from "@/components/ui/sidebar";
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox } from "lucide-react";
+import { LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
@@ -33,6 +33,7 @@ const menuItems = [
   { icon: Users, label: "Candidates", path: "/candidates" },
   { icon: GraduationCap, label: "Training", path: "/training" },
   { icon: Inbox, label: "Requests", path: "/requests" },
+  { icon: Settings, label: "Settings", path: "/settings" },
 ];
 
 const TANIS_LOGO_WHITE = "https://d2xsxph8kpxj0f.cloudfront.net/310419663028909162/GKQCuajYkpcdyw75NP8gmu/tanis-logo-white_d38279a7.png";

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -19,13 +19,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Inbox, Clock, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import { Inbox, Clock, CheckCircle, XCircle, Loader2, BarChart3, TrendingUp, Users, Calendar } from "lucide-react";
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
-  leave: "Leave / Day Off",
+  leave: "Leave",
   salary: "Salary Inquiry",
   schedule: "Schedule Change",
   complaint: "General Complaint",
+  resignation: "Resignation",
+  day_off: "Day Off",
   other: "Other",
 };
 
@@ -45,6 +47,7 @@ type AgentRequest = {
   message: string;
   status: string;
   adminReply: string | null;
+  requestedDate: number | null;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -67,6 +70,7 @@ export default function Requests() {
   const [replyText, setReplyText] = useState("");
   const [newStatus, setNewStatus] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [filterType, setFilterType] = useState<string>("all");
 
   function openRequest(req: AgentRequest) {
     setSelected(req);
@@ -83,17 +87,37 @@ export default function Requests() {
     });
   }
 
-  const filtered = filterStatus === "all"
-    ? (requests as AgentRequest[])
-    : (requests as AgentRequest[]).filter((r) => r.status === filterStatus);
+  const reqs = requests as AgentRequest[];
 
   const counts = {
-    all: requests.length,
-    pending: (requests as AgentRequest[]).filter((r) => r.status === "pending").length,
-    in_progress: (requests as AgentRequest[]).filter((r) => r.status === "in_progress").length,
-    resolved: (requests as AgentRequest[]).filter((r) => r.status === "resolved").length,
-    rejected: (requests as AgentRequest[]).filter((r) => r.status === "rejected").length,
+    all: reqs.length,
+    pending: reqs.filter((r) => r.status === "pending").length,
+    in_progress: reqs.filter((r) => r.status === "in_progress").length,
+    resolved: reqs.filter((r) => r.status === "resolved").length,
+    rejected: reqs.filter((r) => r.status === "rejected").length,
   };
+
+  // Analytics: requests by type
+  const byType = useMemo(() => {
+    const map: Record<string, number> = {};
+    reqs.forEach((r) => { map[r.type] = (map[r.type] ?? 0) + 1; });
+    return Object.entries(map).sort((a, b) => b[1] - a[1]);
+  }, [reqs]);
+
+  // Analytics: avg resolution time (resolved requests)
+  const avgResolutionHours = useMemo(() => {
+    const resolved = reqs.filter((r) => r.status === "resolved");
+    if (resolved.length === 0) return null;
+    const totalMs = resolved.reduce((sum, r) => sum + (new Date(r.updatedAt).getTime() - new Date(r.createdAt).getTime()), 0);
+    return Math.round(totalMs / resolved.length / 3600000);
+  }, [reqs]);
+
+  // Analytics: unique agents who submitted
+  const uniqueAgents = useMemo(() => new Set(reqs.map((r) => r.traineeCode)).size, [reqs]);
+
+  const filtered = reqs
+    .filter((r) => filterStatus === "all" || r.status === filterStatus)
+    .filter((r) => filterType === "all" || r.type === filterType);
 
   return (
     <div className="p-6 space-y-6">
@@ -113,7 +137,63 @@ export default function Requests() {
         </Badge>
       </div>
 
-      {/* Stats row */}
+      {/* ── Analytics Panel ── */}
+      {reqs.length > 0 && (
+        <Card className="border border-border">
+          <CardHeader className="pb-3 pt-4 px-5">
+            <div className="flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-muted-foreground" />
+              <CardTitle className="text-sm font-semibold">Analytics</CardTitle>
+            </div>
+          </CardHeader>
+          <CardContent className="px-5 pb-4 space-y-4">
+            {/* Summary row */}
+            <div className="grid grid-cols-3 gap-3">
+              <div className="bg-muted/40 rounded-lg p-3 text-center">
+                <Users className="w-4 h-4 text-muted-foreground mx-auto mb-1" />
+                <p className="text-xl font-bold text-foreground">{uniqueAgents}</p>
+                <p className="text-xs text-muted-foreground">Agents</p>
+              </div>
+              <div className="bg-muted/40 rounded-lg p-3 text-center">
+                <TrendingUp className="w-4 h-4 text-muted-foreground mx-auto mb-1" />
+                <p className="text-xl font-bold text-foreground">
+                  {reqs.length > 0 ? Math.round((counts.resolved / reqs.length) * 100) : 0}%
+                </p>
+                <p className="text-xs text-muted-foreground">Resolution Rate</p>
+              </div>
+              <div className="bg-muted/40 rounded-lg p-3 text-center">
+                <Clock className="w-4 h-4 text-muted-foreground mx-auto mb-1" />
+                <p className="text-xl font-bold text-foreground">
+                  {avgResolutionHours !== null ? `${avgResolutionHours}h` : "—"}
+                </p>
+                <p className="text-xs text-muted-foreground">Avg Resolution</p>
+              </div>
+            </div>
+            {/* By type breakdown */}
+            {byType.length > 0 && (
+              <div>
+                <p className="text-xs font-medium text-muted-foreground mb-2">Requests by Type</p>
+                <div className="space-y-1.5">
+                  {byType.map(([type, count]) => (
+                    <div key={type} className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground w-28 shrink-0">{REQUEST_TYPE_LABELS[type] ?? type}</span>
+                      <div className="flex-1 bg-muted rounded-full h-1.5 overflow-hidden">
+                        <div
+                          className="h-full rounded-full"
+                          style={{ width: `${(count / reqs.length) * 100}%`, background: BRAND }}
+                        />
+                      </div>
+                      <span className="text-xs font-semibold text-foreground w-5 text-right">{count}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Status filter cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {(["pending", "in_progress", "resolved", "rejected"] as const).map((s) => {
           const cfg = STATUS_CONFIG[s];
@@ -130,6 +210,25 @@ export default function Requests() {
             </button>
           );
         })}
+      </div>
+
+      {/* Type filter */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className="text-xs text-muted-foreground">Filter by type:</span>
+        {["all", ...Object.keys(REQUEST_TYPE_LABELS)].map((t) => (
+          <button
+            key={t}
+            onClick={() => setFilterType(t)}
+            className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+              filterType === t
+                ? "text-white border-transparent"
+                : "bg-card border-border text-muted-foreground hover:border-foreground/30"
+            }`}
+            style={filterType === t ? { background: BRAND } : {}}
+          >
+            {t === "all" ? "All Types" : REQUEST_TYPE_LABELS[t]}
+          </button>
+        ))}
       </div>
 
       {/* Requests list */}
@@ -161,6 +260,15 @@ export default function Requests() {
                         <span className="text-xs font-semibold text-muted-foreground">{req.traineeCode}</span>
                         <span className="text-xs text-muted-foreground">·</span>
                         <span className="text-xs text-muted-foreground">{REQUEST_TYPE_LABELS[req.type] ?? req.type}</span>
+                        {req.requestedDate && (
+                          <>
+                            <span className="text-xs text-muted-foreground">·</span>
+                            <span className="text-xs text-muted-foreground flex items-center gap-1">
+                              <Calendar className="w-3 h-3" />
+                              {new Date(req.requestedDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                            </span>
+                          </>
+                        )}
                       </div>
                       <p className="font-semibold text-foreground text-sm truncate">{req.subject}</p>
                       <p className="text-xs text-muted-foreground mt-0.5 line-clamp-1">{req.message}</p>
@@ -201,6 +309,13 @@ export default function Requests() {
                 <span className="bg-muted rounded px-2 py-0.5">
                   {new Date(selected.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                 </span>
+                {selected.requestedDate && (
+                  <span className="bg-amber-50 text-amber-700 border border-amber-200 rounded px-2 py-0.5 flex items-center gap-1">
+                    <Calendar className="w-3 h-3" />
+                    {selected.type === "resignation" ? "Last day: " : "Requested: "}
+                    {new Date(selected.requestedDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                  </span>
+                )}
               </div>
 
               {/* Message */}

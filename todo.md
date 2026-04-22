@@ -269,3 +269,54 @@
 - [x] Fix agent login: only 1 credential exists (T-5555); credentials must be generated per agent from Training batch detail
 - [x] Pipeline board: EyeOff button per column header — click to collapse to narrow strip, click again to expand
 - [x] 40/40 tests passing
+
+## Round 27 — Multi-Admin, Security, Referrals, Notifications, Analytics
+
+### Multi-Admin System
+- [x] DB: create `admin_accounts` table (id, email, passwordHash, name, role, isActive, forcePasswordChange, createdAt)
+- [x] DB: create `admin_invites` table (id, email, token, expiresAt, usedAt, invitedBy)
+- [x] Run migration for admin_accounts and admin_invites (migrate-round27.mjs)
+- [x] Backend: adminAuth.invite procedure (owner only — send invite, store token with 48h expiry)
+- [x] Backend: adminAuth.acceptInvite procedure (validate token, set password, create account)
+- [x] Backend: adminAuth.login procedure (email + password → JWT session, rate-limited)
+- [x] Backend: adminAuth.listAdmins procedure (owner only)
+- [x] Backend: adminAuth.deactivateAdmin procedure (owner only)
+- [x] Security: bcrypt hash all admin passwords
+- [x] Security: rate limit agent login — 5 failed attempts → 15-min lockout (login_attempts table)
+- [x] Security: invite tokens expire in 48 hours
+- [x] Security: force password change on first login flag
+- [x] Frontend: Login page — add "Admin (Email)" login mode alongside Manus OAuth
+- [x] Frontend: Settings → Admins page — list admins, invite by email, deactivate button
+- [x] Frontend: AdminInviteAccept page at /admin/accept-invite?token=...
+
+### Request Center Upgrades
+- [x] Add "Resignation" request type with last working day date picker (min 2 weeks from today)
+- [x] Add "Day Off" request type with requested date picker (min 2 weeks from today)
+- [x] Update all date-based request types to enforce 2-week minimum on frontend + backend
+- [x] Backend: update requestsRouter to handle requestedDate field
+- [x] DB: add requestedDate column to agent_requests table (migrate-round27b.mjs)
+
+### Referral Tab
+- [x] DB: create `referrals` table (id, referrerCandidateId, refereeName, refereePhone, refereeNote, status, createdAt)
+- [x] Run migration for referrals table (migrate-round27.mjs)
+- [x] Backend: referrals.submit (agent submits referral, auto-creates candidate with source=referred)
+- [x] Backend: referrals.listMine (agent sees own referrals + status)
+- [x] Backend: referrals.listAll (admin sees all referrals)
+- [x] Frontend (Agent Portal): new Referrals tab — submit form + list own referrals with status
+- [x] Frontend (Admin): referral candidates show "Referred" source label in pipeline
+
+### Request Analytics Panel
+- [x] Frontend (Admin Requests page): summary panel — total by type, avg resolution time, pending/resolved/rejected counts
+
+### Bulk Credential Generation
+- [x] Backend: batches.bulkGenerateCredentials procedure (generate for all agents in batch with trainee codes)
+- [x] Frontend (Training batch detail): "Generate All Credentials" button with copy-per-row and "Copy All" dialog
+
+### Agent Notification Bell
+- [x] DB: create `agent_notifications` table (id, candidateId, message, isRead, createdAt)
+- [x] Run migration for agent_notifications (migrate-round27.mjs)
+- [x] Backend: notify agent when admin replies to request
+- [x] Backend: notifications.listMine (agent) + markRead
+- [x] Frontend (Agent Portal): notification bell in header — unread count badge, dropdown list
+
+- [x] 40/40 tests passing

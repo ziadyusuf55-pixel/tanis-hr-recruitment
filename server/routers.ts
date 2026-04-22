@@ -54,11 +54,40 @@ import {
   listAgentRequestsByCandidate,
   listAllAgentRequests,
   updateAgentRequestStatus,
+  // Admin accounts
+  getAdminByEmail,
+  getAdminById,
+  createAdminAccount,
+  listAdminAccounts,
+  setAdminActive,
+  updateAdminPassword,
+  // Admin invites
+  createAdminInvite,
+  getAdminInviteByToken,
+  markAdminInviteUsed,
+  // Rate limiting
+  recordFailedLogin,
+  countRecentFailedLogins,
+  clearLoginAttempts,
+  // Referrals
+  createReferral,
+  getReferralsByReferrer,
+  listAllReferrals,
+  updateReferralStatus,
+  // Notifications
+  createAgentNotification,
+  getNotificationsByCandidate,
+  markNotificationsRead,
+  countUnreadNotifications,
 } from "./db";
 import { notifyOwner } from "./_core/notification";
 import { sendInterviewNotification } from "./email";
 import { ENV } from "./_core/env";
+import crypto from "crypto";
 import jwt from "jsonwebtoken";
+
+const ADMIN_COOKIE = "tanis_admin_session";
+const ADMIN_LOCKOUT_MAX = 5;
 
 const PIPELINE_STAGES_ZOD = z.enum([
   "applied",
@@ -80,6 +109,7 @@ const authRouter = router({
     return { success: true } as const;
   }),
 });
+
 
 const batchesRouter = router({
     list: protectedProcedure.query(() => listBatches()),
@@ -137,6 +167,21 @@ const batchesRouter = router({
 
   allAssignments: protectedProcedure
     .query(() => getAllBatchAssignments()),
+  // Bulk generate credentials for all agents in a batch
+  bulkGenerateCredentials: protectedProcedure
+    .input(z.object({ batchId: z.number() }))
+    .mutation(async ({ input }) => {
+      const candidates = await listCandidatesInBatch(input.batchId);
+      const results: Array<{ candidateId: number; traineeCode: string; password: string }> = [];
+      for (const c of candidates) {
+        if (!c.traineeCode) continue; // skip agents without trainee code
+        const plainPassword = generatePassword(c.traineeCode);
+        const passwordHash = await bcrypt.hash(plainPassword, 10);
+        await upsertAgentCredential(c.id, c.traineeCode, passwordHash);
+        results.push({ candidateId: c.id, traineeCode: c.traineeCode, password: plainPassword });
+      }
+      return { generated: results.length, credentials: results };
+    }),
 });
 
 const candidatesRouter = router({
@@ -457,12 +502,9 @@ const dashboardRouter = router({
       }),
 });
 
-// ─── Agent Portal Router ─────────────────────────────────────────────────────
-
+/// ─── Agent Portal Router ─────────────────────────────────────────────────────
 const AGENT_COOKIE = "tanis_agent_session";
-
 function generatePassword(traineeCode: string): string {
-  // Auto-generate: traineeCode + 4 random digits, e.g. TN0042-2847
   const digits = Math.floor(1000 + Math.random() * 9000);
   return `${traineeCode}-${digits}`;
 }
@@ -646,9 +688,10 @@ const requestsRouter = router({
   // Agent: submit a new request
   submit: publicProcedure
     .input(z.object({
-      type: z.enum(["leave", "salary", "schedule", "complaint", "other"]),
+      type: z.enum(["leave", "salary", "schedule", "complaint", "resignation", "day_off", "other"]),
       subject: z.string().min(1).max(255),
       message: z.string().min(1),
+      requestedDate: z.number().optional(), // UTC ms timestamp
     }))
     .mutation(async ({ input, ctx }) => {
       // Must be authenticated as agent
@@ -661,17 +704,27 @@ const requestsRouter = router({
         throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid agent session" });
       }
       if (payload.type !== "agent") throw new TRPCError({ code: "UNAUTHORIZED", message: "Not an agent session" });
+      // Enforce 2-week minimum for date-based requests
+      const dateRequiredTypes = ["leave", "day_off", "resignation"];
+      if (dateRequiredTypes.includes(input.type)) {
+        if (!input.requestedDate) throw new TRPCError({ code: "BAD_REQUEST", message: "Please select a date for this request" });
+        const twoWeeksFromNow = Date.now() + 14 * 24 * 60 * 60 * 1000;
+        if (input.requestedDate < twoWeeksFromNow) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Date must be at least 2 weeks from today" });
+        }
+      }
       await createAgentRequest({
         candidateId: payload.candidateId,
         traineeCode: payload.traineeCode,
         type: input.type,
         subject: input.subject,
         message: input.message,
+        requestedDate: input.requestedDate ?? null,
       });
       // Notify admin
       await notifyOwner({
         title: `New Request from Agent ${payload.traineeCode}`,
-        content: `Type: ${input.type}\nSubject: ${input.subject}\n\n${input.message}`,
+        content: `Type: ${input.type}\nSubject: ${input.subject}\n\n${input.message}${input.requestedDate ? `\nRequested Date: ${new Date(input.requestedDate).toLocaleDateString()}` : ""}`,
       }).catch(() => {});
       return { success: true };
     }),
@@ -702,6 +755,174 @@ const requestsRouter = router({
     .mutation(({ input }) => updateAgentRequestStatus(input.id, input.status, input.adminReply ?? null)),
 });
 
+// ─── Admin Auth Router ────────────────────────────────────────────────────────
+const adminAuthRouter = router({
+  // Invite a new admin (owner only)
+  invite: protectedProcedure
+    .input(z.object({ email: z.string().email(), name: z.string().min(1) }))
+    .mutation(async ({ input, ctx }) => {
+      const existing = await getAdminByEmail(input.email);
+      if (existing) throw new TRPCError({ code: "CONFLICT", message: "An admin with this email already exists" });
+      const token = crypto.randomBytes(48).toString("hex");
+      const expiresAt = Date.now() + 48 * 60 * 60 * 1000;
+      await createAdminInvite({
+        email: input.email, name: input.name, token, expiresAt,
+        invitedBy: ctx.user?.name ?? ctx.user?.email ?? "owner",
+      });
+      // Return the invite link (frontend will display it)
+      const inviteUrl = `${input.email}|||${token}`; // frontend constructs URL
+      return { token, expiresAt, inviteUrl: token };
+    }),
+
+  // Validate invite token (public)
+  validateInvite: publicProcedure
+    .input(z.object({ token: z.string() }))
+    .query(async ({ input }) => {
+      const invite = await getAdminInviteByToken(input.token);
+      if (!invite) throw new TRPCError({ code: "NOT_FOUND", message: "Invite not found" });
+      if (invite.usedAt) throw new TRPCError({ code: "BAD_REQUEST", message: "Invite already used" });
+      if (Date.now() > invite.expiresAt) throw new TRPCError({ code: "BAD_REQUEST", message: "Invite has expired" });
+      return { email: invite.email, name: invite.name };
+    }),
+
+  // Accept invite and set password (public)
+  acceptInvite: publicProcedure
+    .input(z.object({ token: z.string(), password: z.string().min(8) }))
+    .mutation(async ({ input }) => {
+      const invite = await getAdminInviteByToken(input.token);
+      if (!invite || invite.usedAt || Date.now() > invite.expiresAt)
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid or expired invite" });
+      const existing = await getAdminByEmail(invite.email);
+      if (existing) throw new TRPCError({ code: "CONFLICT", message: "Account already exists" });
+      const passwordHash = await bcrypt.hash(input.password, 12);
+      await createAdminAccount({ email: invite.email, name: invite.name, passwordHash, invitedBy: invite.invitedBy });
+      await markAdminInviteUsed(input.token);
+      return { success: true, email: invite.email };
+    }),
+
+  // Admin email/password login (public)
+  login: publicProcedure
+    .input(z.object({ email: z.string().email(), password: z.string().min(1) }))
+    .mutation(async ({ input, ctx }) => {
+      const ip = ctx.req.ip ?? ctx.req.headers["x-forwarded-for"]?.toString() ?? "unknown";
+      // Rate limit check
+      const attempts = await countRecentFailedLogins(input.email, "admin");
+      if (attempts >= ADMIN_LOCKOUT_MAX)
+        throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "Too many failed attempts. Please wait 15 minutes." });
+      const admin = await getAdminByEmail(input.email);
+      if (!admin || !admin.isActive) {
+        await recordFailedLogin(input.email, "admin", ip);
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid email or password" });
+      }
+      const valid = await bcrypt.compare(input.password, admin.passwordHash);
+      if (!valid) {
+        await recordFailedLogin(input.email, "admin", ip);
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid email or password" });
+      }
+      await clearLoginAttempts(input.email, "admin");
+      const token = jwt.sign(
+        { adminId: admin.id, email: admin.email, name: admin.name, type: "admin_account" },
+        ENV.cookieSecret,
+        { expiresIn: "7d" }
+      );
+      ctx.res.cookie(ADMIN_COOKIE, token, {
+        httpOnly: true, secure: process.env.NODE_ENV === "production",
+        sameSite: "lax", maxAge: 7 * 24 * 60 * 60 * 1000, path: "/",
+      });
+      return { success: true, name: admin.name, email: admin.email };
+    }),
+
+  // Admin logout
+  logout: publicProcedure.mutation(async ({ ctx }) => {
+    ctx.res.clearCookie(ADMIN_COOKIE, { path: "/" });
+    return { success: true };
+  }),
+
+  // List all admins (owner only)
+  list: protectedProcedure.query(() => listAdminAccounts()),
+
+  // Deactivate / reactivate admin (owner only)
+  setActive: protectedProcedure
+    .input(z.object({ id: z.number(), isActive: z.boolean() }))
+    .mutation(({ input }) => setAdminActive(input.id, input.isActive)),
+});
+
+// ─── Referrals Router ─────────────────────────────────────────────────────────
+const referralsRouter = router({
+  // Agent submits a referral
+  submit: publicProcedure
+    .input(z.object({
+      referrerCandidateId: z.number(),
+      refereeName: z.string().min(1),
+      refereePhone: z.string().min(5),
+      refereeNote: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      // Auto-create candidate with source="referral"
+      const insertResult = await createCandidate({
+        name: input.refereeName,
+        phone: input.refereePhone,
+        source: "referral",
+        notes: `Referred by agent (candidateId: ${input.referrerCandidateId}). Note: ${input.refereeNote ?? ""}`,
+      });
+      // insertResult is MySqlRawQueryResult — extract insertId
+      const createdCandidateId = (insertResult as { insertId?: number })?.insertId ?? null;
+      await createReferral({
+        referrerCandidateId: input.referrerCandidateId,
+        refereeName: input.refereeName,
+        refereePhone: input.refereePhone,
+        refereeNote: input.refereeNote ?? null,
+        createdCandidateId,
+      });
+      return { success: true };
+    }),
+
+  // Agent views own referrals
+  listMine: publicProcedure
+    .input(z.object({ candidateId: z.number() }))
+    .query(({ input }) => getReferralsByReferrer(input.candidateId)),
+
+  // Admin views all referrals
+  listAll: protectedProcedure.query(() => listAllReferrals()),
+
+  // Admin updates referral status
+  updateStatus: protectedProcedure
+    .input(z.object({
+      id: z.number(),
+      status: z.enum(["pending", "contacted", "hired", "rejected"]),
+      referrerCandidateId: z.number().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      await updateReferralStatus(input.id, input.status);
+      // Notify the referring agent
+      if (input.referrerCandidateId) {
+        const statusLabel = { pending: "Pending", contacted: "Contacted", hired: "Hired! 🎉", rejected: "Not selected" }[input.status];
+        await createAgentNotification({
+          candidateId: input.referrerCandidateId,
+          message: `Your referral status has been updated: ${statusLabel}`,
+          type: "referral_update",
+          relatedId: input.id,
+        });
+      }
+      return { success: true };
+    }),
+});
+
+// ─── Notifications Router ─────────────────────────────────────────────────────
+const notificationsRouter = router({
+  listMine: publicProcedure
+    .input(z.object({ candidateId: z.number() }))
+    .query(({ input }) => getNotificationsByCandidate(input.candidateId)),
+
+  countUnread: publicProcedure
+    .input(z.object({ candidateId: z.number() }))
+    .query(({ input }) => countUnreadNotifications(input.candidateId)),
+
+  markRead: publicProcedure
+    .input(z.object({ candidateId: z.number() }))
+    .mutation(({ input }) => markNotificationsRead(input.candidateId)),
+});
+
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -713,7 +934,9 @@ export const appRouter = router({
   system: systemRouter,
   agent: agentRouter,
   requests: requestsRouter,
+  adminAuth: adminAuthRouter,
+  referrals: referralsRouter,
+  notifications: notificationsRouter,
 });
-
-export type AppRouter = typeof appRouter;
+export type AppRouter = typeof appRouter;;
 

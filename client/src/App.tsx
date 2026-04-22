@@ -9,6 +9,8 @@ import Candidates from "./pages/Candidates";
 import CandidateDetail from "./pages/CandidateDetail";
 import Training from "./pages/Training";
 import Requests from "./pages/Requests";
+import Settings from "./pages/Settings";
+import AdminInviteAccept from "./pages/AdminInviteAccept";
 import Login from "./pages/Login";
 import AgentPortal from "./pages/AgentPortal";
 import { useAuth } from "./_core/hooks/useAuth";
@@ -56,6 +58,8 @@ function Router() {
       <Route path="/candidates/:id" component={() => <ProtectedRoute component={CandidateDetail} />} />
       <Route path="/training" component={() => <ProtectedRoute component={Training} />} />
       <Route path="/requests" component={() => <ProtectedRoute component={Requests} />} />
+      <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
+      <Route path="/admin-invite" component={AdminInviteAccept} />
       <Route path="/agent" component={AgentPortal} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />

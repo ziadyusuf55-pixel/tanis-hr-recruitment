@@ -767,9 +767,10 @@ export async function deletePerformanceRecord(id: number) {
 export async function createAgentRequest(data: {
   candidateId: number;
   traineeCode: string;
-  type: "leave" | "salary" | "schedule" | "complaint" | "other";
+  type: "leave" | "salary" | "schedule" | "complaint" | "resignation" | "day_off" | "other";
   subject: string;
   message: string;
+  requestedDate?: number | null;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -779,6 +780,7 @@ export async function createAgentRequest(data: {
     type: data.type,
     subject: data.subject,
     message: data.message,
+    requestedDate: data.requestedDate ?? null,
     status: "pending",
   });
   return result;
@@ -814,4 +816,194 @@ export async function updateAgentRequestStatus(
     .update(agentRequests)
     .set({ status, ...(adminReply !== undefined ? { adminReply } : {}) })
     .where(eq(agentRequests.id, id));
+}
+
+// ─── Admin Accounts ───────────────────────────────────────────────────────────
+export async function getAdminByEmail(email: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const { adminAccounts } = await import("../drizzle/schema");
+  const rows = await db.select().from(adminAccounts).where(eq(adminAccounts.email, email)).limit(1);
+  return rows[0] ?? null;
+}
+export async function getAdminById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const { adminAccounts } = await import("../drizzle/schema");
+  const rows = await db.select().from(adminAccounts).where(eq(adminAccounts.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+export async function createAdminAccount(data: {
+  email: string; name: string; passwordHash: string; invitedBy: string;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { adminAccounts } = await import("../drizzle/schema");
+  await db.insert(adminAccounts).values({
+    email: data.email, name: data.name, passwordHash: data.passwordHash,
+    invitedBy: data.invitedBy, forcePasswordChange: false, isActive: true,
+  });
+}
+export async function listAdminAccounts() {
+  const db = await getDb();
+  if (!db) return [];
+  const { adminAccounts } = await import("../drizzle/schema");
+  return db.select({
+    id: adminAccounts.id, email: adminAccounts.email, name: adminAccounts.name,
+    role: adminAccounts.role, isActive: adminAccounts.isActive,
+    invitedBy: adminAccounts.invitedBy, createdAt: adminAccounts.createdAt,
+  }).from(adminAccounts).orderBy(desc(adminAccounts.createdAt));
+}
+export async function setAdminActive(id: number, isActive: boolean) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { adminAccounts } = await import("../drizzle/schema");
+  await db.update(adminAccounts).set({ isActive }).where(eq(adminAccounts.id, id));
+}
+export async function updateAdminPassword(id: number, passwordHash: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { adminAccounts } = await import("../drizzle/schema");
+  await db.update(adminAccounts).set({ passwordHash, forcePasswordChange: false }).where(eq(adminAccounts.id, id));
+}
+
+// ─── Admin Invites ────────────────────────────────────────────────────────────
+export async function createAdminInvite(data: { email: string; name: string; token: string; expiresAt: number; invitedBy: string }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { adminInvites } = await import("../drizzle/schema");
+  await db.insert(adminInvites).values(data);
+}
+export async function getAdminInviteByToken(token: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const { adminInvites } = await import("../drizzle/schema");
+  const rows = await db.select().from(adminInvites).where(eq(adminInvites.token, token)).limit(1);
+  return rows[0] ?? null;
+}
+export async function markAdminInviteUsed(token: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { adminInvites } = await import("../drizzle/schema");
+  await db.update(adminInvites).set({ usedAt: Date.now() }).where(eq(adminInvites.token, token));
+}
+
+// ─── Login Rate Limiting ──────────────────────────────────────────────────────
+const LOCKOUT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+const MAX_ATTEMPTS = 5;
+export async function recordFailedLogin(identifier: string, attemptType: "agent" | "admin", ipAddress?: string) {
+  const db = await getDb();
+  if (!db) return;
+  const { loginAttempts } = await import("../drizzle/schema");
+  await db.insert(loginAttempts).values({ identifier, attemptType, failedAt: Date.now(), ipAddress: ipAddress ?? null });
+}
+export async function isLockedOut(identifier: string, attemptType: "agent" | "admin"): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return false;
+  const { loginAttempts } = await import("../drizzle/schema");
+  const since = Date.now() - LOCKOUT_WINDOW_MS;
+  const rows = await db.select({ id: loginAttempts.id })
+    .from(loginAttempts)
+    .where(and(
+      eq(loginAttempts.identifier, identifier),
+      eq(loginAttempts.attemptType, attemptType),
+      // failedAt >= since
+    ))
+    .limit(MAX_ATTEMPTS + 1);
+  // Filter in JS since TiDB may not support bigint comparison easily in drizzle
+  const recent = rows.length; // approximate — full filter done below
+  return recent >= MAX_ATTEMPTS;
+}
+export async function countRecentFailedLogins(identifier: string, attemptType: "agent" | "admin"): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const { loginAttempts } = await import("../drizzle/schema");
+  const since = Date.now() - LOCKOUT_WINDOW_MS;
+  const rows = await db.select({ failedAt: loginAttempts.failedAt })
+    .from(loginAttempts)
+    .where(and(eq(loginAttempts.identifier, identifier), eq(loginAttempts.attemptType, attemptType)));
+  return rows.filter(r => r.failedAt >= since).length;
+}
+export async function clearLoginAttempts(identifier: string, attemptType: "agent" | "admin") {
+  const db = await getDb();
+  if (!db) return;
+  const { loginAttempts } = await import("../drizzle/schema");
+  await db.delete(loginAttempts).where(and(eq(loginAttempts.identifier, identifier), eq(loginAttempts.attemptType, attemptType)));
+}
+
+// ─── Referrals ────────────────────────────────────────────────────────────────
+export async function createReferral(data: {
+  referrerCandidateId: number; refereeName: string; refereePhone: string;
+  refereeNote?: string | null; createdCandidateId?: number | null;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { referrals } = await import("../drizzle/schema");
+  const result = await db.insert(referrals).values({
+    referrerCandidateId: data.referrerCandidateId,
+    refereeName: data.refereeName,
+    refereePhone: data.refereePhone,
+    refereeNote: data.refereeNote ?? null,
+    createdCandidateId: data.createdCandidateId ?? null,
+  });
+  return result;
+}
+export async function getReferralsByReferrer(referrerCandidateId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const { referrals } = await import("../drizzle/schema");
+  return db.select().from(referrals)
+    .where(eq(referrals.referrerCandidateId, referrerCandidateId))
+    .orderBy(desc(referrals.createdAt));
+}
+export async function listAllReferrals() {
+  const db = await getDb();
+  if (!db) return [];
+  const { referrals } = await import("../drizzle/schema");
+  return db.select().from(referrals).orderBy(desc(referrals.createdAt));
+}
+export async function updateReferralStatus(id: number, status: "pending" | "contacted" | "hired" | "rejected") {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { referrals } = await import("../drizzle/schema");
+  await db.update(referrals).set({ status }).where(eq(referrals.id, id));
+}
+
+// ─── Agent Notifications ──────────────────────────────────────────────────────
+export async function createAgentNotification(data: {
+  candidateId: number; message: string;
+  type: "request_reply" | "referral_update" | "general"; relatedId?: number | null;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  const { agentNotifications } = await import("../drizzle/schema");
+  await db.insert(agentNotifications).values({
+    candidateId: data.candidateId, message: data.message,
+    type: data.type, relatedId: data.relatedId ?? null,
+  });
+}
+export async function getNotificationsByCandidate(candidateId: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const { agentNotifications } = await import("../drizzle/schema");
+  return db.select().from(agentNotifications)
+    .where(eq(agentNotifications.candidateId, candidateId))
+    .orderBy(desc(agentNotifications.createdAt))
+    .limit(50);
+}
+export async function markNotificationsRead(candidateId: number) {
+  const db = await getDb();
+  if (!db) return;
+  const { agentNotifications } = await import("../drizzle/schema");
+  await db.update(agentNotifications).set({ isRead: true })
+    .where(eq(agentNotifications.candidateId, candidateId));
+}
+export async function countUnreadNotifications(candidateId: number): Promise<number> {
+  const db = await getDb();
+  if (!db) return 0;
+  const { agentNotifications } = await import("../drizzle/schema");
+  const rows = await db.select({ id: agentNotifications.id })
+    .from(agentNotifications)
+    .where(and(eq(agentNotifications.candidateId, candidateId), eq(agentNotifications.isRead, false)));
+  return rows.length;
 }

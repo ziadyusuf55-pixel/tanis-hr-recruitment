@@ -16,6 +16,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Bell } from "lucide-react";
 
 const TANIS_LOGO_WHITE =
   "https://d2xsxph8kpxj0f.cloudfront.net/310419663028909162/GKQCuajYkpcdyw75NP8gmu/tanis-logo-white_d38279a7.png";
@@ -85,6 +86,7 @@ export default function AgentPortal() {
           </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-muted-foreground hidden sm:block">{agent.name}</span>
+            <NotificationBell candidateId={agent.candidateId} />
             <Button variant="outline" size="sm" onClick={handleLogout}>
               Sign Out
             </Button>
@@ -116,11 +118,12 @@ export default function AgentPortal() {
 
         {/* Tabs */}
         <Tabs defaultValue="profile">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="profile">Profile</TabsTrigger>
             <TabsTrigger value="training">Training</TabsTrigger>
             <TabsTrigger value="payroll">Payroll</TabsTrigger>
             <TabsTrigger value="requests">Requests</TabsTrigger>
+            <TabsTrigger value="referrals">Refer</TabsTrigger>
           </TabsList>
 
           {/* ── Profile Tab ── */}
@@ -292,7 +295,12 @@ export default function AgentPortal() {
           </TabsContent>
           {/* ── Request Center Tab ── */}
           <TabsContent value="requests" className="mt-6 space-y-6">
-            <RequestCenterTab />
+            <RequestCenterTab candidateId={agent.candidateId} />
+          </TabsContent>
+
+          {/* ── Referrals Tab ── */}
+          <TabsContent value="referrals" className="mt-6">
+            <ReferralTab referrerCandidateId={agent.candidateId} />
           </TabsContent>
         </Tabs>
       </main>
@@ -301,12 +309,23 @@ export default function AgentPortal() {
 }
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
-  leave: "Leave / Day Off",
+  leave: "Leave",
   salary: "Salary Inquiry",
   schedule: "Schedule Change",
   complaint: "General Complaint",
+  resignation: "Resignation",
+  day_off: "Day Off",
   other: "Other",
 };
+
+// Types that require a date (min 2 weeks from today)
+const DATE_REQUIRED_TYPES = ["leave", "day_off", "resignation"];
+
+function getMinDate() {
+  const d = new Date();
+  d.setDate(d.getDate() + 14);
+  return d.toISOString().split("T")[0];
+}
 
 const STATUS_STYLES: Record<string, { label: string; className: string }> = {
   pending:     { label: "Pending",     className: "bg-yellow-50 text-yellow-700 border-yellow-200" },
@@ -315,30 +334,35 @@ const STATUS_STYLES: Record<string, { label: string; className: string }> = {
   rejected:    { label: "Rejected",    className: "bg-red-50 text-red-700 border-red-200" },
 };
 
-function RequestCenterTab() {
+function RequestCenterTab({ candidateId }: { candidateId: number }) {
   const utils = trpc.useUtils();
   const { data: requests = [], isLoading } = trpc.requests.listMine.useQuery();
   const submitMutation = trpc.requests.submit.useMutation({
     onSuccess: () => {
       utils.requests.listMine.invalidate();
+      // Also refresh notifications
+      utils.notifications.listMine.invalidate();
       toast.success("Request submitted successfully");
-      setForm({ type: "", subject: "", message: "" });
+      setForm({ type: "", subject: "", message: "", requestedDate: "" });
       setShowForm(false);
     },
     onError: (e) => toast.error(e.message),
   });
 
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ type: "", subject: "", message: "" });
+  const [form, setForm] = useState({ type: "", subject: "", message: "", requestedDate: "" });
+  const needsDate = DATE_REQUIRED_TYPES.includes(form.type);
 
   function handleSubmit() {
     if (!form.type) { toast.error("Please select a request type"); return; }
     if (!form.subject.trim()) { toast.error("Please enter a subject"); return; }
     if (!form.message.trim()) { toast.error("Please describe your request"); return; }
+    if (needsDate && !form.requestedDate) { toast.error("Please select a date (minimum 2 weeks from today)"); return; }
     submitMutation.mutate({
-      type: form.type as "leave" | "salary" | "schedule" | "complaint" | "other",
+      type: form.type as "leave" | "salary" | "schedule" | "complaint" | "resignation" | "day_off" | "other",
       subject: form.subject.trim(),
       message: form.message.trim(),
+      requestedDate: form.requestedDate ? new Date(form.requestedDate).getTime() : undefined,
     });
   }
 
@@ -371,7 +395,9 @@ function RequestCenterTab() {
                   <SelectValue placeholder="Select type..." />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="leave">Leave / Day Off</SelectItem>
+                  <SelectItem value="leave">Leave</SelectItem>
+                  <SelectItem value="day_off">Day Off</SelectItem>
+                  <SelectItem value="resignation">Resignation</SelectItem>
                   <SelectItem value="salary">Salary Inquiry</SelectItem>
                   <SelectItem value="schedule">Schedule Change</SelectItem>
                   <SelectItem value="complaint">General Complaint</SelectItem>
@@ -379,6 +405,20 @@ function RequestCenterTab() {
                 </SelectContent>
               </Select>
             </div>
+            {needsDate && (
+              <div className="space-y-1.5">
+                <Label>
+                  {form.type === "resignation" ? "Last Working Day" : "Requested Date"}
+                  <span className="ml-1 text-xs text-muted-foreground">(min. 2 weeks from today)</span>
+                </Label>
+                <Input
+                  type="date"
+                  min={getMinDate()}
+                  value={form.requestedDate}
+                  onChange={(e) => setForm((f) => ({ ...f, requestedDate: e.target.value }))}
+                />
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label>Subject</Label>
               <Input
@@ -397,7 +437,7 @@ function RequestCenterTab() {
               />
             </div>
             <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={() => { setShowForm(false); setForm({ type: "", subject: "", message: "" }); }}>
+              <Button variant="outline" onClick={() => { setShowForm(false); setForm({ type: "", subject: "", message: "", requestedDate: "" }); }}>
                 Cancel
               </Button>
               <Button
@@ -449,6 +489,172 @@ function RequestCenterTab() {
                       <p className="text-sm text-foreground whitespace-pre-wrap bg-muted/50 rounded-lg px-3 py-2">{req.adminReply}</p>
                     </div>
                   )}
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Notification Bell ──────────────────────────────────────────────────────
+
+function NotificationBell({ candidateId }: { candidateId: number }) {
+  const utils = trpc.useUtils();
+  const { data: notifications = [] } = trpc.notifications.listMine.useQuery(
+    { candidateId },
+    { refetchInterval: 30000 }
+  );
+  const markReadMutation = trpc.notifications.markRead.useMutation({
+    onSuccess: () => utils.notifications.listMine.invalidate(),
+  });
+  const [open, setOpen] = useState(false);
+  const unread = (notifications as Array<{ id: number; isRead: boolean }>).filter((n) => !n.isRead).length;
+
+  function handleOpen() {
+    setOpen((v) => !v);
+    if (unread > 0) {
+      markReadMutation.mutate({ candidateId });
+    }
+  }
+
+  return (
+    <div className="relative">
+      <Button variant="outline" size="sm" className="relative px-2" onClick={handleOpen}>
+        <Bell className="w-4 h-4" />
+        {unread > 0 && (
+          <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full text-white text-[10px] flex items-center justify-center font-bold" style={{ background: BRAND }}>
+            {unread > 9 ? "9+" : unread}
+          </span>
+        )}
+      </Button>
+      {open && (
+        <div className="absolute right-0 top-10 w-80 bg-card border border-border rounded-xl shadow-xl z-50 overflow-hidden">
+          <div className="px-4 py-3 border-b border-border">
+            <p className="font-semibold text-sm">Notifications</p>
+          </div>
+          <div className="max-h-72 overflow-y-auto">
+            {(notifications as Array<{ id: number; type: string; message: string; isRead: boolean; createdAt: Date }>).length === 0 ? (
+              <p className="text-center text-sm text-muted-foreground py-8">No notifications yet</p>
+            ) : (
+              (notifications as Array<{ id: number; type: string; message: string; isRead: boolean; createdAt: Date }>).map((n) => (
+                <div key={n.id} className={`px-4 py-3 border-b border-border last:border-0 ${!n.isRead ? "bg-muted/40" : ""}`}>
+                  <p className="text-sm text-foreground">{n.message}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{new Date(n.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</p>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Referral Tab ───────────────────────────────────────────────────────────
+
+const REFERRAL_STATUS_STYLES: Record<string, { label: string; className: string }> = {
+  pending:   { label: "Pending",   className: "bg-yellow-50 text-yellow-700 border-yellow-200" },
+  contacted: { label: "Contacted", className: "bg-blue-50 text-blue-700 border-blue-200" },
+  hired:     { label: "Hired",     className: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  rejected:  { label: "Not Hired", className: "bg-red-50 text-red-700 border-red-200" },
+};
+
+function ReferralTab({ referrerCandidateId }: { referrerCandidateId: number }) {
+  const utils = trpc.useUtils();
+  const { data: referrals = [], isLoading } = trpc.referrals.listMine.useQuery({ candidateId: referrerCandidateId });
+  const submitMutation = trpc.referrals.submit.useMutation({
+    onSuccess: () => {
+      utils.referrals.listMine.invalidate();
+      toast.success("Referral submitted! We'll be in touch with your candidate.");
+      setForm({ name: "", phone: "", note: "" });
+      setShowForm(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ name: "", phone: "", note: "" });
+
+  function handleSubmit() {
+    if (!form.name.trim()) { toast.error("Please enter the candidate's name"); return; }
+    if (!form.phone.trim()) { toast.error("Please enter the candidate's phone number"); return; }
+    submitMutation.mutate({
+      referrerCandidateId,
+      refereeName: form.name.trim(),
+      refereePhone: form.phone.trim(),
+      refereeNote: form.note.trim() || undefined,
+    });
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="font-semibold text-foreground">Refer a Candidate</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">Know someone great for outbound sales? Refer them to Tanis.</p>
+        </div>
+        {!showForm && (
+          <Button onClick={() => setShowForm(true)} style={{ background: BRAND }} className="text-white hover:opacity-90 shrink-0">
+            + Refer Someone
+          </Button>
+        )}
+      </div>
+
+      {showForm && (
+        <Card className="border-2" style={{ borderColor: BRAND + "40" }}>
+          <CardHeader>
+            <CardTitle className="text-base">Referral Details</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>Candidate Full Name</Label>
+              <Input placeholder="e.g. Ahmed Mohamed" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Phone Number</Label>
+              <Input placeholder="e.g. 01012345678" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Note <span className="text-muted-foreground text-xs">(optional)</span></Label>
+              <Textarea placeholder="Why are you recommending this person?" rows={3} value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={() => { setShowForm(false); setForm({ name: "", phone: "", note: "" }); }}>Cancel</Button>
+              <Button onClick={handleSubmit} disabled={submitMutation.isPending} style={{ background: BRAND }} className="text-white hover:opacity-90">
+                {submitMutation.isPending ? "Submitting..." : "Submit Referral"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {isLoading ? (
+        <Card><CardContent className="py-10 text-center text-muted-foreground text-sm">Loading referrals...</CardContent></Card>
+      ) : (referrals as Array<unknown>).length === 0 ? (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <p className="text-muted-foreground text-sm">No referrals submitted yet.</p>
+            <p className="text-muted-foreground text-xs mt-1">Refer a friend and help them join the Tanis team!</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="space-y-3">
+          {(referrals as Array<{ id: number; refereeName: string; refereePhone: string; refereeNote: string | null; status: string; createdAt: Date }>).map((ref) => {
+            const st = REFERRAL_STATUS_STYLES[ref.status] ?? REFERRAL_STATUS_STYLES.pending;
+            return (
+              <Card key={ref.id}>
+                <CardContent className="pt-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-semibold text-foreground text-sm">{ref.refereeName}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">{ref.refereePhone} · Referred {new Date(ref.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}</p>
+                      {ref.refereeNote && <p className="text-xs text-muted-foreground mt-1 italic">"{ref.refereeNote}"</p>}
+                    </div>
+                    <Badge variant="outline" className={`text-xs shrink-0 ${st.className}`}>{st.label}</Badge>
+                  </div>
                 </CardContent>
               </Card>
             );
