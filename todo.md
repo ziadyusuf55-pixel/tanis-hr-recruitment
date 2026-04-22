@@ -360,3 +360,10 @@
 - [x] Frontend: add unread requests red dot badge on admin sidebar "Requests" nav item
 - [x] Admin Requests page: mark all as read on open, show attachment link and multi-day dates in detail dialog
 - [x] 40/40 tests still passing
+
+## Round 31 — Agent Portal Light/Dark Mode Toggle
+
+- [x] Add light/dark mode toggle button in agent portal top bar (sun/moon icon)
+- [x] Persist preference in localStorage (key: tanis-agent-theme, default: dark)
+- [x] Full light theme: white/stone background, dark text, brand accent colors
+- [x] 40/40 tests passing

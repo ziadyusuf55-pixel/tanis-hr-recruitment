@@ -2,9 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -26,13 +24,97 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
-  Calendar,
+  Sun,
+  Moon,
 } from "lucide-react";
 
 const TANIS_LOGO_WHITE =
   "https://d2xsxph8kpxj0f.cloudfront.net/310419663028909162/GKQCuajYkpcdyw75NP8gmu/tanis-logo-white_d38279a7.png";
 const BRAND = "oklch(0.32 0.18 28)";
 const BRAND_LIGHT = "oklch(0.42 0.18 28)";
+const THEME_KEY = "tanis-agent-theme";
+
+// ─── Theme tokens ─────────────────────────────────────────────────────────────
+type Theme = {
+  bg: string;
+  surface: string;
+  surfaceBorder: string;
+  text: string;
+  textMuted: string;
+  textFaint: string;
+  headerBg: string;
+  headerBorder: string;
+  mobileNavBorder: string;
+  cardBg: string;
+  cardBorder: string;
+  inputBg: string;
+  inputBorder: string;
+  navActive: string;
+  navInactive: string;
+  navHover: string;
+  badgePending: string;
+  badgeInProgress: string;
+  badgeResolved: string;
+  badgeRejected: string;
+  notifBg: string;
+  notifUnread: string;
+  toggleBg: string;
+  toggleText: string;
+};
+
+const DARK: Theme = {
+  bg: "#0f0f0f",
+  surface: "rgba(255,255,255,0.04)",
+  surfaceBorder: "rgba(255,255,255,0.08)",
+  text: "#ffffff",
+  textMuted: "rgba(255,255,255,0.6)",
+  textFaint: "rgba(255,255,255,0.3)",
+  headerBg: "rgba(15,15,15,0.95)",
+  headerBorder: "rgba(255,255,255,0.10)",
+  mobileNavBorder: "rgba(255,255,255,0.10)",
+  cardBg: "rgba(255,255,255,0.03)",
+  cardBorder: "rgba(255,255,255,0.08)",
+  inputBg: "rgba(255,255,255,0.05)",
+  inputBorder: "rgba(255,255,255,0.10)",
+  navActive: "#ffffff",
+  navInactive: "rgba(255,255,255,0.50)",
+  navHover: "rgba(255,255,255,0.05)",
+  badgePending: "bg-yellow-500/20 text-yellow-400",
+  badgeInProgress: "bg-blue-500/20 text-blue-400",
+  badgeResolved: "bg-emerald-500/20 text-emerald-400",
+  badgeRejected: "bg-red-500/20 text-red-400",
+  notifBg: "#1a1a1a",
+  notifUnread: "rgba(255,255,255,0.05)",
+  toggleBg: "rgba(255,255,255,0.08)",
+  toggleText: "rgba(255,255,255,0.60)",
+};
+
+const LIGHT: Theme = {
+  bg: "#f5f5f4",
+  surface: "rgba(0,0,0,0.03)",
+  surfaceBorder: "rgba(0,0,0,0.08)",
+  text: "#1a1a1a",
+  textMuted: "rgba(0,0,0,0.55)",
+  textFaint: "rgba(0,0,0,0.35)",
+  headerBg: "rgba(255,255,255,0.95)",
+  headerBorder: "rgba(0,0,0,0.08)",
+  mobileNavBorder: "rgba(0,0,0,0.08)",
+  cardBg: "#ffffff",
+  cardBorder: "rgba(0,0,0,0.07)",
+  inputBg: "#ffffff",
+  inputBorder: "rgba(0,0,0,0.12)",
+  navActive: "#ffffff",
+  navInactive: "rgba(0,0,0,0.45)",
+  navHover: "rgba(0,0,0,0.04)",
+  badgePending: "bg-yellow-100 text-yellow-700",
+  badgeInProgress: "bg-blue-100 text-blue-700",
+  badgeResolved: "bg-emerald-100 text-emerald-700",
+  badgeRejected: "bg-red-100 text-red-700",
+  notifBg: "#ffffff",
+  notifUnread: "rgba(0,0,0,0.03)",
+  toggleBg: "rgba(0,0,0,0.06)",
+  toggleText: "rgba(0,0,0,0.50)",
+};
 
 function formatDate(ts: number | Date | null | undefined) {
   if (!ts) return "—";
@@ -61,6 +143,18 @@ export default function AgentPortal() {
     { enabled: !!agent?.candidateId }
   );
   const [activeTab, setActiveTab] = useState<Tab>("profile");
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    const saved = localStorage.getItem(THEME_KEY);
+    return saved !== null ? saved === "dark" : true; // default dark
+  });
+
+  const theme = isDark ? DARK : LIGHT;
+
+  function toggleTheme() {
+    const next = !isDark;
+    setIsDark(next);
+    localStorage.setItem(THEME_KEY, next ? "dark" : "light");
+  }
 
   useEffect(() => {
     if (!isLoading && !agent) {
@@ -75,13 +169,13 @@ export default function AgentPortal() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#0f0f0f]">
+      <div className="min-h-screen flex items-center justify-center" style={{ background: theme.bg }}>
         <div className="flex flex-col items-center gap-3">
           <div
             className="w-8 h-8 border-2 rounded-full animate-spin"
             style={{ borderColor: BRAND_LIGHT, borderTopColor: "transparent" }}
           />
-          <p className="text-sm text-white/50">Loading your portal...</p>
+          <p className="text-sm" style={{ color: theme.textMuted }}>Loading your portal...</p>
         </div>
       </div>
     );
@@ -97,11 +191,15 @@ export default function AgentPortal() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#0f0f0f] text-white">
+    <div className="min-h-screen transition-colors duration-200" style={{ background: theme.bg, color: theme.text }}>
       {/* ── Top Bar ── */}
       <header
-        className="sticky top-0 z-30 border-b border-white/10"
-        style={{ background: "rgba(15,15,15,0.95)", backdropFilter: "blur(12px)" }}
+        className="sticky top-0 z-30"
+        style={{
+          background: theme.headerBg,
+          borderBottom: `1px solid ${theme.headerBorder}`,
+          backdropFilter: "blur(12px)",
+        }}
       >
         <div className="max-w-5xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
           {/* Logo */}
@@ -112,7 +210,7 @@ export default function AgentPortal() {
             >
               <img src={TANIS_LOGO_WHITE} alt="Tanis" className="w-4 h-4 object-contain" />
             </div>
-            <span className="font-semibold text-sm text-white">Tanis Hub</span>
+            <span className="font-semibold text-sm" style={{ color: theme.text }}>Tanis Hub</span>
           </div>
 
           {/* Nav */}
@@ -121,12 +219,18 @@ export default function AgentPortal() {
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all"
+                style={
                   activeTab === item.id
-                    ? "text-white"
-                    : "text-white/50 hover:text-white/80 hover:bg-white/5"
-                }`}
-                style={activeTab === item.id ? { background: BRAND } : {}}
+                    ? { background: BRAND, color: "#ffffff" }
+                    : { color: theme.navInactive }
+                }
+                onMouseEnter={(e) => {
+                  if (activeTab !== item.id) (e.currentTarget as HTMLElement).style.background = theme.navHover;
+                }}
+                onMouseLeave={(e) => {
+                  if (activeTab !== item.id) (e.currentTarget as HTMLElement).style.background = "transparent";
+                }}
               >
                 {item.icon}
                 {item.label}
@@ -135,11 +239,23 @@ export default function AgentPortal() {
           </nav>
 
           {/* Right */}
-          <div className="flex items-center gap-2">
-            <NotificationBell candidateId={agent.candidateId} />
+          <div className="flex items-center gap-1">
+            {/* Theme toggle */}
+            <button
+              onClick={toggleTheme}
+              className="p-2 rounded-lg transition-all"
+              style={{ background: theme.toggleBg, color: theme.toggleText }}
+              title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
+            <NotificationBell candidateId={agent.candidateId} theme={theme} />
             <button
               onClick={handleLogout}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-white/50 hover:text-white hover:bg-white/5 transition-all"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-all"
+              style={{ color: theme.navInactive }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.color = theme.text; (e.currentTarget as HTMLElement).style.background = theme.navHover; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.color = theme.navInactive; (e.currentTarget as HTMLElement).style.background = "transparent"; }}
             >
               <LogOut className="w-4 h-4" />
               <span className="hidden sm:inline">Sign Out</span>
@@ -148,14 +264,13 @@ export default function AgentPortal() {
         </div>
 
         {/* Mobile nav */}
-        <div className="sm:hidden flex border-t border-white/10">
+        <div className="sm:hidden flex" style={{ borderTop: `1px solid ${theme.mobileNavBorder}` }}>
           {navItems.map((item) => (
             <button
               key={item.id}
               onClick={() => setActiveTab(item.id)}
-              className={`flex-1 flex flex-col items-center gap-0.5 py-2 text-xs transition-all ${
-                activeTab === item.id ? "text-white" : "text-white/40"
-              }`}
+              className="flex-1 flex flex-col items-center gap-0.5 py-2 text-xs transition-all"
+              style={{ color: activeTab === item.id ? theme.text : theme.navInactive }}
             >
               {item.icon}
               {item.label}
@@ -185,29 +300,16 @@ export default function AgentPortal() {
             <p className="text-white font-bold text-xl tracking-widest mt-0.5">{agent.traineeCode}</p>
           </div>
         </div>
-        {/* Decorative circles */}
-        <div
-          className="absolute -right-16 -top-16 w-64 h-64 rounded-full opacity-10"
-          style={{ background: "white" }}
-        />
-        <div
-          className="absolute -right-4 bottom-0 w-32 h-32 rounded-full opacity-5"
-          style={{ background: "white" }}
-        />
+        <div className="absolute -right-16 -top-16 w-64 h-64 rounded-full opacity-10" style={{ background: "white" }} />
+        <div className="absolute -right-4 bottom-0 w-32 h-32 rounded-full opacity-5" style={{ background: "white" }} />
       </div>
 
       {/* ── Content ── */}
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
-        {activeTab === "profile" && <ProfileTab agent={agent} />}
-        {activeTab === "payroll" && (
-          <PayrollTab payroll={payroll as PayrollRecord[] | undefined} />
-        )}
-        {activeTab === "requests" && (
-          <RequestCenterTab candidateId={agent.candidateId} />
-        )}
-        {activeTab === "referrals" && (
-          <ReferralTab referrerCandidateId={agent.candidateId} />
-        )}
+        {activeTab === "profile" && <ProfileTab agent={agent} theme={theme} />}
+        {activeTab === "payroll" && <PayrollTab payroll={payroll as PayrollRecord[] | undefined} theme={theme} />}
+        {activeTab === "requests" && <RequestCenterTab candidateId={agent.candidateId} theme={theme} />}
+        {activeTab === "referrals" && <ReferralTab referrerCandidateId={agent.candidateId} theme={theme} />}
       </main>
     </div>
   );
@@ -215,7 +317,7 @@ export default function AgentPortal() {
 
 // ─── Profile Tab ─────────────────────────────────────────────────────────────
 
-function ProfileTab({ agent }: { agent: AgentData }) {
+function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
   const joinDate = agent.batch?.assignedAt
     ? formatDate(new Date(agent.batch.assignedAt))
     : "—";
@@ -232,46 +334,45 @@ function ProfileTab({ agent }: { agent: AgentData }) {
 
   return (
     <div className="space-y-6">
-      <SectionTitle>My Information</SectionTitle>
+      <SectionTitle theme={theme}>My Information</SectionTitle>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {fields.map(({ label, value }) => (
           <div
             key={label}
-            className="rounded-xl p-4 border border-white/8"
-            style={{ background: "rgba(255,255,255,0.04)" }}
+            className="rounded-xl p-4"
+            style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}
           >
-            <p className="text-white/40 text-xs uppercase tracking-wider mb-1">{label}</p>
-            <p className="text-white font-medium text-sm">{value}</p>
+            <p className="text-xs uppercase tracking-wider mb-1" style={{ color: theme.textFaint }}>{label}</p>
+            <p className="font-medium text-sm" style={{ color: theme.text }}>{value}</p>
           </div>
         ))}
       </div>
 
       {agent.batch && (
         <>
-          <SectionTitle>Training Batch</SectionTitle>
-          <div className="rounded-xl border border-white/8 overflow-hidden" style={{ background: "rgba(255,255,255,0.04)" }}>
-            <div className="grid grid-cols-2 sm:grid-cols-3 divide-x divide-y divide-white/8">
+          <SectionTitle theme={theme}>Training Batch</SectionTitle>
+          <div className="rounded-xl overflow-hidden" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
+            <div className="grid grid-cols-2 sm:grid-cols-3" style={{ borderBottom: `1px solid ${theme.surfaceBorder}` }}>
               {[
                 { label: "Batch Name", value: agent.batch.name },
                 { label: "Trainer", value: agent.batch.trainerName ?? "—" },
                 { label: "Start Date", value: formatDate(agent.batch.startDate) },
-              ].map(({ label, value }) => (
-                <div key={label} className="p-4">
-                  <p className="text-white/40 text-xs uppercase tracking-wider mb-1">{label}</p>
-                  <p className="text-white font-medium text-sm">{value}</p>
+              ].map(({ label, value }, i) => (
+                <div key={label} className="p-4" style={i > 0 ? { borderLeft: `1px solid ${theme.surfaceBorder}` } : {}}>
+                  <p className="text-xs uppercase tracking-wider mb-1" style={{ color: theme.textFaint }}>{label}</p>
+                  <p className="font-medium text-sm" style={{ color: theme.text }}>{value}</p>
                 </div>
               ))}
             </div>
-            {/* Attendance bar */}
             {agent.batch.totalSessions != null && Number(agent.batch.totalSessions) > 0 && (
-              <div className="px-4 py-4 border-t border-white/8">
+              <div className="px-4 py-4">
                 <div className="flex items-center justify-between mb-2">
-                  <p className="text-white/40 text-xs uppercase tracking-wider">Attendance</p>
-                  <p className="text-white text-sm font-medium">
+                  <p className="text-xs uppercase tracking-wider" style={{ color: theme.textFaint }}>Attendance</p>
+                  <p className="text-sm font-medium" style={{ color: theme.text }}>
                     {Number(agent.batch.attendedSessions ?? 0)} / {Number(agent.batch.totalSessions)} sessions
                   </p>
                 </div>
-                <div className="w-full h-1.5 rounded-full bg-white/10">
+                <div className="w-full h-1.5 rounded-full" style={{ background: theme.surfaceBorder }}>
                   <div
                     className="h-1.5 rounded-full transition-all"
                     style={{
@@ -302,55 +403,56 @@ type PayrollRecord = {
   notes: string | null;
 };
 
-function PayrollTab({ payroll }: { payroll?: PayrollRecord[] }) {
+function PayrollTab({ payroll, theme }: { payroll?: PayrollRecord[]; theme: Theme }) {
   if (!payroll || payroll.length === 0) {
     return (
       <EmptyState
-        icon={<CreditCard className="w-8 h-8 text-white/20" />}
+        icon={<CreditCard className="w-8 h-8" style={{ color: theme.textFaint }} />}
         title="No payroll records yet"
         subtitle="Your salary details will appear here once processed."
+        theme={theme}
       />
     );
   }
 
   return (
     <div className="space-y-4">
-      <SectionTitle>Payroll History</SectionTitle>
+      <SectionTitle theme={theme}>Payroll History</SectionTitle>
       <div className="space-y-3">
         {payroll.map((record) => (
           <div
             key={record.id}
-            className="rounded-xl border border-white/8 overflow-hidden"
-            style={{ background: "rgba(255,255,255,0.04)" }}
+            className="rounded-xl overflow-hidden"
+            style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}
           >
-            <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
+            <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
               <div>
-                <p className="font-semibold text-white">{record.month}</p>
-                <p className="text-xs text-white/40 mt-0.5">
+                <p className="font-semibold" style={{ color: theme.text }}>{record.month}</p>
+                <p className="text-xs mt-0.5" style={{ color: theme.textFaint }}>
                   Payment date: {formatDate(record.paymentDate)}
                 </p>
               </div>
               <span
                 className={`text-xs font-medium px-3 py-1 rounded-full ${
                   record.status === "paid"
-                    ? "bg-emerald-500/20 text-emerald-400"
-                    : "bg-yellow-500/20 text-yellow-400"
+                    ? "bg-emerald-500/20 text-emerald-600"
+                    : "bg-yellow-500/20 text-yellow-600"
                 }`}
               >
                 {record.status === "paid" ? "Paid" : "Pending"}
               </span>
             </div>
-            <div className="grid grid-cols-3 divide-x divide-white/8">
+            <div className="grid grid-cols-3" style={{ borderBottom: record.notes ? `1px solid ${theme.cardBorder}` : "none" }}>
               {[
-                { label: "Gross", value: formatCurrency(record.grossSalary) },
-                { label: "Deductions", value: record.deductions ? `- ${formatCurrency(record.deductions)}` : "—", red: true },
-                { label: "Net Pay", value: formatCurrency(record.netPay), accent: true },
-              ].map(({ label, value, red, accent }) => (
-                <div key={label} className="px-4 py-3">
-                  <p className="text-white/40 text-xs mb-1">{label}</p>
+                { label: "Gross", value: formatCurrency(record.grossSalary), accent: false, red: false },
+                { label: "Deductions", value: record.deductions ? `- ${formatCurrency(record.deductions)}` : "—", red: true, accent: false },
+                { label: "Net Pay", value: formatCurrency(record.netPay), accent: true, red: false },
+              ].map(({ label, value, red, accent }, i) => (
+                <div key={label} className="px-4 py-3" style={i > 0 ? { borderLeft: `1px solid ${theme.cardBorder}` } : {}}>
+                  <p className="text-xs mb-1" style={{ color: theme.textFaint }}>{label}</p>
                   <p
-                    className={`text-sm font-semibold ${red ? "text-red-400" : ""}`}
-                    style={accent ? { color: BRAND_LIGHT } : {}}
+                    className="text-sm font-semibold"
+                    style={{ color: red ? "#ef4444" : accent ? BRAND_LIGHT : theme.text }}
                   >
                     {value}
                   </p>
@@ -358,8 +460,8 @@ function PayrollTab({ payroll }: { payroll?: PayrollRecord[] }) {
               ))}
             </div>
             {record.notes && (
-              <div className="px-5 py-3 border-t border-white/8">
-                <p className="text-xs text-white/40">{record.notes}</p>
+              <div className="px-5 py-3">
+                <p className="text-xs" style={{ color: theme.textFaint }}>{record.notes}</p>
               </div>
             )}
           </div>
@@ -385,12 +487,25 @@ const REQUEST_TYPE_LABELS: Record<string, string> = {
 const DATE_REQUIRED_TYPES = ["leave", "day_off", "resignation"];
 const MULTI_DATE_TYPES = ["leave", "day_off"];
 
-const STATUS_STYLES: Record<string, { label: string; className: string }> = {
-  pending: { label: "Pending", className: "bg-yellow-500/20 text-yellow-400" },
-  in_progress: { label: "In Progress", className: "bg-blue-500/20 text-blue-400" },
-  resolved: { label: "Resolved", className: "bg-emerald-500/20 text-emerald-400" },
-  rejected: { label: "Rejected", className: "bg-red-500/20 text-red-400" },
-};
+function getStatusStyle(status: string, theme: Theme) {
+  const map: Record<string, string> = {
+    pending: theme.badgePending,
+    in_progress: theme.badgeInProgress,
+    resolved: theme.badgeResolved,
+    rejected: theme.badgeRejected,
+  };
+  return map[status] ?? map.pending;
+}
+
+function getStatusLabel(status: string) {
+  const map: Record<string, string> = {
+    pending: "Pending",
+    in_progress: "In Progress",
+    resolved: "Resolved",
+    rejected: "Rejected",
+  };
+  return map[status] ?? "Pending";
+}
 
 function getMinDateStr() {
   const d = new Date();
@@ -398,7 +513,7 @@ function getMinDateStr() {
   return d.toISOString().split("T")[0];
 }
 
-function RequestCenterTab({ candidateId: _candidateId }: { candidateId: number }) {
+function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: number; theme: Theme }) {
   const utils = trpc.useUtils();
   const { data: requests = [], isLoading } = trpc.requests.listMine.useQuery();
   const submitMutation = trpc.requests.submit.useMutation({
@@ -417,8 +532,8 @@ function RequestCenterTab({ candidateId: _candidateId }: { candidateId: number }
     type: "",
     subject: "",
     message: "",
-    requestedDate: "", // single date (resignation)
-    requestedDates: [] as string[], // multi-day (leave, day_off)
+    requestedDate: "",
+    requestedDates: [] as string[],
     attachmentUrl: "",
     attachmentName: "",
   });
@@ -475,12 +590,8 @@ function RequestCenterTab({ candidateId: _candidateId }: { candidateId: number }
     if (!form.subject.trim()) { toast.error("Please enter a subject"); return; }
     if (!form.message.trim()) { toast.error("Please describe your request"); return; }
     if (needsDate) {
-      if (isMultiDate && form.requestedDates.length === 0) {
-        toast.error("Please select at least one date"); return;
-      }
-      if (!isMultiDate && !form.requestedDate) {
-        toast.error("Please select a date (minimum 2 weeks from today)"); return;
-      }
+      if (isMultiDate && form.requestedDates.length === 0) { toast.error("Please select at least one date"); return; }
+      if (!isMultiDate && !form.requestedDate) { toast.error("Please select a date (minimum 2 weeks from today)"); return; }
     }
     submitMutation.mutate({
       type: form.type as "leave" | "salary" | "schedule" | "complaint" | "resignation" | "day_off" | "sick_note" | "other",
@@ -492,42 +603,36 @@ function RequestCenterTab({ candidateId: _candidateId }: { candidateId: number }
     });
   }
 
+  const inputStyle = {
+    background: theme.inputBg,
+    border: `1px solid ${theme.inputBorder}`,
+    color: theme.text,
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <SectionTitle>My Requests</SectionTitle>
+        <SectionTitle theme={theme}>My Requests</SectionTitle>
         {!showForm && (
-          <Button
-            onClick={() => setShowForm(true)}
-            className="text-white text-sm"
-            style={{ background: BRAND }}
-          >
+          <Button onClick={() => setShowForm(true)} className="text-white text-sm" style={{ background: BRAND }}>
             + New Request
           </Button>
         )}
       </div>
 
-      {/* Form */}
       {showForm && (
-        <div
-          className="rounded-2xl border border-white/10 p-6 space-y-5"
-          style={{ background: "rgba(255,255,255,0.04)" }}
-        >
+        <div className="rounded-2xl p-6 space-y-5" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
           <div className="flex items-center justify-between">
-            <p className="font-semibold text-white">Submit a Request</p>
-            <button
-              onClick={() => { setShowForm(false); resetForm(); }}
-              className="text-white/40 hover:text-white transition-colors"
-            >
+            <p className="font-semibold" style={{ color: theme.text }}>Submit a Request</p>
+            <button onClick={() => { setShowForm(false); resetForm(); }} style={{ color: theme.textFaint }}>
               <X className="w-4 h-4" />
             </button>
           </div>
 
-          {/* Type */}
           <div className="space-y-1.5">
-            <Label className="text-white/60 text-xs uppercase tracking-wider">Request Type</Label>
+            <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>Request Type</Label>
             <Select value={form.type} onValueChange={(v) => setForm((f) => ({ ...f, type: v, requestedDate: "", requestedDates: [] }))}>
-              <SelectTrigger className="bg-white/5 border-white/10 text-white">
+              <SelectTrigger style={inputStyle}>
                 <SelectValue placeholder="Select type..." />
               </SelectTrigger>
               <SelectContent>
@@ -543,19 +648,14 @@ function RequestCenterTab({ candidateId: _candidateId }: { candidateId: number }
             </Select>
           </div>
 
-          {/* Date(s) */}
           {needsDate && isMultiDate && (
             <div className="space-y-1.5">
-              <Label className="text-white/60 text-xs uppercase tracking-wider">
-                Select Dates <span className="text-white/30 normal-case">(min. 2 weeks from today — pick multiple)</span>
+              <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>
+                Select Dates <span className="normal-case" style={{ color: theme.textFaint }}>(min. 2 weeks from today — pick multiple)</span>
               </Label>
-              <MultiDatePicker
-                selectedDates={form.requestedDates}
-                onToggle={toggleDate}
-                minDate={getMinDateStr()}
-              />
+              <MultiDatePicker selectedDates={form.requestedDates} onToggle={toggleDate} minDate={getMinDateStr()} theme={theme} />
               {form.requestedDates.length > 0 && (
-                <p className="text-xs text-white/40">
+                <p className="text-xs" style={{ color: theme.textFaint }}>
                   {form.requestedDates.length} day{form.requestedDates.length > 1 ? "s" : ""} selected:{" "}
                   {form.requestedDates.map((d) => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" })).join(", ")}
                 </p>
@@ -565,60 +665,34 @@ function RequestCenterTab({ candidateId: _candidateId }: { candidateId: number }
 
           {needsDate && !isMultiDate && (
             <div className="space-y-1.5">
-              <Label className="text-white/60 text-xs uppercase tracking-wider">
+              <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>
                 {form.type === "resignation" ? "Last Working Day" : "Requested Date"}
-                <span className="ml-1 text-white/30 normal-case">(min. 2 weeks from today)</span>
+                <span className="ml-1 normal-case" style={{ color: theme.textFaint }}>(min. 2 weeks from today)</span>
               </Label>
-              <Input
-                type="date"
-                min={getMinDateStr()}
-                value={form.requestedDate}
-                onChange={(e) => setForm((f) => ({ ...f, requestedDate: e.target.value }))}
-                className="bg-white/5 border-white/10 text-white"
-              />
+              <Input type="date" min={getMinDateStr()} value={form.requestedDate} onChange={(e) => setForm((f) => ({ ...f, requestedDate: e.target.value }))} style={inputStyle} />
             </div>
           )}
 
-          {/* Subject */}
           <div className="space-y-1.5">
-            <Label className="text-white/60 text-xs uppercase tracking-wider">Subject</Label>
-            <Input
-              placeholder="Brief summary of your request"
-              value={form.subject}
-              onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))}
-              className="bg-white/5 border-white/10 text-white placeholder:text-white/30"
-            />
+            <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>Subject</Label>
+            <Input placeholder="Brief summary of your request" value={form.subject} onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))} style={inputStyle} className="placeholder:text-gray-400" />
           </div>
 
-          {/* Message */}
           <div className="space-y-1.5">
-            <Label className="text-white/60 text-xs uppercase tracking-wider">Message</Label>
-            <Textarea
-              placeholder="Describe your request in detail..."
-              rows={4}
-              value={form.message}
-              onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))}
-              className="bg-white/5 border-white/10 text-white placeholder:text-white/30 resize-none"
-            />
+            <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>Message</Label>
+            <Textarea placeholder="Describe your request in detail..." rows={4} value={form.message} onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))} style={inputStyle} className="resize-none placeholder:text-gray-400" />
           </div>
 
-          {/* Attachment */}
           <div className="space-y-1.5">
-            <Label className="text-white/60 text-xs uppercase tracking-wider">Attachment <span className="text-white/30 normal-case">(optional — any file, max 16MB)</span></Label>
-            <input
-              ref={fileInputRef}
-              type="file"
-              className="hidden"
-              onChange={handleFileSelect}
-            />
+            <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>
+              Attachment <span className="normal-case" style={{ color: theme.textFaint }}>(optional — any file, max 16MB)</span>
+            </Label>
+            <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileSelect} />
             {form.attachmentUrl ? (
-              <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10">
-                <Paperclip className="w-4 h-4 text-white/40 shrink-0" />
-                <span className="text-sm text-white/70 flex-1 truncate">{form.attachmentName}</span>
-                <button
-                  onClick={() => setForm((f) => ({ ...f, attachmentUrl: "", attachmentName: "" }))}
-                  className="text-white/30 hover:text-white/70 transition-colors"
-                >
+              <div className="flex items-center gap-2 px-3 py-2 rounded-lg" style={{ background: theme.inputBg, border: `1px solid ${theme.inputBorder}` }}>
+                <Paperclip className="w-4 h-4 shrink-0" style={{ color: theme.textFaint }} />
+                <span className="text-sm flex-1 truncate" style={{ color: theme.textMuted }}>{form.attachmentName}</span>
+                <button onClick={() => setForm((f) => ({ ...f, attachmentUrl: "", attachmentName: "" }))} style={{ color: theme.textFaint }}>
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
@@ -626,7 +700,8 @@ function RequestCenterTab({ candidateId: _candidateId }: { candidateId: number }
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploading}
-                className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/5 border border-white/10 border-dashed text-white/40 hover:text-white/70 hover:bg-white/8 transition-all text-sm w-full"
+                className="flex items-center gap-2 px-3 py-2 rounded-lg w-full text-sm transition-all"
+                style={{ background: theme.inputBg, border: `1px dashed ${theme.inputBorder}`, color: theme.textFaint }}
               >
                 <Paperclip className="w-4 h-4" />
                 {uploading ? "Uploading..." : "Attach a file"}
@@ -634,84 +709,68 @@ function RequestCenterTab({ candidateId: _candidateId }: { candidateId: number }
             )}
           </div>
 
-          {/* Actions */}
           <div className="flex gap-2 justify-end pt-1">
             <Button
               variant="outline"
               onClick={() => { setShowForm(false); resetForm(); }}
-              className="border-white/10 text-white/60 hover:text-white bg-transparent"
+              style={{ borderColor: theme.surfaceBorder, color: theme.textMuted, background: "transparent" }}
             >
               Cancel
             </Button>
-            <Button
-              onClick={handleSubmit}
-              disabled={submitMutation.isPending || uploading}
-              className="text-white"
-              style={{ background: BRAND }}
-            >
+            <Button onClick={handleSubmit} disabled={submitMutation.isPending || uploading} className="text-white" style={{ background: BRAND }}>
               {submitMutation.isPending ? "Submitting..." : "Submit Request"}
             </Button>
           </div>
         </div>
       )}
 
-      {/* List */}
       {isLoading ? (
-        <div className="py-12 text-center text-white/30 text-sm">Loading requests...</div>
+        <div className="py-12 text-center text-sm" style={{ color: theme.textFaint }}>Loading requests...</div>
       ) : (requests as RequestItem[]).length === 0 ? (
         <EmptyState
-          icon={<MessageSquare className="w-8 h-8 text-white/20" />}
+          icon={<MessageSquare className="w-8 h-8" style={{ color: theme.textFaint }} />}
           title="No requests yet"
           subtitle="Use the button above to submit a request to the admin team."
+          theme={theme}
         />
       ) : (
         <div className="space-y-3">
           {(requests as RequestItem[]).map((req) => {
-            const st = STATUS_STYLES[req.status] ?? STATUS_STYLES.pending;
             const dates: string[] = req.requestedDates ? (() => { try { return JSON.parse(req.requestedDates); } catch { return []; } })() : [];
             return (
-              <div
-                key={req.id}
-                className="rounded-xl border border-white/8 p-5"
-                style={{ background: "rgba(255,255,255,0.03)" }}
-              >
+              <div key={req.id} className="rounded-xl p-5" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
                 <div className="flex items-start justify-between gap-3 mb-3">
                   <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-white text-sm truncate">{req.subject}</p>
-                    <p className="text-xs text-white/40 mt-0.5">
+                    <p className="font-semibold text-sm truncate" style={{ color: theme.text }}>{req.subject}</p>
+                    <p className="text-xs mt-0.5" style={{ color: theme.textFaint }}>
                       {REQUEST_TYPE_LABELS[req.type] ?? req.type} ·{" "}
                       {new Date(req.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                     </p>
                   </div>
-                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full shrink-0 ${st.className}`}>
-                    {st.label}
+                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full shrink-0 ${getStatusStyle(req.status, theme)}`}>
+                    {getStatusLabel(req.status)}
                   </span>
                 </div>
-                <p className="text-sm text-white/60 whitespace-pre-wrap">{req.message}</p>
+                <p className="text-sm whitespace-pre-wrap" style={{ color: theme.textMuted }}>{req.message}</p>
                 {dates.length > 0 && (
                   <div className="mt-2 flex flex-wrap gap-1">
                     {dates.map((d) => (
-                      <span key={d} className="text-xs px-2 py-0.5 rounded-full bg-white/8 text-white/50">
+                      <span key={d} className="text-xs px-2 py-0.5 rounded-full" style={{ background: theme.surface, color: theme.textMuted }}>
                         {new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
                       </span>
                     ))}
                   </div>
                 )}
                 {req.attachmentUrl && (
-                  <a
-                    href={req.attachmentUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-2 inline-flex items-center gap-1.5 text-xs text-white/40 hover:text-white/70 transition-colors"
-                  >
+                  <a href={req.attachmentUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1.5 text-xs transition-colors" style={{ color: theme.textFaint }}>
                     <Paperclip className="w-3.5 h-3.5" />
                     View attachment
                   </a>
                 )}
                 {req.adminReply && (
-                  <div className="mt-3 pt-3 border-t border-white/8">
-                    <p className="text-xs font-semibold text-white/50 mb-1">Admin Reply</p>
-                    <p className="text-sm text-white/70 whitespace-pre-wrap bg-white/5 rounded-lg px-3 py-2">
+                  <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${theme.surfaceBorder}` }}>
+                    <p className="text-xs font-semibold mb-1" style={{ color: theme.textFaint }}>Admin Reply</p>
+                    <p className="text-sm whitespace-pre-wrap rounded-lg px-3 py-2" style={{ color: theme.textMuted, background: theme.surface }}>
                       {req.adminReply}
                     </p>
                   </div>
@@ -743,10 +802,12 @@ function MultiDatePicker({
   selectedDates,
   onToggle,
   minDate,
+  theme,
 }: {
   selectedDates: string[];
   onToggle: (date: string) => void;
   minDate: string;
+  theme: Theme;
 }) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -758,10 +819,7 @@ function MultiDatePicker({
   const minDateObj = new Date(minDate);
   minDateObj.setHours(0, 0, 0, 0);
 
-  const monthName = new Date(viewYear, viewMonth).toLocaleDateString("en-US", {
-    month: "long",
-    year: "numeric",
-  });
+  const monthName = new Date(viewYear, viewMonth).toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
   function prevMonth() {
     if (viewMonth === 0) { setViewYear((y) => y - 1); setViewMonth(11); }
@@ -778,27 +836,21 @@ function MultiDatePicker({
   ];
 
   return (
-    <div
-      className="rounded-xl border border-white/10 p-4"
-      style={{ background: "rgba(255,255,255,0.04)" }}
-    >
-      {/* Header */}
+    <div className="rounded-xl p-4" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
       <div className="flex items-center justify-between mb-3">
-        <button onClick={prevMonth} className="p-1 rounded-lg hover:bg-white/10 text-white/60 hover:text-white transition-colors">
+        <button onClick={prevMonth} className="p-1 rounded-lg transition-colors" style={{ color: theme.textMuted }}>
           <ChevronLeft className="w-4 h-4" />
         </button>
-        <p className="text-sm font-medium text-white">{monthName}</p>
-        <button onClick={nextMonth} className="p-1 rounded-lg hover:bg-white/10 text-white/60 hover:text-white transition-colors">
+        <p className="text-sm font-medium" style={{ color: theme.text }}>{monthName}</p>
+        <button onClick={nextMonth} className="p-1 rounded-lg transition-colors" style={{ color: theme.textMuted }}>
           <ChevronRight className="w-4 h-4" />
         </button>
       </div>
-      {/* Day labels */}
       <div className="grid grid-cols-7 mb-1">
         {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
-          <div key={d} className="text-center text-[10px] text-white/30 py-1">{d}</div>
+          <div key={d} className="text-center text-[10px] py-1" style={{ color: theme.textFaint }}>{d}</div>
         ))}
       </div>
-      {/* Cells */}
       <div className="grid grid-cols-7 gap-0.5">
         {cells.map((day, idx) => {
           if (!day) return <div key={`empty-${idx}`} />;
@@ -812,14 +864,14 @@ function MultiDatePicker({
               key={dateStr}
               disabled={disabled}
               onClick={() => !disabled && onToggle(dateStr)}
-              className={`aspect-square rounded-lg text-xs font-medium transition-all ${
+              className="aspect-square rounded-lg text-xs font-medium transition-all"
+              style={
                 disabled
-                  ? "text-white/15 cursor-not-allowed"
+                  ? { color: theme.textFaint, cursor: "not-allowed" }
                   : selected
-                  ? "text-white"
-                  : "text-white/60 hover:bg-white/10 hover:text-white"
-              }`}
-              style={selected ? { background: BRAND } : {}}
+                  ? { background: BRAND, color: "#ffffff" }
+                  : { color: theme.textMuted }
+              }
             >
               {day}
             </button>
@@ -832,11 +884,9 @@ function MultiDatePicker({
 
 // ─── Referral Tab ─────────────────────────────────────────────────────────────
 
-function ReferralTab({ referrerCandidateId }: { referrerCandidateId: number }) {
+function ReferralTab({ referrerCandidateId, theme }: { referrerCandidateId: number; theme: Theme }) {
   const utils = trpc.useUtils();
-  const { data: referrals = [], isLoading } = trpc.referrals.listMine.useQuery({
-    candidateId: referrerCandidateId,
-  });
+  const { data: referrals = [], isLoading } = trpc.referrals.listMine.useQuery({ candidateId: referrerCandidateId });
   const submitMutation = trpc.referrals.submit.useMutation({
     onSuccess: () => {
       utils.referrals.listMine.invalidate();
@@ -851,57 +901,57 @@ function ReferralTab({ referrerCandidateId }: { referrerCandidateId: number }) {
   const [form, setForm] = useState({ name: "", phone: "", note: "" });
 
   const REFERRAL_STATUS: Record<string, { label: string; className: string }> = {
-    pending: { label: "Pending", className: "bg-yellow-500/20 text-yellow-400" },
-    contacted: { label: "Contacted", className: "bg-blue-500/20 text-blue-400" },
-    hired: { label: "Hired", className: "bg-emerald-500/20 text-emerald-400" },
-    rejected: { label: "Not Hired", className: "bg-red-500/20 text-red-400" },
+    pending: { label: "Pending", className: theme.badgePending },
+    contacted: { label: "Contacted", className: theme.badgeInProgress },
+    hired: { label: "Hired", className: theme.badgeResolved },
+    rejected: { label: "Not Hired", className: theme.badgeRejected },
   };
+
+  const inputStyle = { background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, color: theme.text };
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <SectionTitle>Refer a Candidate</SectionTitle>
+        <SectionTitle theme={theme}>Refer a Candidate</SectionTitle>
         {!showForm && (
-          <Button
-            onClick={() => setShowForm(true)}
-            className="text-white text-sm"
-            style={{ background: BRAND }}
-          >
+          <Button onClick={() => setShowForm(true)} className="text-white text-sm" style={{ background: BRAND }}>
             + Refer Someone
           </Button>
         )}
       </div>
 
       {showForm && (
-        <div
-          className="rounded-2xl border border-white/10 p-6 space-y-4"
-          style={{ background: "rgba(255,255,255,0.04)" }}
-        >
+        <div className="rounded-2xl p-6 space-y-4" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
           <div className="flex items-center justify-between">
-            <p className="font-semibold text-white">Referral Details</p>
-            <button onClick={() => { setShowForm(false); setForm({ name: "", phone: "", note: "" }); }} className="text-white/40 hover:text-white transition-colors">
+            <p className="font-semibold" style={{ color: theme.text }}>Referral Details</p>
+            <button onClick={() => { setShowForm(false); setForm({ name: "", phone: "", note: "" }); }} style={{ color: theme.textFaint }}>
               <X className="w-4 h-4" />
             </button>
           </div>
           <div className="space-y-1.5">
-            <Label className="text-white/60 text-xs uppercase tracking-wider">Candidate Full Name</Label>
-            <Input placeholder="e.g. Ahmed Mohamed" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} className="bg-white/5 border-white/10 text-white placeholder:text-white/30" />
+            <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>Candidate Full Name</Label>
+            <Input placeholder="e.g. Ahmed Mohamed" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} style={inputStyle} className="placeholder:text-gray-400" />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-white/60 text-xs uppercase tracking-wider">Phone Number</Label>
-            <Input placeholder="e.g. 01012345678" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} className="bg-white/5 border-white/10 text-white placeholder:text-white/30" />
+            <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>Phone Number</Label>
+            <Input placeholder="e.g. 01012345678" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} style={inputStyle} className="placeholder:text-gray-400" />
           </div>
           <div className="space-y-1.5">
-            <Label className="text-white/60 text-xs uppercase tracking-wider">Note <span className="text-white/30 normal-case">(optional)</span></Label>
-            <Textarea placeholder="Why are you recommending this person?" rows={3} value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} className="bg-white/5 border-white/10 text-white placeholder:text-white/30 resize-none" />
+            <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>Note <span className="normal-case" style={{ color: theme.textFaint }}>(optional)</span></Label>
+            <Textarea placeholder="Why are you recommending this person?" rows={3} value={form.note} onChange={(e) => setForm((f) => ({ ...f, note: e.target.value }))} style={inputStyle} className="resize-none placeholder:text-gray-400" />
           </div>
           <div className="flex gap-2 justify-end">
-            <Button variant="outline" onClick={() => { setShowForm(false); setForm({ name: "", phone: "", note: "" }); }} className="border-white/10 text-white/60 hover:text-white bg-transparent">Cancel</Button>
-            <Button onClick={() => {
-              if (!form.name.trim()) { toast.error("Please enter the candidate's name"); return; }
-              if (!form.phone.trim()) { toast.error("Please enter the phone number"); return; }
-              submitMutation.mutate({ referrerCandidateId, refereeName: form.name.trim(), refereePhone: form.phone.trim(), refereeNote: form.note.trim() || undefined });
-            }} disabled={submitMutation.isPending} className="text-white" style={{ background: BRAND }}>
+            <Button variant="outline" onClick={() => { setShowForm(false); setForm({ name: "", phone: "", note: "" }); }} style={{ borderColor: theme.surfaceBorder, color: theme.textMuted, background: "transparent" }}>Cancel</Button>
+            <Button
+              onClick={() => {
+                if (!form.name.trim()) { toast.error("Please enter the candidate's name"); return; }
+                if (!form.phone.trim()) { toast.error("Please enter the phone number"); return; }
+                submitMutation.mutate({ referrerCandidateId, refereeName: form.name.trim(), refereePhone: form.phone.trim(), refereeNote: form.note.trim() || undefined });
+              }}
+              disabled={submitMutation.isPending}
+              className="text-white"
+              style={{ background: BRAND }}
+            >
               {submitMutation.isPending ? "Submitting..." : "Submit Referral"}
             </Button>
           </div>
@@ -909,26 +959,27 @@ function ReferralTab({ referrerCandidateId }: { referrerCandidateId: number }) {
       )}
 
       {isLoading ? (
-        <div className="py-12 text-center text-white/30 text-sm">Loading referrals...</div>
+        <div className="py-12 text-center text-sm" style={{ color: theme.textFaint }}>Loading referrals...</div>
       ) : (referrals as ReferralItem[]).length === 0 ? (
         <EmptyState
-          icon={<Users className="w-8 h-8 text-white/20" />}
+          icon={<Users className="w-8 h-8" style={{ color: theme.textFaint }} />}
           title="No referrals yet"
           subtitle="Know someone great for outbound sales? Refer them to Tanis."
+          theme={theme}
         />
       ) : (
         <div className="space-y-3">
           {(referrals as ReferralItem[]).map((ref) => {
             const st = REFERRAL_STATUS[ref.status] ?? REFERRAL_STATUS.pending;
             return (
-              <div key={ref.id} className="rounded-xl border border-white/8 p-5" style={{ background: "rgba(255,255,255,0.03)" }}>
+              <div key={ref.id} className="rounded-xl p-5" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <p className="font-semibold text-white text-sm">{ref.refereeName}</p>
-                    <p className="text-xs text-white/40 mt-0.5">
+                    <p className="font-semibold text-sm" style={{ color: theme.text }}>{ref.refereeName}</p>
+                    <p className="text-xs mt-0.5" style={{ color: theme.textFaint }}>
                       {ref.refereePhone} · Referred {new Date(ref.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                     </p>
-                    {ref.refereeNote && <p className="text-xs text-white/40 mt-1 italic">"{ref.refereeNote}"</p>}
+                    {ref.refereeNote && <p className="text-xs mt-1 italic" style={{ color: theme.textFaint }}>"{ref.refereeNote}"</p>}
                   </div>
                   <span className={`text-xs font-medium px-2.5 py-1 rounded-full shrink-0 ${st.className}`}>{st.label}</span>
                 </div>
@@ -952,7 +1003,7 @@ type ReferralItem = {
 
 // ─── Notification Bell ────────────────────────────────────────────────────────
 
-function NotificationBell({ candidateId }: { candidateId: number }) {
+function NotificationBell({ candidateId, theme }: { candidateId: number; theme: Theme }) {
   const utils = trpc.useUtils();
   const { data: notifications = [] } = trpc.notifications.listMine.useQuery(
     { candidateId },
@@ -973,7 +1024,8 @@ function NotificationBell({ candidateId }: { candidateId: number }) {
     <div className="relative">
       <button
         onClick={handleOpen}
-        className="relative p-2 rounded-lg text-white/50 hover:text-white hover:bg-white/5 transition-all"
+        className="relative p-2 rounded-lg transition-all"
+        style={{ background: theme.toggleBg, color: theme.toggleText }}
       >
         <Bell className="w-4 h-4" />
         {unread > 0 && (
@@ -987,20 +1039,27 @@ function NotificationBell({ candidateId }: { candidateId: number }) {
       </button>
       {open && (
         <div
-          className="absolute right-0 top-10 w-80 rounded-xl border border-white/10 shadow-2xl z-50 overflow-hidden"
-          style={{ background: "#1a1a1a" }}
+          className="absolute right-0 top-10 w-80 rounded-xl shadow-2xl z-50 overflow-hidden"
+          style={{ background: theme.notifBg, border: `1px solid ${theme.surfaceBorder}` }}
         >
-          <div className="px-4 py-3 border-b border-white/10">
-            <p className="font-semibold text-sm text-white">Notifications</p>
+          <div className="px-4 py-3" style={{ borderBottom: `1px solid ${theme.surfaceBorder}` }}>
+            <p className="font-semibold text-sm" style={{ color: theme.text }}>Notifications</p>
           </div>
           <div className="max-h-72 overflow-y-auto">
             {(notifications as NotifItem[]).length === 0 ? (
-              <p className="text-center text-sm text-white/30 py-8">No notifications yet</p>
+              <p className="text-center text-sm py-8" style={{ color: theme.textFaint }}>No notifications yet</p>
             ) : (
               (notifications as NotifItem[]).map((n) => (
-                <div key={n.id} className={`px-4 py-3 border-b border-white/8 last:border-0 ${!n.isRead ? "bg-white/5" : ""}`}>
-                  <p className="text-sm text-white/80">{n.message}</p>
-                  <p className="text-xs text-white/30 mt-0.5">
+                <div
+                  key={n.id}
+                  className="px-4 py-3"
+                  style={{
+                    borderBottom: `1px solid ${theme.surfaceBorder}`,
+                    background: !n.isRead ? theme.notifUnread : "transparent",
+                  }}
+                >
+                  <p className="text-sm" style={{ color: theme.textMuted }}>{n.message}</p>
+                  <p className="text-xs mt-0.5" style={{ color: theme.textFaint }}>
                     {new Date(n.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                   </p>
                 </div>
@@ -1017,16 +1076,16 @@ type NotifItem = { id: number; type: string; message: string; isRead: boolean; c
 
 // ─── Shared Helpers ───────────────────────────────────────────────────────────
 
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h2 className="text-base font-semibold text-white/80">{children}</h2>;
+function SectionTitle({ children, theme }: { children: React.ReactNode; theme: Theme }) {
+  return <h2 className="text-base font-semibold" style={{ color: theme.textMuted }}>{children}</h2>;
 }
 
-function EmptyState({ icon, title, subtitle }: { icon: React.ReactNode; title: string; subtitle: string }) {
+function EmptyState({ icon, title, subtitle, theme }: { icon: React.ReactNode; title: string; subtitle: string; theme: Theme }) {
   return (
     <div className="py-16 flex flex-col items-center gap-3 text-center">
       {icon}
-      <p className="text-white/50 font-medium text-sm">{title}</p>
-      <p className="text-white/30 text-xs max-w-xs">{subtitle}</p>
+      <p className="font-medium text-sm" style={{ color: theme.textMuted }}>{title}</p>
+      <p className="text-xs max-w-xs" style={{ color: theme.textFaint }}>{subtitle}</p>
     </div>
   );
 }
@@ -1054,6 +1113,3 @@ type AgentData = {
     trainerNotes: string | null;
   } | null;
 };
-
-// Suppress unused import warning for Calendar icon
-void Calendar;
