@@ -706,7 +706,7 @@ const requestsRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       // Must be authenticated as agent
-      const agentToken = ctx.req.cookies?.agent_session;
+      const agentToken = ctx.req.cookies?.[AGENT_COOKIE];
       if (!agentToken) throw new TRPCError({ code: "UNAUTHORIZED", message: "Not authenticated as agent" });
       let payload: { candidateId: number; traineeCode: string; type: string };
       try {
@@ -742,7 +742,7 @@ const requestsRouter = router({
 
   // Agent: list own requests
   listMine: publicProcedure.query(async ({ ctx }) => {
-    const agentToken = ctx.req.cookies?.agent_session;
+    const agentToken = ctx.req.cookies?.[AGENT_COOKIE];
     if (!agentToken) return [];
     try {
       const payload = jwt.verify(agentToken, ENV.cookieSecret) as { candidateId: number; type: string };

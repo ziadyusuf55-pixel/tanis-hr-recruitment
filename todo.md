@@ -326,3 +326,9 @@
 - [x] Backend: add `agent.resetPassword` procedure (admin only) — generates new random password, bcrypt hashes it, updates agent_credentials, returns plain password
 - [x] Frontend (Training batch detail): amber RotateCcw button per agent row — shows new password in a copy dialog (shown only once)
 - [x] 40/40 tests passing
+
+## Round 29 — Bug Fix: Agent Login Cookie Name Mismatch
+
+- [x] Root cause found: `requests.submit` and `requests.listMine` used hardcoded `agent_session` cookie name instead of the `AGENT_COOKIE` constant (`tanis_agent_session`) — caused agent request submissions to fail with UNAUTHORIZED even after successful login
+- [x] Fixed both procedures to use `ctx.req.cookies?.[AGENT_COOKIE]`
+- [x] 40/40 tests still passing
