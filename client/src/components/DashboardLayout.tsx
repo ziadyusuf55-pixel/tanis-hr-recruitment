@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/sidebar";
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
+import { trpc } from "@/lib/trpc";
 import { LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -129,6 +130,12 @@ function DashboardLayoutContent({
     ? user.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
     : "R";
 
+  // Unread requests badge — poll every 30s
+  const { data: unreadCount = 0 } = trpc.requests.countUnread.useQuery(undefined, {
+    refetchInterval: 30000,
+    enabled: !!user,
+  });
+
   return (
     <>
       <div className="relative" ref={sidebarRef}>
@@ -168,6 +175,8 @@ function DashboardLayoutContent({
             <SidebarMenu className="px-2 gap-0.5">
               {menuItems.map((item) => {
                 const isActive = location === item.path || (item.path !== "/" && location.startsWith(item.path));
+                const isRequests = item.path === "/requests";
+                const showBadge = isRequests && Number(unreadCount) > 0;
                 return (
                   <SidebarMenuItem key={item.path}>
                     <SidebarMenuButton
@@ -176,8 +185,18 @@ function DashboardLayoutContent({
                       tooltip={item.label}
                       className="h-9 rounded-lg font-normal text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent data-[active=true]:bg-white/10 data-[active=true]:text-sidebar-foreground"
                     >
-                      <item.icon className="h-4 w-4 shrink-0" />
-                      <span className="text-sm">{item.label}</span>
+                      <div className="relative shrink-0">
+                        <item.icon className="h-4 w-4" />
+                        {showBadge && (
+                          <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-500 text-white text-[8px] flex items-center justify-center font-bold leading-none">
+                            {Number(unreadCount) > 9 ? "9+" : unreadCount}
+                          </span>
+                        )}
+                      </div>
+                      <span className="text-sm flex-1">{item.label}</span>
+                      {showBadge && !isCollapsed && (
+                        <span className="ml-auto text-[10px] font-bold text-red-400">{Number(unreadCount) > 9 ? "9+" : unreadCount} new</span>
+                      )}
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 );

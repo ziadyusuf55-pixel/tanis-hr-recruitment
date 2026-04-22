@@ -258,11 +258,14 @@ export const agentRequests = mysqlTable("agent_requests", {
   id: int("id").autoincrement().primaryKey(),
   candidateId: int("candidateId").notNull(), // FK to candidates.id
   traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
-  type: mysqlEnum("type", ["leave", "salary", "schedule", "complaint", "resignation", "day_off", "other"]).notNull(),
+  type: mysqlEnum("type", ["leave", "salary", "schedule", "complaint", "resignation", "day_off", "sick_note", "other"]).notNull(),
   subject: varchar("subject", { length: 255 }).notNull(),
   message: text("message").notNull(),
   requestedDate: bigint("requestedDate", { mode: "number" }), // UTC ms timestamp for date-based requests (leave, day_off, resignation last day)
+  requestedDates: text("requestedDates"), // JSON array of date strings for multi-day requests
+  attachmentUrl: varchar("attachmentUrl", { length: 1024 }), // S3 URL for sick note or supporting doc
   status: mysqlEnum("status", ["pending", "in_progress", "resolved", "rejected"]).default("pending").notNull(),
+  isAdminRead: boolean("isAdminRead").default(false).notNull(), // true once admin has viewed this request
   adminReply: text("adminReply"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

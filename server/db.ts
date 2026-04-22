@@ -767,10 +767,12 @@ export async function deletePerformanceRecord(id: number) {
 export async function createAgentRequest(data: {
   candidateId: number;
   traineeCode: string;
-  type: "leave" | "salary" | "schedule" | "complaint" | "resignation" | "day_off" | "other";
+  type: "leave" | "salary" | "schedule" | "complaint" | "resignation" | "day_off" | "sick_note" | "other";
   subject: string;
   message: string;
   requestedDate?: number | null;
+  requestedDates?: string | null; // JSON array of date strings
+  attachmentUrl?: string | null;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -781,6 +783,8 @@ export async function createAgentRequest(data: {
     subject: data.subject,
     message: data.message,
     requestedDate: data.requestedDate ?? null,
+    requestedDates: data.requestedDates ?? null,
+    attachmentUrl: data.attachmentUrl ?? null,
     status: "pending",
   });
   return result;
@@ -816,6 +820,22 @@ export async function updateAgentRequestStatus(
     .update(agentRequests)
     .set({ status, ...(adminReply !== undefined ? { adminReply } : {}) })
     .where(eq(agentRequests.id, id));
+}
+
+export async function countUnreadAgentRequests() {
+  const db = await getDb();
+  if (!db) return 0;
+  const rows = await db
+    .select({ count: sql<number>`COUNT(*)` })
+    .from(agentRequests)
+    .where(eq(agentRequests.isAdminRead, false));
+  return Number(rows[0]?.count ?? 0);
+}
+
+export async function markAllAgentRequestsRead() {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(agentRequests).set({ isAdminRead: true }).where(eq(agentRequests.isAdminRead, false));
 }
 
 // ─── Admin Accounts ───────────────────────────────────────────────────────────

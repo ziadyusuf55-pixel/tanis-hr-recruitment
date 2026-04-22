@@ -19,7 +19,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Inbox, Clock, CheckCircle, XCircle, Loader2, BarChart3, TrendingUp, Users, Calendar } from "lucide-react";
+import { Inbox, Clock, CheckCircle, XCircle, Loader2, BarChart3, TrendingUp, Users, Calendar, Paperclip } from "lucide-react";
+import { useEffect } from "react";
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   leave: "Leave",
@@ -28,6 +29,7 @@ const REQUEST_TYPE_LABELS: Record<string, string> = {
   complaint: "General Complaint",
   resignation: "Resignation",
   day_off: "Day Off",
+  sick_note: "Sick Note",
   other: "Other",
 };
 
@@ -48,6 +50,9 @@ type AgentRequest = {
   status: string;
   adminReply: string | null;
   requestedDate: number | null;
+  requestedDates: string | null; // JSON array of date strings
+  attachmentUrl: string | null;
+  isAdminRead: boolean;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -57,6 +62,16 @@ const BRAND = "oklch(0.32 0.18 28)";
 export default function Requests() {
   const utils = trpc.useUtils();
   const { data: requests = [], isLoading } = trpc.requests.listAll.useQuery();
+  const markAllReadMutation = trpc.requests.markAllRead.useMutation({
+    onSuccess: () => utils.requests.countUnread.invalidate(),
+  });
+
+  // Mark all requests as read when admin opens this page
+  useEffect(() => {
+    markAllReadMutation.mutate();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const updateMutation = trpc.requests.updateStatus.useMutation({
     onSuccess: () => {
       utils.requests.listAll.invalidate();
@@ -316,12 +331,36 @@ export default function Requests() {
                     {new Date(selected.requestedDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                   </span>
                 )}
+                {selected.requestedDates && (() => {
+                  try {
+                    const dates: string[] = JSON.parse(selected.requestedDates);
+                    return dates.map((d) => (
+                      <span key={d} className="bg-amber-50 text-amber-700 border border-amber-200 rounded px-2 py-0.5 flex items-center gap-1">
+                        <Calendar className="w-3 h-3" />
+                        {new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                      </span>
+                    ));
+                  } catch { return null; }
+                })()}
               </div>
 
               {/* Message */}
               <div className="bg-muted/50 rounded-lg px-4 py-3">
                 <p className="text-sm text-foreground whitespace-pre-wrap">{selected.message}</p>
               </div>
+
+              {/* Attachment */}
+              {selected.attachmentUrl && (
+                <a
+                  href={selected.attachmentUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-2 text-sm text-primary hover:underline"
+                >
+                  <Paperclip className="w-4 h-4" />
+                  View attachment
+                </a>
+              )}
 
               {/* Status */}
               <div className="space-y-1.5">

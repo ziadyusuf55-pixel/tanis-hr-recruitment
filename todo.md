@@ -341,3 +341,22 @@
 - [x] Also aligned agent login cookie options to use `getSessionCookieOptions()` (sameSite:none, secure based on x-forwarded-proto) matching the OAuth cookie approach — ensures cookies work on HTTPS deployed site
 - [x] End-to-end test confirmed: login returns 200 + sets cookie, agent.me returns full agent profile
 - [x] 40/40 tests passing
+
+## Round 30 — Agent Portal Redesign + Request Center Improvements
+
+- [x] Backend: fix join date to use batch `assignedAt` (when agent was assigned to training batch) instead of candidate `createdAt`
+- [x] Backend: add `sick_note` to request type enum in DB and Zod schema
+- [x] Backend: add `attachmentUrl` and `isAdminRead` columns to `agent_requests` table
+- [x] Backend: add `requests.uploadAttachment` tRPC mutation (upload file to S3, return URL)
+- [x] Backend: fix 2-week date validation — use calendar days (allow same day 14 days from now)
+- [x] Backend: remove `notifyOwner` email call from `requests.submit`
+- [x] Backend: add `requests.countUnread`, `requests.markAllRead` tRPC procedures
+- [x] Frontend: redesign AgentPortal with new dark layout (top nav, hero banner, card sections)
+- [x] Frontend: remove Training tab from agent portal
+- [x] Frontend: fix join date display to show batch `assignedAt` date
+- [x] Frontend: add `sick_note` option to request type dropdown
+- [x] Frontend: add file attachment input on request form (any file type, upload to S3 via tRPC)
+- [x] Frontend: multi-day calendar picker for leave/day-off requests
+- [x] Frontend: add unread requests red dot badge on admin sidebar "Requests" nav item
+- [x] Admin Requests page: mark all as read on open, show attachment link and multi-day dates in detail dialog
+- [x] 40/40 tests still passing

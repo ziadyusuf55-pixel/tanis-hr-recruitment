@@ -75,6 +75,9 @@ import {
   getReferralsByReferrer,
   listAllReferrals,
   updateReferralStatus,
+  // Request unread tracking
+  countUnreadAgentRequests,
+  markAllAgentRequestsRead,
   // Notifications
   createAgentNotification,
   getNotificationsByCandidate,
@@ -597,9 +600,10 @@ const agentRouter = router({
           startDate: batch.startDate,
           notes: batch.notes,
           traineeCode: myEntry?.traineeCode ?? payload.traineeCode,
-          attendedSessions: (myEntry as Record<string, unknown>)?.attendedSessions ?? null,
-          totalSessions: (myEntry as Record<string, unknown>)?.totalSessions ?? null,
-          trainerNotes: (myEntry as Record<string, unknown>)?.trainerNotes ?? null,
+          assignedAt: ((myEntry as Record<string, unknown>)?.assignedAt as Date | null) ?? null, // join date = when assigned to batch
+          attendedSessions: ((myEntry as Record<string, unknown>)?.attendedSessions as number | null) ?? null,
+          totalSessions: ((myEntry as Record<string, unknown>)?.totalSessions as number | null) ?? null,
+          trainerNotes: ((myEntry as Record<string, unknown>)?.trainerNotes as string | null) ?? null,
         };
       }
       return {
@@ -704,10 +708,12 @@ const requestsRouter = router({
   // Agent: submit a new request
   submit: publicProcedure
     .input(z.object({
-      type: z.enum(["leave", "salary", "schedule", "complaint", "resignation", "day_off", "other"]),
+      type: z.enum(["leave", "salary", "schedule", "complaint", "resignation", "day_off", "sick_note", "other"]),
       subject: z.string().min(1).max(255),
       message: z.string().min(1),
-      requestedDate: z.number().optional(), // UTC ms timestamp
+      requestedDate: z.number().optional(), // UTC ms timestamp (single date)
+      requestedDates: z.array(z.string()).optional(), // multiple date strings for multi-day requests
+      attachmentUrl: z.string().url().optional(), // S3 URL of uploaded file
     }))
     .mutation(async ({ input, ctx }) => {
       // Must be authenticated as agent
@@ -720,12 +726,20 @@ const requestsRouter = router({
         throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid agent session" });
       }
       if (payload.type !== "agent") throw new TRPCError({ code: "UNAUTHORIZED", message: "Not an agent session" });
-      // Enforce 2-week minimum for date-based requests
+      // Enforce 2-week minimum for date-based requests (compare calendar dates, not ms)
       const dateRequiredTypes = ["leave", "day_off", "resignation"];
       if (dateRequiredTypes.includes(input.type)) {
-        if (!input.requestedDate) throw new TRPCError({ code: "BAD_REQUEST", message: "Please select a date for this request" });
-        const twoWeeksFromNow = Date.now() + 14 * 24 * 60 * 60 * 1000;
-        if (input.requestedDate < twoWeeksFromNow) {
+        const hasDates = (input.requestedDates && input.requestedDates.length > 0) || input.requestedDate;
+        if (!hasDates) throw new TRPCError({ code: "BAD_REQUEST", message: "Please select a date for this request" });
+        // Check the earliest selected date is at least 14 calendar days from today
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const minDate = new Date(today);
+        minDate.setDate(minDate.getDate() + 14);
+        const checkDate = input.requestedDates?.[0]
+          ? new Date(input.requestedDates[0])
+          : input.requestedDate ? new Date(input.requestedDate) : null;
+        if (checkDate && checkDate < minDate) {
           throw new TRPCError({ code: "BAD_REQUEST", message: "Date must be at least 2 weeks from today" });
         }
       }
@@ -736,12 +750,10 @@ const requestsRouter = router({
         subject: input.subject,
         message: input.message,
         requestedDate: input.requestedDate ?? null,
+        requestedDates: input.requestedDates ? JSON.stringify(input.requestedDates) : null,
+        attachmentUrl: input.attachmentUrl ?? null,
       });
-      // Notify admin
-      await notifyOwner({
-        title: `New Request from Agent ${payload.traineeCode}`,
-        content: `Type: ${input.type}\nSubject: ${input.subject}\n\n${input.message}${input.requestedDate ? `\nRequested Date: ${new Date(input.requestedDate).toLocaleDateString()}` : ""}`,
-      }).catch(() => {});
+      // Request goes to the request center — no email notification
       return { success: true };
     }),
 
@@ -769,6 +781,37 @@ const requestsRouter = router({
       adminReply: z.string().optional(),
     }))
     .mutation(({ input }) => updateAgentRequestStatus(input.id, input.status, input.adminReply ?? null)),
+
+  // Admin: count unread requests (for red dot badge)
+  countUnread: protectedProcedure.query(() => countUnreadAgentRequests()),
+
+  // Admin: mark all requests as read (called when admin opens the Requests page)
+  markAllRead: protectedProcedure.mutation(() => markAllAgentRequestsRead()),
+
+  // Agent: upload an attachment file (returns S3 URL)
+  uploadAttachment: publicProcedure
+    .input(z.object({
+      fileBase64: z.string(), // base64-encoded file content
+      fileName: z.string().max(255),
+      mimeType: z.string().max(100),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      // Must be authenticated as agent
+      const agentToken = getAgentCookieFromReq(ctx.req);
+      if (!agentToken) throw new TRPCError({ code: "UNAUTHORIZED", message: "Not authenticated as agent" });
+      try {
+        jwt.verify(agentToken, ENV.cookieSecret);
+      } catch {
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid agent session" });
+      }
+      const { storagePut } = await import("./storage");
+      const buffer = Buffer.from(input.fileBase64, "base64");
+      if (buffer.length > 16 * 1024 * 1024) throw new TRPCError({ code: "BAD_REQUEST", message: "File too large (max 16MB)" });
+      const ext = input.fileName.split(".").pop() ?? "bin";
+      const key = `agent-attachments/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
+      const { url } = await storagePut(key, buffer, input.mimeType);
+      return { url };
+    }),
 });
 
 // ─── Admin Auth Router ────────────────────────────────────────────────────────
