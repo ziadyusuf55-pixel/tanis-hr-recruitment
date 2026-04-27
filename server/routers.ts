@@ -452,8 +452,8 @@ const dashboardRouter = router({
         const interviewCount = pipelineCounts.find((p) => p.status === "interview_scheduled")?.count ?? 0;
         const acceptedCount = pipelineCounts.find((p) => p.status === "accepted")?.count ?? 0;
         const whatsappGroupCount = pipelineCounts.find((p) => p.status === "whatsapp_group_added")?.count ?? 0;
-        // no_answer is tracked via subStatus field, count separately
-        const noAnswerCount = await getNoAnswerCount();
+        // no_answer is now a real pipeline stage — count from pipelineCounts like all other stages
+        const noAnswerCount = pipelineCounts.find((p) => p.status === "no_answer")?.count ?? 0;
         // Rejected/blacklisted: always fetch all-time counts (not period-filtered)
         const allTimeCounts = period !== "all" ? await getPipelineCounts("all") : pipelineCounts;
         const rejectedCount = allTimeCounts.find((p) => p.status === "rejected")?.count ?? 0;

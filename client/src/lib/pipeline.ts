@@ -1,6 +1,7 @@
 export const PIPELINE_STAGES = [
   "applied",
   "whatsapp_sent",
+  "no_answer",
   "voice_note_reviewed",
   "interview_scheduled",
   "accepted",
@@ -15,6 +16,7 @@ export type PipelineStage = (typeof PIPELINE_STAGES)[number];
 export const ACTIVE_STAGES = [
   "applied",
   "whatsapp_sent",
+  "no_answer",
   "voice_note_reviewed",
   "interview_scheduled",
   "accepted",
@@ -26,6 +28,7 @@ export const ACTIVE_STAGES = [
 export const STAGE_LABELS: Record<PipelineStage, string> = {
   applied: "Applied",
   whatsapp_sent: "WhatsApp Sent",
+  no_answer: "No Answer",
   voice_note_reviewed: "Voice Note Reviewed",
   interview_scheduled: "Interview Scheduled",
   accepted: "Accepted",
@@ -37,6 +40,7 @@ export const STAGE_LABELS: Record<PipelineStage, string> = {
 export const STAGE_SHORT_LABELS: Record<PipelineStage, string> = {
   applied: "Applied",
   whatsapp_sent: "WhatsApp",
+  no_answer: "No Answer",
   voice_note_reviewed: "Voice Note",
   interview_scheduled: "Interview",
   accepted: "Accepted",
@@ -48,6 +52,7 @@ export const STAGE_SHORT_LABELS: Record<PipelineStage, string> = {
 export const STAGE_DESCRIPTIONS: Record<PipelineStage, string> = {
   applied: "Candidate applied via email, form, or LinkedIn",
   whatsapp_sent: "Intro WhatsApp message sent — awaiting voice note",
+  no_answer: "WhatsApp sent but candidate did not respond",
   voice_note_reviewed: "Voice note received and reviewed — ready for interview",
   interview_scheduled: "Google Meet interview link sent",
   accepted: "Interview passed — candidate accepted",
@@ -59,6 +64,7 @@ export const STAGE_DESCRIPTIONS: Record<PipelineStage, string> = {
 export const STAGE_COLORS: Record<PipelineStage, string> = {
   applied: "stage-applied",
   whatsapp_sent: "stage-whatsapp",
+  no_answer: "stage-no-answer",
   voice_note_reviewed: "stage-voice",
   interview_scheduled: "stage-interview",
   accepted: "stage-accepted",
@@ -70,6 +76,7 @@ export const STAGE_COLORS: Record<PipelineStage, string> = {
 export const STAGE_BG: Record<PipelineStage, string> = {
   applied: "bg-slate-50 border-slate-200",
   whatsapp_sent: "bg-green-50 border-green-200",
+  no_answer: "bg-orange-50 border-orange-200",
   voice_note_reviewed: "bg-blue-50 border-blue-200",
   interview_scheduled: "bg-violet-50 border-violet-200",
   accepted: "bg-emerald-50 border-emerald-200",
@@ -81,6 +88,7 @@ export const STAGE_BG: Record<PipelineStage, string> = {
 export const STAGE_HEADER: Record<PipelineStage, string> = {
   applied: "bg-slate-500",
   whatsapp_sent: "bg-green-500",
+  no_answer: "bg-orange-500",
   voice_note_reviewed: "bg-blue-500",
   interview_scheduled: "bg-violet-600",
   accepted: "bg-emerald-600",
@@ -92,6 +100,7 @@ export const STAGE_HEADER: Record<PipelineStage, string> = {
 export const STAGE_DOT: Record<PipelineStage, string> = {
   applied: "bg-slate-400",
   whatsapp_sent: "bg-green-500",
+  no_answer: "bg-orange-500",
   voice_note_reviewed: "bg-blue-500",
   interview_scheduled: "bg-violet-500",
   accepted: "bg-emerald-500",
@@ -103,6 +112,7 @@ export const STAGE_DOT: Record<PipelineStage, string> = {
 export const STAGE_BADGE: Record<PipelineStage, string> = {
   applied: "bg-slate-100 text-slate-700 border-slate-200",
   whatsapp_sent: "bg-green-50 text-green-700 border-green-200",
+  no_answer: "bg-orange-50 text-orange-700 border-orange-200",
   voice_note_reviewed: "bg-blue-50 text-blue-700 border-blue-200",
   interview_scheduled: "bg-violet-50 text-violet-700 border-violet-200",
   accepted: "bg-emerald-50 text-emerald-700 border-emerald-200",
@@ -116,6 +126,7 @@ export function getNextStage(current: PipelineStage): PipelineStage | null {
   const forward = [
     "applied",
     "whatsapp_sent",
+    "no_answer",
     "voice_note_reviewed",
     "interview_scheduled",
     "accepted",

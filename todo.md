@@ -367,3 +367,14 @@
 - [x] Persist preference in localStorage (key: tanis-agent-theme, default: dark)
 - [x] Full light theme: white/stone background, dark text, brand accent colors
 - [x] 40/40 tests passing
+
+## Round 32 — No Answer Pipeline Stage
+
+- [x] DB: 'no_answer' was already in the status enum (added in a previous round)
+- [x] Backend: schema.ts and routers.ts already had no_answer in PIPELINE_STAGES_ZOD
+- [x] Backend: fixed dashboard KPI to count no_answer from pipelineCounts (status column) instead of legacy subStatus
+- [x] Frontend: updated pipeline.ts to add no_answer stage with orange color, labels, and descriptions
+- [x] Frontend: fixed No Answer button to call updateStatus (moves to no_answer stage) instead of setSubStatus
+- [x] Frontend: No Answer column now appears in board; button shows on whatsapp_sent cards; back button on no_answer cards
+- [x] Frontend: Skip to Interview shortcut also available from no_answer stage
+- [x] 40/40 tests still passing

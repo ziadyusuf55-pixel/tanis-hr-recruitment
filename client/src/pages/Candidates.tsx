@@ -130,17 +130,11 @@ export default function Candidates() {
     onError: () => toast.error("Failed to update status"),
   });
 
-  const setSubStatus = trpc.candidates.setSubStatus.useMutation({
-    onSuccess: (_data, variables) => {
-      utils.candidates.list.invalidate();
-      utils.dashboard.kpis.invalidate();
-      toast.success(variables.subStatus === "no_answer" ? "Marked as No Answer" : "No Answer cleared");
-    },
-    onError: () => toast.error("Failed to update sub-status"),
-  });
-
-  const handleNoAnswer = (id: number, subStatus: string | null) => {
-    setSubStatus.mutate({ id, subStatus: subStatus as "no_answer" | null });
+  const handleNoAnswer = (id: number, currentStage: PipelineStage) => {
+    // Toggle: if already in no_answer, move back to whatsapp_sent; otherwise move to no_answer
+    const targetStage: PipelineStage = currentStage === "no_answer" ? "whatsapp_sent" : "no_answer";
+    const candidate = (candidates ?? []).find((c) => c.id === id);
+    updateStatus.mutate({ id, status: targetStage, fromStage: candidate?.status as PipelineStage | undefined });
   };
 
   // Rejection reason state
@@ -595,7 +589,7 @@ export default function Candidates() {
             }
           }}
           onNoShow={(id, name) => handleNoShow(id, name)}
-          onNoAnswer={handleNoAnswer}
+          onNoAnswer={(id) => handleNoAnswer(id, filtered.find((c) => c.id === id)?.status as PipelineStage)}
           onClickCandidate={(id) => navigate(`/candidates/${id}`)}
           onDeleteCandidate={(id, name) => { setDeleteId(id); setDeleteName(name); }}
           onToggleSelect={toggleSelect}
@@ -958,7 +952,7 @@ function PipelineBoard({
   selected: Set<number>;
   onMoveStage: (id: number, stage: PipelineStage) => void;
   onNoShow: (id: number, name: string) => void;
-  onNoAnswer: (id: number, subStatus: string | null) => void;
+  onNoAnswer: (id: number) => void;
   onClickCandidate: (id: number) => void;
   onDeleteCandidate: (id: number, name: string) => void;
   onToggleSelect: (id: number) => void;
@@ -1062,7 +1056,7 @@ function CandidateCard({
   isSelected: boolean;
   onMoveStage: (id: number, stage: PipelineStage) => void;
   onNoShow: (id: number, name: string) => void;
-  onNoAnswer: (id: number, subStatus: string | null) => void;
+  onNoAnswer: (id: number) => void;
   onClick: () => void;
   onDelete: () => void;
   onToggleSelect: () => void;
@@ -1092,9 +1086,7 @@ function CandidateCard({
             {batchName && (
               <span className="text-[9px] font-bold px-1 py-0 rounded bg-emerald-100 text-emerald-700 shrink-0">{batchName}</span>
             )}
-            {candidate.subStatus === "no_answer" && (
-              <span className="text-[9px] font-bold px-1 py-0 rounded bg-orange-100 text-orange-700 shrink-0">No Answer</span>
-            )}
+
           </div>
           <p className="text-[10px] text-muted-foreground truncate">{candidate.phone || candidate.email || "—"}</p>
         </div>
@@ -1132,18 +1124,24 @@ function CandidateCard({
             <UserX className="h-2 w-2" /> No Show
           </button>
         )}
-        {/* No Answer — phone call not answered, stays in pipeline */}
-        {!(["rejected", "blacklisted", "whatsapp_group_added"].includes(currentStage)) && (
+        {/* No Answer — move to no_answer stage (or back to whatsapp_sent if already there) */}
+        {currentStage === "whatsapp_sent" && (
           <button
-            onClick={() => onNoAnswer(candidate.id, candidate.subStatus === "no_answer" ? null : "no_answer")}
-            className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full border transition-colors flex items-center gap-0.5 ${
-              candidate.subStatus === "no_answer"
-                ? "border-orange-300 bg-orange-100 text-orange-800 hover:bg-orange-200"
-                : "border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100"
-            }`}
-            title={candidate.subStatus === "no_answer" ? "Clear No Answer" : "Mark as No Answer (phone not picked up)"}
+            onClick={() => onNoAnswer(candidate.id)}
+            className="text-[9px] font-medium px-1.5 py-0.5 rounded-full border border-orange-200 bg-orange-50 text-orange-700 transition-colors hover:bg-orange-100 flex items-center gap-0.5"
+            title="Mark as No Answer — candidate did not respond to WhatsApp"
           >
-            <Clock className="h-2 w-2" /> {candidate.subStatus === "no_answer" ? "Clear" : "No Answer"}
+            <Clock className="h-2 w-2" /> No Answer
+          </button>
+        )}
+        {/* Move back to WhatsApp Sent from No Answer */}
+        {currentStage === "no_answer" && (
+          <button
+            onClick={() => onNoAnswer(candidate.id)}
+            className="text-[9px] font-medium px-1.5 py-0.5 rounded-full border border-green-200 bg-green-50 text-green-700 transition-colors hover:bg-green-100 flex items-center gap-0.5"
+            title="Move back to WhatsApp Sent"
+          >
+            <MessageCircle className="h-2 w-2" /> ← WA Sent
           </button>
         )}
         {/* WhatsApp Sent — shown when candidate is in Applied stage */}
@@ -1166,8 +1164,8 @@ function CandidateCard({
             <ArrowRight className="h-2 w-2" /> Interview Scheduled
           </button>
         )}
-        {/* Skip to Interview shortcut — shown when candidate is in Applied or WhatsApp Sent stage */}
-        {["applied", "whatsapp_sent"].includes(currentStage) && (
+        {/* Skip to Interview shortcut — shown when candidate is in Applied, WhatsApp Sent, or No Answer stage */}
+        {["applied", "whatsapp_sent", "no_answer"].includes(currentStage) && (
           <button
             onClick={() => onMoveStage(candidate.id, "interview_scheduled")}
             className="text-[9px] font-medium px-1.5 py-0.5 rounded-full border border-blue-200 bg-blue-50 text-blue-700 transition-colors hover:bg-blue-100 flex items-center gap-0.5"
