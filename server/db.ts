@@ -1394,3 +1394,34 @@ export async function getHeadcountForecast(campaignId: number, days = 30) {
   }
   return forecast;
 }
+
+
+// ─── Agent Comments ───────────────────────────────────────────────────────────
+export async function getCommentsByCode(traineeCode: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { agentComments } = await import("../drizzle/schema");
+  return db.select().from(agentComments)
+    .where(eq(agentComments.traineeCode, traineeCode))
+    .orderBy(desc(agentComments.createdAt));
+}
+
+export async function addAgentComment(data: {
+  traineeCode: string;
+  adminName: string;
+  content: string;
+  tag: "note" | "warning" | "resolved";
+}) {
+  const db = await getDb();
+  if (!db) return null;
+  const { agentComments } = await import("../drizzle/schema");
+  const [result] = await db.insert(agentComments).values(data);
+  return result;
+}
+
+export async function deleteAgentComment(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  const { agentComments } = await import("../drizzle/schema");
+  await db.delete(agentComments).where(eq(agentComments.id, id));
+}

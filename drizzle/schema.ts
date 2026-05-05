@@ -479,3 +479,17 @@ export const overtimeAvailability = mysqlTable("overtime_availability", {
 });
 export type OvertimeAvailability = typeof overtimeAvailability.$inferSelect;
 export type InsertOvertimeAvailability = typeof overtimeAvailability.$inferInsert;
+
+/**
+ * Agent comments — admin-written notes/issues visible to the agent in their portal.
+ */
+export const agentComments = mysqlTable("agent_comments", {
+  id: int("id").autoincrement().primaryKey(),
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
+  adminName: varchar("adminName", { length: 255 }).notNull(),
+  content: text("content").notNull(),
+  tag: mysqlEnum("tag", ["note", "warning", "resolved"]).default("note").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type AgentComment = typeof agentComments.$inferSelect;
+export type InsertAgentComment = typeof agentComments.$inferInsert;

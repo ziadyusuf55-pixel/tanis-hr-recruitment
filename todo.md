@@ -472,3 +472,20 @@
 - [x] Frontend: notification dropdown/panel listing campaign assignment alerts
 - [x] Frontend: auto-poll or invalidate notifications on portal load
 - [x] 40/40 tests still passing
+
+## Round 36 — Admin Agent Profile Page
+- [x] DB: create agent_comments table (id, traineeCode, adminName, content, tag: warning/note/resolved, createdAt)
+- [x] DB: migrate agent_comments table
+- [x] Backend: getAgentFullProfile procedure (workforce agent + documents + payment methods + comments)
+- [x] Backend: addAgentComment mutation (admin only)
+- [x] Backend: deleteAgentComment mutation (admin only)
+- [x] Backend: updateAgentPaymentMethod mutation (admin can edit agent payment preferences)
+- [x] Backend: getMyAdminComments procedure for agent portal (agent reads their own comments)
+- [x] Frontend: /operations/agents/:code route + AgentProfilePage component
+- [x] Frontend: AgentProfilePage — Profile header (name, code, campaign, shift, team leader, status)
+- [x] Frontend: AgentProfilePage — Documents tab (view-only list of uploaded docs)
+- [x] Frontend: AgentProfilePage — Payment Preferences tab (editable by admin)
+- [x] Frontend: AgentProfilePage — Comments/Issues tab (add/delete comments with tag)
+- [x] Frontend: Operations Agents tab — make agent rows clickable → navigate to profile page
+- [x] Frontend: Agent portal — new "Comments" tab showing admin comments
+- [x] 40/40 tests still passing

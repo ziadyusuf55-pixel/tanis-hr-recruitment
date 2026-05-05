@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -209,6 +210,7 @@ const EMPTY_CAMPAIGN = { name: "", minHeadcount: "20", workDays: "all" as "all" 
 export default function Operations() {
   const utils = trpc.useUtils();
   const [activeTab, setActiveTab] = useState<"agents" | "campaigns" | "forecast" | "plan">("agents");
+  const [, navigate] = useLocation();
   const [planCampaignId, setPlanCampaignId] = useState<number | null>(null);
   const [planWeekOffset, setPlanWeekOffset] = useState(0);
   const { data: operationPlan, isLoading: loadingPlan } = trpc.campaigns.getOperationPlan.useQuery(
@@ -475,7 +477,7 @@ export default function Operations() {
                 </thead>
                 <tbody className="divide-y">
                   {filteredAgents.map(agent => (
-                    <tr key={agent.traineeCode} className="hover:bg-muted/20 transition-colors">
+                    <tr key={agent.traineeCode} className="hover:bg-muted/20 transition-colors cursor-pointer" onClick={() => navigate(`/operations/agents/${agent.traineeCode}`)}>
                       <td className="px-4 py-3">
                         <div className="font-medium">{agent.fullName}</div>
                         <div className="flex items-center gap-1.5 mt-0.5">
@@ -512,7 +514,7 @@ export default function Operations() {
                         </Badge>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => openEditAgent(agent)}>
+                        <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={(e) => { e.stopPropagation(); openEditAgent(agent); }}>
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>
                       </td>

@@ -141,7 +141,7 @@ function formatCurrency(amount: string | number | null | undefined) {
   return `EGP ${num.toLocaleString()}`;
 }
 
-type Tab = "profile" | "payroll" | "requests" | "referrals" | "documents" | "payment";
+type Tab = "profile" | "payroll" | "requests" | "referrals" | "documents" | "payment" | "comments";
 
 export default function AgentPortal() {
   const [, navigate] = useLocation();
@@ -199,6 +199,7 @@ export default function AgentPortal() {
     { id: "documents", label: "Documents", icon: <FileText className="w-4 h-4" /> },
     { id: "payment", label: "Payment", icon: <Wallet className="w-4 h-4" /> },
     { id: "referrals", label: "Refer", icon: <Users className="w-4 h-4" /> },
+    { id: "comments", label: "Comments", icon: <Bell className="w-4 h-4" /> },
   ];
 
   return (
@@ -323,6 +324,7 @@ export default function AgentPortal() {
         {activeTab === "documents" && <DocumentsTab theme={theme} />}
         {activeTab === "payment" && <PaymentMethodsTab theme={theme} />}
         {activeTab === "referrals" && <ReferralTab referrerCandidateId={agent.candidateId} theme={theme} />}
+        {activeTab === "comments" && <AgentCommentsTab theme={theme} />}
       </main>
     </div>
   );
@@ -1751,3 +1753,67 @@ type AgentData = {
     trainerNotes: string | null;
   } | null;
 };
+
+// ─── Agent Comments Tab (read-only for agents) ────────────────────────────────
+const COMMENT_TAG_CONFIG = {
+  note:     { label: "Note",     color: "bg-blue-500/20 text-blue-400",    border: "border-blue-500/30" },
+  warning:  { label: "Warning",  color: "bg-amber-500/20 text-amber-400",  border: "border-amber-500/30" },
+  resolved: { label: "Resolved", color: "bg-emerald-500/20 text-emerald-400", border: "border-emerald-500/30" },
+};
+
+function AgentCommentsTab({ theme }: { theme: Theme }) {
+  const { data: comments = [], isLoading } = trpc.agentComments.listMine.useQuery();
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3">
+        {[1, 2, 3].map(i => (
+          <div key={i} className="h-20 rounded-xl animate-pulse" style={{ background: theme.surface }} />
+        ))}
+      </div>
+    );
+  }
+
+  if (comments.length === 0) {
+    return (
+      <div className="text-center py-16">
+        <Bell className="w-10 h-10 mx-auto mb-3 opacity-30" style={{ color: theme.textFaint }} />
+        <p className="font-medium" style={{ color: theme.text }}>No comments yet</p>
+        <p className="text-sm mt-1" style={{ color: theme.textMuted }}>Your manager will post notes or feedback here.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm mb-4" style={{ color: theme.textMuted }}>
+        Comments and feedback from your management team.
+      </p>
+      {comments.map((c) => {
+        const tag = c.tag as keyof typeof COMMENT_TAG_CONFIG;
+        const cfg = COMMENT_TAG_CONFIG[tag] ?? COMMENT_TAG_CONFIG.note;
+        return (
+          <div
+            key={c.id}
+            className="rounded-xl p-4 border"
+            style={{ background: theme.cardBg, borderColor: theme.cardBorder }}
+          >
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              <span className={`text-xs font-medium px-2 py-0.5 rounded-full border ${cfg.color} ${cfg.border}`}>
+                {cfg.label}
+              </span>
+              <span className="text-xs" style={{ color: theme.textMuted }}>from {c.adminName}</span>
+              <span className="text-xs" style={{ color: theme.textFaint }}>
+                {new Date(c.createdAt).toLocaleDateString("en-US", {
+                  month: "short", day: "numeric", year: "numeric",
+                  hour: "2-digit", minute: "2-digit",
+                })}
+              </span>
+            </div>
+            <p className="text-sm whitespace-pre-wrap" style={{ color: theme.text }}>{c.content}</p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}

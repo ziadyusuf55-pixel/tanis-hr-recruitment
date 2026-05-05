@@ -14,6 +14,7 @@ import AdminInviteAccept from "./pages/AdminInviteAccept";
 import Login from "./pages/Login";
 import AgentPortal from "./pages/AgentPortal";
 import Operations from "./pages/Operations";
+import AgentProfilePage from "./pages/AgentProfilePage";
 import { useAuth } from "./_core/hooks/useAuth";
 import { getLoginUrl } from "./const";
 import { useEffect } from "react";
@@ -59,6 +60,7 @@ function Router() {
       <Route path="/candidates/:id" component={() => <ProtectedRoute component={CandidateDetail} />} />
       <Route path="/training" component={() => <ProtectedRoute component={Training} />} />
       <Route path="/operations" component={() => <ProtectedRoute component={Operations} />} />
+      <Route path="/operations/agents/:code" component={() => <ProtectedRoute component={AgentProfilePage} />} />
       <Route path="/requests" component={() => <ProtectedRoute component={Requests} />} />
       <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
       <Route path="/admin-invite" component={AdminInviteAccept} />

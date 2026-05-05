@@ -117,6 +117,10 @@ import {
   upsertOvertimeAvailability,
   getOvertimeAvailabilityForDate,
   getHeadcountForecast,
+  // Agent comments
+  getCommentsByCode,
+  addAgentComment,
+  deleteAgentComment,
 } from "./db";
 import { notifyOwner } from "./_core/notification";
 import { sendInterviewNotification } from "./email";
@@ -1243,6 +1247,44 @@ const workforceRouter = router({
     .input(z.object({ campaignId: z.number() }))
     .query(({ input }) => listWorkforceAgents(input.campaignId)),
   getEligibleCandidates: protectedProcedure.query(() => getEligibleCandidatesForOps()),
+  getAgentFullProfile: protectedProcedure
+    .input(z.object({ traineeCode: z.string() }))
+    .query(async ({ input }) => {
+      const agent = await getWorkforceAgentByCode(input.traineeCode);
+      if (!agent) return null;
+      const [documents, paymentMethods, comments] = await Promise.all([
+        getDocumentsByCode(input.traineeCode),
+        getPaymentMethodsByCode(input.traineeCode),
+        getCommentsByCode(input.traineeCode),
+      ]);
+      return { agent, documents, paymentMethods, comments };
+    }),
+});
+// ─── Agent Comments Router ────────────────────────────────────────────────────
+const agentCommentsRouter = router({
+  listByCode: protectedProcedure
+    .input(z.object({ traineeCode: z.string() }))
+    .query(({ input }) => getCommentsByCode(input.traineeCode)),
+  listMine: publicProcedure.query(({ ctx }) => {
+    const code = getAgentCookieFromReq(ctx.req);
+    if (!code) return [];
+    return getCommentsByCode(code);
+  }),
+  add: protectedProcedure
+    .input(z.object({
+      traineeCode: z.string(),
+      content: z.string().min(1),
+      tag: z.enum(["note", "warning", "resolved"]).default("note"),
+    }))
+    .mutation(({ input, ctx }) => addAgentComment({
+      traineeCode: input.traineeCode,
+      adminName: ctx.user.name ?? ctx.user.email ?? "Admin",
+      content: input.content,
+      tag: input.tag,
+    })),
+  delete: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(({ input }) => deleteAgentComment(input.id)),
 });
 
 // ─── Payment Methods Router ───────────────────────────────────────────────────
@@ -1292,6 +1334,26 @@ const paymentMethodsRouter = router({
   addComment: protectedProcedure
     .input(z.object({ id: z.number(), comment: z.string() }))
     .mutation(({ input }) => addPaymentMethodComment(input.id, input.comment)),
+  adminUpsert: protectedProcedure
+    .input(z.object({
+      id: z.number().optional(),
+      traineeCode: z.string(),
+      type: z.enum(["wallet", "bank"]),
+      walletProvider: z.enum(["vodafone_cash", "orange_cash"]).optional(),
+      walletPhone: z.string().optional(),
+      walletName: z.string().optional(),
+      bankName: z.string().optional(),
+      bankAccountOrPhone: z.string().optional(),
+      bankFullName: z.string().optional(),
+      isPreferred: z.boolean().optional(),
+    }))
+    .mutation(({ input }) => upsertPaymentMethod(input)),
+  adminDelete: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(({ input }) => deletePaymentMethod(input.id)),
+  adminSetPreferred: protectedProcedure
+    .input(z.object({ id: z.number(), traineeCode: z.string() }))
+    .mutation(({ input }) => setPaymentMethodPreferred(input.id, input.traineeCode)),
 });
 
 // ─── Documents Router ─────────────────────────────────────────────────────────
@@ -1475,6 +1537,7 @@ export const appRouter = router({
   campaigns: campaignsRouter,
   workforce: workforceRouter,
   paymentMethods: paymentMethodsRouter,
+  agentComments: agentCommentsRouter,
   documents: documentsRouter,
   scheduleChange: scheduleChangeRouter,
   overtime: overtimeRouter,
