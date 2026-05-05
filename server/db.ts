@@ -1002,7 +1002,7 @@ export async function updateReferralStatus(id: number, status: "pending" | "cont
 // ─── Agent Notifications ──────────────────────────────────────────────────────
 export async function createAgentNotification(data: {
   candidateId: number; message: string;
-  type: "request_reply" | "referral_update" | "general"; relatedId?: number | null;
+  type: "request_reply" | "referral_update" | "general" | "campaign_assigned"; relatedId?: number | null;
 }) {
   const db = await getDb();
   if (!db) return;

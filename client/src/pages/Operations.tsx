@@ -28,6 +28,7 @@ import {
   RefreshCw,
   Grid3X3,
   ChevronLeft,
+  UserPlus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -259,6 +260,21 @@ export default function Operations() {
     onError: (e) => toast.error(e.message),
   });
 
+  // Add Agent to Operations
+  const [addAgentDialog, setAddAgentDialog] = useState(false);
+  type AddAgentForm = { candidateId: string; traineeCode: string; fullName: string; alias: string; campaignId: string; shiftHours: string; teamLeader: string; offDay1: string; offDay2: string; };
+  const EMPTY_ADD_FORM: AddAgentForm = { candidateId: '', traineeCode: '', fullName: '', alias: '', campaignId: '', shiftHours: '', teamLeader: '', offDay1: '', offDay2: '' };
+  const [addAgentForm, setAddAgentForm] = useState<AddAgentForm>(EMPTY_ADD_FORM);
+  const { data: eligibleCandidates = [] } = trpc.workforce.getEligibleCandidates.useQuery(undefined, { enabled: addAgentDialog });
+  const createWorkforceAgent = trpc.workforce.create.useMutation({
+    onSuccess: () => {
+      utils.workforce.list.invalidate();
+      toast.success('Agent added to Operations');
+      setAddAgentDialog(false);
+      setAddAgentForm(EMPTY_ADD_FORM);
+    },
+    onError: (e) => toast.error(e.message),
+  });
   // Overtime alert
   const [overtimeDialog, setOvertimeDialog] = useState(false);
   const [overtimeDate, setOvertimeDate] = useState("");
@@ -872,6 +888,114 @@ export default function Operations() {
         </DialogContent>
       </Dialog>
 
+      {/* Add Agent to Operations Dialog */}
+      <Dialog open={addAgentDialog} onOpenChange={(o) => { setAddAgentDialog(o); if (!o) setAddAgentForm(EMPTY_ADD_FORM); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><UserPlus className="h-5 w-5 text-emerald-600" /> Add Agent to Operations</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Select Candidate</label>
+              <select
+                className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+                value={addAgentForm.candidateId}
+                onChange={e => {
+                  const selected = (eligibleCandidates as Array<{candidateId: number; traineeCode: string | null; name: string; phone: string | null; source: string}>).find(c => c.candidateId === Number(e.target.value));
+                  if (selected) {
+                    setAddAgentForm(f => ({
+                      ...f,
+                      candidateId: String(selected.candidateId),
+                      traineeCode: selected.traineeCode ?? "",
+                      fullName: selected.name,
+                    }));
+                  } else {
+                    setAddAgentForm(f => ({ ...f, candidateId: "", traineeCode: "", fullName: "" }));
+                  }
+                }}
+              >
+                <option value="">Select candidate...</option>
+                {(eligibleCandidates as Array<{candidateId: number; traineeCode: string | null; name: string; phone: string | null; source: string}>).map(c => (
+                  <option key={c.candidateId} value={c.candidateId}>
+                    {c.name}{c.traineeCode ? ` (${c.traineeCode})` : ""} — {c.source === "ops" ? "Already in Ops" : "Training"}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Trainee Code</label>
+              <Input placeholder="e.g. TN-001" value={addAgentForm.traineeCode} onChange={e => setAddAgentForm(f => ({ ...f, traineeCode: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Full Name</label>
+              <Input placeholder="Full name" value={addAgentForm.fullName} onChange={e => setAddAgentForm(f => ({ ...f, fullName: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">English Alias (optional)</label>
+              <Input placeholder="e.g. Jordan" value={addAgentForm.alias} onChange={e => setAddAgentForm(f => ({ ...f, alias: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Campaign</label>
+              <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={addAgentForm.campaignId} onChange={e => setAddAgentForm(f => ({ ...f, campaignId: e.target.value }))}>
+                <option value="">Select campaign...</option>
+                {(campaigns as Campaign[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Shift Hours</label>
+                <Input placeholder="e.g. 9AM–5PM" value={addAgentForm.shiftHours} onChange={e => setAddAgentForm(f => ({ ...f, shiftHours: e.target.value }))} />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Team Leader</label>
+                <Input placeholder="Team leader name" value={addAgentForm.teamLeader} onChange={e => setAddAgentForm(f => ({ ...f, teamLeader: e.target.value }))} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Off Day 1</label>
+                <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={addAgentForm.offDay1} onChange={e => setAddAgentForm(f => ({ ...f, offDay1: e.target.value }))}>
+                  <option value="">Select day...</option>
+                  {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Off Day 2</label>
+                <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={addAgentForm.offDay2} onChange={e => setAddAgentForm(f => ({ ...f, offDay2: e.target.value }))}>
+                  <option value="">Select day...</option>
+                  {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setAddAgentDialog(false)}>Cancel</Button>
+            <Button
+              className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5"
+              disabled={createWorkforceAgent.isPending || !addAgentForm.traineeCode || !addAgentForm.fullName || !addAgentForm.candidateId}
+              onClick={() => {
+                if (!addAgentForm.traineeCode.trim()) { toast.error("Trainee code required"); return; }
+                if (!addAgentForm.fullName.trim()) { toast.error("Full name required"); return; }
+                if (!addAgentForm.candidateId) { toast.error("Please select a candidate"); return; }
+                createWorkforceAgent.mutate({
+                  traineeCode: addAgentForm.traineeCode.trim(),
+                  candidateId: Number(addAgentForm.candidateId),
+                  fullName: addAgentForm.fullName.trim(),
+                  alias: addAgentForm.alias || undefined,
+                  campaignId: addAgentForm.campaignId ? Number(addAgentForm.campaignId) : undefined,
+                  shiftHours: addAgentForm.shiftHours || undefined,
+                  teamLeader: addAgentForm.teamLeader || undefined,
+                  offDay1: addAgentForm.offDay1 !== "" ? Number(addAgentForm.offDay1) : undefined,
+                  offDay2: addAgentForm.offDay2 !== "" ? Number(addAgentForm.offDay2) : undefined,
+                  joinDate: Date.now(),
+                });
+              }}
+            >
+              <UserPlus className="h-4 w-4" /> Add to Operations
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
       {/* Overtime Alert Dialog */}
       <Dialog open={overtimeDialog} onOpenChange={setOvertimeDialog}>
         <DialogContent className="max-w-md">

@@ -457,3 +457,18 @@
 - [x] Login lockout UI: warning after 3 wrong attempts, lockout countdown after 5
 
 - [x] 40/40 tests still passing
+
+## Round 35 — Fix Add-Agent-to-Operations + Campaign Assignment Notifications
+### Bug Fix
+- [x] Diagnose why adding an agent to Operations is broken (Operations page add flow)
+- [x] Fix the add-agent-to-Operations flow end-to-end
+### Notifications
+- [x] DB schema: add agent_notifications table (id, candidateId, type, title, body, isRead, createdAt)
+- [x] Run migration for agent_notifications table
+- [x] Backend: trigger notification when workforce_agents record is created/updated with a campaign
+- [x] Backend: tRPC notifications.listMine — list unread + recent notifications for logged-in agent
+- [x] Backend: tRPC notifications.markRead — mark one or all as read
+- [x] Frontend: bell icon in agent portal header with unread badge count
+- [x] Frontend: notification dropdown/panel listing campaign assignment alerts
+- [x] Frontend: auto-poll or invalidate notifications on portal load
+- [x] 40/40 tests still passing

@@ -349,7 +349,7 @@ export const agentNotifications = mysqlTable("agent_notifications", {
   id: int("id").autoincrement().primaryKey(),
   candidateId: int("candidateId").notNull(), // FK to candidates.id
   message: varchar("message", { length: 500 }).notNull(),
-  type: mysqlEnum("type", ["request_reply", "referral_update", "general"]).default("general").notNull(),
+  type: mysqlEnum("type", ["request_reply", "referral_update", "general", "campaign_assigned"]).default("general").notNull(),
   relatedId: int("relatedId"), // requestId or referralId
   isRead: boolean("isRead").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),

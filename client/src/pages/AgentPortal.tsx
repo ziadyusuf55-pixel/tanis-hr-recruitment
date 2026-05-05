@@ -1121,10 +1121,20 @@ function NotificationBell({ candidateId, theme }: { candidateId: number; theme: 
                     background: !n.isRead ? theme.notifUnread : "transparent",
                   }}
                 >
-                  <p className="text-sm" style={{ color: theme.textMuted }}>{n.message}</p>
-                  <p className="text-xs mt-0.5" style={{ color: theme.textFaint }}>
-                    {new Date(n.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
-                  </p>
+                  <div className="flex items-start gap-2">
+                    <span className="mt-0.5 text-base leading-none" aria-hidden>
+                      {n.type === "campaign_assigned" ? "🎯" : n.type === "request_reply" ? "📋" : n.type === "referral_update" ? "👥" : "🔔"}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm" style={{ color: theme.textMuted }}>{n.message}</p>
+                      <p className="text-xs mt-0.5" style={{ color: theme.textFaint }}>
+                        {new Date(n.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      </p>
+                    </div>
+                    {!n.isRead && (
+                      <span className="mt-1 w-2 h-2 rounded-full flex-shrink-0" style={{ background: BRAND }} />
+                    )}
+                  </div>
                 </div>
               ))
             )}

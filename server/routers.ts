@@ -1178,8 +1178,24 @@ const workforceRouter = router({
       offDay2: z.number().int().min(0).max(6).optional(),
       joinDate: z.number().optional(),
     }))
-    .mutation(({ input }) => createWorkforceAgent(input)),
-
+    .mutation(async ({ input }) => {
+      await createWorkforceAgent(input);
+      // Send campaign assignment notification if a campaign was specified
+      if (input.campaignId) {
+        try {
+          const campaign = await getCampaignById(input.campaignId);
+          const campaignName = campaign?.name ?? `Campaign #${input.campaignId}`;
+          await createAgentNotification({
+            candidateId: input.candidateId,
+            type: "campaign_assigned",
+            message: `You have been assigned to the "${campaignName}" campaign. Welcome to the operations team!`,
+            relatedId: input.campaignId,
+          });
+        } catch (e) {
+          console.error("[Notification] Failed to send campaign assignment notification:", e);
+        }
+      }
+    }),
   update: protectedProcedure
     .input(z.object({
       traineeCode: z.string(),
@@ -1195,8 +1211,28 @@ const workforceRouter = router({
       joinDate: z.number().optional(),
       isActive: z.boolean().optional(),
     }))
-    .mutation(({ input }) => { const { traineeCode, ...rest } = input; return updateWorkforceAgent(traineeCode, rest); }),
-
+     .mutation(async ({ input }) => {
+      const { traineeCode, ...rest } = input;
+      // If campaignId is being set, fetch the old agent to check if it changed
+      if (input.campaignId !== undefined) {
+        try {
+          const existing = await getWorkforceAgentByCode(traineeCode);
+          if (existing && existing.campaignId !== input.campaignId) {
+            const campaign = await getCampaignById(input.campaignId);
+            const campaignName = campaign?.name ?? `Campaign #${input.campaignId}`;
+            await createAgentNotification({
+              candidateId: existing.candidateId,
+              type: "campaign_assigned",
+              message: `You have been reassigned to the "${campaignName}" campaign.`,
+              relatedId: input.campaignId,
+            });
+          }
+        } catch (e) {
+          console.error("[Notification] Failed to send campaign reassignment notification:", e);
+        }
+      }
+      return updateWorkforceAgent(traineeCode, rest);
+    }),
   getMyProfile: publicProcedure.query(({ ctx }) => {
     const code = getAgentCookieFromReq(ctx.req);
     if (!code) return null;
