@@ -432,3 +432,28 @@
 - [x] Operation plan view: read-only schedule showing campaign weekly grid
 - [x] Schedule change request: pick target agent, choose new off days for both, submit → peer approval → manager approval
 - [x] Overtime availability: agent sees overtime notification and clicks Available/Not Available
+
+## Round 34 — Operation Plan Grid, HR Letter, Portal Cleanup, Login Lockout
+
+### Backend
+- [x] Add `hr_letter` to agent_requests type enum (purpose + language: Arabic/English fields)
+- [x] Fix WhatsApp group member deletion cascade: when deleted from group AND assigned to batch, remove from batch too
+- [x] Add `workforce.getOperationPlan` procedure: dynamic grid — campaigns as sections, agents as columns, days as rows, 1=working 0=off, daily count
+- [x] Fix Operations tab agent dropdown: show trainees (passed mock call) + existing operations agents
+- [x] Add login lockout: 5 wrong attempts → 15-min lockout, show warning from attempt 3, lockout countdown message
+
+### Admin
+- [x] Operations tab: build dynamic operation plan grid view matching Excel format
+- [x] Operations tab: agent dropdown shows trainees + existing ops agents
+
+### Agent Portal
+- [x] Remove "Training Batch" label → show Campaign number instead
+- [x] Add off days display in profile (from workforce_agents.offDays)
+- [x] Add manager name in profile (from workforce_agents.teamLeader)
+- [x] Rename "Trainee ID" → "Agent ID" everywhere in portal
+- [x] Remove "Schedule" tab entirely from agent portal
+- [x] Keep schedule change request flow: pick swap partner → peer approves → manager approves
+- [x] Add HR Letter to request type dropdown (purpose + language fields)
+- [x] Login lockout UI: warning after 3 wrong attempts, lockout countdown after 5
+
+- [x] 40/40 tests still passing

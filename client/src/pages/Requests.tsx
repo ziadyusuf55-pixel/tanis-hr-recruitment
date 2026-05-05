@@ -30,6 +30,7 @@ const REQUEST_TYPE_LABELS: Record<string, string> = {
   resignation: "Resignation",
   day_off: "Day Off",
   sick_note: "Sick Note",
+  hr_letter: "HR Letter",
   other: "Other",
 };
 
@@ -52,6 +53,8 @@ type AgentRequest = {
   requestedDate: number | null;
   requestedDates: string | null; // JSON array of date strings
   attachmentUrl: string | null;
+  hrLetterPurpose: string | null;
+  hrLetterLanguage: string | null;
   isAdminRead: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -343,6 +346,19 @@ export default function Requests() {
                   } catch { return null; }
                 })()}
               </div>
+
+              {/* HR Letter Details */}
+              {selected.type === "hr_letter" && (selected.hrLetterPurpose || selected.hrLetterLanguage) && (
+                <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 space-y-1">
+                  <p className="text-xs font-semibold text-blue-700 uppercase tracking-wider">HR Letter Details</p>
+                  {selected.hrLetterPurpose && (
+                    <p className="text-sm text-blue-900"><span className="font-medium">Purpose:</span> {selected.hrLetterPurpose}</p>
+                  )}
+                  {selected.hrLetterLanguage && (
+                    <p className="text-sm text-blue-900"><span className="font-medium">Language:</span> {selected.hrLetterLanguage === "arabic" ? "Arabic" : "English"}</p>
+                  )}
+                </div>
+              )}
 
               {/* Message */}
               <div className="bg-muted/50 rounded-lg px-4 py-3">

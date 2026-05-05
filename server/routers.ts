@@ -67,6 +67,7 @@ import {
   getAdminInviteByToken,
   markAdminInviteUsed,
   // Rate limiting
+  isLockedOut,
   recordFailedLogin,
   countRecentFailedLogins,
   clearLoginAttempts,
@@ -92,6 +93,7 @@ import {
   // Workforce agents
   listWorkforceAgents,
   getWorkforceAgentByCode,
+  getEligibleCandidatesForOps,
   createWorkforceAgent,
   updateWorkforceAgent,
   // Payment methods
@@ -291,6 +293,13 @@ const candidatesRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         await updateCandidateStatus(input.id, input.status);
+        // WhatsApp group cascade: if moving away from whatsapp_group_added, remove from batch
+        if (input.fromStage === "whatsapp_group_added" && input.status !== "whatsapp_group_added") {
+          const batch = await getCandidateBatch(input.id);
+          if (batch) {
+            await removeCandidateFromBatch(batch.id, input.id);
+          }
+        }
         await logActivity({
           candidateId: input.id,
           action: "stage_change",
@@ -575,10 +584,41 @@ const agentRouter = router({
   login: publicProcedure
     .input(z.object({ traineeCode: z.string().min(1), password: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
+      // Check lockout before any credential lookup
+      const lockoutStatus = await isLockedOut(input.traineeCode, "agent");
+      if (lockoutStatus.locked) {
+        const remainingMins = Math.ceil(lockoutStatus.remainingMs / 60000);
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: `Account locked due to too many failed attempts. Try again in ${remainingMins} minute${remainingMins !== 1 ? "s" : ""}.`,
+        });
+      }
       const cred = await getAgentCredentialByTraineeCode(input.traineeCode);
-      if (!cred) throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid Trainee ID or password" });
+      if (!cred) {
+        await recordFailedLogin(input.traineeCode, "agent");
+        const attempts = await countRecentFailedLogins(input.traineeCode, "agent");
+        const remaining = Math.max(0, 5 - attempts);
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: remaining > 0
+            ? `Invalid Trainee ID or password. ${remaining} attempt${remaining !== 1 ? "s" : ""} remaining.`
+            : "Invalid Trainee ID or password.",
+        });
+      }
       const valid = await bcrypt.compare(input.password, cred.passwordHash);
-      if (!valid) throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid Trainee ID or password" });
+      if (!valid) {
+        await recordFailedLogin(input.traineeCode, "agent");
+        const attempts = await countRecentFailedLogins(input.traineeCode, "agent");
+        const remaining = Math.max(0, 5 - attempts);
+        throw new TRPCError({
+          code: "UNAUTHORIZED",
+          message: remaining > 0
+            ? `Invalid Trainee ID or password. ${remaining} attempt${remaining !== 1 ? "s" : ""} remaining.`
+            : "Account locked. Too many failed attempts.",
+        });
+      }
+      // Successful login — clear failed attempts
+      await clearLoginAttempts(input.traineeCode, "agent");
       // Create a signed JWT for the agent session
       const token = jwt.sign(
         { candidateId: cred.candidateId, traineeCode: cred.traineeCode, type: "agent" },
@@ -740,12 +780,14 @@ const requestsRouter = router({
   // Agent: submit a new request
   submit: publicProcedure
     .input(z.object({
-      type: z.enum(["leave", "salary", "schedule", "complaint", "resignation", "day_off", "sick_note", "other"]),
+      type: z.enum(["leave", "salary", "schedule", "complaint", "resignation", "day_off", "sick_note", "hr_letter", "other"]),
       subject: z.string().min(1).max(255),
       message: z.string().min(1),
       requestedDate: z.number().optional(), // UTC ms timestamp (single date)
       requestedDates: z.array(z.string()).optional(), // multiple date strings for multi-day requests
       attachmentUrl: z.string().url().optional(), // S3 URL of uploaded file
+      hrLetterPurpose: z.string().optional(), // purpose for hr_letter type
+      hrLetterLanguage: z.enum(["arabic", "english"]).optional(), // language for hr_letter type
     }))
     .mutation(async ({ input, ctx }) => {
       // Must be authenticated as agent
@@ -784,6 +826,8 @@ const requestsRouter = router({
         requestedDate: input.requestedDate ?? null,
         requestedDates: input.requestedDates ? JSON.stringify(input.requestedDates) : null,
         attachmentUrl: input.attachmentUrl ?? null,
+        hrLetterPurpose: input.hrLetterPurpose ?? null,
+        hrLetterLanguage: input.hrLetterLanguage ?? null,
       });
       // Request goes to the request center — no email notification
       return { success: true };
@@ -1069,6 +1113,48 @@ const campaignsRouter = router({
   getOvertimeResponses: protectedProcedure
     .input(z.object({ campaignId: z.number(), date: z.string() }))
     .query(({ input }) => getOvertimeAvailabilityForDate(input.campaignId, input.date)),
+  // Dynamic operation plan: 7-day grid (Mon-Sun) showing each agent's work/off status
+  getOperationPlan: publicProcedure
+    .input(z.object({ campaignId: z.number(), weekOffset: z.number().int().optional() }))
+    .query(async ({ input }) => {
+      const agents = await listWorkforceAgents(input.campaignId);
+      const campaign = await getCampaignById(input.campaignId);
+      // Build the Mon-Sun week starting from weekOffset weeks from current Monday
+      const now = new Date();
+      const dayOfWeek = now.getDay(); // 0=Sun, 1=Mon, ...
+      const daysToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+      const monday = new Date(now);
+      monday.setDate(now.getDate() + daysToMonday + (input.weekOffset ?? 0) * 7);
+      monday.setHours(0, 0, 0, 0);
+      const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const FULL_DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      // Build 7-day array Mon(1) through Sun(0)
+      const weekDays = Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(monday);
+        d.setDate(monday.getDate() + i);
+        return { date: d, dayOfWeek: d.getDay(), label: DAY_NAMES[d.getDay()], fullLabel: FULL_DAY_NAMES[d.getDay()] };
+      });
+      // For each agent, determine work/off status per day
+      const grid = agents.map(agent => ({
+        traineeCode: agent.traineeCode,
+        fullName: agent.fullName,
+        alias: agent.alias,
+        teamLeader: agent.teamLeader,
+        shiftHours: agent.shiftHours,
+        days: weekDays.map(day => {
+          const isOff = agent.offDay1 === day.dayOfWeek || agent.offDay2 === day.dayOfWeek;
+          // Also check campaign workDays — if weekdays only, Sat(6) and Sun(0) are off
+          const isCampaignOff = campaign?.workDays === "weekdays" && (day.dayOfWeek === 0 || day.dayOfWeek === 6);
+          return { date: day.date.toISOString().split("T")[0], label: day.label, fullLabel: day.fullLabel, status: (isOff || isCampaignOff) ? "off" : "work" as "off" | "work" };
+        }),
+      }));
+      return {
+        campaign,
+        weekStart: monday.toISOString().split("T")[0],
+        weekDays: weekDays.map(d => ({ date: d.date.toISOString().split("T")[0], label: d.label, fullLabel: d.fullLabel })),
+        grid,
+      };
+    }),
 });
 
 // ─── Workforce Router ─────────────────────────────────────────────────────────
@@ -1120,6 +1206,7 @@ const workforceRouter = router({
   getCampaignAgents: publicProcedure
     .input(z.object({ campaignId: z.number() }))
     .query(({ input }) => listWorkforceAgents(input.campaignId)),
+  getEligibleCandidates: protectedProcedure.query(() => getEligibleCandidatesForOps()),
 });
 
 // ─── Payment Methods Router ───────────────────────────────────────────────────

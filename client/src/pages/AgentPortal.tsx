@@ -141,7 +141,7 @@ function formatCurrency(amount: string | number | null | undefined) {
   return `EGP ${num.toLocaleString()}`;
 }
 
-type Tab = "profile" | "payroll" | "requests" | "referrals" | "documents" | "payment" | "schedule";
+type Tab = "profile" | "payroll" | "requests" | "referrals" | "documents" | "payment";
 
 export default function AgentPortal() {
   const [, navigate] = useLocation();
@@ -199,7 +199,6 @@ export default function AgentPortal() {
     { id: "documents", label: "Documents", icon: <FileText className="w-4 h-4" /> },
     { id: "payment", label: "Payment", icon: <Wallet className="w-4 h-4" /> },
     { id: "referrals", label: "Refer", icon: <Users className="w-4 h-4" /> },
-    { id: "schedule", label: "Schedule", icon: <Calendar className="w-4 h-4" /> },
   ];
 
   return (
@@ -308,7 +307,7 @@ export default function AgentPortal() {
             className="shrink-0 rounded-2xl px-5 py-3 text-center"
             style={{ background: "rgba(255,255,255,0.12)", backdropFilter: "blur(8px)" }}
           >
-            <p className="text-white/60 text-[10px] uppercase tracking-wider">Trainee ID</p>
+            <p className="text-white/60 text-[10px] uppercase tracking-wider">Agent ID</p>
             <p className="text-white font-bold text-xl tracking-widest mt-0.5">{agent.traineeCode}</p>
           </div>
         </div>
@@ -324,7 +323,6 @@ export default function AgentPortal() {
         {activeTab === "documents" && <DocumentsTab theme={theme} />}
         {activeTab === "payment" && <PaymentMethodsTab theme={theme} />}
         {activeTab === "referrals" && <ReferralTab referrerCandidateId={agent.candidateId} theme={theme} />}
-        {activeTab === "schedule" && <OperationPlanTab theme={theme} />}
       </main>
     </div>
   );
@@ -386,7 +384,7 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
       </div>
       {!wfProfile && agent.batch && (
         <>
-          <SectionTitle theme={theme}>Training Batch</SectionTitle>
+          <SectionTitle theme={theme}>Training Info</SectionTitle>
           <div className="rounded-xl overflow-hidden" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
             <div className="grid grid-cols-2 sm:grid-cols-3" style={{ borderBottom: `1px solid ${theme.surfaceBorder}` }}>
               {[
@@ -517,6 +515,7 @@ const REQUEST_TYPE_LABELS: Record<string, string> = {
   resignation: "Resignation",
   day_off: "Day Off",
   sick_note: "Sick Note",
+  hr_letter: "HR Letter",
   other: "Other",
 };
 
@@ -564,7 +563,7 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
   const uploadMutation = trpc.requests.uploadAttachment.useMutation();
 
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({
+   const [form, setForm] = useState({
     type: "",
     subject: "",
     message: "",
@@ -572,15 +571,16 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
     requestedDates: [] as string[],
     attachmentUrl: "",
     attachmentName: "",
+    hrLetterPurpose: "",
+    hrLetterLanguage: "" as "arabic" | "english" | "",
   });
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
   const needsDate = DATE_REQUIRED_TYPES.includes(form.type);
   const isMultiDate = MULTI_DATE_TYPES.includes(form.type);
-
+  const isHrLetter = form.type === "hr_letter";
   function resetForm() {
-    setForm({ type: "", subject: "", message: "", requestedDate: "", requestedDates: [], attachmentUrl: "", attachmentName: "" });
+    setForm({ type: "", subject: "", message: "", requestedDate: "", requestedDates: [], attachmentUrl: "", attachmentName: "", hrLetterPurpose: "", hrLetterLanguage: "" });
   }
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -629,13 +629,19 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
       if (isMultiDate && form.requestedDates.length === 0) { toast.error("Please select at least one date"); return; }
       if (!isMultiDate && !form.requestedDate) { toast.error("Please select a date (minimum 2 weeks from today)"); return; }
     }
+    if (isHrLetter) {
+      if (!form.hrLetterPurpose.trim()) { toast.error("Please describe the purpose of the HR letter"); return; }
+      if (!form.hrLetterLanguage) { toast.error("Please select the letter language"); return; }
+    }
     submitMutation.mutate({
-      type: form.type as "leave" | "salary" | "schedule" | "complaint" | "resignation" | "day_off" | "sick_note" | "other",
+      type: form.type as "leave" | "salary" | "schedule" | "complaint" | "resignation" | "day_off" | "sick_note" | "hr_letter" | "other",
       subject: form.subject.trim(),
       message: form.message.trim(),
       requestedDate: (!isMultiDate && form.requestedDate) ? new Date(form.requestedDate).getTime() : undefined,
       requestedDates: (isMultiDate && form.requestedDates.length > 0) ? form.requestedDates : undefined,
       attachmentUrl: form.attachmentUrl || undefined,
+      hrLetterPurpose: isHrLetter ? form.hrLetterPurpose.trim() : undefined,
+      hrLetterLanguage: isHrLetter && form.hrLetterLanguage ? form.hrLetterLanguage : undefined,
     });
   }
 
@@ -678,6 +684,7 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
                 <SelectItem value="resignation">Resignation</SelectItem>
                 <SelectItem value="salary">Salary Inquiry</SelectItem>
                 <SelectItem value="schedule">Schedule Change</SelectItem>
+                <SelectItem value="hr_letter">HR Letter</SelectItem>
                 <SelectItem value="complaint">General Complaint</SelectItem>
                 <SelectItem value="other">Other</SelectItem>
               </SelectContent>
@@ -709,6 +716,26 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
             </div>
           )}
 
+          {isHrLetter && (
+            <>
+              <div className="space-y-1.5">
+                <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>Purpose of HR Letter <span className="normal-case" style={{ color: theme.textFaint }}>(e.g. bank account, visa, embassy)</span></Label>
+                <Input placeholder="Describe the purpose..." value={form.hrLetterPurpose} onChange={(e) => setForm((f) => ({ ...f, hrLetterPurpose: e.target.value }))} style={inputStyle} className="placeholder:text-gray-400" />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>Letter Language</Label>
+                <Select value={form.hrLetterLanguage} onValueChange={(v) => setForm((f) => ({ ...f, hrLetterLanguage: v as "arabic" | "english" }))}>
+                  <SelectTrigger style={inputStyle}>
+                    <SelectValue placeholder="Select language..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="arabic">Arabic</SelectItem>
+                    <SelectItem value="english">English</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </>
+          )}
           <div className="space-y-1.5">
             <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>Subject</Label>
             <Input placeholder="Brief summary of your request" value={form.subject} onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))} style={inputStyle} className="placeholder:text-gray-400" />

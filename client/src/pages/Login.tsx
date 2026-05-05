@@ -63,6 +63,8 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [agentLoading, setAgentLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [agentLoginError, setAgentLoginError] = useState<string | null>(null);
+  const [agentIsLocked, setAgentIsLocked] = useState(false);
 
   const agentLoginMutation = trpc.agent.login.useMutation();
 
@@ -73,16 +75,20 @@ export default function Login() {
   async function handleAgentLogin(e: React.FormEvent) {
     e.preventDefault();
     if (!traineeCode.trim() || !password.trim()) {
-      toast.error("Please enter your Agent ID and password.");
+      setAgentLoginError("Please enter your Agent ID and password.");
       return;
     }
     setAgentLoading(true);
+    setAgentLoginError(null);
     try {
       const fullCode = `T-${traineeCode.trim()}`;
       await agentLoginMutation.mutateAsync({ traineeCode: fullCode, password });
       navigate("/agent");
-    } catch {
-      toast.error("Invalid Trainee ID or password. Please try again.");
+    } catch (err: unknown) {
+      const msg = (err as { message?: string })?.message ?? "Invalid credentials. Please try again.";
+      const locked = msg.toLowerCase().includes("locked") || msg.toLowerCase().includes("too many");
+      setAgentIsLocked(locked);
+      setAgentLoginError(msg);
     } finally {
       setAgentLoading(false);
     }
@@ -378,19 +384,34 @@ export default function Login() {
 
               <button
                 type="submit"
-                disabled={agentLoading}
+                disabled={agentLoading || agentIsLocked}
                 className="w-full h-12 rounded-xl font-semibold text-sm text-white transition-all hover:opacity-90 hover:shadow-lg active:scale-[0.98] disabled:opacity-50 flex items-center justify-center gap-2 shadow-md mt-2"
-                style={{ background: "oklch(0.28 0.18 28)" }}
+                style={{ background: agentIsLocked ? "oklch(0.50 0.18 28)" : "oklch(0.28 0.18 28)" }}
               >
                 {agentLoading ? <Spinner /> : (
                   <>
-                    Sign In to Portal
+                    {agentIsLocked ? "Account Locked" : "Sign In to Portal"}
                     <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                       <path d="m9 18 6-6-6-6"/>
                     </svg>
                   </>
                 )}
               </button>
+              {agentLoginError && (
+                <div className={`mt-3 rounded-xl px-4 py-3 text-sm flex items-start gap-2.5 ${
+                  agentIsLocked
+                    ? "bg-red-50 border border-red-200 text-red-700"
+                    : "bg-amber-50 border border-amber-200 text-amber-700"
+                }`}>
+                  <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    {agentIsLocked
+                      ? <><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></>
+                      : <><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></>
+                    }
+                  </svg>
+                  <span>{agentLoginError}</span>
+                </div>
+              )}
             </form>
 
             <p className="text-center text-xs text-muted-foreground mt-6 leading-relaxed">

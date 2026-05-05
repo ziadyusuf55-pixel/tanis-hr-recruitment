@@ -26,6 +26,8 @@ import {
   Trash2,
   ExternalLink,
   RefreshCw,
+  Grid3X3,
+  ChevronLeft,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -205,7 +207,13 @@ const EMPTY_CAMPAIGN = { name: "", minHeadcount: "20", workDays: "all" as "all" 
 
 export default function Operations() {
   const utils = trpc.useUtils();
-  const [activeTab, setActiveTab] = useState<"agents" | "campaigns" | "forecast">("agents");
+  const [activeTab, setActiveTab] = useState<"agents" | "campaigns" | "forecast" | "plan">("agents");
+  const [planCampaignId, setPlanCampaignId] = useState<number | null>(null);
+  const [planWeekOffset, setPlanWeekOffset] = useState(0);
+  const { data: operationPlan, isLoading: loadingPlan } = trpc.campaigns.getOperationPlan.useQuery(
+    { campaignId: planCampaignId!, weekOffset: planWeekOffset },
+    { enabled: planCampaignId !== null }
+  );
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | "all">("all");
   const [search, setSearch] = useState("");
 
@@ -396,6 +404,7 @@ export default function Operations() {
           { id: "agents", label: "Agents", icon: Users },
           { id: "campaigns", label: "Campaigns", icon: Settings },
           { id: "forecast", label: "Headcount Forecast", icon: BarChart3 },
+          { id: "plan", label: "Operation Plan", icon: Grid3X3 },
         ].map(tab => (
           <button
             key={tab.id}
@@ -654,6 +663,103 @@ export default function Operations() {
         </div>
       )}
 
+      {/* Operation Plan Tab */}
+      {activeTab === "plan" && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <select
+              className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm min-w-[180px]"
+              value={planCampaignId ?? ""}
+              onChange={e => { setPlanCampaignId(e.target.value ? Number(e.target.value) : null); setPlanWeekOffset(0); }}
+            >
+              <option value="">Select campaign...</option>
+              {(campaigns as Campaign[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+            {planCampaignId !== null && (
+              <div className="flex items-center gap-1">
+                <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => setPlanWeekOffset(o => o - 1)}>
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-sm font-medium px-2">
+                  {operationPlan ? `Week of ${operationPlan.weekStart}` : `Week ${planWeekOffset >= 0 ? "+" : ""}${planWeekOffset}`}
+                </span>
+                <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => setPlanWeekOffset(o => o + 1)}>
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setPlanWeekOffset(0)}>This Week</Button>
+              </div>
+            )}
+          </div>
+          {planCampaignId === null ? (
+            <div className="text-center py-16 text-muted-foreground">
+              <Grid3X3 className="h-10 w-10 mx-auto mb-3 opacity-25" />
+              <p className="font-medium">Select a campaign to view the operation plan</p>
+            </div>
+          ) : loadingPlan ? (
+            <div className="space-y-2">{[1,2,3,4,5].map(i => <div key={i} className="h-10 rounded-lg bg-muted/40 animate-pulse" />)}</div>
+          ) : !operationPlan || operationPlan.grid.length === 0 ? (
+            <div className="text-center py-16 text-muted-foreground">
+              <Users className="h-10 w-10 mx-auto mb-3 opacity-25" />
+              <p className="font-medium">No agents in this campaign</p>
+            </div>
+          ) : (
+            <div className="rounded-xl border overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/40 border-b">
+                    <tr>
+                      <th className="text-left px-4 py-3 font-semibold text-sm sticky left-0 bg-muted/40 min-w-[160px]">Agent</th>
+                      {operationPlan.weekDays.map(day => (
+                        <th key={day.date} className="px-3 py-3 font-semibold text-center min-w-[72px]">
+                          <div>{day.label}</div>
+                          <div className="text-[10px] font-normal text-muted-foreground">{day.date.slice(5)}</div>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {operationPlan.grid.map((agent, i) => (
+                      <tr key={agent.traineeCode} className={i % 2 === 0 ? "bg-background" : "bg-muted/20"}>
+                        <td className="px-4 py-2.5 sticky left-0 bg-inherit">
+                          <div className="font-medium text-sm">{agent.alias ?? agent.fullName}</div>
+                          <div className="text-[10px] text-muted-foreground font-mono">{agent.traineeCode}</div>
+                        </td>
+                        {agent.days.map(day => (
+                          <td key={day.date} className="px-3 py-2.5 text-center">
+                            <span
+                              className="inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-semibold"
+                              style={{
+                                background: day.status === "off" ? "#ef444422" : "#22c55e22",
+                                color: day.status === "off" ? "#ef4444" : "#22c55e",
+                              }}
+                            >
+                              {day.status === "off" ? "Off" : "On"}
+                            </span>
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="border-t bg-muted/40">
+                    <tr>
+                      <td className="px-4 py-2.5 font-semibold text-sm sticky left-0 bg-muted/40">Daily Count</td>
+                      {operationPlan.weekDays.map(day => {
+                        const working = operationPlan.grid.filter(a => a.days.find(d => d.date === day.date)?.status === "work").length;
+                        const min = (operationPlan.campaign as Campaign | null)?.minHeadcount ?? 0;
+                        return (
+                          <td key={day.date} className="px-3 py-2.5 text-center">
+                            <span className={`font-bold text-sm ${working < min ? "text-red-600" : "text-emerald-600"}`}>{working}</span>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
       {/* Edit Agent Dialog */}
       <Dialog open={editDialog} onOpenChange={setEditDialog}>
         <DialogContent className="max-w-lg">

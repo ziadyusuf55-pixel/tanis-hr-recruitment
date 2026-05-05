@@ -767,12 +767,14 @@ export async function deletePerformanceRecord(id: number) {
 export async function createAgentRequest(data: {
   candidateId: number;
   traineeCode: string;
-  type: "leave" | "salary" | "schedule" | "complaint" | "resignation" | "day_off" | "sick_note" | "other";
+  type: "leave" | "salary" | "schedule" | "complaint" | "resignation" | "day_off" | "sick_note" | "hr_letter" | "other";
   subject: string;
   message: string;
   requestedDate?: number | null;
   requestedDates?: string | null; // JSON array of date strings
   attachmentUrl?: string | null;
+  hrLetterPurpose?: string | null;
+  hrLetterLanguage?: "arabic" | "english" | null;
 }) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
@@ -785,6 +787,8 @@ export async function createAgentRequest(data: {
     requestedDate: data.requestedDate ?? null,
     requestedDates: data.requestedDates ?? null,
     attachmentUrl: data.attachmentUrl ?? null,
+    hrLetterPurpose: data.hrLetterPurpose ?? null,
+    hrLetterLanguage: data.hrLetterLanguage ?? null,
     status: "pending",
   });
   return result;
@@ -917,22 +921,28 @@ export async function recordFailedLogin(identifier: string, attemptType: "agent"
   const { loginAttempts } = await import("../drizzle/schema");
   await db.insert(loginAttempts).values({ identifier, attemptType, failedAt: Date.now(), ipAddress: ipAddress ?? null });
 }
-export async function isLockedOut(identifier: string, attemptType: "agent" | "admin"): Promise<boolean> {
+export async function isLockedOut(identifier: string, attemptType: "agent" | "admin"): Promise<{ locked: boolean; remainingMs: number }> {
   const db = await getDb();
-  if (!db) return false;
+  if (!db) return { locked: false, remainingMs: 0 };
   const { loginAttempts } = await import("../drizzle/schema");
   const since = Date.now() - LOCKOUT_WINDOW_MS;
-  const rows = await db.select({ id: loginAttempts.id })
+  const rows = await db.select({ id: loginAttempts.id, failedAt: loginAttempts.failedAt })
     .from(loginAttempts)
     .where(and(
       eq(loginAttempts.identifier, identifier),
       eq(loginAttempts.attemptType, attemptType),
-      // failedAt >= since
+      gte(loginAttempts.failedAt, since)
     ))
+    .orderBy(loginAttempts.failedAt)
     .limit(MAX_ATTEMPTS + 1);
-  // Filter in JS since TiDB may not support bigint comparison easily in drizzle
-  const recent = rows.length; // approximate — full filter done below
-  return recent >= MAX_ATTEMPTS;
+  if (rows.length >= MAX_ATTEMPTS) {
+    // Find the oldest attempt in the window — lockout expires LOCKOUT_WINDOW_MS after it
+    const oldestAttempt = rows[0].failedAt;
+    const lockoutExpiry = (oldestAttempt as number) + LOCKOUT_WINDOW_MS;
+    const remainingMs = Math.max(0, lockoutExpiry - Date.now());
+    return { locked: true, remainingMs };
+  }
+  return { locked: false, remainingMs: 0 };
 }
 export async function countRecentFailedLogins(identifier: string, attemptType: "agent" | "admin"): Promise<number> {
   const db = await getDb();
@@ -1099,6 +1109,38 @@ export async function listWorkforceAgents(campaignId?: number) {
   return base;
 }
 
+/**
+ * Returns candidates eligible to be added to Operations:
+ * 1. Candidates currently in training batches (in_training stage)
+ * 2. Existing workforce agents (for re-assignment)
+ */
+export async function getEligibleCandidatesForOps() {
+  const db = await getDb();
+  if (!db) return [];
+  const { batchCandidates, candidates: candidatesTable, workforceAgents } = await import("../drizzle/schema");
+  // Get all candidates who are in a batch (in training) — use raw SQL for status filter
+  const inTraining = await db.select({
+    candidateId: batchCandidates.candidateId,
+    traineeCode: batchCandidates.traineeCode,
+    name: candidatesTable.name,
+    phone: candidatesTable.phone,
+    source: sql<string>`'training'`,
+  }).from(batchCandidates)
+    .innerJoin(candidatesTable, eq(batchCandidates.candidateId, candidatesTable.id));
+  // Get all existing workforce agents
+  const existingOps = await db.select({
+    candidateId: workforceAgents.candidateId,
+    traineeCode: workforceAgents.traineeCode,
+    name: workforceAgents.fullName,
+    phone: workforceAgents.phone,
+    source: sql<string>`'ops'`,
+  }).from(workforceAgents);
+  // Merge, deduplicate by candidateId (prefer ops if already there)
+  const merged = new Map<number, { candidateId: number; traineeCode: string | null; name: string; phone: string | null; source: string }>();
+  for (const r of inTraining) merged.set(r.candidateId, r);
+  for (const r of existingOps) merged.set(r.candidateId, r); // ops overrides training
+  return Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
 export async function getWorkforceAgentByCode(traineeCode: string) {
   const db = await getDb();
   if (!db) return null;
