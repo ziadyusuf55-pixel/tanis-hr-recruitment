@@ -26,6 +26,15 @@ import {
   ChevronRight,
   Sun,
   Moon,
+  Briefcase,
+  FileText,
+  Wallet,
+  Calendar,
+  Upload,
+  CheckCircle,
+  XCircle,
+  Clock,
+  Star,
 } from "lucide-react";
 
 const TANIS_LOGO_WHITE =
@@ -132,7 +141,7 @@ function formatCurrency(amount: string | number | null | undefined) {
   return `EGP ${num.toLocaleString()}`;
 }
 
-type Tab = "profile" | "payroll" | "requests" | "referrals";
+type Tab = "profile" | "payroll" | "requests" | "referrals" | "documents" | "payment" | "schedule";
 
 export default function AgentPortal() {
   const [, navigate] = useLocation();
@@ -187,7 +196,10 @@ export default function AgentPortal() {
     { id: "profile", label: "Profile", icon: <User className="w-4 h-4" /> },
     { id: "payroll", label: "Payroll", icon: <CreditCard className="w-4 h-4" /> },
     { id: "requests", label: "Requests", icon: <MessageSquare className="w-4 h-4" /> },
+    { id: "documents", label: "Documents", icon: <FileText className="w-4 h-4" /> },
+    { id: "payment", label: "Payment", icon: <Wallet className="w-4 h-4" /> },
     { id: "referrals", label: "Refer", icon: <Users className="w-4 h-4" /> },
+    { id: "schedule", label: "Schedule", icon: <Calendar className="w-4 h-4" /> },
   ];
 
   return (
@@ -309,7 +321,10 @@ export default function AgentPortal() {
         {activeTab === "profile" && <ProfileTab agent={agent} theme={theme} />}
         {activeTab === "payroll" && <PayrollTab payroll={payroll as PayrollRecord[] | undefined} theme={theme} />}
         {activeTab === "requests" && <RequestCenterTab candidateId={agent.candidateId} theme={theme} />}
+        {activeTab === "documents" && <DocumentsTab theme={theme} />}
+        {activeTab === "payment" && <PaymentMethodsTab theme={theme} />}
         {activeTab === "referrals" && <ReferralTab referrerCandidateId={agent.candidateId} theme={theme} />}
+        {activeTab === "schedule" && <OperationPlanTab theme={theme} />}
       </main>
     </div>
   );
@@ -317,26 +332,48 @@ export default function AgentPortal() {
 
 // ─── Profile Tab ─────────────────────────────────────────────────────────────
 
+const DAY_NAMES_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
-  const joinDate = agent.batch?.assignedAt
+  const { data: wfProfile } = trpc.workforce.getMyProfile.useQuery();
+  const joinDate = wfProfile?.joinDate
+    ? formatDate(new Date(wfProfile.joinDate as number))
+    : agent.batch?.assignedAt
     ? formatDate(new Date(agent.batch.assignedAt))
     : "—";
-
-  const fields = [
+  const wfFields = wfProfile ? [
+    { label: "Agent ID", value: wfProfile.traineeCode as string },
+    { label: "Full Name", value: wfProfile.fullName as string },
+    { label: "Alias / English Name", value: (wfProfile.alias as string | null) ?? "—" },
+    { label: "Campaign", value: (wfProfile.campaignName as string | null) ?? "—" },
+    { label: "Join Date", value: joinDate },
+    { label: "Shift Hours", value: (wfProfile.shiftHours as string | null) ?? "—" },
+    { label: "Team Leader", value: (wfProfile.teamLeader as string | null) ?? "—" },
+    { label: "Off Day 1", value: wfProfile.offDay1 != null ? DAY_NAMES_FULL[wfProfile.offDay1 as number] : "—" },
+    { label: "Off Day 2", value: wfProfile.offDay2 != null ? DAY_NAMES_FULL[wfProfile.offDay2 as number] : "—" },
+    { label: "Phone", value: (wfProfile.phone as string | null) ?? "—" },
+    { label: "Email", value: (wfProfile.email as string | null) ?? "—" },
+  ] : [
     { label: "Full Name", value: agent.name },
-    { label: "Trainee ID", value: agent.traineeCode },
+    { label: "Agent ID", value: agent.traineeCode },
     { label: "Position", value: agent.positionApplied },
     { label: "Join Date", value: joinDate },
-    { label: "Location", value: agent.location ?? "—" },
     { label: "Phone", value: agent.phone ?? "—" },
     { label: "Email", value: agent.email ?? "—" },
   ];
-
   return (
     <div className="space-y-6">
-      <SectionTitle theme={theme}>My Information</SectionTitle>
+      {wfProfile && (
+        <div className="rounded-xl p-4 flex items-center gap-3" style={{ background: "oklch(0.32 0.18 28 / 0.15)", border: "1px solid oklch(0.32 0.18 28 / 0.3)" }}>
+          <Briefcase className="w-5 h-5 shrink-0" style={{ color: BRAND_LIGHT }} />
+          <div>
+            <p className="text-sm font-semibold" style={{ color: theme.text }}>Operations Agent</p>
+            <p className="text-xs" style={{ color: theme.textMuted }}>You are part of the active workforce. Your profile is managed by your team leader.</p>
+          </div>
+        </div>
+      )}
+      <SectionTitle theme={theme}>{wfProfile ? "My Operations Profile" : "My Information"}</SectionTitle>
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {fields.map(({ label, value }) => (
+        {wfFields.map(({ label, value }) => (
           <div
             key={label}
             className="rounded-xl p-4"
@@ -347,8 +384,7 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
           </div>
         ))}
       </div>
-
-      {agent.batch && (
+      {!wfProfile && agent.batch && (
         <>
           <SectionTitle theme={theme}>Training Batch</SectionTitle>
           <div className="rounded-xl overflow-hidden" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
@@ -1086,6 +1122,571 @@ function EmptyState({ icon, title, subtitle, theme }: { icon: React.ReactNode; t
       {icon}
       <p className="font-medium text-sm" style={{ color: theme.textMuted }}>{title}</p>
       <p className="text-xs max-w-xs" style={{ color: theme.textFaint }}>{subtitle}</p>
+    </div>
+  );
+}
+
+
+// ─── Documents Tab ────────────────────────────────────────────────────────────
+type DocItem = {
+  id: number;
+  traineeCode: string;
+  docType: string;
+  fileUrl: string;
+  fileName: string | null;
+  status: "pending" | "approved" | "rejected";
+  adminComment: string | null;
+  uploadedAt: Date;
+  updatedAt: Date;
+};
+const DOC_LABELS: Record<string, string> = {
+  national_id: "صورة بطاقة الرقم القومي (سارية)",
+  qualification: "شهادة المؤهل / بيان قيد",
+  cv: "CV",
+  personal_photos: "2–6 صور شخصية",
+  military_status: "موقف التجنيد (للذكور)",
+  insurance_status: "موقف التأمينات",
+  criminal_record: "فيش جنائي",
+};
+const REQUIRED_DOCS = Object.keys(DOC_LABELS);
+function DocumentsTab({ theme }: { theme: Theme }) {
+  const utils = trpc.useUtils();
+  const { data: docs = [], isLoading } = trpc.documents.listMine.useQuery();
+  const uploadMutation = trpc.documents.upload.useMutation({
+    onSuccess: () => utils.documents.listMine.invalidate(),
+  });
+  const [uploading, setUploading] = useState<string | null>(null);
+  async function handleUpload(docType: string, file: File) {
+    setUploading(docType);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch("/api/upload-doc", { method: "POST", body: formData });
+      const { url } = await res.json() as { url: string };
+      await uploadMutation.mutateAsync({ docType, fileUrl: url });
+    } catch {
+      // ignore
+    } finally {
+      setUploading(null);
+    }
+  }
+  const docMap = new Map((docs as unknown as DocItem[]).map((d) => [d.docType, d]));
+  return (
+    <div className="space-y-6">
+      <div className="rounded-xl p-4" style={{ background: "oklch(0.32 0.18 28 / 0.12)", border: "1px solid oklch(0.32 0.18 28 / 0.25)" }}>
+        <p className="text-sm font-semibold mb-1" style={{ color: theme.text }}>Required Documents for Contract</p>
+        <p className="text-xs" style={{ color: theme.textMuted }}>
+          Please upload all required documents below so we can prepare your employment contract. All documents must be clear and valid.
+        </p>
+      </div>
+      <div className="space-y-3">
+        {REQUIRED_DOCS.map((docType) => {
+          const doc = docMap.get(docType);
+          const isUploading = uploading === docType;
+          return (
+            <div
+              key={docType}
+              className="rounded-xl p-4 flex items-center justify-between gap-4"
+              style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}
+            >
+              <div className="flex items-center gap-3 min-w-0">
+                {doc?.status === "approved" ? (
+                  <CheckCircle className="w-5 h-5 shrink-0 text-green-500" />
+                ) : doc?.status === "rejected" ? (
+                  <XCircle className="w-5 h-5 shrink-0 text-red-500" />
+                ) : doc ? (
+                  <Clock className="w-5 h-5 shrink-0 text-yellow-500" />
+                ) : (
+                  <FileText className="w-5 h-5 shrink-0" style={{ color: theme.textFaint }} />
+                )}
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate" style={{ color: theme.text }}>{DOC_LABELS[docType]}</p>
+                  {doc?.adminComment && (
+                    <p className="text-xs mt-0.5" style={{ color: doc.status === "rejected" ? "#ef4444" : theme.textMuted }}>
+                      {doc.adminComment}
+                    </p>
+                  )}
+                  {doc && !doc.adminComment && (
+                    <p className="text-xs mt-0.5 capitalize" style={{ color: doc.status === "approved" ? "#22c55e" : doc.status === "rejected" ? "#ef4444" : "#eab308" }}>
+                      {doc.status === "approved" ? "Approved" : doc.status === "rejected" ? "Rejected" : "Pending Review"}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {doc && (
+                  <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer"
+                    className="text-xs px-2 py-1 rounded-lg" style={{ background: theme.surfaceBorder, color: theme.textMuted }}>
+                    View
+                  </a>
+                )}
+                <label className="cursor-pointer">
+                  <input
+                    type="file"
+                    className="hidden"
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(docType, f); e.target.value = ""; }}
+                    disabled={isUploading}
+                  />
+                  <span
+                    className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-all"
+                    style={{ background: BRAND, color: "white", opacity: isUploading ? 0.6 : 1 }}
+                  >
+                    {isUploading ? <Clock className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
+                    {doc ? "Re-upload" : "Upload"}
+                  </span>
+                </label>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {isLoading && (
+        <div className="flex justify-center py-8">
+          <div className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: BRAND_LIGHT, borderTopColor: "transparent" }} />
+        </div>
+      )}
+    </div>
+  );
+}
+// ─── Payment Methods Tab ──────────────────────────────────────────────────────
+type PaymentItem = {
+  id: number;
+  traineeCode: string;
+  type: "wallet" | "bank";
+  walletProvider: "vodafone_cash" | "orange_cash" | null;
+  walletPhone: string | null;
+  walletName: string | null;
+  bankName: string | null;
+  bankAccountOrPhone: string | null;
+  bankFullName: string | null;
+  isPreferred: boolean;
+  adminComment: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+};
+const EGYPT_BANKS = [
+  "Banque Misr","National Bank of Egypt","Commercial International Bank (CIB)",
+  "Banque du Caire","Arab African International Bank","QNB Al Ahli",
+  "HSBC Egypt","Faisal Islamic Bank","Arab Bank","Attijariwafa Bank Egypt",
+  "Bank of Alexandria","Egyptian Gulf Bank","Suez Canal Bank","Al Baraka Bank Egypt",
+  "Abu Dhabi Islamic Bank","Mashreq Bank Egypt","Société Arabe Internationale de Banque (SAIB)",
+  "Credit Agricole Egypt","United Bank","Export Development Bank of Egypt","Other",
+];
+function PaymentMethodsTab({ theme }: { theme: Theme }) {
+  const utils = trpc.useUtils();
+  const { data: methods = [], isLoading } = trpc.paymentMethods.listMine.useQuery();
+  const addMutation = trpc.paymentMethods.upsert.useMutation({
+    onSuccess: () => { utils.paymentMethods.listMine.invalidate(); setShowForm(false); resetForm(); },
+  });
+  const setPreferredMutation = trpc.paymentMethods.setPreferred.useMutation({
+    onSuccess: () => utils.paymentMethods.listMine.invalidate(),
+  });
+  const deleteMutation = trpc.paymentMethods.delete.useMutation({
+    onSuccess: () => utils.paymentMethods.listMine.invalidate(),
+  });
+  const [showForm, setShowForm] = useState(false);
+  const [formType, setFormType] = useState<"wallet" | "bank">("wallet");
+  const [provider, setProvider] = useState("Vodafone Cash");
+  const [phone, setPhone] = useState("");
+  const [bankName, setBankName] = useState(EGYPT_BANKS[0]);
+  const [accountNumber, setAccountNumber] = useState("");
+  const [accountPhone, setAccountPhone] = useState("");
+  const [holderName, setHolderName] = useState("");
+  function resetForm() {
+    setFormType("wallet"); setProvider("Vodafone Cash"); setPhone(""); setBankName(EGYPT_BANKS[0]);
+    setAccountNumber(""); setAccountPhone(""); setHolderName("");
+  }
+  async function handleAdd() {
+    await addMutation.mutateAsync({
+      type: formType,
+      walletProvider: formType === "wallet" ? (provider === "Vodafone Cash" ? "vodafone_cash" : "orange_cash") : undefined,
+      walletPhone: formType === "wallet" ? phone : undefined,
+      walletName: formType === "wallet" ? holderName : undefined,
+      bankName: formType === "bank" ? bankName : undefined,
+      bankAccountOrPhone: formType === "bank" ? (accountNumber || accountPhone || undefined) : undefined,
+      bankFullName: formType === "bank" ? holderName : undefined,
+    });
+  }
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <SectionTitle theme={theme}>Payment Methods</SectionTitle>
+        <button
+          onClick={() => setShowForm((v) => !v)}
+          className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium"
+          style={{ background: BRAND, color: "white" }}
+        >
+          + Add Method
+        </button>
+      </div>
+      {showForm && (
+        <div className="rounded-xl p-5 space-y-4" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
+          <p className="text-sm font-semibold" style={{ color: theme.text }}>New Payment Method</p>
+          <div className="flex gap-2">
+            {(["wallet", "bank"] as const).map((t) => (
+              <button key={t} onClick={() => setFormType(t)}
+                className="px-4 py-1.5 rounded-lg text-sm font-medium transition-all capitalize"
+                style={{ background: formType === t ? BRAND : theme.surfaceBorder, color: formType === t ? "white" : theme.textMuted }}>
+                {t === "wallet" ? "Wallet" : "Bank Account"}
+              </button>
+            ))}
+          </div>
+          {formType === "wallet" && (
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Provider</label>
+                <select value={provider} onChange={(e) => setProvider(e.target.value)}
+                  className="w-full rounded-lg px-3 py-2 text-sm border" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }}>
+                  <option>Vodafone Cash</option>
+                  <option>Orange Cash</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Phone Number</label>
+                <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="01XXXXXXXXX"
+                  className="w-full rounded-lg px-3 py-2 text-sm border" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }} />
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Full Name (as registered)</label>
+                <input value={holderName} onChange={(e) => setHolderName(e.target.value)} placeholder="Full name"
+                  className="w-full rounded-lg px-3 py-2 text-sm border" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }} />
+              </div>
+            </div>
+          )}
+          {formType === "bank" && (
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Bank Name</label>
+                <select value={bankName} onChange={(e) => setBankName(e.target.value)}
+                  className="w-full rounded-lg px-3 py-2 text-sm border" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }}>
+                  {EGYPT_BANKS.map((b) => <option key={b}>{b}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Account Number (optional)</label>
+                <input value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} placeholder="Account number"
+                  className="w-full rounded-lg px-3 py-2 text-sm border" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }} />
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Phone Number (optional)</label>
+                <input value={accountPhone} onChange={(e) => setAccountPhone(e.target.value)} placeholder="01XXXXXXXXX"
+                  className="w-full rounded-lg px-3 py-2 text-sm border" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }} />
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Full Name (account holder)</label>
+                <input value={holderName} onChange={(e) => setHolderName(e.target.value)} placeholder="Full name"
+                  className="w-full rounded-lg px-3 py-2 text-sm border" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }} />
+              </div>
+            </div>
+          )}
+          <div className="flex gap-2 pt-1">
+            <button onClick={handleAdd} disabled={addMutation.isPending}
+              className="px-4 py-2 rounded-lg text-sm font-medium" style={{ background: BRAND, color: "white" }}>
+              {addMutation.isPending ? "Saving..." : "Save"}
+            </button>
+            <button onClick={() => { setShowForm(false); resetForm(); }}
+              className="px-4 py-2 rounded-lg text-sm font-medium" style={{ background: theme.surfaceBorder, color: theme.textMuted }}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {isLoading ? (
+        <div className="flex justify-center py-8">
+          <div className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: BRAND_LIGHT, borderTopColor: "transparent" }} />
+        </div>
+      ) : (methods as unknown as PaymentItem[]).length === 0 ? (
+        <EmptyState icon={<Wallet className="w-8 h-8" style={{ color: theme.textFaint }} />}
+          title="No payment methods yet" subtitle="Add a wallet or bank account to receive your salary." theme={theme} />
+      ) : (
+        <div className="space-y-3">
+          {(methods as unknown as PaymentItem[]).map((m) => (
+            <div key={m.id} className="rounded-xl p-4" style={{ background: theme.surface, border: `1px solid ${m.isPreferred ? "oklch(0.32 0.18 28 / 0.5)" : theme.surfaceBorder}` }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: BRAND + "22" }}>
+                    {m.type === "wallet" ? <Wallet className="w-4 h-4" style={{ color: BRAND_LIGHT }} /> : <CreditCard className="w-4 h-4" style={{ color: BRAND_LIGHT }} />}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold" style={{ color: theme.text }}>
+                        {m.type === "wallet" ? (m.walletProvider === "vodafone_cash" ? "Vodafone Cash" : m.walletProvider === "orange_cash" ? "Orange Cash" : "Wallet") : (m.bankName ?? "Bank Account")}
+                      </p>
+                      {m.isPreferred && <span className="text-[10px] px-1.5 py-0.5 rounded font-bold" style={{ background: BRAND, color: "white" }}>Preferred</span>}
+                    </div>
+                    <p className="text-xs" style={{ color: theme.textMuted }}>
+                      {m.type === "wallet" ? m.walletPhone : (m.bankAccountOrPhone ?? "—")} · {m.type === "wallet" ? m.walletName : m.bankFullName}
+                    </p>
+                    {m.adminComment && (
+                      <p className="text-xs mt-1 italic" style={{ color: "#eab308" }}>Admin note: {m.adminComment}</p>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {!m.isPreferred && (
+                    <button onClick={() => setPreferredMutation.mutate({ id: m.id })}
+                      className="text-xs px-2 py-1 rounded-lg" style={{ background: theme.surfaceBorder, color: theme.textMuted }}>
+                      Set Preferred
+                    </button>
+                  )}
+                  <button onClick={() => { if (confirm("Remove this payment method?")) deleteMutation.mutate({ id: m.id }); }}
+                    className="text-xs px-2 py-1 rounded-lg" style={{ background: "#ef444422", color: "#ef4444" }}>
+                    Remove
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ─── Operation Plan Tab ───────────────────────────────────────────────────────
+const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+type WfAgent = {
+  id: number;
+  traineeCode: string;
+  fullName: string;
+  alias: string | null;
+  offDay1: number | null;
+  offDay2: number | null;
+  campaignId: number | null;
+};
+type ScReq = {
+  id: number;
+  requesterCode: string;
+  targetCode: string;
+  requesterNewOff1: number | null;
+  requesterNewOff2: number | null;
+  targetNewOff1: number | null;
+  targetNewOff2: number | null;
+  message: string | null;
+  status: string;
+  createdAt: Date | number;
+};
+function OperationPlanTab({ theme }: { theme: Theme }) {
+  const utils = trpc.useUtils();
+  const { data: myProfile } = trpc.workforce.getMyProfile.useQuery();
+  const campaignId = myProfile?.campaignId as number | null | undefined;
+  const myCode = myProfile?.traineeCode as string | undefined;
+  const { data: agents = [] } = trpc.workforce.getCampaignAgents.useQuery(
+    { campaignId: campaignId! },
+    { enabled: !!campaignId }
+  );
+  const { data: myRequests = [] } = trpc.scheduleChange.listMine.useQuery();
+  const createRequest = trpc.scheduleChange.request.useMutation({
+    onSuccess: () => { utils.scheduleChange.listMine.invalidate(); setShowForm(false); resetForm(); },
+  });
+  const peerApprove = trpc.scheduleChange.peerApprove.useMutation({
+    onSuccess: () => utils.scheduleChange.listMine.invalidate(),
+  });
+  const [showForm, setShowForm] = useState(false);
+  const [targetCode, setTargetCode] = useState("");
+  const [reqOff1, setReqOff1] = useState<number>(0);
+  const [reqOff2, setReqOff2] = useState<number>(1);
+  const [tgtOff1, setTgtOff1] = useState<number>(0);
+  const [tgtOff2, setTgtOff2] = useState<number>(1);
+  const [msg, setMsg] = useState("");
+  function resetForm() { setTargetCode(""); setReqOff1(0); setReqOff2(1); setTgtOff1(0); setTgtOff2(1); setMsg(""); }
+  const typedAgents = agents as unknown as WfAgent[];
+  const typedRequests = myRequests as unknown as ScReq[];
+  const pendingPeerApproval = typedRequests.filter(r => r.targetCode === myCode && r.status === "pending_peer");
+  const myOutgoing = typedRequests.filter(r => r.requesterCode === myCode);
+  if (!myProfile) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-3">
+        <Calendar className="w-10 h-10" style={{ color: theme.textFaint }} />
+        <p className="text-sm" style={{ color: theme.textMuted }}>You are not yet assigned to an operations campaign.</p>
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-8">
+      {/* Weekly Schedule Grid */}
+      <div>
+        <SectionTitle theme={theme}>Campaign Weekly Schedule</SectionTitle>
+        <p className="text-xs mb-4" style={{ color: theme.textMuted }}>
+          Green = Working day &nbsp;·&nbsp; Red = Off day &nbsp;·&nbsp; Your row is highlighted.
+        </p>
+        <div className="rounded-xl overflow-hidden" style={{ border: `1px solid ${theme.surfaceBorder}` }}>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr style={{ background: theme.surface }}>
+                  <th className="text-left px-4 py-3 font-semibold" style={{ color: theme.text, minWidth: 140 }}>Agent</th>
+                  {DAY_SHORT.map(d => (
+                    <th key={d} className="px-3 py-3 font-semibold text-center" style={{ color: theme.text, minWidth: 52 }}>{d}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {typedAgents.map((a, i) => {
+                  const isMe = a.traineeCode === myCode;
+                  return (
+                    <tr
+                      key={a.id}
+                      style={{
+                        background: isMe ? "oklch(0.32 0.18 28 / 0.12)" : i % 2 === 0 ? theme.bg : theme.surface,
+                        borderTop: `1px solid ${theme.surfaceBorder}`,
+                      }}
+                    >
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-2">
+                          {isMe && <span className="text-[10px] px-1.5 py-0.5 rounded font-bold" style={{ background: BRAND, color: "white" }}>You</span>}
+                          <span className="font-medium truncate" style={{ color: theme.text }}>{a.alias ?? a.fullName}</span>
+                        </div>
+                      </td>
+                      {[0,1,2,3,4,5,6].map(day => {
+                        const isOff = a.offDay1 === day || a.offDay2 === day;
+                        return (
+                          <td key={day} className="px-3 py-2.5 text-center">
+                            <span
+                              className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-semibold"
+                              style={{
+                                background: isOff ? "#ef444422" : "#22c55e22",
+                                color: isOff ? "#ef4444" : "#22c55e",
+                              }}
+                            >
+                              {isOff ? "Off" : "On"}
+                            </span>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      {/* Pending peer approval requests */}
+      {pendingPeerApproval.length > 0 && (
+        <div>
+          <SectionTitle theme={theme}>Pending Your Approval</SectionTitle>
+          <div className="space-y-3">
+            {pendingPeerApproval.map(r => (
+              <div key={r.id} className="rounded-xl p-4" style={{ background: theme.surface, border: `1px solid oklch(0.85 0.18 85 / 0.4)` }}>
+                <p className="text-sm font-medium mb-1" style={{ color: theme.text }}>
+                  <span style={{ color: BRAND_LIGHT }}>{r.requesterCode}</span> wants to swap schedules with you.
+                </p>
+                {r.message && <p className="text-xs mb-3 italic" style={{ color: theme.textMuted }}>"{r.message}"</p>}
+                <p className="text-xs mb-3" style={{ color: theme.textMuted }}>
+                  Their new off days: {r.requesterNewOff1 != null ? DAY_SHORT[r.requesterNewOff1] : "—"} & {r.requesterNewOff2 != null ? DAY_SHORT[r.requesterNewOff2] : "—"} &nbsp;·&nbsp;
+                  Your new off days: {r.targetNewOff1 != null ? DAY_SHORT[r.targetNewOff1] : "—"} & {r.targetNewOff2 != null ? DAY_SHORT[r.targetNewOff2] : "—"}
+                </p>
+                <div className="flex gap-2">
+                  <button onClick={() => peerApprove.mutate({ id: r.id, approve: true })}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium" style={{ background: "#22c55e22", color: "#22c55e" }}>
+                    Approve
+                  </button>
+                  <button onClick={() => peerApprove.mutate({ id: r.id, approve: false })}
+                    className="px-3 py-1.5 rounded-lg text-xs font-medium" style={{ background: "#ef444422", color: "#ef4444" }}>
+                    Decline
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {/* My outgoing requests */}
+      {myOutgoing.length > 0 && (
+        <div>
+          <SectionTitle theme={theme}>My Schedule Change Requests</SectionTitle>
+          <div className="space-y-2">
+            {myOutgoing.map(r => (
+              <div key={r.id} className="rounded-xl p-4 flex items-center justify-between" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
+                <div>
+                  <p className="text-sm font-medium" style={{ color: theme.text }}>Swap with {r.targetCode}</p>
+                  <p className="text-xs mt-0.5" style={{ color: theme.textMuted }}>
+                    New off days: {r.requesterNewOff1 != null ? DAY_SHORT[r.requesterNewOff1] : "—"} & {r.requesterNewOff2 != null ? DAY_SHORT[r.requesterNewOff2] : "—"}
+                  </p>
+                </div>
+                <span className="text-xs px-2 py-1 rounded-full font-medium capitalize" style={{
+                  background: r.status === "approved" ? "#22c55e22" : r.status === "rejected" ? "#ef444422" : "#eab30822",
+                  color: r.status === "approved" ? "#22c55e" : r.status === "rejected" ? "#ef4444" : "#eab308",
+                }}>
+                  {r.status.replace("_", " ")}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {/* Request schedule change form */}
+      <div>
+        <div className="flex items-center justify-between mb-4">
+          <SectionTitle theme={theme}>Request Schedule Change</SectionTitle>
+          <button onClick={() => setShowForm(v => !v)}
+            className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: BRAND, color: "white" }}>
+            {showForm ? "Cancel" : "+ New Request"}
+          </button>
+        </div>
+        {showForm && (
+          <div className="rounded-xl p-5 space-y-4" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
+            <p className="text-xs" style={{ color: theme.textMuted }}>
+              Select the agent you want to swap schedules with, then specify the new off days for both of you. The other agent must approve first, then the manager will review.
+            </p>
+            <div>
+              <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Agent to swap with</label>
+              <select value={targetCode} onChange={e => setTargetCode(e.target.value)}
+                className="w-full rounded-lg px-3 py-2 text-sm border" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }}>
+                <option value="">Select agent...</option>
+                {typedAgents.filter(a => a.traineeCode !== myCode).map(a => (
+                  <option key={a.traineeCode} value={a.traineeCode}>{a.alias ?? a.fullName} ({a.traineeCode})</option>
+                ))}
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Your new off day 1</label>
+                <select value={reqOff1} onChange={e => setReqOff1(Number(e.target.value))}
+                  className="w-full rounded-lg px-3 py-2 text-sm border" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }}>
+                  {DAY_SHORT.map((d, i) => <option key={d} value={i}>{d}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Your new off day 2</label>
+                <select value={reqOff2} onChange={e => setReqOff2(Number(e.target.value))}
+                  className="w-full rounded-lg px-3 py-2 text-sm border" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }}>
+                  {DAY_SHORT.map((d, i) => <option key={d} value={i}>{d}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Their new off day 1</label>
+                <select value={tgtOff1} onChange={e => setTgtOff1(Number(e.target.value))}
+                  className="w-full rounded-lg px-3 py-2 text-sm border" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }}>
+                  {DAY_SHORT.map((d, i) => <option key={d} value={i}>{d}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Their new off day 2</label>
+                <select value={tgtOff2} onChange={e => setTgtOff2(Number(e.target.value))}
+                  className="w-full rounded-lg px-3 py-2 text-sm border" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }}>
+                  {DAY_SHORT.map((d, i) => <option key={d} value={i}>{d}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Message (optional)</label>
+              <textarea value={msg} onChange={e => setMsg(e.target.value)} rows={2} placeholder="Reason for schedule change..."
+                className="w-full rounded-lg px-3 py-2 text-sm border resize-none" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }} />
+            </div>
+            <button
+              onClick={() => createRequest.mutate({ targetCode, requesterNewOff1: reqOff1, requesterNewOff2: reqOff2, targetNewOff1: tgtOff1, targetNewOff2: tgtOff2, message: msg || undefined })}
+              disabled={!targetCode || createRequest.isPending}
+              className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
+              style={{ background: BRAND, color: "white" }}
+            >
+              {createRequest.isPending ? "Submitting..." : "Submit Request"}
+            </button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

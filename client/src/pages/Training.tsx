@@ -126,10 +126,25 @@ export default function Training() {
   const toggleSlackJoined = trpc.batches.toggleSlackJoined.useMutation({
     onSuccess: (_data, vars) => {
       utils.batches.listCandidates.invalidate({ batchId: selectedBatchId! });
-      toast.success(vars.value ? "Marked as Slack joined" : "Marked as not joined");
+      toast.success(vars.value ? "Mock call passed" : "Mock call pending");
     },
     onError: (e) => toast.error(e.message),
   });
+
+  // Transfer to Operations
+  const [transferDialogOpen, setTransferDialogOpen] = useState(false);
+  const [transferCandidate, setTransferCandidate] = useState<BatchCandidate | null>(null);
+  const [transferForm, setTransferForm] = useState({ alias: "", campaignId: "", shiftHours: "", teamLeader: "", offDay1: "", offDay2: "" });
+  const { data: campaigns = [] } = trpc.campaigns.list.useQuery();
+  const createWorkforce = trpc.workforce.create.useMutation({
+    onSuccess: () => {
+      toast.success("Agent transferred to Operations");
+      setTransferDialogOpen(false);
+      setTransferCandidate(null);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
   // Dialog state
   const [createOpen, setCreateOpen] = useState(false);
@@ -247,7 +262,7 @@ export default function Training() {
                   <th className="text-left px-4 py-3 font-medium text-muted-foreground">
                     <span className="flex items-center gap-1.5"><Hash className="h-3.5 w-3.5" /> Trainee Code</span>
                   </th>
-                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Slack</th>
+                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Mock Call</th>
                   <th className="px-4 py-3 w-10"></th>
                 </tr>
               </thead>
@@ -315,17 +330,33 @@ export default function Training() {
                             if (!selectedBatchId) return;
                             toggleSlackJoined.mutate({ batchId: selectedBatchId, candidateId: c.id, value: val });
                           }}
-                          className="data-[state=checked]:bg-[#4A154B]"
+                          className="data-[state=checked]:bg-emerald-600"
                         />
                         <span className={`text-xs font-medium ${
-                          c.slackJoined ? "text-[#4A154B]" : "text-muted-foreground"
+                          c.slackJoined ? "text-emerald-600" : "text-muted-foreground"
                         }`}>
-                          {c.slackJoined ? "Joined" : "Pending"}
+                          {c.slackJoined ? "Passed" : "Pending"}
                         </span>
                       </div>
                     </td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex items-center justify-end gap-1">
+                        {c.slackJoined && c.traineeCode && (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 px-2 text-xs text-emerald-700 hover:text-emerald-800 hover:bg-emerald-50 gap-1"
+                            onClick={() => {
+                              setTransferCandidate(c);
+                              setTransferForm({ alias: "", campaignId: "", shiftHours: "", teamLeader: "", offDay1: "", offDay2: "" });
+                              setTransferDialogOpen(true);
+                            }}
+                            title="Transfer to Operations"
+                          >
+                            <UserPlus className="h-3.5 w-3.5" />
+                            <span>Operations</span>
+                          </Button>
+                        )}
                         <Button
                           variant="ghost"
                           size="sm"
@@ -448,6 +479,79 @@ export default function Training() {
                 >
                   <Copy className="h-4 w-4" /> Copy Credentials
                 </Button>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
+        {/* Transfer to Operations Dialog */}
+        <Dialog open={transferDialogOpen} onOpenChange={(o) => { setTransferDialogOpen(o); if (!o) setTransferCandidate(null); }}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2"><UserPlus className="h-5 w-5 text-emerald-600" /> Transfer to Operations</DialogTitle>
+            </DialogHeader>
+            {transferCandidate && (
+              <div className="space-y-4">
+                <p className="text-sm text-muted-foreground">Transferring <strong>{transferCandidate.name}</strong> ({transferCandidate.traineeCode}) to the Operations workforce.</p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">English Alias</label>
+                    <Input placeholder="e.g. Jordan" value={transferForm.alias} onChange={e => setTransferForm(f => ({ ...f, alias: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Campaign</label>
+                    <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={transferForm.campaignId} onChange={e => setTransferForm(f => ({ ...f, campaignId: e.target.value }))}>
+                      <option value="">Select campaign...</option>
+                      {(campaigns as Array<{id:number;name:string}>).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Shift Hours</label>
+                    <Input placeholder="e.g. 9AM–5PM" value={transferForm.shiftHours} onChange={e => setTransferForm(f => ({ ...f, shiftHours: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Team Leader</label>
+                    <Input placeholder="Team leader name" value={transferForm.teamLeader} onChange={e => setTransferForm(f => ({ ...f, teamLeader: e.target.value }))} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Off Day 1</label>
+                    <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={transferForm.offDay1} onChange={e => setTransferForm(f => ({ ...f, offDay1: e.target.value }))}>
+                      <option value="">Select day...</option>
+                      {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">Off Day 2</label>
+                    <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={transferForm.offDay2} onChange={e => setTransferForm(f => ({ ...f, offDay2: e.target.value }))}>
+                      <option value="">Select day...</option>
+                      {DAY_NAMES.map((d, i) => <option key={i} value={i}>{d}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 pt-2">
+                  <Button variant="outline" onClick={() => setTransferDialogOpen(false)}>Cancel</Button>
+                  <Button
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1.5"
+                    disabled={createWorkforce.isPending}
+                    onClick={() => {
+                      if (!transferCandidate?.traineeCode) { toast.error("Trainee code required"); return; }
+                      createWorkforce.mutate({
+                        traineeCode: transferCandidate.traineeCode!,
+                        candidateId: transferCandidate.id,
+                        fullName: transferCandidate.name,
+                        alias: transferForm.alias || undefined,
+                        campaignId: transferForm.campaignId ? Number(transferForm.campaignId) : undefined,
+                        shiftHours: transferForm.shiftHours || undefined,
+                        teamLeader: transferForm.teamLeader || undefined,
+                        offDay1: transferForm.offDay1 !== "" ? Number(transferForm.offDay1) : undefined,
+                        offDay2: transferForm.offDay2 !== "" ? Number(transferForm.offDay2) : undefined,
+                        joinDate: Date.now(),
+                      });
+                    }}
+                  >
+                    <UserPlus className="h-4 w-4" /> Transfer
+                  </Button>
+                </div>
               </div>
             )}
           </DialogContent>

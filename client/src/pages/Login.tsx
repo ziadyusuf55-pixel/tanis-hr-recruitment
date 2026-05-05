@@ -73,12 +73,13 @@ export default function Login() {
   async function handleAgentLogin(e: React.FormEvent) {
     e.preventDefault();
     if (!traineeCode.trim() || !password.trim()) {
-      toast.error("Please enter your Trainee ID and password.");
+      toast.error("Please enter your Agent ID and password.");
       return;
     }
     setAgentLoading(true);
     try {
-      await agentLoginMutation.mutateAsync({ traineeCode: traineeCode.trim(), password });
+      const fullCode = `T-${traineeCode.trim()}`;
+      await agentLoginMutation.mutateAsync({ traineeCode: fullCode, password });
       navigate("/agent");
     } catch {
       toast.error("Invalid Trainee ID or password. Please try again.");
@@ -320,21 +321,17 @@ export default function Login() {
             <form onSubmit={handleAgentLogin} className="space-y-4">
               <div className="space-y-1.5">
                 <Label htmlFor="traineeCode" className="text-sm font-medium text-foreground">
-                  Trainee ID
+                  Agent ID
                 </Label>
-                <div className="relative">
-                  <div className="absolute left-3.5 top-1/2 -translate-y-1/2 text-muted-foreground">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect width="20" height="14" x="2" y="5" rx="2"/><path d="M2 10h20"/>
-                    </svg>
-                  </div>
+                <div className="relative flex items-center">
+                  <span className="absolute left-3.5 text-sm font-bold select-none pointer-events-none z-10" style={{ color: "oklch(0.28 0.18 28)" }}>T-</span>
                   <Input
                     id="traineeCode"
-                    placeholder="e.g. TN-0042"
+                    placeholder="001"
                     value={traineeCode}
-                    onChange={(e) => setTraineeCode(e.target.value)}
+                    onChange={(e) => setTraineeCode(e.target.value.replace(/^T-/i, ""))}
                     autoComplete="username"
-                    className="pl-10 h-11 rounded-xl border-border focus:border-[oklch(0.28_0.18_28)] focus:ring-[oklch(0.28_0.18_28)]"
+                    className="pl-9 h-11 rounded-xl border-border focus:border-[oklch(0.28_0.18_28)] focus:ring-[oklch(0.28_0.18_28)]"
                   />
                 </div>
               </div>

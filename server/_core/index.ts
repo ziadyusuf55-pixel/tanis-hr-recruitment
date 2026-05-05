@@ -128,6 +128,38 @@ async function startServer() {
     }
   });
 
+  // File upload endpoint for agent documents
+  app.post("/api/upload-doc", async (req, res) => {
+    try {
+      const busboy = (await import("busboy")).default;
+      const bb = busboy({ headers: req.headers, limits: { fileSize: 16 * 1024 * 1024 } });
+      const chunks: Buffer[] = [];
+      let mimeType = "application/octet-stream";
+      let fileName = "upload";
+      bb.on("file", (_field: string, file: NodeJS.ReadableStream, info: { filename: string; mimeType: string }) => {
+        mimeType = info.mimeType;
+        fileName = info.filename || "upload";
+        file.on("data", (chunk: Buffer) => chunks.push(chunk));
+      });
+      bb.on("finish", async () => {
+        try {
+          const { storagePut } = await import("../storage");
+          const buf = Buffer.concat(chunks);
+          const ext = fileName.split(".").pop() ?? "bin";
+          const key = `agent-docs/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+          const { url } = await storagePut(key, buf, mimeType);
+          res.json({ url, key });
+        } catch (err) {
+          res.status(500).json({ error: String(err) });
+        }
+      });
+      bb.on("error", (err: Error) => res.status(500).json({ error: String(err) }));
+      req.pipe(bb);
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",

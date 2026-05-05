@@ -1027,3 +1027,328 @@ export async function countUnreadNotifications(candidateId: number): Promise<num
     .where(and(eq(agentNotifications.candidateId, candidateId), eq(agentNotifications.isRead, false)));
   return rows.length;
 }
+
+
+// ─── Campaigns ────────────────────────────────────────────────────────────────
+
+export async function listCampaigns() {
+  const db = await getDb();
+  if (!db) return [];
+  const { campaigns } = await import("../drizzle/schema");
+  return db.select().from(campaigns).orderBy(campaigns.name);
+}
+
+export async function getCampaignById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const { campaigns } = await import("../drizzle/schema");
+  const rows = await db.select().from(campaigns).where(eq(campaigns.id, id)).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function createCampaign(data: { name: string; minHeadcount: number; workDays: "all" | "weekdays"; notes?: string }) {
+  const db = await getDb();
+  if (!db) return;
+  const { campaigns } = await import("../drizzle/schema");
+  await db.insert(campaigns).values(data);
+}
+
+export async function updateCampaign(id: number, data: Partial<{ name: string; minHeadcount: number; workDays: "all" | "weekdays"; notes: string }>) {
+  const db = await getDb();
+  if (!db) return;
+  const { campaigns } = await import("../drizzle/schema");
+  await db.update(campaigns).set(data).where(eq(campaigns.id, id));
+}
+
+export async function deleteCampaign(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  const { campaigns } = await import("../drizzle/schema");
+  await db.delete(campaigns).where(eq(campaigns.id, id));
+}
+
+// ─── Workforce Agents ─────────────────────────────────────────────────────────
+
+export async function listWorkforceAgents(campaignId?: number) {
+  const db = await getDb();
+  if (!db) return [];
+  const { workforceAgents, campaigns } = await import("../drizzle/schema");
+  const base = db.select({
+    id: workforceAgents.id,
+    traineeCode: workforceAgents.traineeCode,
+    candidateId: workforceAgents.candidateId,
+    campaignId: workforceAgents.campaignId,
+    campaignName: campaigns.name,
+    fullName: workforceAgents.fullName,
+    alias: workforceAgents.alias,
+    email: workforceAgents.email,
+    phone: workforceAgents.phone,
+    shiftHours: workforceAgents.shiftHours,
+    teamLeader: workforceAgents.teamLeader,
+    offDay1: workforceAgents.offDay1,
+    offDay2: workforceAgents.offDay2,
+    joinDate: workforceAgents.joinDate,
+    isActive: workforceAgents.isActive,
+    createdAt: workforceAgents.createdAt,
+  }).from(workforceAgents)
+    .leftJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
+    .orderBy(workforceAgents.fullName);
+  if (campaignId) {
+    return base.where(eq(workforceAgents.campaignId, campaignId));
+  }
+  return base;
+}
+
+export async function getWorkforceAgentByCode(traineeCode: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const { workforceAgents, campaigns } = await import("../drizzle/schema");
+  const rows = await db.select({
+    id: workforceAgents.id,
+    traineeCode: workforceAgents.traineeCode,
+    candidateId: workforceAgents.candidateId,
+    campaignId: workforceAgents.campaignId,
+    campaignName: campaigns.name,
+    campaignMinHeadcount: campaigns.minHeadcount,
+    campaignWorkDays: campaigns.workDays,
+    fullName: workforceAgents.fullName,
+    alias: workforceAgents.alias,
+    email: workforceAgents.email,
+    phone: workforceAgents.phone,
+    shiftHours: workforceAgents.shiftHours,
+    teamLeader: workforceAgents.teamLeader,
+    offDay1: workforceAgents.offDay1,
+    offDay2: workforceAgents.offDay2,
+    joinDate: workforceAgents.joinDate,
+    isActive: workforceAgents.isActive,
+  }).from(workforceAgents)
+    .leftJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
+    .where(eq(workforceAgents.traineeCode, traineeCode))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function createWorkforceAgent(data: {
+  traineeCode: string; candidateId: number; fullName: string;
+  alias?: string; email?: string; phone?: string; campaignId?: number;
+  shiftHours?: string; teamLeader?: string; offDay1?: number; offDay2?: number; joinDate?: number;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  const { workforceAgents } = await import("../drizzle/schema");
+  await db.insert(workforceAgents).values(data);
+}
+
+export async function updateWorkforceAgent(traineeCode: string, data: Partial<{
+  fullName: string; alias: string; email: string; phone: string; campaignId: number;
+  shiftHours: string; teamLeader: string; offDay1: number; offDay2: number; joinDate: number; isActive: boolean;
+}>) {
+  const db = await getDb();
+  if (!db) return;
+  const { workforceAgents } = await import("../drizzle/schema");
+  await db.update(workforceAgents).set(data).where(eq(workforceAgents.traineeCode, traineeCode));
+}
+
+// ─── Agent Payment Methods ────────────────────────────────────────────────────
+
+export async function getPaymentMethodsByCode(traineeCode: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { agentPaymentMethods } = await import("../drizzle/schema");
+  return db.select().from(agentPaymentMethods)
+    .where(eq(agentPaymentMethods.traineeCode, traineeCode))
+    .orderBy(desc(agentPaymentMethods.isPreferred), agentPaymentMethods.createdAt);
+}
+
+export async function listAllPaymentMethods() {
+  const db = await getDb();
+  if (!db) return [];
+  const { agentPaymentMethods } = await import("../drizzle/schema");
+  return db.select().from(agentPaymentMethods).orderBy(agentPaymentMethods.traineeCode);
+}
+
+export async function upsertPaymentMethod(data: {
+  id?: number; traineeCode: string; type: "wallet" | "bank";
+  walletProvider?: "vodafone_cash" | "orange_cash"; walletPhone?: string; walletName?: string;
+  bankName?: string; bankAccountOrPhone?: string; bankFullName?: string; isPreferred?: boolean;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  const { agentPaymentMethods } = await import("../drizzle/schema");
+  if (data.id) {
+    const { id, ...rest } = data;
+    await db.update(agentPaymentMethods).set(rest).where(eq(agentPaymentMethods.id, id));
+  } else {
+    await db.insert(agentPaymentMethods).values(data);
+  }
+}
+
+export async function setPaymentMethodPreferred(id: number, traineeCode: string) {
+  const db = await getDb();
+  if (!db) return;
+  const { agentPaymentMethods } = await import("../drizzle/schema");
+  // Unset all preferred for this agent, then set the chosen one
+  await db.update(agentPaymentMethods).set({ isPreferred: false })
+    .where(eq(agentPaymentMethods.traineeCode, traineeCode));
+  await db.update(agentPaymentMethods).set({ isPreferred: true })
+    .where(eq(agentPaymentMethods.id, id));
+}
+
+export async function addPaymentMethodComment(id: number, comment: string) {
+  const db = await getDb();
+  if (!db) return;
+  const { agentPaymentMethods } = await import("../drizzle/schema");
+  await db.update(agentPaymentMethods).set({ adminComment: comment }).where(eq(agentPaymentMethods.id, id));
+}
+
+export async function deletePaymentMethod(id: number) {
+  const db = await getDb();
+  if (!db) return;
+  const { agentPaymentMethods } = await import("../drizzle/schema");
+  await db.delete(agentPaymentMethods).where(eq(agentPaymentMethods.id, id));
+}
+
+// ─── Agent Documents ──────────────────────────────────────────────────────────
+
+export async function getDocumentsByCode(traineeCode: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { agentDocuments } = await import("../drizzle/schema");
+  return db.select().from(agentDocuments)
+    .where(eq(agentDocuments.traineeCode, traineeCode))
+    .orderBy(agentDocuments.docType);
+}
+
+export async function listAllDocuments() {
+  const db = await getDb();
+  if (!db) return [];
+  const { agentDocuments } = await import("../drizzle/schema");
+  return db.select().from(agentDocuments).orderBy(agentDocuments.traineeCode, agentDocuments.docType);
+}
+
+export async function upsertAgentDocument(data: {
+  id?: number; traineeCode: string; docType: string; fileUrl: string; fileName?: string;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  const { agentDocuments } = await import("../drizzle/schema");
+  if (data.id) {
+    await db.update(agentDocuments).set({ fileUrl: data.fileUrl, fileName: data.fileName ?? null, status: "pending", adminComment: null })
+      .where(eq(agentDocuments.id, data.id));
+  } else {
+    await db.insert(agentDocuments).values({ ...data, status: "pending" });
+  }
+}
+
+export async function reviewAgentDocument(id: number, status: "approved" | "rejected", adminComment?: string) {
+  const db = await getDb();
+  if (!db) return;
+  const { agentDocuments } = await import("../drizzle/schema");
+  await db.update(agentDocuments).set({ status, adminComment: adminComment ?? null }).where(eq(agentDocuments.id, id));
+}
+
+// ─── Schedule Change Requests ─────────────────────────────────────────────────
+
+export async function createScheduleChangeRequest(data: {
+  requesterCode: string; targetCode: string;
+  requesterNewOff1?: number; requesterNewOff2?: number;
+  targetNewOff1?: number; targetNewOff2?: number; message?: string;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  const { scheduleChangeRequests } = await import("../drizzle/schema");
+  await db.insert(scheduleChangeRequests).values({ ...data, status: "pending_peer" });
+}
+
+export async function listScheduleChangeRequestsByCode(traineeCode: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { scheduleChangeRequests } = await import("../drizzle/schema");
+  return db.select().from(scheduleChangeRequests)
+    .where(sql`${scheduleChangeRequests.requesterCode} = ${traineeCode} OR ${scheduleChangeRequests.targetCode} = ${traineeCode}`)
+    .orderBy(desc(scheduleChangeRequests.createdAt));
+}
+
+export async function listAllScheduleChangeRequests() {
+  const db = await getDb();
+  if (!db) return [];
+  const { scheduleChangeRequests } = await import("../drizzle/schema");
+  return db.select().from(scheduleChangeRequests).orderBy(desc(scheduleChangeRequests.createdAt));
+}
+
+export async function updateScheduleChangeRequest(id: number, data: Partial<{
+  status: "pending_peer" | "pending_manager" | "approved" | "rejected";
+  peerApprovedAt: number; managerApprovedAt: number; managerComment: string;
+}>) {
+  const db = await getDb();
+  if (!db) return;
+  const { scheduleChangeRequests } = await import("../drizzle/schema");
+  await db.update(scheduleChangeRequests).set(data).where(eq(scheduleChangeRequests.id, id));
+}
+
+// ─── Overtime Availability ────────────────────────────────────────────────────
+
+export async function upsertOvertimeAvailability(data: {
+  traineeCode: string; campaignId: number; date: string; status: "available" | "unavailable";
+}) {
+  const db = await getDb();
+  if (!db) return;
+  const { overtimeAvailability } = await import("../drizzle/schema");
+  // Delete existing entry for same agent+date, then insert
+  await db.delete(overtimeAvailability)
+    .where(and(eq(overtimeAvailability.traineeCode, data.traineeCode), eq(overtimeAvailability.date, data.date)));
+  await db.insert(overtimeAvailability).values(data);
+}
+
+export async function getOvertimeAvailabilityForDate(campaignId: number, date: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { overtimeAvailability } = await import("../drizzle/schema");
+  return db.select().from(overtimeAvailability)
+    .where(and(eq(overtimeAvailability.campaignId, campaignId), eq(overtimeAvailability.date, date)));
+}
+
+// ─── Headcount Forecast ───────────────────────────────────────────────────────
+// Returns projected logged-in count for each day in the next 30 days for a campaign.
+// Logic: total active agents - agents with approved leave/sick_note/day_off on that date.
+
+export async function getHeadcountForecast(campaignId: number, days = 30) {
+  const db = await getDb();
+  if (!db) return [];
+  const { workforceAgents, agentRequests } = await import("../drizzle/schema");
+
+  // Get all active agents in this campaign
+  const agents = await db.select({
+    traineeCode: workforceAgents.traineeCode,
+    offDay1: workforceAgents.offDay1,
+    offDay2: workforceAgents.offDay2,
+  }).from(workforceAgents)
+    .where(and(eq(workforceAgents.campaignId, campaignId), eq(workforceAgents.isActive, true)));
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const forecast: { date: string; dayOfWeek: number; scheduled: number; approvedLeaves: number; projected: number }[] = [];
+
+  for (let i = 0; i < days; i++) {
+    const d = new Date(today);
+    d.setDate(today.getDate() + i);
+    const dow = d.getDay(); // 0=Sun, 6=Sat
+    const dateStr = d.toISOString().slice(0, 10);
+
+    // Agents scheduled to work this day (not their fixed off day)
+    const scheduled = agents.filter(a => a.offDay1 !== dow && a.offDay2 !== dow).length;
+
+    // Count approved leave/sick_note/day_off requests for this date
+    const approvedRequests = await db.select({ id: agentRequests.id })
+      .from(agentRequests)
+      .where(and(
+        eq(agentRequests.status, "resolved"),
+        sql`${agentRequests.requestedDates} LIKE ${`%${dateStr}%`}`
+      ));
+
+    const approvedLeaves = approvedRequests.length;
+    forecast.push({ date: dateStr, dayOfWeek: dow, scheduled, approvedLeaves, projected: Math.max(0, scheduled - approvedLeaves) });
+  }
+  return forecast;
+}

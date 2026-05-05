@@ -23,7 +23,7 @@ import {
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
 import { trpc } from "@/lib/trpc";
-import { LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings } from "lucide-react";
+import { LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings, Briefcase } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
@@ -33,6 +33,7 @@ const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/" },
   { icon: Users, label: "Candidates", path: "/candidates" },
   { icon: GraduationCap, label: "Training", path: "/training" },
+  { icon: Briefcase, label: "Operations", path: "/operations" },
   { icon: Inbox, label: "Requests", path: "/requests" },
   { icon: Settings, label: "Settings", path: "/settings" },
 ];

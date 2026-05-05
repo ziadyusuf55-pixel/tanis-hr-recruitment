@@ -354,3 +354,126 @@ export const agentNotifications = mysqlTable("agent_notifications", {
 });
 export type AgentNotification = typeof agentNotifications.$inferSelect;
 export type InsertAgentNotification = typeof agentNotifications.$inferInsert;
+
+/**
+ * Campaigns — operational client campaigns that workforce agents are assigned to.
+ * minHeadcount is the minimum number of agents that must be logged in daily.
+ * workDays: 'all' = 7 days, 'weekdays' = Mon-Fri only.
+ */
+export const campaigns = mysqlTable("campaigns", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  minHeadcount: int("minHeadcount").notNull().default(1),
+  workDays: mysqlEnum("workDays", ["all", "weekdays"]).default("all").notNull(),
+  notes: text("notes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type Campaign = typeof campaigns.$inferSelect;
+export type InsertCampaign = typeof campaigns.$inferInsert;
+
+/**
+ * Workforce agents — agents who have passed mock call and joined operations.
+ * Separate from training; linked to a candidate record by traineeCode.
+ * offDay1 / offDay2: day-of-week numbers (0=Sunday, 1=Monday, ... 6=Saturday).
+ */
+export const workforceAgents = mysqlTable("workforce_agents", {
+  id: int("id").autoincrement().primaryKey(),
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull().unique(),
+  candidateId: int("candidateId").notNull(),
+  campaignId: int("campaignId"),
+  fullName: varchar("fullName", { length: 255 }).notNull(),
+  alias: varchar("alias", { length: 100 }),           // English alias used on campaign
+  email: varchar("email", { length: 320 }),
+  phone: varchar("phone", { length: 64 }),
+  shiftHours: varchar("shiftHours", { length: 100 }), // e.g. "9:00 AM - 5:00 PM"
+  teamLeader: varchar("teamLeader", { length: 255 }),
+  offDay1: int("offDay1"),                             // 0-6 (Sun-Sat)
+  offDay2: int("offDay2"),                             // 0-6 (Sun-Sat)
+  joinDate: bigint("joinDate", { mode: "number" }),   // UTC ms — date joined operations
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type WorkforceAgent = typeof workforceAgents.$inferSelect;
+export type InsertWorkforceAgent = typeof workforceAgents.$inferInsert;
+
+/**
+ * Agent payment methods — wallet or bank account for salary disbursement.
+ * Agents add/edit; admin can add comments (e.g. "name mismatch").
+ */
+export const agentPaymentMethods = mysqlTable("agent_payment_methods", {
+  id: int("id").autoincrement().primaryKey(),
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
+  type: mysqlEnum("type", ["wallet", "bank"]).notNull(),
+  // Wallet fields
+  walletProvider: mysqlEnum("walletProvider", ["vodafone_cash", "orange_cash"]),
+  walletPhone: varchar("walletPhone", { length: 20 }),
+  walletName: varchar("walletName", { length: 255 }),
+  // Bank fields
+  bankName: varchar("bankName", { length: 255 }),
+  bankAccountOrPhone: varchar("bankAccountOrPhone", { length: 100 }),
+  bankFullName: varchar("bankFullName", { length: 255 }),
+  isPreferred: boolean("isPreferred").default(false).notNull(),
+  adminComment: text("adminComment"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AgentPaymentMethod = typeof agentPaymentMethods.$inferSelect;
+export type InsertAgentPaymentMethod = typeof agentPaymentMethods.$inferInsert;
+
+/**
+ * Agent documents — required docs for contract (national ID, certificate, CV, etc.).
+ * Agents upload; admin reviews and sets status per document.
+ */
+export const agentDocuments = mysqlTable("agent_documents", {
+  id: int("id").autoincrement().primaryKey(),
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
+  docType: varchar("docType", { length: 100 }).notNull(), // e.g. 'national_id', 'certificate', 'cv', etc.
+  fileUrl: varchar("fileUrl", { length: 1024 }).notNull(),
+  fileName: varchar("fileName", { length: 255 }),
+  status: mysqlEnum("status", ["pending", "approved", "rejected"]).default("pending").notNull(),
+  adminComment: text("adminComment"),
+  uploadedAt: timestamp("uploadedAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type AgentDocument = typeof agentDocuments.$inferSelect;
+export type InsertAgentDocument = typeof agentDocuments.$inferInsert;
+
+/**
+ * Schedule change requests — agent requests to swap off days with another agent.
+ * Flow: agent submits → target agent approves → manager approves → off days updated.
+ */
+export const scheduleChangeRequests = mysqlTable("schedule_change_requests", {
+  id: int("id").autoincrement().primaryKey(),
+  requesterCode: varchar("requesterCode", { length: 100 }).notNull(),
+  targetCode: varchar("targetCode", { length: 100 }).notNull(),
+  // Proposed new off days for each party (0-6)
+  requesterNewOff1: int("requesterNewOff1"),
+  requesterNewOff2: int("requesterNewOff2"),
+  targetNewOff1: int("targetNewOff1"),
+  targetNewOff2: int("targetNewOff2"),
+  message: text("message"),
+  status: mysqlEnum("status", ["pending_peer", "pending_manager", "approved", "rejected"]).default("pending_peer").notNull(),
+  peerApprovedAt: bigint("peerApprovedAt", { mode: "number" }),
+  managerApprovedAt: bigint("managerApprovedAt", { mode: "number" }),
+  managerComment: text("managerComment"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type ScheduleChangeRequest = typeof scheduleChangeRequests.$inferSelect;
+export type InsertScheduleChangeRequest = typeof scheduleChangeRequests.$inferInsert;
+
+/**
+ * Overtime availability — agents respond to overtime alerts for specific dates.
+ */
+export const overtimeAvailability = mysqlTable("overtime_availability", {
+  id: int("id").autoincrement().primaryKey(),
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
+  campaignId: int("campaignId").notNull(),
+  date: varchar("date", { length: 10 }).notNull(), // format: "2025-06-15" (YYYY-MM-DD)
+  status: mysqlEnum("status", ["available", "unavailable"]).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type OvertimeAvailability = typeof overtimeAvailability.$inferSelect;
+export type InsertOvertimeAvailability = typeof overtimeAvailability.$inferInsert;

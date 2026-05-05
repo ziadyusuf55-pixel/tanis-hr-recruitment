@@ -378,3 +378,57 @@
 - [x] Frontend: No Answer column now appears in board; button shows on whatsapp_sent cards; back button on no_answer cards
 - [x] Frontend: Skip to Interview shortcut also available from no_answer stage
 - [x] 40/40 tests still passing
+
+## Round 33 — Workforce Operations Module (COMPLETED)
+
+### DB Schema
+- [x] Add `campaigns` table (id, name, minHeadcount, workDays: all/weekdays)
+- [x] Add `workforce_agents` table (id, traineeCode, fullName, alias, email, phone, campaignId, joinDate, shiftHours, teamLeader, offDay1, offDay2, preferredPaymentMethod)
+- [x] Add `agent_payment_methods` table (id, agentCode, type: wallet/bank, walletProvider, walletPhone, walletName, bankName, bankAccountOrPhone, bankFullName, isPreferred, adminComment)
+- [x] Add `agent_documents` table (id, agentCode, docType, fileUrl, status: pending/approved/rejected, adminComment, uploadedAt)
+- [x] Add `schedule_change_requests` table (id, requesterCode, targetCode, requesterNewOff1/2, targetNewOff1/2, status, peerApprovedAt, managerComment)
+- [x] Add `overtime_availability` table (id, agentCode, date, status: available/unavailable)
+- [x] Run migration SQL for all new tables
+
+### Backend Routers
+- [x] `workforce.list` — admin lists all ops agents
+- [x] `workforce.create` — admin adds agent to operations
+- [x] `workforce.update` — admin edits agent fields
+- [x] `workforce.getMyProfile` — agent reads own ops profile
+- [x] `campaigns.list/create/update` — manage campaigns
+- [x] `campaigns.headcountForecast` — projected daily count per campaign for next 30 days
+- [x] `campaigns.sendOvertimeAlert` — send bell notification to all campaign agents off that day
+- [x] `paymentMethods.upsert` — agent adds/edits payment method
+- [x] `paymentMethods.listMine` — agent lists own payment methods
+- [x] `paymentMethods.listAll` — admin sees all
+- [x] `paymentMethods.addComment` — admin comments on a payment method
+- [x] `documents.upload` — agent uploads doc to S3
+- [x] `documents.listMine` — agent sees own docs
+- [x] `documents.listAll` — admin sees all
+- [x] `documents.review` — admin sets status + comment
+- [x] `scheduleChange.request` — agent submits swap request
+- [x] `scheduleChange.peerApprove` — target agent approves/rejects
+- [x] `scheduleChange.managerApprove` — admin approves/rejects, updates off days
+- [x] `scheduleChange.listMine` — agent sees own requests
+- [x] `scheduleChange.listAll` — admin sees all
+
+### Admin UI
+- [x] Training tab: remove Slack invitation button, convert to list view (name, batch, mock status, quick-edit), remove Trainee ID column
+- [x] Add Operations tab in admin sidebar
+- [x] Operations: agent list view (name, ID, campaign, shift, team leader, off days, Teams button)
+- [x] Operations: add/edit agent dialog (all fields including campaign, shift, off days, team leader)
+- [x] Operations: Campaign management section (create/edit campaigns, set min headcount, work days)
+- [x] Operations: Headcount forecast view — weekly/monthly calendar per campaign, red days = below minimum
+- [x] Operations: "Send Overtime Alert" button on below-minimum days
+- [x] Operations: Documents review panel per agent (doc list, status badges, comment input)
+- [x] Operations: Payment methods review panel (see all methods, add admin comments)
+
+### Agent Portal
+- [x] Fix login: show "T-" as fixed prefix, agent types only number (e.g. 001 → T-001)
+- [x] Dashboard: show campaign, join date, agent ID, off days, shift hours, team leader, alias, credentials
+- [x] Remove Training Batch / Trainee ID labels (replaced by ops fields)
+- [x] Payment method section: add wallet (Vodafone Cash/Orange Cash + phone + name) or bank (Egypt banks list + account/phone + full name), mark preferred, see admin comments
+- [x] Documents section: upload required docs with Arabic instructions, see per-doc status + admin comment
+- [x] Operation plan view: read-only schedule showing campaign weekly grid
+- [x] Schedule change request: pick target agent, choose new off days for both, submit → peer approval → manager approval
+- [x] Overtime availability: agent sees overtime notification and clicks Available/Not Available

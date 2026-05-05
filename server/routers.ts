@@ -83,6 +83,38 @@ import {
   getNotificationsByCandidate,
   markNotificationsRead,
   countUnreadNotifications,
+  // Campaigns
+  listCampaigns,
+  getCampaignById,
+  createCampaign,
+  updateCampaign,
+  deleteCampaign,
+  // Workforce agents
+  listWorkforceAgents,
+  getWorkforceAgentByCode,
+  createWorkforceAgent,
+  updateWorkforceAgent,
+  // Payment methods
+  getPaymentMethodsByCode,
+  listAllPaymentMethods,
+  upsertPaymentMethod,
+  setPaymentMethodPreferred,
+  addPaymentMethodComment,
+  deletePaymentMethod,
+  // Documents
+  getDocumentsByCode,
+  listAllDocuments,
+  upsertAgentDocument,
+  reviewAgentDocument,
+  // Schedule change requests
+  createScheduleChangeRequest,
+  listScheduleChangeRequestsByCode,
+  listAllScheduleChangeRequests,
+  updateScheduleChangeRequest,
+  // Overtime
+  upsertOvertimeAvailability,
+  getOvertimeAvailabilityForDate,
+  getHeadcountForecast,
 } from "./db";
 import { notifyOwner } from "./_core/notification";
 import { sendInterviewNotification } from "./email";
@@ -982,6 +1014,327 @@ const notificationsRouter = router({
     .mutation(({ input }) => markNotificationsRead(input.candidateId)),
 });
 
+// ─── Campaigns Router ────────────────────────────────────────────────────────
+const campaignsRouter = router({
+  list: publicProcedure.query(() => listCampaigns()),
+
+  getById: publicProcedure
+    .input(z.object({ id: z.number() }))
+    .query(({ input }) => getCampaignById(input.id)),
+
+  create: protectedProcedure
+    .input(z.object({
+      name: z.string().min(1),
+      minHeadcount: z.number().int().min(1),
+      workDays: z.enum(["all", "weekdays"]),
+      notes: z.string().optional(),
+    }))
+    .mutation(({ input }) => createCampaign(input)),
+
+  update: protectedProcedure
+    .input(z.object({
+      id: z.number(),
+      name: z.string().min(1).optional(),
+      minHeadcount: z.number().int().min(1).optional(),
+      workDays: z.enum(["all", "weekdays"]).optional(),
+      notes: z.string().optional(),
+    }))
+    .mutation(({ input }) => { const { id, ...rest } = input; return updateCampaign(id, rest); }),
+
+  delete: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(({ input }) => deleteCampaign(input.id)),
+
+  headcountForecast: protectedProcedure
+    .input(z.object({ campaignId: z.number(), days: z.number().int().min(1).max(90).optional() }))
+    .query(({ input }) => getHeadcountForecast(input.campaignId, input.days ?? 30)),
+
+  sendOvertimeAlert: protectedProcedure
+    .input(z.object({ campaignId: z.number(), date: z.string(), message: z.string().optional() }))
+    .mutation(async ({ input }) => {
+      // Get all active agents in this campaign
+      const agents = await listWorkforceAgents(input.campaignId);
+      // For each agent, find their candidateId and send a notification
+      for (const agent of agents) {
+        await createAgentNotification({
+          candidateId: agent.candidateId,
+          message: input.message ?? `Overtime needed on ${input.date}. Are you available? Please respond in the portal.`,
+          type: "general",
+          relatedId: null,
+        });
+      }
+      return { sent: agents.length };
+    }),
+
+  getOvertimeResponses: protectedProcedure
+    .input(z.object({ campaignId: z.number(), date: z.string() }))
+    .query(({ input }) => getOvertimeAvailabilityForDate(input.campaignId, input.date)),
+});
+
+// ─── Workforce Router ─────────────────────────────────────────────────────────
+const workforceRouter = router({
+  list: protectedProcedure
+    .input(z.object({ campaignId: z.number().optional() }))
+    .query(({ input }) => listWorkforceAgents(input.campaignId)),
+
+  create: protectedProcedure
+    .input(z.object({
+      traineeCode: z.string().min(1),
+      candidateId: z.number(),
+      fullName: z.string().min(1),
+      alias: z.string().optional(),
+      email: z.string().email().optional(),
+      phone: z.string().optional(),
+      campaignId: z.number().optional(),
+      shiftHours: z.string().optional(),
+      teamLeader: z.string().optional(),
+      offDay1: z.number().int().min(0).max(6).optional(),
+      offDay2: z.number().int().min(0).max(6).optional(),
+      joinDate: z.number().optional(),
+    }))
+    .mutation(({ input }) => createWorkforceAgent(input)),
+
+  update: protectedProcedure
+    .input(z.object({
+      traineeCode: z.string(),
+      fullName: z.string().optional(),
+      alias: z.string().optional(),
+      email: z.string().email().optional(),
+      phone: z.string().optional(),
+      campaignId: z.number().optional(),
+      shiftHours: z.string().optional(),
+      teamLeader: z.string().optional(),
+      offDay1: z.number().int().min(0).max(6).optional(),
+      offDay2: z.number().int().min(0).max(6).optional(),
+      joinDate: z.number().optional(),
+      isActive: z.boolean().optional(),
+    }))
+    .mutation(({ input }) => { const { traineeCode, ...rest } = input; return updateWorkforceAgent(traineeCode, rest); }),
+
+  getMyProfile: publicProcedure.query(({ ctx }) => {
+    const code = getAgentCookieFromReq(ctx.req);
+    if (!code) return null;
+    return getWorkforceAgentByCode(code);
+  }),
+
+  getCampaignAgents: publicProcedure
+    .input(z.object({ campaignId: z.number() }))
+    .query(({ input }) => listWorkforceAgents(input.campaignId)),
+});
+
+// ─── Payment Methods Router ───────────────────────────────────────────────────
+const paymentMethodsRouter = router({
+  listMine: publicProcedure.query(({ ctx }) => {
+    const code = getAgentCookieFromReq(ctx.req);
+    if (!code) return [];
+    return getPaymentMethodsByCode(code);
+  }),
+
+  listAll: protectedProcedure.query(() => listAllPaymentMethods()),
+
+  upsert: publicProcedure
+    .input(z.object({
+      id: z.number().optional(),
+      type: z.enum(["wallet", "bank"]),
+      walletProvider: z.enum(["vodafone_cash", "orange_cash"]).optional(),
+      walletPhone: z.string().optional(),
+      walletName: z.string().optional(),
+      bankName: z.string().optional(),
+      bankAccountOrPhone: z.string().optional(),
+      bankFullName: z.string().optional(),
+      isPreferred: z.boolean().optional(),
+    }))
+    .mutation(({ ctx, input }) => {
+      const code = getAgentCookieFromReq(ctx.req);
+      if (!code) throw new TRPCError({ code: "UNAUTHORIZED" });
+      return upsertPaymentMethod({ ...input, traineeCode: code });
+    }),
+
+  setPreferred: publicProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(({ ctx, input }) => {
+      const code = getAgentCookieFromReq(ctx.req);
+      if (!code) throw new TRPCError({ code: "UNAUTHORIZED" });
+      return setPaymentMethodPreferred(input.id, code);
+    }),
+
+  delete: publicProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(({ ctx, input }) => {
+      const code = getAgentCookieFromReq(ctx.req);
+      if (!code) throw new TRPCError({ code: "UNAUTHORIZED" });
+      return deletePaymentMethod(input.id);
+    }),
+
+  addComment: protectedProcedure
+    .input(z.object({ id: z.number(), comment: z.string() }))
+    .mutation(({ input }) => addPaymentMethodComment(input.id, input.comment)),
+});
+
+// ─── Documents Router ─────────────────────────────────────────────────────────
+const documentsRouter = router({
+  listMine: publicProcedure.query(({ ctx }) => {
+    const code = getAgentCookieFromReq(ctx.req);
+    if (!code) return [];
+    return getDocumentsByCode(code);
+  }),
+
+  listAll: protectedProcedure.query(() => listAllDocuments()),
+
+  listByAgent: protectedProcedure
+    .input(z.object({ traineeCode: z.string() }))
+    .query(({ input }) => getDocumentsByCode(input.traineeCode)),
+
+  upload: publicProcedure
+    .input(z.object({
+      id: z.number().optional(),
+      docType: z.string().min(1),
+      fileUrl: z.string().url(),
+      fileName: z.string().optional(),
+    }))
+    .mutation(({ ctx, input }) => {
+      const code = getAgentCookieFromReq(ctx.req);
+      if (!code) throw new TRPCError({ code: "UNAUTHORIZED" });
+      return upsertAgentDocument({ ...input, traineeCode: code });
+    }),
+
+  uploadFile: publicProcedure
+    .input(z.object({
+      id: z.number().optional(),
+      docType: z.string().min(1),
+      fileBase64: z.string(),
+      fileName: z.string(),
+      mimeType: z.string().default("application/octet-stream"),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const code = getAgentCookieFromReq(ctx.req);
+      if (!code) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const { storagePut } = await import("./storage");
+      const buf = Buffer.from(input.fileBase64, "base64");
+      const ext = input.fileName.split(".").pop() ?? "bin";
+      const key = `agent-docs/${code}/${input.docType}-${Date.now()}.${ext}`;
+      const { url } = await storagePut(key, buf, input.mimeType);
+      await upsertAgentDocument({ id: input.id, traineeCode: code, docType: input.docType, fileUrl: url, fileName: input.fileName });
+      return { url };
+    }),
+
+  review: protectedProcedure
+    .input(z.object({
+      id: z.number(),
+      status: z.enum(["approved", "rejected"]),
+      adminComment: z.string().optional(),
+    }))
+    .mutation(({ input }) => reviewAgentDocument(input.id, input.status, input.adminComment)),
+});
+
+// ─── Schedule Change Router ───────────────────────────────────────────────────
+const scheduleChangeRouter = router({
+  request: publicProcedure
+    .input(z.object({
+      targetCode: z.string().min(1),
+      requesterNewOff1: z.number().int().min(0).max(6).optional(),
+      requesterNewOff2: z.number().int().min(0).max(6).optional(),
+      targetNewOff1: z.number().int().min(0).max(6).optional(),
+      targetNewOff2: z.number().int().min(0).max(6).optional(),
+      message: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const code = getAgentCookieFromReq(ctx.req);
+      if (!code) throw new TRPCError({ code: "UNAUTHORIZED" });
+      await createScheduleChangeRequest({ ...input, requesterCode: code });
+      // Notify target agent
+      const target = await getWorkforceAgentByCode(input.targetCode);
+      if (target) {
+        await createAgentNotification({
+          candidateId: target.candidateId,
+          message: `${code} has requested a schedule swap with you. Please review in the portal.`,
+          type: "general",
+          relatedId: null,
+        });
+      }
+      return { success: true };
+    }),
+
+  listMine: publicProcedure.query(({ ctx }) => {
+    const code = getAgentCookieFromReq(ctx.req);
+    if (!code) return [];
+    return listScheduleChangeRequestsByCode(code);
+  }),
+
+  listAll: protectedProcedure.query(() => listAllScheduleChangeRequests()),
+
+  peerApprove: publicProcedure
+    .input(z.object({ id: z.number(), approve: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      const code = getAgentCookieFromReq(ctx.req);
+      if (!code) throw new TRPCError({ code: "UNAUTHORIZED" });
+      if (input.approve) {
+        await updateScheduleChangeRequest(input.id, {
+          status: "pending_manager",
+          peerApprovedAt: Date.now(),
+        });
+      } else {
+        await updateScheduleChangeRequest(input.id, { status: "rejected" });
+      }
+      return { success: true };
+    }),
+
+  managerApprove: protectedProcedure
+    .input(z.object({
+      id: z.number(),
+      approve: z.boolean(),
+      managerComment: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const requests = await listAllScheduleChangeRequests();
+      const req = requests.find(r => r.id === input.id);
+      if (!req) throw new TRPCError({ code: "NOT_FOUND" });
+      if (input.approve) {
+        // Update off days for both agents
+        if (req.requesterNewOff1 !== null && req.requesterNewOff1 !== undefined) {
+          await updateWorkforceAgent(req.requesterCode, { offDay1: req.requesterNewOff1, offDay2: req.requesterNewOff2 ?? undefined });
+        }
+        if (req.targetNewOff1 !== null && req.targetNewOff1 !== undefined) {
+          await updateWorkforceAgent(req.targetCode, { offDay1: req.targetNewOff1, offDay2: req.targetNewOff2 ?? undefined });
+        }
+        await updateScheduleChangeRequest(input.id, {
+          status: "approved",
+          managerApprovedAt: Date.now(),
+          managerComment: input.managerComment,
+        });
+        // Notify both agents
+        const requester = await getWorkforceAgentByCode(req.requesterCode);
+        const target = await getWorkforceAgentByCode(req.targetCode);
+        if (requester) await createAgentNotification({ candidateId: requester.candidateId, message: "Your schedule change request has been approved.", type: "general", relatedId: input.id });
+        if (target) await createAgentNotification({ candidateId: target.candidateId, message: "A schedule change request involving you has been approved.", type: "general", relatedId: input.id });
+      } else {
+        await updateScheduleChangeRequest(input.id, { status: "rejected", managerComment: input.managerComment });
+        const requester = await getWorkforceAgentByCode(req.requesterCode);
+        if (requester) await createAgentNotification({ candidateId: requester.candidateId, message: "Your schedule change request was rejected.", type: "general", relatedId: input.id });
+      }
+      return { success: true };
+    }),
+});
+
+// ─── Overtime Router ──────────────────────────────────────────────────────────
+const overtimeRouter = router({
+  respond: publicProcedure
+    .input(z.object({
+      campaignId: z.number(),
+      date: z.string(),
+      status: z.enum(["available", "unavailable"]),
+    }))
+    .mutation(({ ctx, input }) => {
+      const code = getAgentCookieFromReq(ctx.req);
+      if (!code) throw new TRPCError({ code: "UNAUTHORIZED" });
+      return upsertOvertimeAvailability({ ...input, traineeCode: code });
+    }),
+
+  getResponses: protectedProcedure
+    .input(z.object({ campaignId: z.number(), date: z.string() }))
+    .query(({ input }) => getOvertimeAvailabilityForDate(input.campaignId, input.date)),
+});
+
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -996,6 +1349,12 @@ export const appRouter = router({
   adminAuth: adminAuthRouter,
   referrals: referralsRouter,
   notifications: notificationsRouter,
+  campaigns: campaignsRouter,
+  workforce: workforceRouter,
+  paymentMethods: paymentMethodsRouter,
+  documents: documentsRouter,
+  scheduleChange: scheduleChangeRouter,
+  overtime: overtimeRouter,
 });
 export type AppRouter = typeof appRouter;;
 
