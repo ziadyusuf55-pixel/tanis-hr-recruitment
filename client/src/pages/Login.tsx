@@ -82,8 +82,12 @@ export default function Login() {
     setAgentLoginError(null);
     try {
       const fullCode = `T-${traineeCode.trim()}`;
-      await agentLoginMutation.mutateAsync({ traineeCode: fullCode, password });
-      navigate("/agent");
+      const result = await agentLoginMutation.mutateAsync({ traineeCode: fullCode, password });
+      if (result.mustChangePassword) {
+        navigate("/agent/change-password");
+      } else {
+        navigate("/agent");
+      }
     } catch (err: unknown) {
       const msg = (err as { message?: string })?.message ?? "Invalid credentials. Please try again.";
       const locked = msg.toLowerCase().includes("locked") || msg.toLowerCase().includes("too many");
@@ -415,8 +419,8 @@ export default function Login() {
             </form>
 
             <p className="text-center text-xs text-muted-foreground mt-6 leading-relaxed">
-              Your credentials were provided by your recruiter.<br />
-              Contact HR if you need assistance.
+              Sign in with the credentials sent to you by Tanis IT department.<br />
+              Contact your team leader if you need assistance.
             </p>
           </div>
         )}

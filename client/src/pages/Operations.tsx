@@ -264,8 +264,8 @@ export default function Operations() {
 
   // Add Agent to Operations
   const [addAgentDialog, setAddAgentDialog] = useState(false);
-  type AddAgentForm = { candidateId: string; traineeCode: string; fullName: string; alias: string; campaignId: string; shiftHours: string; teamLeader: string; offDay1: string; offDay2: string; };
-  const EMPTY_ADD_FORM: AddAgentForm = { candidateId: '', traineeCode: '', fullName: '', alias: '', campaignId: '', shiftHours: '', teamLeader: '', offDay1: '', offDay2: '' };
+  type AddAgentForm = { candidateId: string; traineeCode: string; fullName: string; alias: string; campaignId: string; shiftHours: string; teamLeader: string; offDay1: string; offDay2: string; dialerCredentials: string; };
+  const EMPTY_ADD_FORM: AddAgentForm = { candidateId: '', traineeCode: '', fullName: '', alias: '', campaignId: '', shiftHours: '', teamLeader: '', offDay1: '', offDay2: '', dialerCredentials: '' };
   const [addAgentForm, setAddAgentForm] = useState<AddAgentForm>(EMPTY_ADD_FORM);
   const { data: eligibleCandidates = [] } = trpc.workforce.getEligibleCandidates.useQuery(undefined, { enabled: addAgentDialog });
   const createWorkforceAgent = trpc.workforce.create.useMutation({
@@ -953,6 +953,10 @@ export default function Operations() {
                 <Input placeholder="Team leader name" value={addAgentForm.teamLeader} onChange={e => setAddAgentForm(f => ({ ...f, teamLeader: e.target.value }))} />
               </div>
             </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Credentials</label>
+              <Input placeholder="Dialer / hub credentials" value={addAgentForm.dialerCredentials} onChange={e => setAddAgentForm(f => ({ ...f, dialerCredentials: e.target.value }))} />
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Off Day 1</label>
@@ -990,6 +994,7 @@ export default function Operations() {
                   offDay1: addAgentForm.offDay1 !== "" ? Number(addAgentForm.offDay1) : undefined,
                   offDay2: addAgentForm.offDay2 !== "" ? Number(addAgentForm.offDay2) : undefined,
                   joinDate: Date.now(),
+                  dialerCredentials: addAgentForm.dialerCredentials || undefined,
                 });
               }}
             >

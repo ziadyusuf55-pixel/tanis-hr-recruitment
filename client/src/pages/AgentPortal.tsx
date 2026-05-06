@@ -352,6 +352,7 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
     { label: "Off Day 2", value: wfProfile.offDay2 != null ? DAY_NAMES_FULL[wfProfile.offDay2 as number] : "—" },
     { label: "Phone", value: (wfProfile.phone as string | null) ?? "—" },
     { label: "Email", value: (wfProfile.email as string | null) ?? "—" },
+    { label: "Credentials", value: (wfProfile.dialerCredentials as string | null) ?? "—" },
   ] : [
     { label: "Full Name", value: agent.name },
     { label: "Agent ID", value: agent.traineeCode },
@@ -384,44 +385,7 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
           </div>
         ))}
       </div>
-      {!wfProfile && agent.batch && (
-        <>
-          <SectionTitle theme={theme}>Training Info</SectionTitle>
-          <div className="rounded-xl overflow-hidden" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
-            <div className="grid grid-cols-2 sm:grid-cols-3" style={{ borderBottom: `1px solid ${theme.surfaceBorder}` }}>
-              {[
-                { label: "Batch Name", value: agent.batch.name },
-                { label: "Trainer", value: agent.batch.trainerName ?? "—" },
-                { label: "Start Date", value: formatDate(agent.batch.startDate) },
-              ].map(({ label, value }, i) => (
-                <div key={label} className="p-4" style={i > 0 ? { borderLeft: `1px solid ${theme.surfaceBorder}` } : {}}>
-                  <p className="text-xs uppercase tracking-wider mb-1" style={{ color: theme.textFaint }}>{label}</p>
-                  <p className="font-medium text-sm" style={{ color: theme.text }}>{value}</p>
-                </div>
-              ))}
-            </div>
-            {agent.batch.totalSessions != null && Number(agent.batch.totalSessions) > 0 && (
-              <div className="px-4 py-4">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs uppercase tracking-wider" style={{ color: theme.textFaint }}>Attendance</p>
-                  <p className="text-sm font-medium" style={{ color: theme.text }}>
-                    {Number(agent.batch.attendedSessions ?? 0)} / {Number(agent.batch.totalSessions)} sessions
-                  </p>
-                </div>
-                <div className="w-full h-1.5 rounded-full" style={{ background: theme.surfaceBorder }}>
-                  <div
-                    className="h-1.5 rounded-full transition-all"
-                    style={{
-                      width: `${Math.round((Number(agent.batch.attendedSessions ?? 0) / Number(agent.batch.totalSessions)) * 100)}%`,
-                      background: BRAND_LIGHT,
-                    }}
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-        </>
-      )}
+
     </div>
   );
 }
@@ -511,18 +475,18 @@ function PayrollTab({ payroll, theme }: { payroll?: PayrollRecord[]; theme: Them
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   leave: "Leave",
+  paid_leave: "Paid Leave",
   salary: "Salary Inquiry",
   schedule: "Schedule Change",
   complaint: "General Complaint",
   resignation: "Resignation",
-  day_off: "Day Off",
+  day_off: "Unpaid Day Off",
   sick_note: "Sick Note",
   hr_letter: "HR Letter",
   other: "Other",
 };
-
-const DATE_REQUIRED_TYPES = ["leave", "day_off", "resignation"];
-const MULTI_DATE_TYPES = ["leave", "day_off"];
+const DATE_REQUIRED_TYPES = ["leave", "paid_leave", "day_off", "resignation"];
+const MULTI_DATE_TYPES = ["leave", "paid_leave", "day_off"];;
 
 function getStatusStyle(status: string, theme: Theme) {
   const map: Record<string, string> = {
@@ -636,7 +600,7 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
       if (!form.hrLetterLanguage) { toast.error("Please select the letter language"); return; }
     }
     submitMutation.mutate({
-      type: form.type as "leave" | "salary" | "schedule" | "complaint" | "resignation" | "day_off" | "sick_note" | "hr_letter" | "other",
+      type: form.type as "leave" | "paid_leave" | "salary" | "schedule" | "complaint" | "resignation" | "day_off" | "sick_note" | "hr_letter" | "other",
       subject: form.subject.trim(),
       message: form.message.trim(),
       requestedDate: (!isMultiDate && form.requestedDate) ? new Date(form.requestedDate).getTime() : undefined,
@@ -681,7 +645,8 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="leave">Leave</SelectItem>
-                <SelectItem value="day_off">Day Off</SelectItem>
+                <SelectItem value="paid_leave">Paid Leave</SelectItem>
+                <SelectItem value="day_off">Unpaid Day Off</SelectItem>
                 <SelectItem value="sick_note">Sick Note</SelectItem>
                 <SelectItem value="resignation">Resignation</SelectItem>
                 <SelectItem value="salary">Salary Inquiry</SelectItem>

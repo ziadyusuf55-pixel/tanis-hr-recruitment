@@ -45,6 +45,7 @@ import {
   getAgentCredentialByCandidateId,
   getAgentCredentialByTraineeCode,
   upsertAgentCredential,
+  changeAgentPassword,
   getPayrollByCandidateId,
   upsertPayrollRecord,
   deletePayrollRecord,
@@ -634,7 +635,7 @@ const agentRouter = router({
         ...agentCookieOpts,
         maxAge: 30 * 24 * 60 * 60 * 1000,
       });
-      return { success: true, traineeCode: cred.traineeCode, candidateId: cred.candidateId };
+      return { success: true, traineeCode: cred.traineeCode, candidateId: cred.candidateId, mustChangePassword: cred.mustChangePassword };
     }),
 
   // Reset agent password — admin only, generates a new random password
@@ -653,8 +654,24 @@ const agentRouter = router({
     ctx.res.clearCookie(AGENT_COOKIE, { path: "/" });
     return { success: true };
   }),
-
-  // Get current agent session info (from cookie)
+  // Change password — agent must be logged in (verified via cookie)
+  changePassword: publicProcedure
+    .input(z.object({ newPassword: z.string().min(6) }))
+    .mutation(async ({ input, ctx }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) throw new TRPCError({ code: "UNAUTHORIZED", message: "Not authenticated" });
+      let payload: { candidateId: number; traineeCode: string; type: string };
+      try {
+        payload = jwt.verify(token, ENV.cookieSecret) as { candidateId: number; traineeCode: string; type: string };
+      } catch {
+        throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid session" });
+      }
+      if (payload.type !== "agent") throw new TRPCError({ code: "UNAUTHORIZED" });
+      const newHash = await bcrypt.hash(input.newPassword, 10);
+      await changeAgentPassword(payload.candidateId, newHash);
+      return { success: true };
+    }),
+  // Get current agent session info (from cookie))
   me: publicProcedure.query(async ({ ctx }) => {
     const token = getAgentCookieFromReq(ctx.req);
     if (!token) return null;
@@ -784,7 +801,7 @@ const requestsRouter = router({
   // Agent: submit a new request
   submit: publicProcedure
     .input(z.object({
-      type: z.enum(["leave", "salary", "schedule", "complaint", "resignation", "day_off", "sick_note", "hr_letter", "other"]),
+      type: z.enum(["leave", "paid_leave", "salary", "schedule", "complaint", "resignation", "day_off", "sick_note", "hr_letter", "other"]),
       subject: z.string().min(1).max(255),
       message: z.string().min(1),
       requestedDate: z.number().optional(), // UTC ms timestamp (single date)
@@ -1181,6 +1198,7 @@ const workforceRouter = router({
       offDay1: z.number().int().min(0).max(6).optional(),
       offDay2: z.number().int().min(0).max(6).optional(),
       joinDate: z.number().optional(),
+      dialerCredentials: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
       await createWorkforceAgent(input);
@@ -1214,6 +1232,7 @@ const workforceRouter = router({
       offDay2: z.number().int().min(0).max(6).optional(),
       joinDate: z.number().optional(),
       isActive: z.boolean().optional(),
+      dialerCredentials: z.string().optional(),
     }))
      .mutation(async ({ input }) => {
       const { traineeCode, ...rest } = input;

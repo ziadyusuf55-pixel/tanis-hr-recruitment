@@ -24,11 +24,12 @@ import { useEffect } from "react";
 
 const REQUEST_TYPE_LABELS: Record<string, string> = {
   leave: "Leave",
+  paid_leave: "Paid Leave",
   salary: "Salary Inquiry",
   schedule: "Schedule Change",
   complaint: "General Complaint",
   resignation: "Resignation",
-  day_off: "Day Off",
+  day_off: "Unpaid Day Off",
   sick_note: "Sick Note",
   hr_letter: "HR Letter",
   other: "Other",

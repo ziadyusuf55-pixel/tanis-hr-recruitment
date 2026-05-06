@@ -200,10 +200,10 @@ export const agentCredentials = mysqlTable("agent_credentials", {
   candidateId: int("candidateId").notNull().unique(), // FK to candidates.id
   traineeCode: varchar("traineeCode", { length: 100 }).notNull().unique(), // login username
   passwordHash: varchar("passwordHash", { length: 255 }).notNull(),
+  mustChangePassword: boolean("mustChangePassword").default(true).notNull(), // force password change on first login
   generatedAt: timestamp("generatedAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
-
 export type AgentCredential = typeof agentCredentials.$inferSelect;
 export type InsertAgentCredential = typeof agentCredentials.$inferInsert;
 
@@ -258,7 +258,7 @@ export const agentRequests = mysqlTable("agent_requests", {
   id: int("id").autoincrement().primaryKey(),
   candidateId: int("candidateId").notNull(), // FK to candidates.id
   traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
-  type: mysqlEnum("type", ["leave", "salary", "schedule", "complaint", "resignation", "day_off", "sick_note", "hr_letter", "other"]).notNull(),
+  type: mysqlEnum("type", ["leave", "salary", "schedule", "complaint", "resignation", "day_off", "paid_leave", "sick_note", "hr_letter", "other"]).notNull(),
   subject: varchar("subject", { length: 255 }).notNull(),
   message: text("message").notNull(),
   requestedDate: bigint("requestedDate", { mode: "number" }), // UTC ms timestamp for date-based requests (leave, day_off, resignation last day)
@@ -393,6 +393,7 @@ export const workforceAgents = mysqlTable("workforce_agents", {
   offDay1: int("offDay1"),                             // 0-6 (Sun-Sat)
   offDay2: int("offDay2"),                             // 0-6 (Sun-Sat)
   joinDate: bigint("joinDate", { mode: "number" }),   // UTC ms — date joined operations
+  dialerCredentials: varchar("dialerCredentials", { length: 500 }), // dialer/hub login credentials (admin fills manually)
   isActive: boolean("isActive").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

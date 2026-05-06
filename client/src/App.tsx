@@ -15,6 +15,7 @@ import Login from "./pages/Login";
 import AgentPortal from "./pages/AgentPortal";
 import Operations from "./pages/Operations";
 import AgentProfilePage from "./pages/AgentProfilePage";
+import ChangePasswordPage from "./pages/ChangePasswordPage";
 import { useAuth } from "./_core/hooks/useAuth";
 import { getLoginUrl } from "./const";
 import { useEffect } from "react";
@@ -64,6 +65,7 @@ function Router() {
       <Route path="/requests" component={() => <ProtectedRoute component={Requests} />} />
       <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
       <Route path="/admin-invite" component={AdminInviteAccept} />
+      <Route path="/agent/change-password" component={ChangePasswordPage} />
       <Route path="/agent" component={AgentPortal} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />

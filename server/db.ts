@@ -637,7 +637,7 @@ export async function getAgentCredentialByTraineeCode(traineeCode: string) {
   return result[0] ?? null;
 }
 
-export async function upsertAgentCredential(candidateId: number, traineeCode: string, passwordHash: string) {
+export async function upsertAgentCredential(candidateId: number, traineeCode: string, passwordHash: string, mustChangePassword = true) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const { agentCredentials } = await import("../drizzle/schema");
@@ -645,11 +645,19 @@ export async function upsertAgentCredential(candidateId: number, traineeCode: st
   const existing = await getAgentCredentialByCandidateId(candidateId);
   if (existing) {
     await db.update(agentCredentials)
-      .set({ traineeCode, passwordHash })
+      .set({ traineeCode, passwordHash, mustChangePassword })
       .where(eq(agentCredentials.candidateId, candidateId));
   } else {
-    await db.insert(agentCredentials).values({ candidateId, traineeCode, passwordHash });
+    await db.insert(agentCredentials).values({ candidateId, traineeCode, passwordHash, mustChangePassword });
   }
+}
+export async function changeAgentPassword(candidateId: number, newPasswordHash: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { agentCredentials } = await import("../drizzle/schema");
+  await db.update(agentCredentials)
+    .set({ passwordHash: newPasswordHash, mustChangePassword: false })
+    .where(eq(agentCredentials.candidateId, candidateId));
 }
 
 // ─── Payroll Records ──────────────────────────────────────────────────────────
@@ -767,7 +775,7 @@ export async function deletePerformanceRecord(id: number) {
 export async function createAgentRequest(data: {
   candidateId: number;
   traineeCode: string;
-  type: "leave" | "salary" | "schedule" | "complaint" | "resignation" | "day_off" | "sick_note" | "hr_letter" | "other";
+  type: "leave" | "paid_leave" | "salary" | "schedule" | "complaint" | "resignation" | "day_off" | "sick_note" | "hr_letter" | "other";
   subject: string;
   message: string;
   requestedDate?: number | null;
@@ -1163,6 +1171,7 @@ export async function getWorkforceAgentByCode(traineeCode: string) {
     offDay2: workforceAgents.offDay2,
     joinDate: workforceAgents.joinDate,
     isActive: workforceAgents.isActive,
+    dialerCredentials: workforceAgents.dialerCredentials,
   }).from(workforceAgents)
     .leftJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
     .where(eq(workforceAgents.traineeCode, traineeCode))
@@ -1174,6 +1183,7 @@ export async function createWorkforceAgent(data: {
   traineeCode: string; candidateId: number; fullName: string;
   alias?: string; email?: string; phone?: string; campaignId?: number;
   shiftHours?: string; teamLeader?: string; offDay1?: number; offDay2?: number; joinDate?: number;
+  dialerCredentials?: string;
 }) {
   const db = await getDb();
   if (!db) return;
@@ -1184,6 +1194,7 @@ export async function createWorkforceAgent(data: {
 export async function updateWorkforceAgent(traineeCode: string, data: Partial<{
   fullName: string; alias: string; email: string; phone: string; campaignId: number;
   shiftHours: string; teamLeader: string; offDay1: number; offDay2: number; joinDate: number; isActive: boolean;
+  dialerCredentials: string;
 }>) {
   const db = await getDb();
   if (!db) return;

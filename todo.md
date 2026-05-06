@@ -489,3 +489,20 @@
 - [x] Frontend: Operations Agents tab — make agent rows clickable → navigate to profile page
 - [x] Frontend: Agent portal — new "Comments" tab showing admin comments
 - [x] 40/40 tests still passing
+
+## Round 37 — Hub Adjustments
+- [ ] DB: Add `credentials` (text) column to workforce_agents table
+- [ ] DB: Add `phone`, `email` columns to workforce_agents table (auto-filled from candidate on create)
+- [ ] DB: Add `mustChangePassword` (boolean, default true) column to workforce_agents table
+- [ ] DB: Split request type: keep `off_day` (unpaid), add `paid_leave` type
+- [ ] Backend: workforce.create — auto-copy phone+email from candidate, set mustChangePassword=true
+- [ ] Backend: agent.login — return mustChangePassword flag in session
+- [ ] Backend: agent.changePassword — new mutation to update password and set mustChangePassword=false
+- [ ] Frontend: Add/Edit Agent form — add Credentials field (single text input)
+- [ ] Frontend: Agent portal — update login hint text to Tanis IT department message
+- [ ] Frontend: Agent portal — force password change screen on first login
+- [ ] Frontend: Agent portal — remove Training Info section from Profile tab
+- [ ] Frontend: Request Center — split Off Day (unpaid) and Paid Leave (paid) as separate request types
+- [ ] Frontend: Operation Plan — monthly calendar grid view replacing week arrows
+- [ ] Frontend: Schedule Change flow — full peer-approve + admin-approve flow
+- [ ] 40/40 tests still passing
