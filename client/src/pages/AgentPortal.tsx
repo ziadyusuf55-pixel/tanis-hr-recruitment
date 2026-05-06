@@ -1494,6 +1494,14 @@ function OperationPlanTab({ theme }: { theme: Theme }) {
   const [tgtOff1, setTgtOff1] = useState<number>(0);
   const [tgtOff2, setTgtOff2] = useState<number>(1);
   const [msg, setMsg] = useState("");
+  // Monthly calendar
+  const [calYear, setCalYear] = useState(() => new Date().getFullYear());
+  const [calMonth, setCalMonth] = useState(() => new Date().getMonth() + 1);
+  const [calExpandedDay, setCalExpandedDay] = useState<string | null>(null);
+  const { data: monthPlan } = trpc.campaigns.getOperationPlanMonth.useQuery(
+    { campaignId: campaignId!, year: calYear, month: calMonth },
+    { enabled: !!campaignId }
+  );
   function resetForm() { setTargetCode(""); setReqOff1(0); setReqOff2(1); setTgtOff1(0); setTgtOff2(1); setMsg(""); }
   const typedAgents = agents as unknown as WfAgent[];
   const typedRequests = myRequests as unknown as ScReq[];
@@ -1509,6 +1517,105 @@ function OperationPlanTab({ theme }: { theme: Theme }) {
   }
   return (
     <div className="space-y-8">
+      {/* Monthly Calendar View */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <SectionTitle theme={theme}>Monthly Operation Plan</SectionTitle>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => { const d = new Date(calYear, calMonth - 2, 1); setCalYear(d.getFullYear()); setCalMonth(d.getMonth() + 1); setCalExpandedDay(null); }}
+              className="w-7 h-7 rounded-lg flex items-center justify-center transition-all"
+              style={{ background: theme.surface, color: theme.textMuted }}
+            ><ChevronLeft className="w-3.5 h-3.5" /></button>
+            <span className="text-sm font-semibold px-2 min-w-[110px] text-center" style={{ color: theme.text }}>
+              {new Date(calYear, calMonth - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
+            </span>
+            <button
+              onClick={() => { const d = new Date(calYear, calMonth, 1); setCalYear(d.getFullYear()); setCalMonth(d.getMonth() + 1); setCalExpandedDay(null); }}
+              className="w-7 h-7 rounded-lg flex items-center justify-center transition-all"
+              style={{ background: theme.surface, color: theme.textMuted }}
+            ><ChevronRight className="w-3.5 h-3.5" /></button>
+          </div>
+        </div>
+        {monthPlan && (() => {
+          const { days, grid } = monthPlan;
+          const firstDayOfWeek = new Date(calYear, calMonth - 1, 1).getDay();
+          const today = new Date().toISOString().split("T")[0];
+          return (
+            <div className="space-y-2">
+              <div className="grid grid-cols-7 gap-1 text-center">
+                {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => (
+                  <div key={d} className="text-[10px] font-semibold py-1" style={{ color: theme.textFaint }}>{d}</div>
+                ))}
+              </div>
+              <div className="grid grid-cols-7 gap-1">
+                {Array.from({length: firstDayOfWeek}).map((_,i) => <div key={`e-${i}`} />)}
+                {days.map(day => {
+                  const myStatus = grid.find(a => a.traineeCode === myCode)?.days.find(d => d.date === day.date)?.status;
+                  const working = grid.filter(a => a.days.find(d => d.date === day.date)?.status === "work").length;
+                  const isToday = day.date === today;
+                  const isExpanded = calExpandedDay === day.date;
+                  const isMyOff = myStatus === "off";
+                  return (
+                    <div key={day.date}
+                      onClick={() => setCalExpandedDay(isExpanded ? null : day.date)}
+                      className="rounded-lg p-1.5 cursor-pointer transition-all min-h-[56px]"
+                      style={{
+                        background: isExpanded ? `${BRAND}22` : isToday ? `${BRAND}15` : theme.surface,
+                        border: `1px solid ${isExpanded ? BRAND : isToday ? `${BRAND}60` : theme.surfaceBorder}`,
+                      }}
+                    >
+                      <div className="text-[10px] font-bold" style={{ color: isToday ? BRAND_LIGHT : theme.text }}>{day.dayNum}</div>
+                      <div className="text-[9px] mt-0.5" style={{ color: isMyOff ? "#ef4444" : "#22c55e" }}>
+                        {isMyOff ? "Off" : "Work"}
+                      </div>
+                      <div className="text-[9px]" style={{ color: theme.textFaint }}>{working} on</div>
+                    </div>
+                  );
+                })}
+              </div>
+              {calExpandedDay && (() => {
+                const workingAgents = grid.filter(a => a.days.find(d => d.date === calExpandedDay)?.status === "work");
+                const offAgents = grid.filter(a => a.days.find(d => d.date === calExpandedDay)?.status === "off");
+                return (
+                  <div className="rounded-xl p-4 space-y-3" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm font-semibold" style={{ color: theme.text }}>
+                        {new Date(calExpandedDay + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+                      </p>
+                      <button onClick={() => setCalExpandedDay(null)} className="text-xs" style={{ color: theme.textFaint }}>✕</button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <p className="text-[10px] font-semibold mb-1.5" style={{ color: "#22c55e" }}>Working ({workingAgents.length})</p>
+                        <div className="space-y-1">
+                          {workingAgents.map(a => (
+                            <div key={a.traineeCode} className="text-xs rounded px-2 py-1" style={{ background: "#22c55e15", color: "#22c55e" }}>
+                              {a.alias ?? a.fullName}{a.traineeCode === myCode ? " (You)" : ""}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="text-[10px] font-semibold mb-1.5" style={{ color: theme.textMuted }}>Off ({offAgents.length})</p>
+                        <div className="space-y-1">
+                          {offAgents.map(a => (
+                            <div key={a.traineeCode} className="text-xs rounded px-2 py-1" style={{ background: theme.surface, color: theme.textMuted }}>
+                              {a.alias ?? a.fullName}{a.traineeCode === myCode ? " (You)" : ""}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+              <p className="text-[10px]" style={{ color: theme.textFaint }}>Click any day to see who is working. Your status is shown in each cell.</p>
+            </div>
+          );
+        })()}
+      </div>
+
       {/* Weekly Schedule Grid */}
       <div>
         <SectionTitle theme={theme}>Campaign Weekly Schedule</SectionTitle>

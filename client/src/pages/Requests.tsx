@@ -313,6 +313,9 @@ export default function Requests() {
         </div>
       )}
 
+      {/* ── Schedule Change Approvals ── */}
+      <ScheduleChangeApprovals />
+
       {/* Detail Dialog */}
       <Dialog open={!!selected} onOpenChange={(open) => !open && setSelected(null)}>
         <DialogContent className="max-w-lg">
@@ -421,5 +424,135 @@ export default function Requests() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+const SC_STATUS_LABELS: Record<string, { label: string; color: string }> = {
+  pending_peer:    { label: "Awaiting Peer",   color: "bg-yellow-50 text-yellow-700 border-yellow-200" },
+  pending_manager: { label: "Awaiting Admin",  color: "bg-blue-50 text-blue-700 border-blue-200" },
+  approved:        { label: "Approved",         color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  rejected:        { label: "Rejected",         color: "bg-red-50 text-red-700 border-red-200" },
+};
+
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+type ScReq = {
+  id: number;
+  requesterCode: string;
+  targetCode: string;
+  requesterNewOff1: number;
+  requesterNewOff2: number;
+  targetNewOff1: number;
+  targetNewOff2: number;
+  message: string | null;
+  status: string;
+  createdAt: Date;
+};
+
+function ScheduleChangeApprovals() {
+  const utils = trpc.useUtils();
+  const { data: allReqs = [] } = trpc.scheduleChange.listAll.useQuery();
+  const managerApprove = trpc.scheduleChange.managerApprove.useMutation({
+    onSuccess: () => { utils.scheduleChange.listAll.invalidate(); toast.success("Schedule change approved"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const managerReject = trpc.scheduleChange.managerApprove.useMutation({
+    onSuccess: () => { utils.scheduleChange.listAll.invalidate(); toast.success("Schedule change rejected"); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const typed = allReqs as ScReq[];
+  const pendingManager = typed.filter(r => r.status === "pending_manager");
+  const recent = typed.filter(r => r.status === "approved" || r.status === "rejected").slice(0, 5);
+
+  if (typed.length === 0) return null;
+
+  return (
+    <Card className="border border-border">
+      <CardHeader className="pb-3 pt-4 px-5">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-semibold">Schedule Change Requests</CardTitle>
+          </div>
+          {pendingManager.length > 0 && (
+            <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-xs">
+              {pendingManager.length} awaiting approval
+            </Badge>
+          )}
+        </div>
+      </CardHeader>
+      <CardContent className="px-5 pb-4 space-y-3">
+        {pendingManager.length === 0 && recent.length === 0 && (
+          <p className="text-xs text-muted-foreground text-center py-4">No schedule change requests yet.</p>
+        )}
+        {pendingManager.map(r => (
+          <div key={r.id} className="rounded-lg border border-blue-200 bg-blue-50/50 p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-semibold text-foreground">{r.requesterCode}</span>
+                <span className="text-xs text-muted-foreground">↔</span>
+                <span className="text-sm font-semibold text-foreground">{r.targetCode}</span>
+              </div>
+              <Badge variant="outline" className={`text-xs ${SC_STATUS_LABELS[r.status]?.color}`}>
+                {SC_STATUS_LABELS[r.status]?.label ?? r.status}
+              </Badge>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+              <div className="bg-white rounded px-2 py-1.5 border border-border">
+                <p className="font-medium text-foreground mb-0.5">{r.requesterCode} new off days</p>
+                <p>{DAY_NAMES[r.requesterNewOff1]} · {DAY_NAMES[r.requesterNewOff2]}</p>
+              </div>
+              <div className="bg-white rounded px-2 py-1.5 border border-border">
+                <p className="font-medium text-foreground mb-0.5">{r.targetCode} new off days</p>
+                <p>{DAY_NAMES[r.targetNewOff1]} · {DAY_NAMES[r.targetNewOff2]}</p>
+              </div>
+            </div>
+            {r.message && (
+              <p className="text-xs text-muted-foreground italic">"{r.message}"</p>
+            )}
+            <p className="text-[10px] text-muted-foreground">
+              Submitted {new Date(r.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+              &nbsp;· Peer approved ✓
+            </p>
+            <div className="flex gap-2 pt-1">
+              <Button
+                size="sm"
+                onClick={() => managerApprove.mutate({ id: r.id, approve: true })}
+                disabled={managerApprove.isPending}
+                className="text-white text-xs h-7"
+                style={{ background: BRAND }}
+              >
+                Approve
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => managerReject.mutate({ id: r.id, approve: false })}
+                disabled={managerReject.isPending}
+                className="text-xs h-7 text-red-600 border-red-200 hover:bg-red-50"
+              >
+                Reject
+              </Button>
+            </div>
+          </div>
+        ))}
+        {recent.length > 0 && (
+          <div>
+            <p className="text-xs font-medium text-muted-foreground mb-2">Recent</p>
+            <div className="space-y-1.5">
+              {recent.map(r => (
+                <div key={r.id} className="flex items-center justify-between text-xs text-muted-foreground">
+                  <span>{r.requesterCode} ↔ {r.targetCode}</span>
+                  <Badge variant="outline" className={`text-[10px] ${SC_STATUS_LABELS[r.status]?.color}`}>
+                    {SC_STATUS_LABELS[r.status]?.label ?? r.status}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

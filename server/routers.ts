@@ -1135,6 +1135,32 @@ const campaignsRouter = router({
     .input(z.object({ campaignId: z.number(), date: z.string() }))
     .query(({ input }) => getOvertimeAvailabilityForDate(input.campaignId, input.date)),
   // Dynamic operation plan: 7-day grid (Mon-Sun) showing each agent's work/off status
+  getOperationPlanMonth: publicProcedure
+    .input(z.object({ campaignId: z.number(), year: z.number().int(), month: z.number().int().min(1).max(12) }))
+    .query(async ({ input }) => {
+      const agents = await listWorkforceAgents(input.campaignId);
+      const campaign = await getCampaignById(input.campaignId);
+      const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      // Build all days in the month
+      const daysInMonth = new Date(input.year, input.month, 0).getDate();
+      const days = Array.from({ length: daysInMonth }, (_, i) => {
+        const d = new Date(input.year, input.month - 1, i + 1);
+        return { date: d.toISOString().split("T")[0], dayOfWeek: d.getDay(), label: DAY_NAMES[d.getDay()], dayNum: i + 1 };
+      });
+      // For each agent, determine work/off status per day
+      const grid = agents.map(agent => ({
+        traineeCode: agent.traineeCode,
+        fullName: agent.fullName,
+        alias: agent.alias,
+        teamLeader: agent.teamLeader,
+        days: days.map(day => {
+          const isOff = agent.offDay1 === day.dayOfWeek || agent.offDay2 === day.dayOfWeek;
+          const isCampaignOff = campaign?.workDays === "weekdays" && (day.dayOfWeek === 0 || day.dayOfWeek === 6);
+          return { date: day.date, label: day.label, dayNum: day.dayNum, status: (isOff || isCampaignOff) ? "off" : "work" as "off" | "work" };
+        }),
+      }));
+      return { campaign, year: input.year, month: input.month, days, grid };
+    }),
   getOperationPlan: publicProcedure
     .input(z.object({ campaignId: z.number(), weekOffset: z.number().int().optional() }))
     .query(async ({ input }) => {
@@ -1473,10 +1499,19 @@ const scheduleChangeRouter = router({
       const code = getAgentCookieFromReq(ctx.req);
       if (!code) throw new TRPCError({ code: "UNAUTHORIZED" });
       if (input.approve) {
+        const reqs = await listAllScheduleChangeRequests();
+        const req = reqs.find(r => r.id === input.id);
         await updateScheduleChangeRequest(input.id, {
           status: "pending_manager",
           peerApprovedAt: Date.now(),
         });
+        // Notify admin that peer has approved and manager review is needed
+        if (req) {
+          await notifyOwner({
+            title: "Schedule Change Needs Your Approval",
+            content: `${req.requesterCode} and ${req.targetCode} have agreed to swap schedules. Peer approval complete — please review and approve or reject in the Request Center.`,
+          }).catch(() => {});
+        }
       } else {
         await updateScheduleChangeRequest(input.id, { status: "rejected" });
       }

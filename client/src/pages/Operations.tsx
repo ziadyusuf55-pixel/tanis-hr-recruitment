@@ -212,9 +212,11 @@ export default function Operations() {
   const [activeTab, setActiveTab] = useState<"agents" | "campaigns" | "forecast" | "plan">("agents");
   const [, navigate] = useLocation();
   const [planCampaignId, setPlanCampaignId] = useState<number | null>(null);
-  const [planWeekOffset, setPlanWeekOffset] = useState(0);
-  const { data: operationPlan, isLoading: loadingPlan } = trpc.campaigns.getOperationPlan.useQuery(
-    { campaignId: planCampaignId!, weekOffset: planWeekOffset },
+  const [planYear, setPlanYear] = useState(() => new Date().getFullYear());
+  const [planMonth, setPlanMonth] = useState(() => new Date().getMonth() + 1);
+  const [planExpandedDay, setPlanExpandedDay] = useState<string | null>(null);
+  const { data: operationPlanMonth, isLoading: loadingPlan } = trpc.campaigns.getOperationPlanMonth.useQuery(
+    { campaignId: planCampaignId!, year: planYear, month: planMonth },
     { enabled: planCampaignId !== null }
   );
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | "all">("all");
@@ -681,101 +683,154 @@ export default function Operations() {
         </div>
       )}
 
-      {/* Operation Plan Tab */}
+      {/* Operation Plan Tab — Monthly Calendar */}
       {activeTab === "plan" && (
         <div className="space-y-4">
+          {/* Controls row */}
           <div className="flex flex-wrap items-center gap-3">
             <select
               className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm min-w-[180px]"
               value={planCampaignId ?? ""}
-              onChange={e => { setPlanCampaignId(e.target.value ? Number(e.target.value) : null); setPlanWeekOffset(0); }}
+              onChange={e => { setPlanCampaignId(e.target.value ? Number(e.target.value) : null); setPlanExpandedDay(null); }}
             >
               <option value="">Select campaign...</option>
               {(campaigns as Campaign[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
             {planCampaignId !== null && (
               <div className="flex items-center gap-1">
-                <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => setPlanWeekOffset(o => o - 1)}>
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <span className="text-sm font-medium px-2">
-                  {operationPlan ? `Week of ${operationPlan.weekStart}` : `Week ${planWeekOffset >= 0 ? "+" : ""}${planWeekOffset}`}
+                <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => {
+                  const d = new Date(planYear, planMonth - 2, 1);
+                  setPlanYear(d.getFullYear()); setPlanMonth(d.getMonth() + 1); setPlanExpandedDay(null);
+                }}><ChevronLeft className="h-4 w-4" /></Button>
+                <span className="text-sm font-semibold px-3 min-w-[120px] text-center">
+                  {new Date(planYear, planMonth - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
                 </span>
-                <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => setPlanWeekOffset(o => o + 1)}>
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-                <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => setPlanWeekOffset(0)}>This Week</Button>
+                <Button variant="outline" size="sm" className="h-8 w-8 p-0" onClick={() => {
+                  const d = new Date(planYear, planMonth, 1);
+                  setPlanYear(d.getFullYear()); setPlanMonth(d.getMonth() + 1); setPlanExpandedDay(null);
+                }}><ChevronRight className="h-4 w-4" /></Button>
+                <Button variant="outline" size="sm" className="h-8 text-xs" onClick={() => {
+                  const now = new Date(); setPlanYear(now.getFullYear()); setPlanMonth(now.getMonth() + 1); setPlanExpandedDay(null);
+                }}>Today</Button>
               </div>
             )}
           </div>
+
           {planCampaignId === null ? (
             <div className="text-center py-16 text-muted-foreground">
-              <Grid3X3 className="h-10 w-10 mx-auto mb-3 opacity-25" />
+              <Calendar className="h-10 w-10 mx-auto mb-3 opacity-25" />
               <p className="font-medium">Select a campaign to view the operation plan</p>
+              <p className="text-xs mt-1">Each day shows how many agents are working vs off</p>
             </div>
           ) : loadingPlan ? (
-            <div className="space-y-2">{[1,2,3,4,5].map(i => <div key={i} className="h-10 rounded-lg bg-muted/40 animate-pulse" />)}</div>
-          ) : !operationPlan || operationPlan.grid.length === 0 ? (
+            <div className="grid grid-cols-7 gap-1">{Array.from({length: 35}).map((_,i) => <div key={i} className="h-20 rounded-lg bg-muted/40 animate-pulse" />)}</div>
+          ) : !operationPlanMonth || operationPlanMonth.grid.length === 0 ? (
             <div className="text-center py-16 text-muted-foreground">
               <Users className="h-10 w-10 mx-auto mb-3 opacity-25" />
               <p className="font-medium">No agents in this campaign</p>
             </div>
-          ) : (
-            <div className="rounded-xl border overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead className="bg-muted/40 border-b">
-                    <tr>
-                      <th className="text-left px-4 py-3 font-semibold text-sm sticky left-0 bg-muted/40 min-w-[160px]">Agent</th>
-                      {operationPlan.weekDays.map(day => (
-                        <th key={day.date} className="px-3 py-3 font-semibold text-center min-w-[72px]">
-                          <div>{day.label}</div>
-                          <div className="text-[10px] font-normal text-muted-foreground">{day.date.slice(5)}</div>
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {operationPlan.grid.map((agent, i) => (
-                      <tr key={agent.traineeCode} className={i % 2 === 0 ? "bg-background" : "bg-muted/20"}>
-                        <td className="px-4 py-2.5 sticky left-0 bg-inherit">
-                          <div className="font-medium text-sm">{agent.alias ?? agent.fullName}</div>
-                          <div className="text-[10px] text-muted-foreground font-mono">{agent.traineeCode}</div>
-                        </td>
-                        {agent.days.map(day => (
-                          <td key={day.date} className="px-3 py-2.5 text-center">
-                            <span
-                              className="inline-flex items-center justify-center w-8 h-8 rounded-full text-xs font-semibold"
-                              style={{
-                                background: day.status === "off" ? "#ef444422" : "#22c55e22",
-                                color: day.status === "off" ? "#ef4444" : "#22c55e",
-                              }}
-                            >
-                              {day.status === "off" ? "Off" : "On"}
-                            </span>
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="border-t bg-muted/40">
-                    <tr>
-                      <td className="px-4 py-2.5 font-semibold text-sm sticky left-0 bg-muted/40">Daily Count</td>
-                      {operationPlan.weekDays.map(day => {
-                        const working = operationPlan.grid.filter(a => a.days.find(d => d.date === day.date)?.status === "work").length;
-                        const min = (operationPlan.campaign as Campaign | null)?.minHeadcount ?? 0;
-                        return (
-                          <td key={day.date} className="px-3 py-2.5 text-center">
-                            <span className={`font-bold text-sm ${working < min ? "text-red-600" : "text-emerald-600"}`}>{working}</span>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  </tfoot>
-                </table>
+          ) : (() => {
+            const { days, grid } = operationPlanMonth;
+            const minHeadcount = (operationPlanMonth.campaign as Campaign | null)?.minHeadcount ?? 0;
+            // Build calendar grid — pad start with empty cells
+            const firstDayOfWeek = new Date(planYear, planMonth - 1, 1).getDay(); // 0=Sun
+            const today = new Date().toISOString().split("T")[0];
+            return (
+              <div className="space-y-3">
+                {/* Day-of-week header */}
+                <div className="grid grid-cols-7 gap-1 text-center">
+                  {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => (
+                    <div key={d} className="text-xs font-semibold text-muted-foreground py-1">{d}</div>
+                  ))}
+                </div>
+                {/* Calendar cells */}
+                <div className="grid grid-cols-7 gap-1">
+                  {Array.from({length: firstDayOfWeek}).map((_,i) => <div key={`empty-${i}`} />)}
+                  {days.map(day => {
+                    const working = grid.filter(a => a.days.find(d => d.date === day.date)?.status === "work").length;
+                    const off = grid.length - working;
+                    const isToday = day.date === today;
+                    const isExpanded = planExpandedDay === day.date;
+                    const isBelowMin = working < minHeadcount;
+                    return (
+                      <div key={day.date}
+                        onClick={() => setPlanExpandedDay(isExpanded ? null : day.date)}
+                        className={`rounded-lg border cursor-pointer transition-all p-2 min-h-[72px] ${
+                          isExpanded ? "ring-2 ring-primary border-primary" :
+                          isToday ? "border-primary/50 bg-primary/5" :
+                          "border-border hover:border-primary/30 hover:bg-muted/20"
+                        }`}
+                      >
+                        <div className={`text-xs font-bold mb-1 ${
+                          isToday ? "text-primary" : "text-foreground"
+                        }`}>{day.dayNum}</div>
+                        <div className="text-[10px] text-muted-foreground mb-1">{day.label}</div>
+                        <div className="flex flex-col gap-0.5">
+                          <span className={`text-[10px] font-semibold ${
+                            isBelowMin ? "text-red-600" : "text-emerald-600"
+                          }`}>✓ {working}</span>
+                          {off > 0 && <span className="text-[10px] text-muted-foreground">✗ {off}</span>}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {/* Expanded day detail */}
+                {planExpandedDay && (() => {
+                  const dayData = days.find(d => d.date === planExpandedDay);
+                  if (!dayData) return null;
+                  const workingAgents = grid.filter(a => a.days.find(d => d.date === planExpandedDay)?.status === "work");
+                  const offAgents = grid.filter(a => a.days.find(d => d.date === planExpandedDay)?.status === "off");
+                  return (
+                    <div className="rounded-xl border bg-card p-4 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h3 className="font-semibold text-sm">
+                          {new Date(planExpandedDay + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+                        </h3>
+                        <div className="flex items-center gap-2 text-xs">
+                          <span className="text-emerald-600 font-semibold">{workingAgents.length} working</span>
+                          <span className="text-muted-foreground">·</span>
+                          <span className="text-muted-foreground">{offAgents.length} off</span>
+                          {workingAgents.length < minHeadcount && (
+                            <span className="text-red-600 font-semibold flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Below minimum ({minHeadcount})</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <p className="text-xs font-medium text-emerald-600 mb-2">Working ({workingAgents.length})</p>
+                          <div className="space-y-1">
+                            {workingAgents.map(a => (
+                              <div key={a.traineeCode} className="text-xs bg-emerald-50 dark:bg-emerald-950/20 rounded px-2 py-1 text-emerald-700 dark:text-emerald-400">
+                                {a.alias ?? a.fullName} <span className="opacity-60 font-mono">({a.traineeCode})</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-muted-foreground mb-2">Off ({offAgents.length})</p>
+                          <div className="space-y-1">
+                            {offAgents.map(a => (
+                              <div key={a.traineeCode} className="text-xs bg-muted/40 rounded px-2 py-1 text-muted-foreground">
+                                {a.alias ?? a.fullName} <span className="opacity-60 font-mono">({a.traineeCode})</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+                {/* Legend */}
+                <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1"><span className="text-emerald-600 font-bold">✓</span> Working agents</span>
+                  <span className="flex items-center gap-1"><span className="text-muted-foreground">✗</span> Off agents</span>
+                  {minHeadcount > 0 && <span className="flex items-center gap-1 text-red-600"><AlertTriangle className="h-3 w-3" /> Red = below minimum ({minHeadcount})</span>}
+                  <span className="flex items-center gap-1">Click any day to see agent details</span>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </div>
       )}
       {/* Edit Agent Dialog */}
