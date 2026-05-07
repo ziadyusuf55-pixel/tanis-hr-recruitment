@@ -1119,6 +1119,7 @@ const campaignsRouter = router({
     .mutation(async ({ input }) => {
       // Get all active agents in this campaign
       const agents = await listWorkforceAgents(input.campaignId);
+      const campaign = await getCampaignById(input.campaignId);
       // For each agent, find their candidateId and send a notification
       for (const agent of agents) {
         await createAgentNotification({
@@ -1128,6 +1129,11 @@ const campaignsRouter = router({
           relatedId: null,
         });
       }
+      // Also notify the owner
+      await notifyOwner({
+        title: `⚠️ Headcount Alert — ${campaign?.name ?? `Campaign #${input.campaignId}`}`,
+        content: `Overtime alert sent to ${agents.length} agent(s) for ${input.date}. ${input.message ?? `We are short on headcount for this date.`}`,
+      });
       return { sent: agents.length };
     }),
 
@@ -1303,6 +1309,21 @@ const workforceRouter = router({
         getCommentsByCode(input.traineeCode),
       ]);
       return { agent, documents, paymentMethods, comments };
+    }),
+
+  bulkGenerateCredentials: protectedProcedure
+    .input(z.object({ campaignId: z.number().optional() }))
+    .mutation(async ({ input }) => {
+      const agents = await listWorkforceAgents(input.campaignId);
+      const DEFAULT_PASSWORD = "Tanis2025";
+      const passwordHash = await bcrypt.hash(DEFAULT_PASSWORD, 10);
+      const results: Array<{ fullName: string; traineeCode: string; password: string }> = [];
+      for (const agent of agents) {
+        if (!agent.traineeCode || !agent.candidateId) continue;
+        await upsertAgentCredential(agent.candidateId, agent.traineeCode, passwordHash, true);
+        results.push({ fullName: agent.fullName, traineeCode: agent.traineeCode, password: DEFAULT_PASSWORD });
+      }
+      return { generated: results.length, credentials: results };
     }),
 });
 // ─── Agent Comments Router ────────────────────────────────────────────────────
@@ -1569,11 +1590,10 @@ const overtimeRouter = router({
       return upsertOvertimeAvailability({ ...input, traineeCode: code });
     }),
 
-  getResponses: protectedProcedure
+    getResponses: protectedProcedure
     .input(z.object({ campaignId: z.number(), date: z.string() }))
     .query(({ input }) => getOvertimeAvailabilityForDate(input.campaignId, input.date)),
 });
-
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
