@@ -1,0 +1,9 @@
+{
+  "query": "\nCREATE TABLE IF NOT EXISTS `break_schedules` (\n  `id` int NOT NULL AUTO_INCREMENT,\n  `agentCode` varchar(100) NOT NULL,\n  `date` varchar(10) NOT NULL,\n  `breakStart` varchar(5) NOT NULL,\n  `breakEnd` varchar(5) NOT NULL,\n  `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`),\n  UNIQUE KEY `break_schedules_agent_date_unique` (`agentCode`, `date`)\n);\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2mcroMLez2dD7B1.d41ce960f4ad --database GKQCuajYkpcdyw75NP8gmu --execute \nCREATE TABLE IF NOT EXISTS `break_schedules` (\n  `id` int NOT NULL AUTO_INCREMENT,\n  `agentCode` varchar(100) NOT NULL,\n  `date` varchar(10) NOT NULL,\n  `breakStart` varchar(5) NOT NULL,\n  `breakEnd` varchar(5) NOT NULL,\n  `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  `updatedAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`),\n  UNIQUE KEY `break_schedules_agent_date_unique` (`agentCode`, `date`)\n);\n",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1855
+}

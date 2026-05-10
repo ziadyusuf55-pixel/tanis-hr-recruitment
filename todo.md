@@ -530,3 +530,23 @@
 - [x] Frontend: Agent portal Payroll tab — month selector (only uploaded months)
 - [x] Frontend: Agent portal Payroll tab — payroll breakdown card (base salary, hours, overtime, commission, deductions, net pay)
 - [x] 40/40 tests still passing
+
+## Round 41 — Break Schedule + Agent Portal Profile Updates
+- [x] DB: Created `break_schedules` table (agentCode, date, breakStart, breakEnd, unique on agentCode+date)
+- [x] Backend: breakSchedule.upsert mutation — admin upserts break entries for an agent (bulk)
+- [x] Backend: breakSchedule.getByAgent query — admin gets all breaks for an agent in a date range
+- [x] Backend: breakSchedule.getByDateRange query — admin overview of all breaks in a range
+- [x] Backend: breakSchedule.delete mutation — admin deletes a specific break entry
+- [x] Backend: breakSchedule.getMyBreaks query — agent gets their own breaks for current week
+- [x] Frontend: Operations tab — added "Break Schedule" sub-tab (Clock icon)
+- [x] Frontend: Break Schedule tab — campaign selector → agent selector (filtered by campaign)
+- [x] Frontend: Break Schedule tab — week navigator (arrows + week label)
+- [x] Frontend: Break Schedule tab — day-by-day grid with time pickers (12-hour preview column)
+- [x] Frontend: Break Schedule tab — Quick Fill: set one time and apply to all days in week
+- [x] Frontend: Break Schedule tab — override individual days manually, delete individual entries
+- [x] Frontend: Break Schedule tab — loads existing saved breaks when agent/week changes
+- [x] Frontend: Agent Portal Profile tab — added Campaign card
+- [x] Frontend: Agent Portal Profile tab — added Day Offs card (from wfProfile offDay1/offDay2)
+- [x] Frontend: Agent Portal Profile tab — added This Week's Break Schedule card (12h format)
+- [x] All times displayed in 12-hour format (e.g., 2:00 PM) in UI
+- [x] 40/40 tests passing, 0 TypeScript errors

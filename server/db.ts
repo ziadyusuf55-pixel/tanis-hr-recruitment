@@ -1533,3 +1533,59 @@ export async function getPayrollMonthsByAgentCode(agentCode: string): Promise<st
     .orderBy(desc(payrollRecords.month));
   return rows.map(r => r.month);
 }
+
+// ─── Break Schedules ──────────────────────────────────────────────────────────
+export async function upsertBreakSchedules(entries: Array<{
+  agentCode: string;
+  date: string; // YYYY-MM-DD
+  breakStart: string; // HH:MM 24h
+  breakEnd: string;   // HH:MM 24h
+}>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { breakSchedules } = await import("../drizzle/schema");
+  for (const entry of entries) {
+    const existing = await db.select({ id: breakSchedules.id })
+      .from(breakSchedules)
+      .where(and(eq(breakSchedules.agentCode, entry.agentCode), eq(breakSchedules.date, entry.date)))
+      .limit(1);
+    if (existing[0]) {
+      await db.update(breakSchedules)
+        .set({ breakStart: entry.breakStart, breakEnd: entry.breakEnd })
+        .where(eq(breakSchedules.id, existing[0].id));
+    } else {
+      await db.insert(breakSchedules).values(entry);
+    }
+  }
+  return { count: entries.length };
+}
+
+export async function getBreakSchedulesByAgent(agentCode: string, startDate: string, endDate: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { breakSchedules } = await import("../drizzle/schema");
+  return db.select().from(breakSchedules)
+    .where(and(
+      eq(breakSchedules.agentCode, agentCode),
+      sql`date >= ${startDate}`,
+      sql`date <= ${endDate}`
+    ))
+    .orderBy(breakSchedules.date);
+}
+
+export async function getBreakSchedulesByDateRange(startDate: string, endDate: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { breakSchedules } = await import("../drizzle/schema");
+  return db.select().from(breakSchedules)
+    .where(and(sql`date >= ${startDate}`, sql`date <= ${endDate}`))
+    .orderBy(breakSchedules.agentCode, breakSchedules.date);
+}
+
+export async function deleteBreakSchedule(agentCode: string, date: string) {
+  const db = await getDb();
+  if (!db) return;
+  const { breakSchedules } = await import("../drizzle/schema");
+  await db.delete(breakSchedules)
+    .where(and(eq(breakSchedules.agentCode, agentCode), eq(breakSchedules.date, date)));
+}

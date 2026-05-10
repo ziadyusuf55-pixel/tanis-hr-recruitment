@@ -357,6 +357,34 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
     { label: "Phone", value: agent.phone ?? "—" },
     { label: "Email", value: agent.email ?? "—" },
   ];
+   // Break schedule for current week
+  const today = new Date();
+  const weekSunday = new Date(today);
+  weekSunday.setDate(today.getDate() - today.getDay());
+  const weekSaturday = new Date(weekSunday);
+  weekSaturday.setDate(weekSunday.getDate() + 6);
+  const bsStart = weekSunday.toISOString().slice(0, 10);
+  const bsEnd = weekSaturday.toISOString().slice(0, 10);
+  const { data: myBreaks = [] } = trpc.breakSchedule.getMyBreaks.useQuery(
+    { startDate: bsStart, endDate: bsEnd },
+    { enabled: !!wfProfile }
+  );
+
+  function to12h(time24: string): string {
+    const [hStr, mStr] = time24.split(":");
+    let h = parseInt(hStr, 10);
+    const m = mStr ?? "00";
+    const ampm = h >= 12 ? "PM" : "AM";
+    if (h === 0) h = 12;
+    else if (h > 12) h -= 12;
+    return `${h}:${m} ${ampm}`;
+  }
+
+  // Day offs from wfProfile
+  const offDays: string[] = [];
+  if (wfProfile?.offDay1 != null) offDays.push(DAY_NAMES_FULL[wfProfile.offDay1 as number]);
+  if (wfProfile?.offDay2 != null) offDays.push(DAY_NAMES_FULL[wfProfile.offDay2 as number]);
+
   return (
     <div className="space-y-6">
       {wfProfile && (
@@ -382,6 +410,65 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
         ))}
       </div>
 
+      {wfProfile && (
+        <>
+          {/* Campaign & Day Offs row */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* Campaign card */}
+            <div className="rounded-xl p-4" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
+              <div className="flex items-center gap-2 mb-2">
+                <Briefcase className="w-4 h-4" style={{ color: BRAND_LIGHT }} />
+                <p className="text-xs uppercase tracking-wider font-medium" style={{ color: theme.textFaint }}>Campaign</p>
+              </div>
+              <p className="font-semibold text-base" style={{ color: theme.text }}>
+                {(wfProfile.campaignName as string | null) ?? "—"}
+              </p>
+              <p className="text-xs mt-1" style={{ color: theme.textMuted }}>Your active campaign assignment</p>
+            </div>
+            {/* Day Offs card */}
+            <div className="rounded-xl p-4" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
+              <div className="flex items-center gap-2 mb-2">
+                <Calendar className="w-4 h-4" style={{ color: BRAND_LIGHT }} />
+                <p className="text-xs uppercase tracking-wider font-medium" style={{ color: theme.textFaint }}>Day Offs</p>
+              </div>
+              {offDays.length > 0 ? (
+                <div className="flex gap-2 flex-wrap">
+                  {offDays.map(d => (
+                    <span key={d} className="px-3 py-1 rounded-full text-sm font-medium" style={{ background: "oklch(0.32 0.18 28 / 0.15)", color: BRAND_LIGHT }}>{d}</span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm" style={{ color: theme.textMuted }}>No day offs assigned</p>
+              )}
+            </div>
+          </div>
+
+          {/* Break Schedule card */}
+          <div className="rounded-xl p-4" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
+            <div className="flex items-center gap-2 mb-3">
+              <Clock className="w-4 h-4" style={{ color: BRAND_LIGHT }} />
+              <p className="text-xs uppercase tracking-wider font-medium" style={{ color: theme.textFaint }}>This Week's Break Schedule</p>
+            </div>
+            {(myBreaks as Array<{ date: string; breakStart: string; breakEnd: string }>).length === 0 ? (
+              <p className="text-sm" style={{ color: theme.textMuted }}>No break schedule set for this week</p>
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                {(myBreaks as Array<{ date: string; breakStart: string; breakEnd: string }>).map(b => {
+                  const d = new Date(b.date + "T00:00:00");
+                  const dayLabel = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+                  return (
+                    <div key={b.date} className="rounded-lg p-3" style={{ background: theme.cardBg, border: `1px solid ${theme.surfaceBorder}` }}>
+                      <p className="text-xs font-medium mb-1" style={{ color: theme.textMuted }}>{dayLabel}</p>
+                      <p className="text-sm font-semibold" style={{ color: theme.text }}>{to12h(b.breakStart)}</p>
+                      <p className="text-xs" style={{ color: theme.textFaint }}>to {to12h(b.breakEnd)}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }

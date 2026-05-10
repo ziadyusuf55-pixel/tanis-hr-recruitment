@@ -127,6 +127,10 @@ import {
   getCommentsByCode,
   addAgentComment,
   deleteAgentComment,
+  upsertBreakSchedules,
+  getBreakSchedulesByAgent,
+  getBreakSchedulesByDateRange,
+  deleteBreakSchedule,
 } from "./db";
 import { notifyOwner } from "./_core/notification";
 import { sendInterviewNotification } from "./email";
@@ -1668,6 +1672,52 @@ const overtimeRouter = router({
     .input(z.object({ campaignId: z.number(), date: z.string() }))
     .query(({ input }) => getOvertimeAvailabilityForDate(input.campaignId, input.date)),
 });
+
+// ─── Break Schedule Router ────────────────────────────────────────────────────
+const breakScheduleRouter = router({
+  // Admin: upsert one or many break entries
+  upsert: protectedProcedure
+    .input(z.object({
+      entries: z.array(z.object({
+        agentCode: z.string(),
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        breakStart: z.string().regex(/^\d{2}:\d{2}$/),
+        breakEnd: z.string().regex(/^\d{2}:\d{2}$/),
+      })),
+    }))
+    .mutation(({ input }) => upsertBreakSchedules(input.entries)),
+  // Admin: get breaks for a specific agent in a date range
+  getByAgent: protectedProcedure
+    .input(z.object({
+      agentCode: z.string(),
+      startDate: z.string(),
+      endDate: z.string(),
+    }))
+    .query(({ input }) => getBreakSchedulesByAgent(input.agentCode, input.startDate, input.endDate)),
+  // Admin: get all breaks in a date range (for overview)
+  getByDateRange: protectedProcedure
+    .input(z.object({ startDate: z.string(), endDate: z.string() }))
+    .query(({ input }) => getBreakSchedulesByDateRange(input.startDate, input.endDate)),
+  // Admin: delete a specific break entry
+  delete: protectedProcedure
+    .input(z.object({ agentCode: z.string(), date: z.string() }))
+    .mutation(({ input }) => deleteBreakSchedule(input.agentCode, input.date)),
+  // Agent: get own breaks for current week
+  getMyBreaks: publicProcedure
+    .input(z.object({ startDate: z.string(), endDate: z.string() }))
+    .query(async ({ input, ctx }) => {
+      const agentToken = getAgentCookieFromReq(ctx.req);
+      if (!agentToken) throw new TRPCError({ code: "UNAUTHORIZED" });
+      let traineeCode: string | null = null;
+      try {
+        const p = jwt.verify(agentToken, ENV.cookieSecret) as { traineeCode?: string; type: string };
+        if (p.type === "agent" && p.traineeCode) traineeCode = p.traineeCode;
+      } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      if (!traineeCode) throw new TRPCError({ code: "UNAUTHORIZED" });
+      return getBreakSchedulesByAgent(traineeCode, input.startDate, input.endDate);
+    }),
+});
+
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -1689,6 +1739,8 @@ export const appRouter = router({
   documents: documentsRouter,
   scheduleChange: scheduleChangeRouter,
   overtime: overtimeRouter,
+  breakSchedule: breakScheduleRouter,
 });
+
 export type AppRouter = typeof appRouter;;
 

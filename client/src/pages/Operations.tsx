@@ -30,6 +30,7 @@ import {
   Grid3X3,
   ChevronLeft,
   UserPlus,
+  Clock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -207,9 +208,269 @@ type ForecastDay = {
 
 const EMPTY_CAMPAIGN = { name: "", minHeadcount: "20", workDays: "all" as "all" | "weekdays", notes: "" };
 
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+function to12h(time24: string): string {
+  const [hStr, mStr] = time24.split(":");
+  let h = parseInt(hStr, 10);
+  const m = mStr ?? "00";
+  const ampm = h >= 12 ? "PM" : "AM";
+  if (h === 0) h = 12;
+  else if (h > 12) h -= 12;
+  return `${h}:${m} ${ampm}`;
+}
+
+function getWeekDates(weekOffset: number): string[] {
+  const now = new Date();
+  const day = now.getDay();
+  const sunday = new Date(now);
+  sunday.setDate(now.getDate() - day + weekOffset * 7);
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(sunday);
+    d.setDate(sunday.getDate() + i);
+    return d.toISOString().slice(0, 10);
+  });
+}
+
+function formatDateLabel(dateStr: string): string {
+  const d = new Date(dateStr + "T00:00:00");
+  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
+// ─── Break Schedule Tab Component ────────────────────────────────────────────
+type BreakScheduleTabProps = {
+  campaigns: Campaign[];
+  agents: WorkforceAgent[];
+  breakCampaignId: number | null;
+  setBreakCampaignId: (id: number | null) => void;
+  breakAgentCode: string | null;
+  setBreakAgentCode: (code: string | null) => void;
+  breakWeekOffset: number;
+  setBreakWeekOffset: (offset: number) => void;
+  breakEntries: Record<string, { start: string; end: string }>;
+  setBreakEntries: (entries: Record<string, { start: string; end: string }>) => void;
+  quickFillStart: string;
+  setQuickFillStart: (v: string) => void;
+  quickFillEnd: string;
+  setQuickFillEnd: (v: string) => void;
+  upsertBreaks: ReturnType<typeof trpc.breakSchedule.upsert.useMutation>;
+};
+
+function BreakScheduleTab({
+  campaigns, agents, breakCampaignId, setBreakCampaignId,
+  breakAgentCode, setBreakAgentCode, breakWeekOffset, setBreakWeekOffset,
+  breakEntries, setBreakEntries, quickFillStart, setQuickFillStart,
+  quickFillEnd, setQuickFillEnd, upsertBreaks,
+}: BreakScheduleTabProps) {
+  const weekDates = getWeekDates(breakWeekOffset);
+  const weekStart = weekDates[0];
+  const weekEnd = weekDates[6];
+
+  const campaignAgents = breakCampaignId
+    ? agents.filter(a => a.campaignId === breakCampaignId && a.isActive)
+    : [];
+
+  const { data: existingBreaks = [] } = trpc.breakSchedule.getByAgent.useQuery(
+    { agentCode: breakAgentCode!, startDate: weekStart, endDate: weekEnd },
+    { enabled: !!breakAgentCode }
+  );
+
+  // Sync existing breaks into local state when agent/week changes
+  const [synced, setSynced] = useState<string | null>(null);
+  const syncKey = `${breakAgentCode}-${weekStart}`;
+  if (synced !== syncKey && existingBreaks.length > 0) {
+    setSynced(syncKey);
+    const merged: Record<string, { start: string; end: string }> = {};
+    for (const b of existingBreaks as Array<{ date: string; breakStart: string; breakEnd: string }>) {
+      merged[b.date] = { start: b.breakStart, end: b.breakEnd };
+    }
+    setBreakEntries(merged);
+  }
+  if (synced !== syncKey && existingBreaks.length === 0 && synced !== null) {
+    setSynced(syncKey);
+    setBreakEntries({});
+  }
+
+  const handleQuickFill = () => {
+    const filled: Record<string, { start: string; end: string }> = {};
+    for (const date of weekDates) {
+      filled[date] = { start: quickFillStart, end: quickFillEnd };
+    }
+    setBreakEntries({ ...breakEntries, ...filled });
+  };
+
+  const handleSave = () => {
+    if (!breakAgentCode) return;
+    const entries = Object.entries(breakEntries)
+      .filter(([, v]) => v.start && v.end)
+      .map(([date, v]) => ({ agentCode: breakAgentCode, date, breakStart: v.start, breakEnd: v.end }));
+    if (entries.length === 0) { return; }
+    upsertBreaks.mutate({ entries });
+  };
+
+  const weekLabel = (() => {
+    const s = new Date(weekDates[0] + "T00:00:00");
+    const e = new Date(weekDates[6] + "T00:00:00");
+    return `${s.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${e.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+  })();
+
+  return (
+    <div className="space-y-5">
+      {/* Selectors */}
+      <div className="flex flex-wrap gap-3 items-end">
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Campaign</label>
+          <select
+            className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm min-w-[180px]"
+            value={breakCampaignId ?? ""}
+            onChange={e => { setBreakCampaignId(e.target.value ? Number(e.target.value) : null); setBreakAgentCode(null); setBreakEntries({}); }}
+          >
+            <option value="">Select campaign...</option>
+            {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">Agent</label>
+          <select
+            className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm min-w-[200px]"
+            value={breakAgentCode ?? ""}
+            onChange={e => { setBreakAgentCode(e.target.value || null); setBreakEntries({}); }}
+            disabled={!breakCampaignId}
+          >
+            <option value="">{breakCampaignId ? "Select agent..." : "Select campaign first"}</option>
+            {campaignAgents.map(a => <option key={a.traineeCode} value={a.traineeCode}>{a.fullName} ({a.traineeCode})</option>)}
+          </select>
+        </div>
+        {/* Week navigator */}
+        <div className="flex items-center gap-2 ml-auto">
+          <button
+            className="p-1.5 rounded-md border border-input hover:bg-muted transition-colors"
+            onClick={() => { setBreakWeekOffset(breakWeekOffset - 1); setBreakEntries({}); }}
+          ><ChevronLeft className="h-4 w-4" /></button>
+          <span className="text-sm font-medium min-w-[200px] text-center">{weekLabel}</span>
+          <button
+            className="p-1.5 rounded-md border border-input hover:bg-muted transition-colors"
+            onClick={() => { setBreakWeekOffset(breakWeekOffset + 1); setBreakEntries({}); }}
+          ><ChevronRight className="h-4 w-4" /></button>
+        </div>
+      </div>
+
+      {!breakAgentCode ? (
+        <div className="rounded-xl border border-dashed p-12 text-center text-muted-foreground">
+          <Clock className="h-8 w-8 mx-auto mb-3 opacity-40" />
+          <p className="text-sm">Select a campaign and agent to manage their break schedule</p>
+        </div>
+      ) : (
+        <>
+          {/* Quick Fill */}
+          <div className="rounded-xl border p-4 bg-muted/30">
+            <p className="text-sm font-medium mb-3">Quick Fill — Apply one break time to all days this week</p>
+            <div className="flex flex-wrap gap-3 items-end">
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Break Start</label>
+                <input
+                  type="time"
+                  className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+                  value={quickFillStart}
+                  onChange={e => setQuickFillStart(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Break End</label>
+                <input
+                  type="time"
+                  className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+                  value={quickFillEnd}
+                  onChange={e => setQuickFillEnd(e.target.value)}
+                />
+              </div>
+              <Button size="sm" variant="outline" onClick={handleQuickFill} className="gap-1.5">
+                <RefreshCw className="h-3.5 w-3.5" /> Fill All Days
+              </Button>
+            </div>
+          </div>
+
+          {/* Day-by-day grid */}
+          <div className="rounded-xl border overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-muted/50 border-b">
+                  <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Day</th>
+                  <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Break Start</th>
+                  <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Break End</th>
+                  <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Preview</th>
+                  <th className="px-4 py-2.5"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {weekDates.map((date, i) => {
+                  const entry = breakEntries[date];
+                  return (
+                    <tr key={date} className={`border-b last:border-0 ${i % 2 === 0 ? "" : "bg-muted/20"}`}>
+                      <td className="px-4 py-2.5 font-medium">{formatDateLabel(date)}</td>
+                      <td className="px-4 py-2.5">
+                        <input
+                          type="time"
+                          className="h-8 rounded-md border border-input bg-background px-2 py-1 text-sm"
+                          value={entry?.start ?? ""}
+                          onChange={e => setBreakEntries({ ...breakEntries, [date]: { start: e.target.value, end: entry?.end ?? "" } })}
+                        />
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <input
+                          type="time"
+                          className="h-8 rounded-md border border-input bg-background px-2 py-1 text-sm"
+                          value={entry?.end ?? ""}
+                          onChange={e => setBreakEntries({ ...breakEntries, [date]: { start: entry?.start ?? "", end: e.target.value } })}
+                        />
+                      </td>
+                      <td className="px-4 py-2.5 text-muted-foreground">
+                        {entry?.start && entry?.end ? `${to12h(entry.start)} – ${to12h(entry.end)}` : <span className="text-xs opacity-50">—</span>}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {entry && (
+                          <button
+                            className="text-xs text-red-500 hover:text-red-700"
+                            onClick={() => { const e2 = { ...breakEntries }; delete e2[date]; setBreakEntries(e2); }}
+                          ><Trash2 className="h-3.5 w-3.5" /></button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex justify-end">
+            <Button
+              onClick={handleSave}
+              disabled={upsertBreaks.isPending || Object.keys(breakEntries).length === 0}
+              className="gap-1.5"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              {upsertBreaks.isPending ? "Saving..." : "Save Break Schedule"}
+            </Button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function Operations() {
   const utils = trpc.useUtils();
-  const [activeTab, setActiveTab] = useState<"agents" | "campaigns" | "forecast" | "plan">("agents");
+  const [activeTab, setActiveTab] = useState<"agents" | "campaigns" | "forecast" | "plan" | "breaks">("agents");
+  // Break schedule state
+  const [breakCampaignId, setBreakCampaignId] = useState<number | null>(null);
+  const [breakAgentCode, setBreakAgentCode] = useState<string | null>(null);
+  const [breakWeekOffset, setBreakWeekOffset] = useState(0);
+  const [breakEntries, setBreakEntries] = useState<Record<string, { start: string; end: string }>>({});
+  const [quickFillStart, setQuickFillStart] = useState("14:00");
+  const [quickFillEnd, setQuickFillEnd] = useState("14:30");
+  const upsertBreaks = trpc.breakSchedule.upsert.useMutation({
+    onSuccess: () => { toast.success("Break schedule saved"); utils.breakSchedule.getByAgent.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
   const [, navigate] = useLocation();
   const [planCampaignId, setPlanCampaignId] = useState<number | null>(null);
   const [planWeekOffset, setPlanWeekOffset] = useState(0);
@@ -444,6 +705,7 @@ export default function Operations() {
           { id: "campaigns", label: "Campaigns", icon: Settings },
           { id: "forecast", label: "Headcount Forecast", icon: BarChart3 },
           { id: "plan", label: "Operation Plan", icon: Grid3X3 },
+          { id: "breaks", label: "Break Schedule", icon: Clock },
         ].map(tab => (
           <button
             key={tab.id}
@@ -807,6 +1069,26 @@ export default function Operations() {
             </div>
           )}
         </div>
+      )}
+      {/* Break Schedule Tab */}
+      {activeTab === "breaks" && (
+        <BreakScheduleTab
+          campaigns={campaigns as Campaign[]}
+          agents={agents as WorkforceAgent[]}
+          breakCampaignId={breakCampaignId}
+          setBreakCampaignId={setBreakCampaignId}
+          breakAgentCode={breakAgentCode}
+          setBreakAgentCode={setBreakAgentCode}
+          breakWeekOffset={breakWeekOffset}
+          setBreakWeekOffset={setBreakWeekOffset}
+          breakEntries={breakEntries}
+          setBreakEntries={setBreakEntries}
+          quickFillStart={quickFillStart}
+          setQuickFillStart={setQuickFillStart}
+          quickFillEnd={quickFillEnd}
+          setQuickFillEnd={setQuickFillEnd}
+          upsertBreaks={upsertBreaks}
+        />
       )}
       {/* Edit Agent Dialog */}
       <Dialog open={editDialog} onOpenChange={setEditDialog}>

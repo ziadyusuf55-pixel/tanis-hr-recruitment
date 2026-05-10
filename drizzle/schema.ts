@@ -8,6 +8,7 @@ import {
   bigint,
   decimal,
   boolean,
+  uniqueIndex,
 } from "drizzle-orm/mysql-core";
 
 /**
@@ -501,3 +502,21 @@ export const agentComments = mysqlTable("agent_comments", {
 });
 export type AgentComment = typeof agentComments.$inferSelect;
 export type InsertAgentComment = typeof agentComments.$inferInsert;
+
+/**
+ * Break schedules — admin assigns daily break times per agent.
+ * Times stored in HH:MM 24-hour format; displayed as 12-hour in UI.
+ */
+export const breakSchedules = mysqlTable("break_schedules", {
+  id: int("id").autoincrement().primaryKey(),
+  agentCode: varchar("agentCode", { length: 100 }).notNull(),
+  date: varchar("date", { length: 10 }).notNull(), // YYYY-MM-DD
+  breakStart: varchar("breakStart", { length: 5 }).notNull(), // HH:MM (24h)
+  breakEnd: varchar("breakEnd", { length: 5 }).notNull(),     // HH:MM (24h)
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  uniqueAgentDate: uniqueIndex("break_schedules_agent_date_unique").on(t.agentCode, t.date),
+}));
+export type BreakSchedule = typeof breakSchedules.$inferSelect;
+export type InsertBreakSchedule = typeof breakSchedules.$inferInsert;
