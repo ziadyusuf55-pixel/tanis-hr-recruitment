@@ -1,0 +1,9 @@
+{
+  "query": "\nALTER TABLE payroll_records\n  ADD COLUMN agentCode VARCHAR(100) NULL AFTER candidateId,\n  ADD COLUMN baseSalary DECIMAL(10,2) NULL,\n  ADD COLUMN workingHours DECIMAL(8,2) NULL,\n  ADD COLUMN overtimeHours DECIMAL(8,2) NULL,\n  ADD COLUMN commission DECIMAL(10,2) NULL DEFAULT 0,\n  ADD COLUMN uploadedBy VARCHAR(255) NULL,\n  ADD COLUMN uploadedAt BIGINT NULL;\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2mcroMLez2dD7B1.d41ce960f4ad --database GKQCuajYkpcdyw75NP8gmu --execute \nALTER TABLE payroll_records\n  ADD COLUMN agentCode VARCHAR(100) NULL AFTER candidateId,\n  ADD COLUMN baseSalary DECIMAL(10,2) NULL,\n  ADD COLUMN workingHours DECIMAL(8,2) NULL,\n  ADD COLUMN overtimeHours DECIMAL(8,2) NULL,\n  ADD COLUMN commission DECIMAL(10,2) NULL DEFAULT 0,\n  ADD COLUMN uploadedBy VARCHAR(255) NULL,\n  ADD COLUMN uploadedAt BIGINT NULL;\n",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 2763
+}

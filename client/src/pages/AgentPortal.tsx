@@ -147,10 +147,6 @@ export default function AgentPortal() {
   const [, navigate] = useLocation();
   const { data: agent, isLoading } = trpc.agent.me.useQuery();
   const logoutMutation = trpc.agent.logout.useMutation();
-  const { data: payroll } = trpc.agent.getPayroll.useQuery(
-    { candidateId: agent?.candidateId ?? 0 },
-    { enabled: !!agent?.candidateId }
-  );
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const [isDark, setIsDark] = useState<boolean>(() => {
     const saved = localStorage.getItem(THEME_KEY);
@@ -319,7 +315,7 @@ export default function AgentPortal() {
       {/* ── Content ── */}
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
         {activeTab === "profile" && <ProfileTab agent={agent} theme={theme} />}
-        {activeTab === "payroll" && <PayrollTab payroll={payroll as PayrollRecord[] | undefined} theme={theme} />}
+        {activeTab === "payroll" && <PayrollTab theme={theme} />}
         {activeTab === "requests" && <RequestCenterTab candidateId={agent.candidateId} theme={theme} />}
         {activeTab === "documents" && <DocumentsTab theme={theme} />}
         {activeTab === "payment" && <PaymentMethodsTab theme={theme} />}
@@ -392,24 +388,57 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
 
 // ─── Payroll Tab ─────────────────────────────────────────────────────────────
 
-type PayrollRecord = {
+type AgentPayrollRecord = {
   id: number;
   month: string;
-  grossSalary: string | number | null;
-  deductions: string | number | null;
-  netPay: string | number | null;
-  status: string;
-  paymentDate: number | null;
-  notes: string | null;
+  baseSalary: string | null;
+  workingHours: string | null;
+  overtimeHours: string | null;
+  commission: string | null;
+  deductions: string | null;
+  netPay: string | null;
 };
 
-function PayrollTab({ payroll, theme }: { payroll?: PayrollRecord[]; theme: Theme }) {
-  if (!payroll || payroll.length === 0) {
+function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
+  const { data: months = [], isLoading: loadingMonths } = trpc.agent.getMyPayrollMonths.useQuery();
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  const activeMonth = selectedMonth ?? months[0] ?? null;
+  const monthIndex = months.indexOf(activeMonth ?? "");
+  const { data: record, isLoading: loadingRecord } = trpc.agent.getMyPayrollRecord.useQuery(
+    { month: activeMonth! },
+    { enabled: !!activeMonth }
+  ) as { data: AgentPayrollRecord | null | undefined; isLoading: boolean };
+
+  const prevMonth = monthIndex < months.length - 1 ? months[monthIndex + 1] : null;
+  const nextMonth = monthIndex > 0 ? months[monthIndex - 1] : null;
+
+  function formatMonthLabel(m: string) {
+    const [y, mo] = m.split("-");
+    return new Date(parseInt(y), parseInt(mo) - 1).toLocaleString("en-US", { month: "long", year: "numeric" });
+  }
+
+  function fmtEGP(val: string | null | undefined): string {
+    if (!val) return "—";
+    const n = parseFloat(val);
+    return isNaN(n) ? "—" : `EGP ${n.toLocaleString("en-EG", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
+  }
+  function fmtNum(val: string | null | undefined, suffix = ""): string {
+    if (!val) return "—";
+    const n = parseFloat(val);
+    if (isNaN(n)) return "—";
+    return n > 0 ? `${n.toLocaleString("en-EG", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}${suffix}` : "—";
+  }
+
+  if (loadingMonths) {
+    return <div className="space-y-3">{[1,2,3].map(i => <div key={i} className="h-24 rounded-xl animate-pulse" style={{ background: theme.cardBg }} />)}</div>;
+  }
+
+  if (months.length === 0) {
     return (
       <EmptyState
         icon={<CreditCard className="w-8 h-8" style={{ color: theme.textFaint }} />}
         title="No payroll records yet"
-        subtitle="Your salary details will appear here once processed."
+        subtitle="Your salary details will appear here once processed by HR."
         theme={theme}
       />
     );
@@ -417,56 +446,71 @@ function PayrollTab({ payroll, theme }: { payroll?: PayrollRecord[]; theme: Them
 
   return (
     <div className="space-y-4">
-      <SectionTitle theme={theme}>Payroll History</SectionTitle>
-      <div className="space-y-3">
-        {payroll.map((record) => (
-          <div
-            key={record.id}
-            className="rounded-xl overflow-hidden"
-            style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}
-          >
-            <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
-              <div>
-                <p className="font-semibold" style={{ color: theme.text }}>{record.month}</p>
-                <p className="text-xs mt-0.5" style={{ color: theme.textFaint }}>
-                  Payment date: {formatDate(record.paymentDate)}
+      {/* Month selector */}
+      <div className="flex items-center gap-3">
+        <button
+          disabled={!prevMonth}
+          onClick={() => setSelectedMonth(prevMonth!)}
+          className="h-8 w-8 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30 text-lg"
+          style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}
+        >
+          &#8249;
+        </button>
+        <span className="text-base font-semibold min-w-[160px] text-center" style={{ color: theme.text }}>
+          {activeMonth ? formatMonthLabel(activeMonth) : "—"}
+        </span>
+        <button
+          disabled={!nextMonth}
+          onClick={() => setSelectedMonth(nextMonth!)}
+          className="h-8 w-8 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30 text-lg"
+          style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}
+        >
+          &#8250;
+        </button>
+      </div>
+
+      {/* Payroll breakdown card */}
+      {loadingRecord ? (
+        <div className="h-48 rounded-xl animate-pulse" style={{ background: theme.cardBg }} />
+      ) : !record ? (
+        <EmptyState
+          icon={<CreditCard className="w-8 h-8" style={{ color: theme.textFaint }} />}
+          title="No record for this month"
+          subtitle="Your payroll for this period has not been uploaded yet."
+          theme={theme}
+        />
+      ) : (
+        <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+          <div className="px-5 py-4" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+            <p className="font-semibold text-lg" style={{ color: theme.text }}>{formatMonthLabel(record.month)}</p>
+            <p className="text-xs mt-0.5" style={{ color: theme.textFaint }}>Payroll breakdown</p>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3">
+            {[
+              { label: "Base Salary", value: fmtEGP(record.baseSalary), red: false, accent: false },
+              { label: "Working Hours", value: fmtNum(record.workingHours, " hrs"), red: false, accent: false },
+              { label: "Overtime Hours", value: fmtNum(record.overtimeHours, " hrs"), red: false, accent: false },
+              { label: "Commission", value: fmtEGP(record.commission), red: false, accent: false },
+              { label: "Deductions", value: record.deductions && parseFloat(record.deductions) > 0 ? `- ${fmtEGP(record.deductions)}` : "—", red: true, accent: false },
+              { label: "Net Pay", value: fmtEGP(record.netPay), red: false, accent: true },
+            ].map(({ label, value, red, accent }, i) => (
+              <div
+                key={label}
+                className="px-5 py-4"
+                style={{
+                  borderTop: i >= 3 ? `1px solid ${theme.cardBorder}` : undefined,
+                  borderLeft: i % 3 !== 0 ? `1px solid ${theme.cardBorder}` : undefined,
+                }}
+              >
+                <p className="text-xs mb-1" style={{ color: theme.textFaint }}>{label}</p>
+                <p className="text-sm font-semibold" style={{ color: red ? "#ef4444" : accent ? BRAND_LIGHT : theme.text }}>
+                  {value}
                 </p>
               </div>
-              <span
-                className={`text-xs font-medium px-3 py-1 rounded-full ${
-                  record.status === "paid"
-                    ? "bg-emerald-500/20 text-emerald-600"
-                    : "bg-yellow-500/20 text-yellow-600"
-                }`}
-              >
-                {record.status === "paid" ? "Paid" : "Pending"}
-              </span>
-            </div>
-            <div className="grid grid-cols-3" style={{ borderBottom: record.notes ? `1px solid ${theme.cardBorder}` : "none" }}>
-              {[
-                { label: "Gross", value: formatCurrency(record.grossSalary), accent: false, red: false },
-                { label: "Deductions", value: record.deductions ? `- ${formatCurrency(record.deductions)}` : "—", red: true, accent: false },
-                { label: "Net Pay", value: formatCurrency(record.netPay), accent: true, red: false },
-              ].map(({ label, value, red, accent }, i) => (
-                <div key={label} className="px-4 py-3" style={i > 0 ? { borderLeft: `1px solid ${theme.cardBorder}` } : {}}>
-                  <p className="text-xs mb-1" style={{ color: theme.textFaint }}>{label}</p>
-                  <p
-                    className="text-sm font-semibold"
-                    style={{ color: red ? "#ef4444" : accent ? BRAND_LIGHT : theme.text }}
-                  >
-                    {value}
-                  </p>
-                </div>
-              ))}
-            </div>
-            {record.notes && (
-              <div className="px-5 py-3">
-                <p className="text-xs" style={{ color: theme.textFaint }}>{record.notes}</p>
-              </div>
-            )}
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

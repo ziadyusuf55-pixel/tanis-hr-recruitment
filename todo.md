@@ -513,3 +513,20 @@
 - [x] Add bulk credential generation: generate Tanis2025 password for all agents without credentials, export CSV (name, code, password)
 - [x] Add "Add Agent" button to Operations Agents tab header
 - [x] 40/40 tests still passing
+
+## Round 40 — Payroll Module
+- [x] DB: Migrated `payroll_records` table to add agentCode, baseSalary, workingHours, overtimeHours, commission, uploadedBy, uploadedAt columns
+- [x] Backend: payroll.uploadPayroll mutation — parse rows, upsert per agent per month (admin only)
+- [x] Backend: payroll.getPayrollMonths query — distinct uploaded months (admin)
+- [x] Backend: payroll.getPayrollByMonth query — all agent records for a given month (admin)
+- [x] Backend: payroll.getMyPayrollMonths query — agent gets their months
+- [x] Backend: payroll.getMyPayrollRecord query — agent gets their record for a given month
+- [x] Frontend: Added "Payroll" to admin sidebar navigation (Banknote icon)
+- [x] Frontend: Admin Payroll page — month selector with arrows
+- [x] Frontend: Admin Payroll page — table of all agents' payroll for selected month
+- [x] Frontend: Admin Payroll page — Upload button with Excel file picker, parse preview, confirm upload
+- [x] Frontend: Admin Payroll page — Download Template button (generates blank Excel template)
+- [x] Frontend: Agent portal Payroll tab — replaced old tab with new Excel-based tab
+- [x] Frontend: Agent portal Payroll tab — month selector (only uploaded months)
+- [x] Frontend: Agent portal Payroll tab — payroll breakdown card (base salary, hours, overtime, commission, deductions, net pay)
+- [x] 40/40 tests still passing

@@ -49,6 +49,11 @@ import {
   getPayrollByCandidateId,
   upsertPayrollRecord,
   deletePayrollRecord,
+  upsertPayrollFromExcel,
+  getPayrollMonths,
+  getPayrollByMonth,
+  getPayrollByAgentCode,
+  getPayrollMonthsByAgentCode,
   getPerformanceByCandidateId,
   upsertPerformanceRecord,
   deletePerformanceRecord,
@@ -756,6 +761,75 @@ const agentRouter = router({
       return { success: true };
     }),
 
+  // Payroll Excel Upload procedures
+  uploadPayroll: protectedProcedure
+    .input(z.object({
+      month: z.string().regex(/^\d{4}-\d{2}$/),
+      rows: z.array(z.object({
+        agentCode: z.string(),
+        agentName: z.string().optional().default(""),
+        baseSalary: z.number().nullable().optional(),
+        workingHours: z.number().nullable().optional(),
+        overtimeHours: z.number().nullable().optional(),
+        commission: z.number().nullable().optional(),
+        deductions: z.number().nullable().optional(),
+        netPay: z.number().nullable().optional(),
+      })),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const uploadedBy = ctx.user?.name ?? ctx.user?.email ?? "Admin";
+      const results = await upsertPayrollFromExcel(
+        input.rows.map(r => ({
+          agentCode: r.agentCode,
+          agentName: r.agentName ?? "",
+          month: input.month,
+          uploadedBy,
+          baseSalary: r.baseSalary ?? null,
+          workingHours: r.workingHours ?? null,
+          overtimeHours: r.overtimeHours ?? null,
+          commission: r.commission ?? null,
+          deductions: r.deductions ?? null,
+          netPay: r.netPay ?? null,
+        }))
+      );
+      return { success: true, count: results.length };
+    }),
+  getPayrollMonths: protectedProcedure
+    .query(async () => {
+      return getPayrollMonths();
+    }),
+  getPayrollByMonth: protectedProcedure
+    .input(z.object({ month: z.string() }))
+    .query(async ({ input }) => {
+      return getPayrollByMonth(input.month);
+    }),
+  // Agent-facing payroll procedures
+  getMyPayrollMonths: publicProcedure
+    .query(async ({ ctx }) => {
+      const agentToken = getAgentCookieFromReq(ctx.req);
+      if (!agentToken) throw new TRPCError({ code: "UNAUTHORIZED" });
+      let traineeCode: string | null = null;
+      try {
+        const p = jwt.verify(agentToken, ENV.cookieSecret) as { traineeCode?: string; type: string };
+        if (p.type === "agent" && p.traineeCode) traineeCode = p.traineeCode;
+      } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      if (!traineeCode) throw new TRPCError({ code: "UNAUTHORIZED" });
+      return getPayrollMonthsByAgentCode(traineeCode);
+    }),
+  getMyPayrollRecord: publicProcedure
+    .input(z.object({ month: z.string() }))
+    .query(async ({ input, ctx }) => {
+      const agentToken = getAgentCookieFromReq(ctx.req);
+      if (!agentToken) throw new TRPCError({ code: "UNAUTHORIZED" });
+      let traineeCode: string | null = null;
+      try {
+        const p = jwt.verify(agentToken, ENV.cookieSecret) as { traineeCode?: string; type: string };
+        if (p.type === "agent" && p.traineeCode) traineeCode = p.traineeCode;
+      } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      if (!traineeCode) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const records = await getPayrollByAgentCode(traineeCode);
+      return records.find(r => r.month === input.month) ?? null;
+    }),
   // Performance — agent can read their own, admin can read/write any
   getPerformance: publicProcedure
     .input(z.object({ candidateId: z.number() }))

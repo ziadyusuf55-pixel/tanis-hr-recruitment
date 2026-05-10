@@ -214,17 +214,24 @@ export type InsertAgentCredential = typeof agentCredentials.$inferInsert;
 export const payrollRecords = mysqlTable("payroll_records", {
   id: int("id").autoincrement().primaryKey(),
   candidateId: int("candidateId").notNull(),
+  agentCode: varchar("agentCode", { length: 100 }),
   month: varchar("month", { length: 7 }).notNull(), // format: "2025-06"
-  grossSalary: decimal("grossSalary", { precision: 10, scale: 2 }),
+  baseSalary: decimal("baseSalary", { precision: 10, scale: 2 }),
+  workingHours: decimal("workingHours", { precision: 8, scale: 2 }),
+  overtimeHours: decimal("overtimeHours", { precision: 8, scale: 2 }),
+  commission: decimal("commission", { precision: 10, scale: 2 }).default("0"),
   deductions: decimal("deductions", { precision: 10, scale: 2 }).default("0"),
   netPay: decimal("netPay", { precision: 10, scale: 2 }),
-  paymentDate: bigint("paymentDate", { mode: "number" }), // UTC ms
+  uploadedBy: varchar("uploadedBy", { length: 255 }),
+  uploadedAt: bigint("uploadedAt", { mode: "number" }),
+  // legacy fields kept for backward compat
+  grossSalary: decimal("grossSalary", { precision: 10, scale: 2 }),
+  paymentDate: bigint("paymentDate", { mode: "number" }),
   status: mysqlEnum("status", ["pending", "paid", "on_hold"]).default("pending").notNull(),
   notes: text("notes"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
-
 export type PayrollRecord = typeof payrollRecords.$inferSelect;
 export type InsertPayrollRecord = typeof payrollRecords.$inferInsert;
 

@@ -14,6 +14,7 @@ import AdminInviteAccept from "./pages/AdminInviteAccept";
 import Login from "./pages/Login";
 import AgentPortal from "./pages/AgentPortal";
 import Operations from "./pages/Operations";
+import Payroll from "./pages/Payroll";
 import AgentProfilePage from "./pages/AgentProfilePage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import { useAuth } from "./_core/hooks/useAuth";
@@ -62,6 +63,7 @@ function Router() {
       <Route path="/training" component={() => <ProtectedRoute component={Training} />} />
       <Route path="/operations" component={() => <ProtectedRoute component={Operations} />} />
       <Route path="/operations/agents/:code" component={() => <ProtectedRoute component={AgentProfilePage} />} />
+      <Route path="/payroll" component={() => <ProtectedRoute component={Payroll} />} />
       <Route path="/requests" component={() => <ProtectedRoute component={Requests} />} />
       <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
       <Route path="/admin-invite" component={AdminInviteAccept} />

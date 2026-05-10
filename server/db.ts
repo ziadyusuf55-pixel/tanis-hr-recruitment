@@ -1436,3 +1436,100 @@ export async function deleteAgentComment(id: number) {
   const { agentComments } = await import("../drizzle/schema");
   await db.delete(agentComments).where(eq(agentComments.id, id));
 }
+
+// ─── Payroll (Excel Upload) ───────────────────────────────────────────────────
+export async function upsertPayrollFromExcel(rows: Array<{
+  agentCode: string;
+  agentName: string;
+  baseSalary: number | null;
+  workingHours: number | null;
+  overtimeHours: number | null;
+  commission: number | null;
+  deductions: number | null;
+  netPay: number | null;
+  month: string; // YYYY-MM
+  uploadedBy: string;
+}>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { payrollRecords, workforceAgents } = await import("../drizzle/schema");
+  const uploadedAt = Date.now();
+  const results: Array<{ agentCode: string; status: "ok" | "not_found" }> = [];
+
+  for (const row of rows) {
+    // Resolve candidateId from workforceAgents by traineeCode
+    const [wa] = await db.select({ candidateId: workforceAgents.candidateId })
+      .from(workforceAgents)
+      .where(eq(workforceAgents.traineeCode, row.agentCode))
+      .limit(1);
+
+    const candidateId = wa?.candidateId ?? 0;
+
+    const existing = await db.select({ id: payrollRecords.id })
+      .from(payrollRecords)
+      .where(and(eq(payrollRecords.agentCode, row.agentCode), eq(payrollRecords.month, row.month)))
+      .limit(1);
+
+    const values = {
+      agentCode: row.agentCode,
+      month: row.month,
+      candidateId,
+      baseSalary: row.baseSalary != null ? String(row.baseSalary) : null,
+      workingHours: row.workingHours != null ? String(row.workingHours) : null,
+      overtimeHours: row.overtimeHours != null ? String(row.overtimeHours) : null,
+      commission: row.commission != null ? String(row.commission) : "0",
+      deductions: row.deductions != null ? String(row.deductions) : "0",
+      netPay: row.netPay != null ? String(row.netPay) : null,
+      uploadedBy: row.uploadedBy,
+      uploadedAt,
+    };
+
+    if (existing[0]) {
+      await db.update(payrollRecords).set(values).where(eq(payrollRecords.id, existing[0].id));
+    } else {
+      await db.insert(payrollRecords).values({ ...values, status: "pending" });
+    }
+    results.push({ agentCode: row.agentCode, status: "ok" });
+  }
+  return results;
+}
+
+export async function getPayrollMonths(): Promise<string[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const { payrollRecords } = await import("../drizzle/schema");
+  const rows = await db.selectDistinct({ month: payrollRecords.month })
+    .from(payrollRecords)
+    .where(sql`agentCode IS NOT NULL`)
+    .orderBy(desc(payrollRecords.month));
+  return rows.map(r => r.month);
+}
+
+export async function getPayrollByMonth(month: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { payrollRecords } = await import("../drizzle/schema");
+  return db.select().from(payrollRecords)
+    .where(and(eq(payrollRecords.month, month), sql`agentCode IS NOT NULL`))
+    .orderBy(payrollRecords.agentCode);
+}
+
+export async function getPayrollByAgentCode(agentCode: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { payrollRecords } = await import("../drizzle/schema");
+  return db.select().from(payrollRecords)
+    .where(and(eq(payrollRecords.agentCode, agentCode), sql`agentCode IS NOT NULL`))
+    .orderBy(desc(payrollRecords.month));
+}
+
+export async function getPayrollMonthsByAgentCode(agentCode: string): Promise<string[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const { payrollRecords } = await import("../drizzle/schema");
+  const rows = await db.selectDistinct({ month: payrollRecords.month })
+    .from(payrollRecords)
+    .where(and(eq(payrollRecords.agentCode, agentCode), sql`agentCode IS NOT NULL`))
+    .orderBy(desc(payrollRecords.month));
+  return rows.map(r => r.month);
+}
