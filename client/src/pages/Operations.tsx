@@ -237,6 +237,9 @@ function formatDateLabel(dateStr: string): string {
 }
 
 // ─── Break Schedule Tab Component ────────────────────────────────────────────
+// breakEntries: { [date]: Array<{ start: string; end: string }> }
+type MultiBreakEntries = Record<string, Array<{ start: string; end: string }>>;
+
 type BreakScheduleTabProps = {
   campaigns: Campaign[];
   agents: WorkforceAgent[];
@@ -246,8 +249,8 @@ type BreakScheduleTabProps = {
   setBreakAgentCode: (code: string | null) => void;
   breakWeekOffset: number;
   setBreakWeekOffset: (offset: number) => void;
-  breakEntries: Record<string, { start: string; end: string }>;
-  setBreakEntries: (entries: Record<string, { start: string; end: string }>) => void;
+  breakEntries: MultiBreakEntries;
+  setBreakEntries: (entries: MultiBreakEntries) => void;
   quickFillStart: string;
   setQuickFillStart: (v: string) => void;
   quickFillEnd: string;
@@ -274,36 +277,59 @@ function BreakScheduleTab({
     { enabled: !!breakAgentCode }
   );
 
-  // Sync existing breaks into local state when agent/week changes
+  // Sync existing breaks (multi-slot) into local state when agent/week changes
   const [synced, setSynced] = useState<string | null>(null);
   const syncKey = `${breakAgentCode}-${weekStart}`;
-  if (synced !== syncKey && existingBreaks.length > 0) {
+  if (synced !== syncKey) {
     setSynced(syncKey);
-    const merged: Record<string, { start: string; end: string }> = {};
+    const merged: MultiBreakEntries = {};
     for (const b of existingBreaks as Array<{ date: string; breakStart: string; breakEnd: string }>) {
-      merged[b.date] = { start: b.breakStart, end: b.breakEnd };
+      if (!merged[b.date]) merged[b.date] = [];
+      merged[b.date].push({ start: b.breakStart, end: b.breakEnd });
     }
     setBreakEntries(merged);
   }
-  if (synced !== syncKey && existingBreaks.length === 0 && synced !== null) {
-    setSynced(syncKey);
-    setBreakEntries({});
-  }
 
+  // Add a new empty break slot to a specific day
+  const addBreakToDay = (date: string) => {
+    const existing = breakEntries[date] ?? [];
+    setBreakEntries({ ...breakEntries, [date]: [...existing, { start: "", end: "" }] });
+  };
+
+  // Update a specific slot for a day
+  const updateSlot = (date: string, idx: number, field: "start" | "end", value: string) => {
+    const slots = [...(breakEntries[date] ?? [])];
+    slots[idx] = { ...slots[idx], [field]: value };
+    setBreakEntries({ ...breakEntries, [date]: slots });
+  };
+
+  // Remove a specific slot from a day
+  const removeSlot = (date: string, idx: number) => {
+    const slots = (breakEntries[date] ?? []).filter((_, i) => i !== idx);
+    const updated = { ...breakEntries };
+    if (slots.length === 0) delete updated[date];
+    else updated[date] = slots;
+    setBreakEntries(updated);
+  };
+
+  // Quick Fill: add one break slot to all days (appends, does not replace)
   const handleQuickFill = () => {
-    const filled: Record<string, { start: string; end: string }> = {};
+    const updated = { ...breakEntries };
     for (const date of weekDates) {
-      filled[date] = { start: quickFillStart, end: quickFillEnd };
+      updated[date] = [...(updated[date] ?? []), { start: quickFillStart, end: quickFillEnd }];
     }
-    setBreakEntries({ ...breakEntries, ...filled });
+    setBreakEntries(updated);
   };
 
   const handleSave = () => {
     if (!breakAgentCode) return;
-    const entries = Object.entries(breakEntries)
-      .filter(([, v]) => v.start && v.end)
-      .map(([date, v]) => ({ agentCode: breakAgentCode, date, breakStart: v.start, breakEnd: v.end }));
-    if (entries.length === 0) { return; }
+    const entries = weekDates.map(date => ({
+      agentCode: breakAgentCode,
+      date,
+      slots: (breakEntries[date] ?? [])
+        .filter(s => s.start && s.end)
+        .map(s => ({ breakStart: s.start, breakEnd: s.end })),
+    }));
     upsertBreaks.mutate({ entries });
   };
 
@@ -312,6 +338,8 @@ function BreakScheduleTab({
     const e = new Date(weekDates[6] + "T00:00:00");
     return `${s.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${e.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
   })();
+
+  const totalSlots = Object.values(breakEntries).reduce((acc, slots) => acc + slots.length, 0);
 
   return (
     <div className="space-y-5">
@@ -344,12 +372,12 @@ function BreakScheduleTab({
         <div className="flex items-center gap-2 ml-auto">
           <button
             className="p-1.5 rounded-md border border-input hover:bg-muted transition-colors"
-            onClick={() => { setBreakWeekOffset(breakWeekOffset - 1); setBreakEntries({}); }}
+            onClick={() => { setBreakWeekOffset(breakWeekOffset - 1); setBreakEntries({}); setSynced(null); }}
           ><ChevronLeft className="h-4 w-4" /></button>
           <span className="text-sm font-medium min-w-[200px] text-center">{weekLabel}</span>
           <button
             className="p-1.5 rounded-md border border-input hover:bg-muted transition-colors"
-            onClick={() => { setBreakWeekOffset(breakWeekOffset + 1); setBreakEntries({}); }}
+            onClick={() => { setBreakWeekOffset(breakWeekOffset + 1); setBreakEntries({}); setSynced(null); }}
           ><ChevronRight className="h-4 w-4" /></button>
         </div>
       </div>
@@ -363,7 +391,8 @@ function BreakScheduleTab({
         <>
           {/* Quick Fill */}
           <div className="rounded-xl border p-4 bg-muted/30">
-            <p className="text-sm font-medium mb-3">Quick Fill — Apply one break time to all days this week</p>
+            <p className="text-sm font-medium mb-1">Quick Fill</p>
+            <p className="text-xs text-muted-foreground mb-3">Add one break slot to all 7 days at once. Existing breaks are preserved.</p>
             <div className="flex flex-wrap gap-3 items-end">
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Break Start</label>
@@ -384,71 +413,94 @@ function BreakScheduleTab({
                 />
               </div>
               <Button size="sm" variant="outline" onClick={handleQuickFill} className="gap-1.5">
-                <RefreshCw className="h-3.5 w-3.5" /> Fill All Days
+                <RefreshCw className="h-3.5 w-3.5" /> Add to All Days
               </Button>
             </div>
           </div>
 
-          {/* Day-by-day grid */}
-          <div className="rounded-xl border overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-muted/50 border-b">
-                  <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Day</th>
-                  <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Break Start</th>
-                  <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Break End</th>
-                  <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Preview</th>
-                  <th className="px-4 py-2.5"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {weekDates.map((date, i) => {
-                  const entry = breakEntries[date];
-                  return (
-                    <tr key={date} className={`border-b last:border-0 ${i % 2 === 0 ? "" : "bg-muted/20"}`}>
-                      <td className="px-4 py-2.5 font-medium">{formatDateLabel(date)}</td>
-                      <td className="px-4 py-2.5">
-                        <input
-                          type="time"
-                          className="h-8 rounded-md border border-input bg-background px-2 py-1 text-sm"
-                          value={entry?.start ?? ""}
-                          onChange={e => setBreakEntries({ ...breakEntries, [date]: { start: e.target.value, end: entry?.end ?? "" } })}
-                        />
-                      </td>
-                      <td className="px-4 py-2.5">
-                        <input
-                          type="time"
-                          className="h-8 rounded-md border border-input bg-background px-2 py-1 text-sm"
-                          value={entry?.end ?? ""}
-                          onChange={e => setBreakEntries({ ...breakEntries, [date]: { start: entry?.start ?? "", end: e.target.value } })}
-                        />
-                      </td>
-                      <td className="px-4 py-2.5 text-muted-foreground">
-                        {entry?.start && entry?.end ? `${to12h(entry.start)} – ${to12h(entry.end)}` : <span className="text-xs opacity-50">—</span>}
-                      </td>
-                      <td className="px-4 py-2.5">
-                        {entry && (
-                          <button
-                            className="text-xs text-red-500 hover:text-red-700"
-                            onClick={() => { const e2 = { ...breakEntries }; delete e2[date]; setBreakEntries(e2); }}
-                          ><Trash2 className="h-3.5 w-3.5" /></button>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          {/* Day-by-day grid — multiple breaks per day */}
+          <div className="space-y-3">
+            {weekDates.map((date, dayIdx) => {
+              const slots = breakEntries[date] ?? [];
+              return (
+                <div
+                  key={date}
+                  className={`rounded-xl border overflow-hidden ${dayIdx % 2 === 0 ? "" : ""}`}
+                >
+                  {/* Day header */}
+                  <div className="flex items-center justify-between px-4 py-2.5 bg-muted/40 border-b">
+                    <span className="text-sm font-semibold">{formatDateLabel(date)}</span>
+                    <button
+                      className="flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80 transition-colors"
+                      onClick={() => addBreakToDay(date)}
+                    >
+                      <span className="text-base leading-none">+</span> Add Break
+                    </button>
+                  </div>
+
+                  {/* Break slots */}
+                  {slots.length === 0 ? (
+                    <div className="px-4 py-3 text-xs text-muted-foreground italic">No breaks scheduled — click "Add Break" to add one</div>
+                  ) : (
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b bg-muted/20">
+                          <th className="text-left px-4 py-2 text-xs font-medium text-muted-foreground w-8">#</th>
+                          <th className="text-left px-4 py-2 text-xs font-medium text-muted-foreground">Start</th>
+                          <th className="text-left px-4 py-2 text-xs font-medium text-muted-foreground">End</th>
+                          <th className="text-left px-4 py-2 text-xs font-medium text-muted-foreground">Preview</th>
+                          <th className="px-4 py-2 w-8"></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {slots.map((slot, slotIdx) => (
+                          <tr key={slotIdx} className="border-b last:border-0">
+                            <td className="px-4 py-2 text-xs text-muted-foreground">{slotIdx + 1}</td>
+                            <td className="px-4 py-2">
+                              <input
+                                type="time"
+                                className="h-8 rounded-md border border-input bg-background px-2 py-1 text-sm"
+                                value={slot.start}
+                                onChange={e => updateSlot(date, slotIdx, "start", e.target.value)}
+                              />
+                            </td>
+                            <td className="px-4 py-2">
+                              <input
+                                type="time"
+                                className="h-8 rounded-md border border-input bg-background px-2 py-1 text-sm"
+                                value={slot.end}
+                                onChange={e => updateSlot(date, slotIdx, "end", e.target.value)}
+                              />
+                            </td>
+                            <td className="px-4 py-2 text-muted-foreground text-xs">
+                              {slot.start && slot.end
+                                ? `${to12h(slot.start)} – ${to12h(slot.end)}`
+                                : <span className="opacity-40">—</span>}
+                            </td>
+                            <td className="px-4 py-2">
+                              <button
+                                className="text-red-500 hover:text-red-700 transition-colors"
+                                onClick={() => removeSlot(date, slotIdx)}
+                              ><Trash2 className="h-3.5 w-3.5" /></button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           <div className="flex justify-end">
             <Button
               onClick={handleSave}
-              disabled={upsertBreaks.isPending || Object.keys(breakEntries).length === 0}
+              disabled={upsertBreaks.isPending}
               className="gap-1.5"
             >
               <CheckCircle2 className="h-4 w-4" />
-              {upsertBreaks.isPending ? "Saving..." : "Save Break Schedule"}
+              {upsertBreaks.isPending ? "Saving..." : `Save Break Schedule${totalSlots > 0 ? ` (${totalSlots} slot${totalSlots !== 1 ? "s" : ""})` : ""}`}
             </Button>
           </div>
         </>
@@ -464,7 +516,7 @@ export default function Operations() {
   const [breakCampaignId, setBreakCampaignId] = useState<number | null>(null);
   const [breakAgentCode, setBreakAgentCode] = useState<string | null>(null);
   const [breakWeekOffset, setBreakWeekOffset] = useState(0);
-  const [breakEntries, setBreakEntries] = useState<Record<string, { start: string; end: string }>>({});
+  const [breakEntries, setBreakEntries] = useState<MultiBreakEntries>({});
   const [quickFillStart, setQuickFillStart] = useState("14:00");
   const [quickFillEnd, setQuickFillEnd] = useState("14:30");
   const upsertBreaks = trpc.breakSchedule.upsert.useMutation({

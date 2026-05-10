@@ -550,3 +550,14 @@
 - [x] Frontend: Agent Portal Profile tab — added This Week's Break Schedule card (12h format)
 - [x] All times displayed in 12-hour format (e.g., 2:00 PM) in UI
 - [x] 40/40 tests passing, 0 TypeScript errors
+
+## Round 42 — Multiple Breaks Per Day
+- [x] DB: Dropped old unique constraint (agentCode, date), added new unique on (agentCode, date, breakIndex)
+- [x] DB: Added breakIndex column to break_schedules table
+- [x] Backend: Updated upsert (bulkReplaceBreaks) — replaces all slots for a date, inserts with sequential breakIndex
+- [x] Frontend: Break Schedule tab — day-by-day cards, each showing all break slots as table rows
+- [x] Frontend: Break Schedule tab — "Add Break" button per day header adds a new empty row
+- [x] Frontend: Break Schedule tab — delete (trash) button per individual break row
+- [x] Frontend: Break Schedule tab — Quick Fill appends one slot to all 7 days (preserves existing)
+- [x] Frontend: Agent Portal Profile tab — groups multiple breaks per day, shows numbered list per day card
+- [x] 40/40 tests passing, 0 TypeScript errors

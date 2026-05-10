@@ -451,21 +451,36 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
             </div>
             {(myBreaks as Array<{ date: string; breakStart: string; breakEnd: string }>).length === 0 ? (
               <p className="text-sm" style={{ color: theme.textMuted }}>No break schedule set for this week</p>
-            ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                {(myBreaks as Array<{ date: string; breakStart: string; breakEnd: string }>).map(b => {
-                  const d = new Date(b.date + "T00:00:00");
-                  const dayLabel = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
-                  return (
-                    <div key={b.date} className="rounded-lg p-3" style={{ background: theme.cardBg, border: `1px solid ${theme.surfaceBorder}` }}>
-                      <p className="text-xs font-medium mb-1" style={{ color: theme.textMuted }}>{dayLabel}</p>
-                      <p className="text-sm font-semibold" style={{ color: theme.text }}>{to12h(b.breakStart)}</p>
-                      <p className="text-xs" style={{ color: theme.textFaint }}>to {to12h(b.breakEnd)}</p>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            ) : (() => {
+              // Group breaks by date (multiple slots per day)
+              const grouped: Record<string, Array<{ breakStart: string; breakEnd: string }>> = {};
+              for (const b of myBreaks as Array<{ date: string; breakStart: string; breakEnd: string }>) {
+                if (!grouped[b.date]) grouped[b.date] = [];
+                grouped[b.date].push({ breakStart: b.breakStart, breakEnd: b.breakEnd });
+              }
+              return (
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).map(([date, slots]) => {
+                    const d = new Date(date + "T00:00:00");
+                    const dayLabel = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+                    return (
+                      <div key={date} className="rounded-lg p-3" style={{ background: theme.cardBg, border: `1px solid ${theme.surfaceBorder}` }}>
+                        <p className="text-xs font-medium mb-2" style={{ color: theme.textMuted }}>{dayLabel}</p>
+                        <div className="space-y-1">
+                          {slots.map((slot, i) => (
+                            <div key={i} className="flex items-center gap-1.5">
+                              <span className="text-xs rounded px-1.5 py-0.5 font-medium" style={{ background: "oklch(0.32 0.18 28 / 0.15)", color: BRAND_LIGHT }}>{i + 1}</span>
+                              <span className="text-sm font-semibold" style={{ color: theme.text }}>{to12h(slot.breakStart)}</span>
+                              <span className="text-xs" style={{ color: theme.textFaint }}>– {to12h(slot.breakEnd)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         </>
       )}

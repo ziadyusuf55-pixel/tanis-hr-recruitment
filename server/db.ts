@@ -1535,27 +1535,37 @@ export async function getPayrollMonthsByAgentCode(agentCode: string): Promise<st
 }
 
 // ─── Break Schedules ──────────────────────────────────────────────────────────
-export async function upsertBreakSchedules(entries: Array<{
-  agentCode: string;
-  date: string; // YYYY-MM-DD
-  breakStart: string; // HH:MM 24h
-  breakEnd: string;   // HH:MM 24h
-}>) {
+/**
+ * Replace all break slots for a given agent+date.
+ * Deletes existing entries for that date, then inserts the new set.
+ */
+export async function replaceBreaksForDate(
+  agentCode: string,
+  date: string,
+  slots: Array<{ breakStart: string; breakEnd: string }>
+) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const { breakSchedules } = await import("../drizzle/schema");
+  await db.delete(breakSchedules)
+    .where(and(eq(breakSchedules.agentCode, agentCode), eq(breakSchedules.date, date)));
+  if (slots.length > 0) {
+    await db.insert(breakSchedules).values(
+      slots.map((s, i) => ({ agentCode, date, breakIndex: i, breakStart: s.breakStart, breakEnd: s.breakEnd }))
+    );
+  }
+}
+
+/**
+ * Bulk replace breaks for multiple agent+date combinations.
+ */
+export async function bulkReplaceBreaks(entries: Array<{
+  agentCode: string;
+  date: string;
+  slots: Array<{ breakStart: string; breakEnd: string }>;
+}>) {
   for (const entry of entries) {
-    const existing = await db.select({ id: breakSchedules.id })
-      .from(breakSchedules)
-      .where(and(eq(breakSchedules.agentCode, entry.agentCode), eq(breakSchedules.date, entry.date)))
-      .limit(1);
-    if (existing[0]) {
-      await db.update(breakSchedules)
-        .set({ breakStart: entry.breakStart, breakEnd: entry.breakEnd })
-        .where(eq(breakSchedules.id, existing[0].id));
-    } else {
-      await db.insert(breakSchedules).values(entry);
-    }
+    await replaceBreaksForDate(entry.agentCode, entry.date, entry.slots);
   }
   return { count: entries.length };
 }

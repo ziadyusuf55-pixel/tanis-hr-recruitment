@@ -127,7 +127,7 @@ import {
   getCommentsByCode,
   addAgentComment,
   deleteAgentComment,
-  upsertBreakSchedules,
+  bulkReplaceBreaks,
   getBreakSchedulesByAgent,
   getBreakSchedulesByDateRange,
   deleteBreakSchedule,
@@ -1675,17 +1675,19 @@ const overtimeRouter = router({
 
 // ─── Break Schedule Router ────────────────────────────────────────────────────
 const breakScheduleRouter = router({
-  // Admin: upsert one or many break entries
+  // Admin: replace all break slots for multiple agent+date combinations
   upsert: protectedProcedure
     .input(z.object({
       entries: z.array(z.object({
         agentCode: z.string(),
         date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-        breakStart: z.string().regex(/^\d{2}:\d{2}$/),
-        breakEnd: z.string().regex(/^\d{2}:\d{2}$/),
+        slots: z.array(z.object({
+          breakStart: z.string().regex(/^\d{2}:\d{2}$/),
+          breakEnd: z.string().regex(/^\d{2}:\d{2}$/),
+        })),
       })),
     }))
-    .mutation(({ input }) => upsertBreakSchedules(input.entries)),
+    .mutation(({ input }) => bulkReplaceBreaks(input.entries)),
   // Admin: get breaks for a specific agent in a date range
   getByAgent: protectedProcedure
     .input(z.object({

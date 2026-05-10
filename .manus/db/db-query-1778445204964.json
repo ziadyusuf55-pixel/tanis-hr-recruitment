@@ -1,0 +1,9 @@
+{
+  "query": "\n-- Drop old unique constraint\nALTER TABLE `break_schedules` DROP INDEX `break_schedules_agent_date_unique`;\n\n-- Add breakIndex column (0-based index per agent per day)\nALTER TABLE `break_schedules` ADD COLUMN `breakIndex` int NOT NULL DEFAULT 0 AFTER `agentCode`;\n\n-- Add new unique constraint on (agentCode, date, breakIndex)\nALTER TABLE `break_schedules` ADD UNIQUE KEY `break_schedules_agent_date_idx_unique` (`agentCode`, `date`, `breakIndex`);\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2mcroMLez2dD7B1.d41ce960f4ad --database GKQCuajYkpcdyw75NP8gmu --execute \n-- Drop old unique constraint\nALTER TABLE `break_schedules` DROP INDEX `break_schedules_agent_date_unique`;\n\n-- Add breakIndex column (0-based index per agent per day)\nALTER TABLE `break_schedules` ADD COLUMN `breakIndex` int NOT NULL DEFAULT 0 AFTER `agentCode`;\n\n-- Add new unique constraint on (agentCode, date, breakIndex)\nALTER TABLE `break_schedules` ADD UNIQUE KEY `break_schedules_agent_date_idx_unique` (`agentCode`, `date`, `breakIndex`);\n",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 2852
+}

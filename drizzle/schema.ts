@@ -510,13 +510,14 @@ export type InsertAgentComment = typeof agentComments.$inferInsert;
 export const breakSchedules = mysqlTable("break_schedules", {
   id: int("id").autoincrement().primaryKey(),
   agentCode: varchar("agentCode", { length: 100 }).notNull(),
+  breakIndex: int("breakIndex").notNull().default(0), // 0-based index per agent per day
   date: varchar("date", { length: 10 }).notNull(), // YYYY-MM-DD
   breakStart: varchar("breakStart", { length: 5 }).notNull(), // HH:MM (24h)
   breakEnd: varchar("breakEnd", { length: 5 }).notNull(),     // HH:MM (24h)
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({
-  uniqueAgentDate: uniqueIndex("break_schedules_agent_date_unique").on(t.agentCode, t.date),
+  uniqueAgentDateIdx: uniqueIndex("break_schedules_agent_date_idx_unique").on(t.agentCode, t.date, t.breakIndex),
 }));
 export type BreakSchedule = typeof breakSchedules.$inferSelect;
 export type InsertBreakSchedule = typeof breakSchedules.$inferInsert;
