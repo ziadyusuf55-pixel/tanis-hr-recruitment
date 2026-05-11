@@ -31,6 +31,8 @@ import {
   ChevronLeft,
   UserPlus,
   Clock,
+  UserX,
+  ShieldOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -64,6 +66,31 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
     onError: (e: { message: string }) => toast.error(e.message),
   });
 
+  // Separation state
+  const [resignDialog, setResignDialog] = useState(false);
+  const [terminateDialog, setTerminateDialog] = useState(false);
+  const [separationReason, setSeparationReason] = useState("");
+
+  const resignOnSpot = trpc.separation.resignOnSpot.useMutation({
+    onSuccess: () => {
+      toast.success("Agent marked as resigned. Portal access revoked and candidate blacklisted.");
+      setResignDialog(false);
+      setSeparationReason("");
+      onClose();
+    },
+    onError: (e: { message: string }) => toast.error(e.message),
+  });
+
+  const terminateAgent = trpc.separation.terminate.useMutation({
+    onSuccess: () => {
+      toast.success("Agent terminated. Portal access revoked.");
+      setTerminateDialog(false);
+      setSeparationReason("");
+      onClose();
+    },
+    onError: (e: { message: string }) => toast.error(e.message),
+  });
+
   type Doc = { id: number; docType: string; fileUrl: string; status: string; adminComment?: string | null; uploadedAt: Date | number | string };
   type Payment = { id: number; method: string; provider?: string | null; accountNumber?: string | null; phoneNumber?: string | null; accountHolderName?: string | null; bankName?: string | null; isPreferred: boolean; adminComment?: string | null; status: string };
 
@@ -74,6 +101,7 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
   };
 
   return (
+    <>
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
@@ -82,6 +110,27 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
             {agent.fullName} {agent.alias ? `(${agent.alias})` : ""} — {agent.traineeCode}
           </DialogTitle>
         </DialogHeader>
+        {/* Separation action buttons — only show if agent is still active/inactive */}
+        {agent.agentStatus !== "resigned" && agent.agentStatus !== "terminated" && (
+          <div className="flex gap-2 mb-3">
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-red-600 border-red-200 hover:bg-red-50"
+              onClick={() => { setSeparationReason(""); setResignDialog(true); }}
+            >
+              <UserX className="h-3.5 w-3.5" /> Mark Resigned (On Spot)
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-orange-600 border-orange-200 hover:bg-orange-50"
+              onClick={() => { setSeparationReason(""); setTerminateDialog(true); }}
+            >
+              <ShieldOff className="h-3.5 w-3.5" /> Terminate Agent
+            </Button>
+          </div>
+        )}
         <div className="flex gap-1 border-b mb-4">
           {(["docs", "payments"] as const).map(s => (
             <button key={s} onClick={() => setActiveSection(s)}
@@ -164,11 +213,78 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
             ))}
           </div>
         )}
+       </DialogContent>
+    </Dialog>
+
+    {/* Resign On Spot Confirmation Dialog */}
+    {/* These extra dialogs are siblings of the main dialog, inside the fragment */}
+    <Dialog open={resignDialog} onOpenChange={setResignDialog}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-red-600">
+            <UserX className="h-4 w-4" /> Mark as Resigned (On Spot)
+          </DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground mb-3">
+          This will immediately mark <strong>{agent.fullName}</strong> as resigned, revoke their portal access, and blacklist their candidate profile. This action cannot be undone.
+        </p>
+        <div className="space-y-2">
+          <label className="text-xs font-medium text-muted-foreground">Reason (required)</label>
+          <textarea
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[80px] resize-none"
+            placeholder="Enter reason for on-spot resignation..."
+            value={separationReason}
+            onChange={e => setSeparationReason(e.target.value)}
+          />
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="outline" onClick={() => setResignDialog(false)}>Cancel</Button>
+          <Button
+            className="bg-red-600 hover:bg-red-700 text-white"
+            disabled={!separationReason.trim() || resignOnSpot.isPending}
+            onClick={() => resignOnSpot.mutate({ agentCode: agent.traineeCode, reason: separationReason.trim() })}
+          >
+            Confirm Resignation
+          </Button>
+        </div>
       </DialogContent>
     </Dialog>
+
+    {/* Terminate Agent Confirmation Dialog */}
+    <Dialog open={terminateDialog} onOpenChange={setTerminateDialog}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-orange-600">
+            <ShieldOff className="h-4 w-4" /> Terminate Agent
+          </DialogTitle>
+        </DialogHeader>
+        <p className="text-sm text-muted-foreground mb-3">
+          This will immediately terminate <strong>{agent.fullName}</strong> and revoke their portal access. This action cannot be undone.
+        </p>
+        <div className="space-y-2">
+          <label className="text-xs font-medium text-muted-foreground">Reason (required)</label>
+          <textarea
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm min-h-[80px] resize-none"
+            placeholder="Enter reason for termination..."
+            value={separationReason}
+            onChange={e => setSeparationReason(e.target.value)}
+          />
+        </div>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="outline" onClick={() => setTerminateDialog(false)}>Cancel</Button>
+          <Button
+            className="bg-orange-600 hover:bg-orange-700 text-white"
+            disabled={!separationReason.trim() || terminateAgent.isPending}
+            onClick={() => terminateAgent.mutate({ agentCode: agent.traineeCode, reason: separationReason.trim() })}
+          >
+            Confirm Termination
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
-
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -196,6 +312,9 @@ type WorkforceAgent = {
   offDay2?: number | null;
   joinDate?: number | null;
   isActive: boolean;
+  crdts?: string | null;
+  agentStatus?: string | null;
+  dialerCredentials?: string | null;
 };
 
 type ForecastDay = {
@@ -568,6 +687,7 @@ export default function Operations() {
     fullName?: string; alias?: string; email?: string; phone?: string;
     campaignId?: string; shiftHours?: string; teamLeader?: string;
     offDay1?: string; offDay2?: string; joinDateStr?: string; isActive?: boolean;
+    crdts?: string;
   };
   const [editForm, setEditForm] = useState<EditForm>({});
   const updateAgent = trpc.workforce.update.useMutation({
@@ -641,6 +761,7 @@ export default function Operations() {
       offDay2: agent.offDay2?.toString() ?? "",
       joinDateStr: agent.joinDate ? new Date(agent.joinDate).toISOString().slice(0, 10) : "",
       isActive: agent.isActive,
+      crdts: agent.crdts ?? "",
     });
     setEditDialog(true);
   };
@@ -660,6 +781,7 @@ export default function Operations() {
       offDay2: editForm.offDay2 !== "" && editForm.offDay2 !== undefined ? Number(editForm.offDay2) : undefined,
       joinDate: editForm.joinDateStr ? new Date(editForm.joinDateStr).getTime() : undefined,
       isActive: editForm.isActive,
+      crdts: editForm.crdts || undefined,
     });
   };
 
@@ -852,9 +974,15 @@ export default function Operations() {
                         {agent.joinDate ? new Date(agent.joinDate).toLocaleDateString() : "—"}
                       </td>
                       <td className="px-4 py-3">
-                        <Badge className={`text-xs ${agent.isActive ? "bg-emerald-100 text-emerald-700 border-emerald-200" : "bg-muted text-muted-foreground"}`} variant="outline">
-                          {agent.isActive ? "Active" : "Inactive"}
-                        </Badge>
+                        {agent.agentStatus === "resigned" ? (
+                          <Badge className="text-xs bg-red-100 text-red-700 border-red-200" variant="outline">Resigned</Badge>
+                        ) : agent.agentStatus === "terminated" ? (
+                          <Badge className="text-xs bg-orange-100 text-orange-700 border-orange-200" variant="outline">Terminated</Badge>
+                        ) : agent.isActive ? (
+                          <Badge className="text-xs bg-emerald-100 text-emerald-700 border-emerald-200" variant="outline">Active</Badge>
+                        ) : (
+                          <Badge className="text-xs bg-muted text-muted-foreground" variant="outline">Inactive</Badge>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-right">
                         <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={(e) => { e.stopPropagation(); openEditAgent(agent); }}>
@@ -1158,14 +1286,6 @@ export default function Operations() {
               <Input value={editForm.alias ?? ""} onChange={e => setEditForm(f => ({ ...f, alias: e.target.value }))} />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Email</label>
-              <Input type="email" value={editForm.email ?? ""} onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))} />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Phone</label>
-              <Input value={editForm.phone ?? ""} onChange={e => setEditForm(f => ({ ...f, phone: e.target.value }))} />
-            </div>
-            <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Campaign</label>
               <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={editForm.campaignId ?? ""} onChange={e => setEditForm(f => ({ ...f, campaignId: e.target.value }))}>
                 <option value="">No campaign</option>
@@ -1173,8 +1293,8 @@ export default function Operations() {
               </select>
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Shift Hours</label>
-              <Input value={editForm.shiftHours ?? ""} onChange={e => setEditForm(f => ({ ...f, shiftHours: e.target.value }))} placeholder="e.g. 9AM–5PM" />
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">CRDTS</label>
+              <Input value={editForm.crdts ?? ""} onChange={e => setEditForm(f => ({ ...f, crdts: e.target.value }))} placeholder="Enter credentials" />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Team Leader</label>

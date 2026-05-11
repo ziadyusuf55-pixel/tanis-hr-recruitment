@@ -561,3 +561,22 @@
 - [x] Frontend: Break Schedule tab — Quick Fill appends one slot to all 7 days (preserves existing)
 - [x] Frontend: Agent Portal Profile tab — groups multiple breaks per day, shows numbered list per day card
 - [x] 40/40 tests passing, 0 TypeScript errors
+
+## Round 43 — Edit Agent Form Cleanup + Resignation & Termination
+- [x] DB: Added `crdts` column to workforce_agents table
+- [x] DB: Added `agentStatus` column to workforce_agents (resigned, terminated, or null)
+- [x] DB: Created `agent_separations` table (agentCode, type, reason, lastWorkingDay, requestedAt, effectiveAt, approvedBy, approvedAt)
+- [x] Backend: Updated updateWorkforceAgent to include crdts field; added crdts to workforce.update router
+- [x] Backend: separation.resignOnSpot mutation — sets resigned, blacklists candidate, revokes portal access, stores record
+- [x] Backend: separation.terminate mutation — sets terminated, revokes portal access, stores record
+- [x] Backend: separation.approveResignation mutation — approves resignation request, sets resigned, revokes access, stores record, marks request resolved
+- [x] Backend: separation.getByAgent query — get separation history for an agent
+- [x] Backend: getAgentRequestById helper added to db.ts
+- [x] Frontend: Edit Agent dialog — removed Email, Phone, Shift Hours fields; added CRDTS text field
+- [x] Frontend: Agent list — Resigned (red) / Terminated (orange) badges distinct from Active/Inactive
+- [x] Frontend: AgentDetailDialog — "Mark Resigned (On Spot)" and "Terminate Agent" buttons (hidden if already separated)
+- [x] Frontend: AgentDetailDialog — on-spot resignation confirmation dialog with required reason
+- [x] Frontend: AgentDetailDialog — termination confirmation dialog with required reason
+- [x] Frontend: Request Center (agent portal) — Resignation request already existed with 2-week minimum date enforcement
+- [x] Frontend: Admin Requests tab — "Approve Resignation" button for pending/in-progress resignation requests
+- [x] 40/40 tests passing, 0 TypeScript errors

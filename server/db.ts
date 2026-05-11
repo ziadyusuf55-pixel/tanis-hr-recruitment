@@ -1172,6 +1172,8 @@ export async function getWorkforceAgentByCode(traineeCode: string) {
     joinDate: workforceAgents.joinDate,
     isActive: workforceAgents.isActive,
     dialerCredentials: workforceAgents.dialerCredentials,
+    crdts: workforceAgents.crdts,
+    agentStatus: workforceAgents.agentStatus,
   }).from(workforceAgents)
     .leftJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
     .where(eq(workforceAgents.traineeCode, traineeCode))
@@ -1183,7 +1185,7 @@ export async function createWorkforceAgent(data: {
   traineeCode: string; candidateId: number; fullName: string;
   alias?: string; email?: string; phone?: string; campaignId?: number;
   shiftHours?: string; teamLeader?: string; offDay1?: number; offDay2?: number; joinDate?: number;
-  dialerCredentials?: string;
+  dialerCredentials?: string; crdts?: string;
 }) {
   const db = await getDb();
   if (!db) return;
@@ -1194,12 +1196,106 @@ export async function createWorkforceAgent(data: {
 export async function updateWorkforceAgent(traineeCode: string, data: Partial<{
   fullName: string; alias: string; email: string; phone: string; campaignId: number;
   shiftHours: string; teamLeader: string; offDay1: number; offDay2: number; joinDate: number; isActive: boolean;
-  dialerCredentials: string;
+  dialerCredentials: string; crdts: string; agentStatus: "active" | "inactive" | "resigned" | "terminated";
 }>) {
   const db = await getDb();
   if (!db) return;
   const { workforceAgents } = await import("../drizzle/schema");
   await db.update(workforceAgents).set(data).where(eq(workforceAgents.traineeCode, traineeCode));
+}
+
+// ─── Agent Separations ────────────────────────────────────────────
+export async function createSeparationRecord(data: {
+  agentCode: string;
+  type: "resignation_request" | "on_spot" | "termination";
+  reason?: string;
+  lastWorkingDay?: string;
+  requestedAt?: number;
+  effectiveAt?: number;
+  approvedBy?: string;
+  approvedAt?: number;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  const { agentSeparations } = await import("../drizzle/schema");
+  await db.insert(agentSeparations).values(data);
+}
+
+export async function getSeparationsByAgent(agentCode: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { agentSeparations } = await import("../drizzle/schema");
+  return db.select().from(agentSeparations)
+    .where(eq(agentSeparations.agentCode, agentCode))
+    .orderBy(desc(agentSeparations.createdAt));
+}
+
+/**
+ * Mark agent as resigned on-spot:
+ * 1. Sets agentStatus = 'resigned', isActive = false
+ * 2. Blacklists the linked candidate
+ * 3. Stores separation record
+ */
+export async function markAgentResignedOnSpot(agentCode: string, reason: string, adminName: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { workforceAgents, candidates, agentSeparations } = await import("../drizzle/schema");
+  // Get agent to find candidateId
+  const agent = await db.select({ candidateId: workforceAgents.candidateId })
+    .from(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode)).limit(1);
+  if (!agent[0]) throw new Error("Agent not found");
+  const now = Date.now();
+  // Update agent status
+  await db.update(workforceAgents)
+    .set({ agentStatus: "resigned", isActive: false })
+    .where(eq(workforceAgents.traineeCode, agentCode));
+  // Blacklist candidate
+  await db.update(candidates)
+    .set({ status: "blacklisted" })
+    .where(eq(candidates.id, agent[0].candidateId));
+  // Store separation record
+  await db.insert(agentSeparations).values({
+    agentCode, type: "on_spot", reason,
+    effectiveAt: now, approvedBy: adminName, approvedAt: now,
+  });
+}
+
+/**
+ * Terminate agent:
+ * 1. Sets agentStatus = 'terminated', isActive = false
+ * 2. Stores separation record
+ */
+export async function terminateAgent(agentCode: string, reason: string, adminName: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { workforceAgents, agentSeparations } = await import("../drizzle/schema");
+  const now = Date.now();
+  await db.update(workforceAgents)
+    .set({ agentStatus: "terminated", isActive: false })
+    .where(eq(workforceAgents.traineeCode, agentCode));
+  await db.insert(agentSeparations).values({
+    agentCode, type: "termination", reason,
+    effectiveAt: now, approvedBy: adminName, approvedAt: now,
+  });
+}
+
+/**
+ * Approve resignation request:
+ * 1. Sets agentStatus = 'resigned', isActive = false
+ * 2. Stores separation record with lastWorkingDay
+ */
+export async function approveResignationRequest(agentCode: string, lastWorkingDay: string, reason: string, adminName: string, requestedAt: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { workforceAgents, agentSeparations } = await import("../drizzle/schema");
+  const now = Date.now();
+  await db.update(workforceAgents)
+    .set({ agentStatus: "resigned", isActive: false })
+    .where(eq(workforceAgents.traineeCode, agentCode));
+  await db.insert(agentSeparations).values({
+    agentCode, type: "resignation_request", reason, lastWorkingDay,
+    requestedAt, effectiveAt: now, approvedBy: adminName, approvedAt: now,
+  });
 }
 
 // ─── Agent Payment Methods ────────────────────────────────────────────────────
@@ -1598,4 +1694,11 @@ export async function deleteBreakSchedule(agentCode: string, date: string) {
   const { breakSchedules } = await import("../drizzle/schema");
   await db.delete(breakSchedules)
     .where(and(eq(breakSchedules.agentCode, agentCode), eq(breakSchedules.date, date)));
+}
+
+export async function getAgentRequestById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const rows = await db.select().from(agentRequests).where(eq(agentRequests.id, id)).limit(1);
+  return rows[0] ?? null;
 }

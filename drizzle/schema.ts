@@ -402,6 +402,8 @@ export const workforceAgents = mysqlTable("workforce_agents", {
   offDay2: int("offDay2"),                             // 0-6 (Sun-Sat)
   joinDate: bigint("joinDate", { mode: "number" }),   // UTC ms — date joined operations
   dialerCredentials: varchar("dialerCredentials", { length: 500 }), // dialer/hub login credentials (admin fills manually)
+  crdts: varchar("crdts", { length: 500 }),                         // CRDTS field — admin fills manually
+  agentStatus: mysqlEnum("agentStatus", ["active", "inactive", "resigned", "terminated"]).default("active").notNull(),
   isActive: boolean("isActive").default(true).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -521,3 +523,21 @@ export const breakSchedules = mysqlTable("break_schedules", {
 }));
 export type BreakSchedule = typeof breakSchedules.$inferSelect;
 export type InsertBreakSchedule = typeof breakSchedules.$inferInsert;
+
+/**
+ * Agent separations — records of resignations (on-spot or request) and terminations.
+ */
+export const agentSeparations = mysqlTable("agent_separations", {
+  id: int("id").autoincrement().primaryKey(),
+  agentCode: varchar("agentCode", { length: 100 }).notNull(),
+  type: mysqlEnum("type", ["resignation_request", "on_spot", "termination"]).notNull(),
+  reason: text("reason"),
+  lastWorkingDay: varchar("lastWorkingDay", { length: 10 }),  // YYYY-MM-DD
+  requestedAt: bigint("requestedAt", { mode: "number" }),     // UTC ms — when agent submitted request
+  effectiveAt: bigint("effectiveAt", { mode: "number" }),     // UTC ms — when separation took effect
+  approvedBy: varchar("approvedBy", { length: 255 }),         // admin name who approved/processed
+  approvedAt: bigint("approvedAt", { mode: "number" }),       // UTC ms
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type AgentSeparation = typeof agentSeparations.$inferSelect;
+export type InsertAgentSeparation = typeof agentSeparations.$inferInsert;

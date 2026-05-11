@@ -61,6 +61,7 @@ import {
   listAgentRequestsByCandidate,
   listAllAgentRequests,
   updateAgentRequestStatus,
+  getAgentRequestById,
   // Admin accounts
   getAdminByEmail,
   getAdminById,
@@ -131,6 +132,11 @@ import {
   getBreakSchedulesByAgent,
   getBreakSchedulesByDateRange,
   deleteBreakSchedule,
+  // Separations
+  markAgentResignedOnSpot,
+  terminateAgent,
+  approveResignationRequest,
+  getSeparationsByAgent,
 } from "./db";
 import { notifyOwner } from "./_core/notification";
 import { sendInterviewNotification } from "./email";
@@ -1343,6 +1349,7 @@ const workforceRouter = router({
       joinDate: z.number().optional(),
       isActive: z.boolean().optional(),
       dialerCredentials: z.string().optional(),
+      crdts: z.string().optional(),
     }))
      .mutation(async ({ input }) => {
       const { traineeCode, ...rest } = input;
@@ -1720,6 +1727,54 @@ const breakScheduleRouter = router({
     }),
 });
 
+// ─── Separation Router ────────────────────────────────────────────
+const separationRouter = router({
+  // Admin: mark agent as resigned on-spot (also blacklists candidate)
+  resignOnSpot: protectedProcedure
+    .input(z.object({ agentCode: z.string(), reason: z.string().min(1) }))
+    .mutation(async ({ input, ctx }) => {
+      const adminName = ctx.user?.name ?? "Admin";
+      await markAgentResignedOnSpot(input.agentCode, input.reason, adminName);
+      return { success: true };
+    }),
+
+  // Admin: terminate agent
+  terminate: protectedProcedure
+    .input(z.object({ agentCode: z.string(), reason: z.string().min(1) }))
+    .mutation(async ({ input, ctx }) => {
+      const adminName = ctx.user?.name ?? "Admin";
+      await terminateAgent(input.agentCode, input.reason, adminName);
+      return { success: true };
+    }),
+
+  // Admin: approve a resignation request submitted by agent
+  approveResignation: protectedProcedure
+    .input(z.object({
+      agentCode: z.string(),
+      requestId: z.number(),
+      adminReply: z.string().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const adminName = ctx.user?.name ?? "Admin";
+      // Look up the request to get the last working day and reason
+      const req = await getAgentRequestById(input.requestId);
+      if (!req) throw new TRPCError({ code: "NOT_FOUND", message: "Request not found" });
+      const lastWorkingDay = req.requestedDate
+        ? new Date(req.requestedDate).toISOString().slice(0, 10)
+        : new Date().toISOString().slice(0, 10);
+      const reason = req.message ?? "Resignation request approved";
+      await approveResignationRequest(input.agentCode, lastWorkingDay, reason, adminName, req.requestedDate ?? Date.now());
+      // Also update the request status to resolved
+      await updateAgentRequestStatus(input.requestId, "resolved", input.adminReply ?? "Your resignation has been approved.");
+      return { success: true };
+    }),
+
+  // Admin/Agent: get separation history for an agent
+  getByAgent: protectedProcedure
+    .input(z.object({ agentCode: z.string() }))
+    .query(({ input }) => getSeparationsByAgent(input.agentCode)),
+});
+
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -1742,6 +1797,7 @@ export const appRouter = router({
   scheduleChange: scheduleChangeRouter,
   overtime: overtimeRouter,
   breakSchedule: breakScheduleRouter,
+  separation: separationRouter,
 });
 
 export type AppRouter = typeof appRouter;;

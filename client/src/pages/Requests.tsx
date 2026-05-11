@@ -85,6 +85,15 @@ export default function Requests() {
     onError: (e) => toast.error(e.message),
   });
 
+  const approveResignation = trpc.separation.approveResignation.useMutation({
+    onSuccess: () => {
+      utils.requests.listAll.invalidate();
+      toast.success("Resignation approved. Agent status updated, portal access revoked.");
+      setSelected(null);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
   const [selected, setSelected] = useState<AgentRequest | null>(null);
   const [replyText, setReplyText] = useState("");
   const [newStatus, setNewStatus] = useState("");
@@ -410,8 +419,19 @@ export default function Requests() {
               </div>
             </div>
           )}
-          <DialogFooter>
+          <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button variant="outline" onClick={() => setSelected(null)}>Cancel</Button>
+            {selected?.type === "resignation" && selected.status !== "resolved" && selected.status !== "rejected" && (
+              <Button
+                className="bg-red-600 hover:bg-red-700 text-white gap-1.5"
+                disabled={approveResignation.isPending}
+                onClick={() => {
+                  if (selected) approveResignation.mutate({ requestId: selected.id, agentCode: selected.traineeCode, adminReply: replyText.trim() || undefined });
+                }}
+              >
+                {approveResignation.isPending ? "Processing..." : "✓ Approve Resignation"}
+              </Button>
+            )}
             <Button
               onClick={handleUpdate}
               disabled={updateMutation.isPending}
