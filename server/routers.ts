@@ -1399,9 +1399,12 @@ const workforceRouter = router({
       return updateWorkforceAgent(traineeCode, rest);
     }),
   getMyProfile: publicProcedure.query(({ ctx }) => {
-    const code = getAgentCookieFromReq(ctx.req);
-    if (!code) return null;
-    return getWorkforceAgentByCode(code);
+    const token = getAgentCookieFromReq(ctx.req);
+    if (!token) return null;
+    try {
+      const { traineeCode } = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
+      return getWorkforceAgentByCode(traineeCode);
+    } catch { return null; }
   }),
 
   getCampaignAgents: publicProcedure
@@ -1424,9 +1427,11 @@ const workforceRouter = router({
   getMyOperationPlan: publicProcedure
     .input(z.object({ weekOffset: z.number().int().optional() }))
     .query(async ({ ctx, input }) => {
-      const code = getAgentCookieFromReq(ctx.req);
-      if (!code) return null;
-      const agent = await getWorkforceAgentByCode(code);
+      const _opTok = getAgentCookieFromReq(ctx.req);
+      if (!_opTok) return null;
+      let _opCode: string;
+      try { _opCode = (jwt.verify(_opTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; } catch { return null; }
+      const agent = await getWorkforceAgentByCode(_opCode);
       if (!agent || !agent.campaignId) return null;
       const campaign = await getCampaignById(agent.campaignId as number);
       const now = new Date();
@@ -1475,9 +1480,12 @@ const agentCommentsRouter = router({
     .input(z.object({ traineeCode: z.string() }))
     .query(({ input }) => getCommentsByCode(input.traineeCode)),
   listMine: publicProcedure.query(({ ctx }) => {
-    const code = getAgentCookieFromReq(ctx.req);
-    if (!code) return [];
-    return getCommentsByCode(code);
+    const _cmtTok = getAgentCookieFromReq(ctx.req);
+    if (!_cmtTok) return [];
+    try {
+      const { traineeCode: _cmtCode } = jwt.verify(_cmtTok, ENV.cookieSecret) as { traineeCode: string };
+      return getCommentsByCode(_cmtCode);
+    } catch { return []; }
   }),
   add: protectedProcedure
     .input(z.object({
@@ -1499,9 +1507,12 @@ const agentCommentsRouter = router({
 // ─── Payment Methods Router ───────────────────────────────────────────────────
 const paymentMethodsRouter = router({
   listMine: publicProcedure.query(({ ctx }) => {
-    const code = getAgentCookieFromReq(ctx.req);
-    if (!code) return [];
-    return getPaymentMethodsByCode(code);
+    const _pmTok = getAgentCookieFromReq(ctx.req);
+    if (!_pmTok) return [];
+    try {
+      const { traineeCode: _pmCode } = jwt.verify(_pmTok, ENV.cookieSecret) as { traineeCode: string };
+      return getPaymentMethodsByCode(_pmCode);
+    } catch { return []; }
   }),
 
   listAll: protectedProcedure.query(() => listAllPaymentMethods()),
@@ -1519,24 +1530,29 @@ const paymentMethodsRouter = router({
       isPreferred: z.boolean().optional(),
     }))
     .mutation(({ ctx, input }) => {
-      const code = getAgentCookieFromReq(ctx.req);
-      if (!code) throw new TRPCError({ code: "UNAUTHORIZED" });
-      return upsertPaymentMethod({ ...input, traineeCode: code });
+      const _pmUTok = getAgentCookieFromReq(ctx.req);
+      if (!_pmUTok) throw new TRPCError({ code: "UNAUTHORIZED" });
+      let _pmUCode: string;
+      try { _pmUCode = (jwt.verify(_pmUTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      return upsertPaymentMethod({ ...input, traineeCode: _pmUCode });
     }),
 
   setPreferred: publicProcedure
     .input(z.object({ id: z.number() }))
     .mutation(({ ctx, input }) => {
-      const code = getAgentCookieFromReq(ctx.req);
-      if (!code) throw new TRPCError({ code: "UNAUTHORIZED" });
-      return setPaymentMethodPreferred(input.id, code);
+      const _pmPTok = getAgentCookieFromReq(ctx.req);
+      if (!_pmPTok) throw new TRPCError({ code: "UNAUTHORIZED" });
+      let _pmPCode: string;
+      try { _pmPCode = (jwt.verify(_pmPTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      return setPaymentMethodPreferred(input.id, _pmPCode);
     }),
 
   delete: publicProcedure
     .input(z.object({ id: z.number() }))
     .mutation(({ ctx, input }) => {
-      const code = getAgentCookieFromReq(ctx.req);
-      if (!code) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const _pmDTok = getAgentCookieFromReq(ctx.req);
+      if (!_pmDTok) throw new TRPCError({ code: "UNAUTHORIZED" });
+      try { jwt.verify(_pmDTok, ENV.cookieSecret); } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
       return deletePaymentMethod(input.id);
     }),
 
@@ -1568,9 +1584,12 @@ const paymentMethodsRouter = router({
 // ─── Documents Router ─────────────────────────────────────────────────────────
 const documentsRouter = router({
   listMine: publicProcedure.query(({ ctx }) => {
-    const code = getAgentCookieFromReq(ctx.req);
-    if (!code) return [];
-    return getDocumentsByCode(code);
+    const _docTok = getAgentCookieFromReq(ctx.req);
+    if (!_docTok) return [];
+    try {
+      const { traineeCode: _docCode } = jwt.verify(_docTok, ENV.cookieSecret) as { traineeCode: string };
+      return getDocumentsByCode(_docCode);
+    } catch { return []; }
   }),
 
   listAll: protectedProcedure.query(() => listAllDocuments()),
@@ -1587,9 +1606,11 @@ const documentsRouter = router({
       fileName: z.string().optional(),
     }))
     .mutation(({ ctx, input }) => {
-      const code = getAgentCookieFromReq(ctx.req);
-      if (!code) throw new TRPCError({ code: "UNAUTHORIZED" });
-      return upsertAgentDocument({ ...input, traineeCode: code });
+      const _docUTok = getAgentCookieFromReq(ctx.req);
+      if (!_docUTok) throw new TRPCError({ code: "UNAUTHORIZED" });
+      let _docUCode: string;
+      try { _docUCode = (jwt.verify(_docUTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      return upsertAgentDocument({ ...input, traineeCode: _docUCode });
     }),
 
   uploadFile: publicProcedure
@@ -1601,14 +1622,16 @@ const documentsRouter = router({
       mimeType: z.string().default("application/octet-stream"),
     }))
     .mutation(async ({ ctx, input }) => {
-      const code = getAgentCookieFromReq(ctx.req);
-      if (!code) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const _docFTok = getAgentCookieFromReq(ctx.req);
+      if (!_docFTok) throw new TRPCError({ code: "UNAUTHORIZED" });
+      let _docFCode: string;
+      try { _docFCode = (jwt.verify(_docFTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
       const { storagePut } = await import("./storage");
       const buf = Buffer.from(input.fileBase64, "base64");
       const ext = input.fileName.split(".").pop() ?? "bin";
-      const key = `agent-docs/${code}/${input.docType}-${Date.now()}.${ext}`;
+      const key = `agent-docs/${_docFCode}/${input.docType}-${Date.now()}.${ext}`;
       const { url } = await storagePut(key, buf, input.mimeType);
-      await upsertAgentDocument({ id: input.id, traineeCode: code, docType: input.docType, fileUrl: url, fileName: input.fileName });
+      await upsertAgentDocument({ id: input.id, traineeCode: _docFCode, docType: input.docType, fileUrl: url, fileName: input.fileName });
       return { url };
     }),
 
@@ -1633,15 +1656,17 @@ const scheduleChangeRouter = router({
       message: z.string().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const code = getAgentCookieFromReq(ctx.req);
-      if (!code) throw new TRPCError({ code: "UNAUTHORIZED" });
-      await createScheduleChangeRequest({ ...input, requesterCode: code });
+      const _scTok = getAgentCookieFromReq(ctx.req);
+      if (!_scTok) throw new TRPCError({ code: "UNAUTHORIZED" });
+      let _scCode: string;
+      try { _scCode = (jwt.verify(_scTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      await createScheduleChangeRequest({ ...input, requesterCode: _scCode });
       // Notify target agent
       const target = await getWorkforceAgentByCode(input.targetCode);
       if (target) {
         await createAgentNotification({
           candidateId: target.candidateId,
-          message: `${code} has requested a schedule swap with you. Please review in the portal.`,
+          message: `${_scCode} has requested a schedule swap with you. Please review in the portal.`,
           type: "general",
           relatedId: null,
         });
@@ -1650,9 +1675,12 @@ const scheduleChangeRouter = router({
     }),
 
   listMine: publicProcedure.query(({ ctx }) => {
-    const code = getAgentCookieFromReq(ctx.req);
-    if (!code) return [];
-    return listScheduleChangeRequestsByCode(code);
+    const _scLTok = getAgentCookieFromReq(ctx.req);
+    if (!_scLTok) return [];
+    try {
+      const { traineeCode: _scLCode } = jwt.verify(_scLTok, ENV.cookieSecret) as { traineeCode: string };
+      return listScheduleChangeRequestsByCode(_scLCode);
+    } catch { return []; }
   }),
 
   listAll: protectedProcedure.query(() => listAllScheduleChangeRequests()),
@@ -1660,8 +1688,9 @@ const scheduleChangeRouter = router({
   peerApprove: publicProcedure
     .input(z.object({ id: z.number(), approve: z.boolean() }))
     .mutation(async ({ ctx, input }) => {
-      const code = getAgentCookieFromReq(ctx.req);
-      if (!code) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const _scRTok = getAgentCookieFromReq(ctx.req);
+      if (!_scRTok) throw new TRPCError({ code: "UNAUTHORIZED" });
+      try { jwt.verify(_scRTok, ENV.cookieSecret); } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
       if (input.approve) {
         const reqs = await listAllScheduleChangeRequests();
         const req = reqs.find(r => r.id === input.id);
@@ -1728,9 +1757,11 @@ const overtimeRouter = router({
       status: z.enum(["available", "unavailable"]),
     }))
     .mutation(({ ctx, input }) => {
-      const code = getAgentCookieFromReq(ctx.req);
-      if (!code) throw new TRPCError({ code: "UNAUTHORIZED" });
-      return upsertOvertimeAvailability({ ...input, traineeCode: code });
+      const _otTok = getAgentCookieFromReq(ctx.req);
+      if (!_otTok) throw new TRPCError({ code: "UNAUTHORIZED" });
+      let _otCode: string;
+      try { _otCode = (jwt.verify(_otTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      return upsertOvertimeAvailability({ ...input, traineeCode: _otCode });
     }),
 
     getResponses: protectedProcedure
@@ -1881,20 +1912,26 @@ const payrollV2Router = router({
     .query(({ input }) => getMyPayrollRecordByCrdts(input.crdts, input.month)),
   // Agent portal: derive CRDTS from cookie automatically
   getMyMonthsFromCookie: publicProcedure.query(async ({ ctx }) => {
-    const code = getAgentCookieFromReq(ctx.req);
-    if (!code) return [];
-    const agent = await getWorkforceAgentByCode(code);
-    if (!agent?.crdts) return [];
-    return getMyPayrollMonthsByCrdts(agent.crdts);
+    const _pr1Tok = getAgentCookieFromReq(ctx.req);
+    if (!_pr1Tok) return [];
+    try {
+      const { traineeCode: _pr1Code } = jwt.verify(_pr1Tok, ENV.cookieSecret) as { traineeCode: string };
+      const agent = await getWorkforceAgentByCode(_pr1Code);
+      if (!agent?.crdts) return [];
+      return getMyPayrollMonthsByCrdts(agent.crdts);
+    } catch { return []; }
   }),
   getMyRecordFromCookie: publicProcedure
     .input(z.object({ month: z.string() }))
     .query(async ({ ctx, input }) => {
-      const code = getAgentCookieFromReq(ctx.req);
-      if (!code) return null;
-      const agent = await getWorkforceAgentByCode(code);
-      if (!agent?.crdts) return null;
-      return getMyPayrollRecordByCrdts(agent.crdts, input.month);
+      const _pr2Tok = getAgentCookieFromReq(ctx.req);
+      if (!_pr2Tok) return null;
+      try {
+        const { traineeCode: _pr2Code } = jwt.verify(_pr2Tok, ENV.cookieSecret) as { traineeCode: string };
+        const agent = await getWorkforceAgentByCode(_pr2Code);
+        if (!agent?.crdts) return null;
+        return getMyPayrollRecordByCrdts(agent.crdts, input.month);
+      } catch { return null; }
     }),
 });
 

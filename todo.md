@@ -675,3 +675,9 @@
 - [x] Frontend: New admin page "Documents" — table: Agent Code, Name, document type, file name, upload date, download link
 - [x] Frontend: Documents page — filter by document type, search by agent name/code
 - [x] Frontend: Add "Payment Preferences" and "Documents" to admin sidebar
+
+### Agent Login Fix & Admin Password Reset (Round 47)
+- [x] Backend: Diagnose and fix agent login flow (JWT cookie, /agent/login route, password verification)
+- [x] Backend: Admin resetAgentPassword mutation — sets a new password for any agent by traineeCode
+- [x] Frontend: "Reset Password" button in agent profile dialog (Operations) — opens a dialog to set new password
+- [x] Frontend: Show generated/set password to admin after reset with copy button

@@ -35,6 +35,9 @@ import {
   UserX,
   ShieldOff,
   Download,
+  KeyRound,
+  Copy,
+  Check,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -72,6 +75,20 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
   const [resignDialog, setResignDialog] = useState(false);
   const [terminateDialog, setTerminateDialog] = useState(false);
   const [separationReason, setSeparationReason] = useState("");
+  // Reset password state
+  const [resetPwDialog, setResetPwDialog] = useState(false);
+  const [newPwResult, setNewPwResult] = useState<{ traineeCode: string; password: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const resetPassword = trpc.agent.resetPassword.useMutation({
+    onSuccess: (data) => { setNewPwResult(data); },
+    onError: (e: { message: string }) => toast.error(e.message),
+  });
+  function copyPassword() {
+    if (!newPwResult) return;
+    navigator.clipboard.writeText(newPwResult.password);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
 
   const resignOnSpot = trpc.separation.resignOnSpot.useMutation({
     onSuccess: () => {
@@ -130,6 +147,14 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
               onClick={() => { setSeparationReason(""); setTerminateDialog(true); }}
             >
               <ShieldOff className="h-3.5 w-3.5" /> Terminate Agent
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-blue-600 border-blue-200 hover:bg-blue-50"
+              onClick={() => { setNewPwResult(null); setCopied(false); setResetPwDialog(true); }}
+            >
+              <KeyRound className="h-3.5 w-3.5" /> Reset Password
             </Button>
           </div>
         )}
@@ -282,6 +307,54 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
             Confirm Termination
           </Button>
         </div>
+      </DialogContent>
+    </Dialog>
+    {/* Reset Password Dialog */}
+    <Dialog open={resetPwDialog} onOpenChange={(o) => { setResetPwDialog(o); if (!o) setNewPwResult(null); }}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2"><KeyRound className="h-4 w-4" /> Reset Portal Password</DialogTitle>
+        </DialogHeader>
+        {!newPwResult ? (
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              This will generate a new random password for <strong>{agent.fullName}</strong> ({agent.traineeCode}). The agent will be required to change it on next login.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <Button variant="outline" onClick={() => setResetPwDialog(false)}>Cancel</Button>
+              <Button
+                onClick={() => resetPassword.mutate({ candidateId: agent.candidateId })}
+                disabled={resetPassword.isPending}
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                {resetPassword.isPending ? "Generating..." : "Generate New Password"}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+              ✓ Password reset successfully. Share the credentials below with the agent.
+            </p>
+            <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-muted-foreground">Agent ID</span>
+                <span className="font-mono font-medium">{newPwResult.traineeCode}</span>
+              </div>
+              <div className="flex justify-between items-center text-sm">
+                <span className="text-muted-foreground">New Password</span>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono font-medium text-primary">{newPwResult.password}</span>
+                  <button onClick={copyPassword} className="text-muted-foreground hover:text-foreground transition-colors">
+                    {copied ? <Check className="h-3.5 w-3.5 text-emerald-600" /> : <Copy className="h-3.5 w-3.5" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">The agent must change this password on their next login.</p>
+            <Button className="w-full" onClick={() => { setResetPwDialog(false); setNewPwResult(null); }}>Done</Button>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
     </>
