@@ -157,6 +157,17 @@ export async function updateCandidateStatus(id: number, status: PipelineStage) {
 export async function deleteCandidate(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  const { stageNotes, interviews, activityLog, batchCandidates, agentNotifications, referrals } = await import("../drizzle/schema");
+  // Delete all child records before the candidate row
+  await db.delete(stageNotes).where(eq(stageNotes.candidateId, id));
+  await db.delete(interviews).where(eq(interviews.candidateId, id));
+  await db.delete(activityLog).where(eq(activityLog.candidateId, id));
+  await db.delete(batchCandidates).where(eq(batchCandidates.candidateId, id));
+  await db.delete(agentNotifications).where(eq(agentNotifications.candidateId, id));
+  // Delete referrals where this candidate is the referrer OR the created candidate
+  await db.delete(referrals).where(eq(referrals.referrerCandidateId, id));
+  await db.delete(referrals).where(eq(referrals.createdCandidateId, id));
+  // Finally delete the candidate
   await db.delete(candidates).where(eq(candidates.id, id));
 }
 
@@ -1242,7 +1253,7 @@ export async function getSeparationsByAgent(agentCode: string) {
 export async function markAgentResignedOnSpot(agentCode: string, reason: string, adminName: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const { workforceAgents, candidates, agentSeparations } = await import("../drizzle/schema");
+  const { workforceAgents, candidates, agentSeparations, agentCredentials, breakSchedules, scheduleChangeRequests, overtimeAvailability } = await import("../drizzle/schema");
   // Get agent to find candidateId
   const agent = await db.select({ candidateId: workforceAgents.candidateId })
     .from(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode)).limit(1);
@@ -1256,6 +1267,12 @@ export async function markAgentResignedOnSpot(agentCode: string, reason: string,
   await db.update(candidates)
     .set({ status: "blacklisted" })
     .where(eq(candidates.id, agent[0].candidateId));
+  // Revoke portal access
+  await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
+  // Clear operational data
+  await db.delete(breakSchedules).where(eq(breakSchedules.agentCode, agentCode));
+  await db.delete(scheduleChangeRequests).where(eq(scheduleChangeRequests.requesterCode, agentCode));
+  await db.delete(overtimeAvailability).where(eq(overtimeAvailability.traineeCode, agentCode));
   // Store separation record
   await db.insert(agentSeparations).values({
     agentCode, type: "on_spot", reason,
@@ -1271,11 +1288,17 @@ export async function markAgentResignedOnSpot(agentCode: string, reason: string,
 export async function terminateAgent(agentCode: string, reason: string, adminName: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const { workforceAgents, agentSeparations } = await import("../drizzle/schema");
+  const { workforceAgents, agentSeparations, agentCredentials, breakSchedules, scheduleChangeRequests, overtimeAvailability } = await import("../drizzle/schema");
   const now = Date.now();
   await db.update(workforceAgents)
     .set({ agentStatus: "terminated", isActive: false })
     .where(eq(workforceAgents.traineeCode, agentCode));
+  // Revoke portal access
+  await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
+  // Clear operational data
+  await db.delete(breakSchedules).where(eq(breakSchedules.agentCode, agentCode));
+  await db.delete(scheduleChangeRequests).where(eq(scheduleChangeRequests.requesterCode, agentCode));
+  await db.delete(overtimeAvailability).where(eq(overtimeAvailability.traineeCode, agentCode));
   await db.insert(agentSeparations).values({
     agentCode, type: "termination", reason,
     effectiveAt: now, approvedBy: adminName, approvedAt: now,
@@ -1290,11 +1313,17 @@ export async function terminateAgent(agentCode: string, reason: string, adminNam
 export async function approveResignationRequest(agentCode: string, lastWorkingDay: string, reason: string, adminName: string, requestedAt: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const { workforceAgents, agentSeparations } = await import("../drizzle/schema");
+  const { workforceAgents, agentSeparations, agentCredentials, breakSchedules, scheduleChangeRequests, overtimeAvailability } = await import("../drizzle/schema");
   const now = Date.now();
   await db.update(workforceAgents)
     .set({ agentStatus: "resigned", isActive: false })
     .where(eq(workforceAgents.traineeCode, agentCode));
+  // Revoke portal access
+  await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
+  // Clear operational data
+  await db.delete(breakSchedules).where(eq(breakSchedules.agentCode, agentCode));
+  await db.delete(scheduleChangeRequests).where(eq(scheduleChangeRequests.requesterCode, agentCode));
+  await db.delete(overtimeAvailability).where(eq(overtimeAvailability.traineeCode, agentCode));
   await db.insert(agentSeparations).values({
     agentCode, type: "resignation_request", reason, lastWorkingDay,
     requestedAt, effectiveAt: now, approvedBy: adminName, approvedAt: now,

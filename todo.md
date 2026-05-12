@@ -642,3 +642,10 @@
 - [x] Frontend: Adherence Log page — upload adherence Excel, view table, filter by agent/month
 - [x] Frontend: Quality Log page — upload quality Excel, view table, filter by agent/month
 - [x] 40/40+ tests still passing (40 tests)
+
+### Cascade Deletion & Separation Cleanup
+- [x] Backend: deleteCandidate — also delete stage_notes, interviews, activity_log, batch_candidates, agent_notifications, referrals for that candidateId
+- [x] Backend: markAgentResignedOnSpot — also delete agent_credentials (revoke portal access), break_schedules, schedule_change_requests, overtime_availability for that traineeCode
+- [x] Backend: terminateAgent — same cleanup as resign (credentials, breaks, schedule requests, overtime)
+- [x] Backend: approveResignationRequest — same cleanup
+- [x] Backend: keep payroll_records, agent_performance, adherence_log, quality_log, agent_violations, agent_separations, agent_payment_methods, agent_documents, agent_comments (historical audit trail — do NOT delete)
