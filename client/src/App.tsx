@@ -19,6 +19,8 @@ import PayrollStatus from "./pages/PayrollStatus";
 import PerformanceDashboard from "./pages/PerformanceDashboard";
 import AdherenceLog from "./pages/AdherenceLog";
 import QualityLog from "./pages/QualityLog";
+import PaymentPreferences from "./pages/PaymentPreferences";
+import AllDocuments from "./pages/AllDocuments";
 import AgentProfilePage from "./pages/AgentProfilePage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import { useAuth } from "./_core/hooks/useAuth";
@@ -72,6 +74,8 @@ function Router() {
       <Route path="/performance" component={() => <ProtectedRoute component={PerformanceDashboard} />} />
       <Route path="/adherence" component={() => <ProtectedRoute component={AdherenceLog} />} />
       <Route path="/quality" component={() => <ProtectedRoute component={QualityLog} />} />
+      <Route path="/payment-preferences" component={() => <ProtectedRoute component={PaymentPreferences} />} />
+      <Route path="/all-documents" component={() => <ProtectedRoute component={AllDocuments} />} />
       <Route path="/requests" component={() => <ProtectedRoute component={Requests} />} />
       <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
       <Route path="/admin-invite" component={AdminInviteAccept} />

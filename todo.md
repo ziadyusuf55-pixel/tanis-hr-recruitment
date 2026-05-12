@@ -649,3 +649,29 @@
 - [x] Backend: terminateAgent — same cleanup as resign (credentials, breaks, schedule requests, overtime)
 - [x] Backend: approveResignationRequest — same cleanup
 - [x] Backend: keep payroll_records, agent_performance, adherence_log, quality_log, agent_violations, agent_separations, agent_payment_methods, agent_documents, agent_comments (historical audit trail — do NOT delete)
+
+### Orientation Tour & Payroll Breakdown (Round 45)
+- [ ] Frontend: OrientationTour component — modal overlay with step-by-step slides (5 steps: Profile, Requests, Payroll, Schedule, Violations)
+- [ ] Frontend: Each step has title, description, and a highlighted tab indicator
+- [ ] Frontend: Next / Back / Done buttons; Done marks tour as complete
+- [ ] Backend: orientation.markShown mutation — sets orientationShown = true for agent
+- [ ] Frontend: Show tour only once — check orientationShown flag from agent profile on load
+- [ ] Frontend: Admin can reset orientation flag from agent profile in Operations
+- [ ] Frontend: Agent Payroll tab — show OT 1.5×, OT 2×, OT 3× as separate line items
+- [ ] Frontend: Agent Payroll tab — show quality deduction and attendance deduction as separate line items
+- [ ] Frontend: Agent Payroll tab — show net pay prominently at bottom
+- [ ] Frontend: Payroll status badge (Pending / Paid) visible to agent
+
+### Flexible Export & Consolidated Admin Views (Round 46)
+- [x] Frontend: Replace simple CSV export button in Operations agents tab with "Export" modal
+- [x] Frontend: Export modal — checkbox list of all available columns (Name, Alias, CRDTS, Code, Campaign, Shift, TL, Off Days, Join Date, Status, Phone, Email)
+- [x] Frontend: Export modal — Select All / Clear All toggle, preview count, Export CSV button
+- [x] Frontend: Export respects active filters (campaign, status, search) — exports only visible agents
+- [x] Backend: paymentMethods.listAll query — all agents with their preferred payment method details
+- [x] Frontend: New admin page "Payment Preferences" — table: Agent Code, Name, Alias, Type, Provider/Bank, Account/Phone, Name on Account
+- [x] Frontend: Payment Preferences page — filter by type (wallet/bank), search by name/code
+- [x] Frontend: Payment Preferences page — export as CSV
+- [x] Backend: documents.listAll query — all agents with their uploaded documents
+- [x] Frontend: New admin page "Documents" — table: Agent Code, Name, document type, file name, upload date, download link
+- [x] Frontend: Documents page — filter by document type, search by agent name/code
+- [x] Frontend: Add "Payment Preferences" and "Documents" to admin sidebar

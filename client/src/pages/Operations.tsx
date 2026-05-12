@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -667,6 +668,71 @@ export default function Operations() {
 
   // Add Agent to Operations
   const [addAgentDialog, setAddAgentDialog] = useState(false);
+  // Export modal state
+  const EXPORT_COLUMNS = [
+    { key: "traineeCode", label: "Agent Code" },
+    { key: "fullName", label: "Full Name" },
+    { key: "alias", label: "Alias" },
+    { key: "crdts", label: "CRDTS" },
+    { key: "campaignName", label: "Campaign" },
+    { key: "shiftHours", label: "Shift Hours" },
+    { key: "teamLeader", label: "Team Leader" },
+    { key: "offDay1", label: "Off Day 1" },
+    { key: "offDay2", label: "Off Day 2" },
+    { key: "joinDate", label: "Join Date" },
+    { key: "agentStatus", label: "Status" },
+    { key: "phone", label: "Phone" },
+    { key: "email", label: "Email" },
+    { key: "dialerCredentials", label: "Dialer Credentials" },
+  ] as const;
+  type ExportColumnKey = typeof EXPORT_COLUMNS[number]["key"];
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [selectedExportCols, setSelectedExportCols] = useState<Set<ExportColumnKey>>(
+    new Set(["fullName", "alias", "crdts"] as ExportColumnKey[])
+  );
+  function toggleExportCol(key: ExportColumnKey) {
+    setSelectedExportCols(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+  const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  function getAgentFieldValue(a: WorkforceAgent, key: ExportColumnKey): string {
+    switch (key) {
+      case "traineeCode": return a.traineeCode;
+      case "fullName": return a.fullName;
+      case "alias": return a.alias ?? "";
+      case "crdts": return a.crdts ?? "";
+      case "campaignName": return a.campaignName ?? "";
+      case "shiftHours": return a.shiftHours ?? "";
+      case "teamLeader": return a.teamLeader ?? "";
+      case "offDay1": return a.offDay1 != null ? DAYS[a.offDay1] : "";
+      case "offDay2": return a.offDay2 != null ? DAYS[a.offDay2] : "";
+      case "joinDate": return a.joinDate ? new Date(a.joinDate).toLocaleDateString("en-US") : "";
+      case "agentStatus": return a.agentStatus ?? "active";
+      case "phone": return a.phone ?? "";
+      case "email": return a.email ?? "";
+      case "dialerCredentials": return a.dialerCredentials ?? "";
+      default: return "";
+    }
+  }
+  function runExport() {
+    if (filteredAgents.length === 0) { toast.error("No agents to export"); return; }
+    if (selectedExportCols.size === 0) { toast.error("Select at least one column"); return; }
+    const orderedCols = EXPORT_COLUMNS.filter(c => selectedExportCols.has(c.key));
+    const headers = orderedCols.map(c => c.label);
+    const rows = (filteredAgents as WorkforceAgent[]).map(a => orderedCols.map(c => getAgentFieldValue(a, c.key)));
+    const csv = [headers, ...rows].map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a2 = document.createElement("a");
+    a2.href = url; a2.download = `agents-${new Date().toISOString().slice(0,10)}.csv`; a2.click();
+    URL.revokeObjectURL(url);
+    toast.success(`Exported ${filteredAgents.length} agents (${orderedCols.length} columns)`);
+    setShowExportModal(false);
+  }
+
   type AddAgentForm = { candidateId: string; traineeCode: string; fullName: string; alias: string; campaignId: string; shiftHours: string; teamLeader: string; offDay1: string; offDay2: string; dialerCredentials: string; };
   const EMPTY_ADD_FORM: AddAgentForm = { candidateId: '', traineeCode: '', fullName: '', alias: '', campaignId: '', shiftHours: '', teamLeader: '', offDay1: '', offDay2: '', dialerCredentials: '' };
   const [addAgentForm, setAddAgentForm] = useState<AddAgentForm>(EMPTY_ADD_FORM);
@@ -876,27 +942,8 @@ export default function Operations() {
             </div>
             <span className="text-sm text-muted-foreground">{filteredAgents.length} agent{filteredAgents.length !== 1 ? "s" : ""}</span>
             <div className="ml-auto flex items-center gap-2">
-              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => {
-                if (filteredAgents.length === 0) { toast.error("No agents to export"); return; }
-                const headers = ["Agent Code", "Full Name", "Alias", "CRDTS", "Campaign", "Shift", "Team Leader", "Off Day 1", "Off Day 2", "Join Date", "Status"];
-                const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-                const csvRows = (filteredAgents as WorkforceAgent[]).map(a => [
-                  a.traineeCode, a.fullName, a.alias ?? "", a.crdts ?? "",
-                  a.campaignName ?? "", a.shiftHours ?? "", a.teamLeader ?? "",
-                  a.offDay1 != null ? DAYS[a.offDay1] : "",
-                  a.offDay2 != null ? DAYS[a.offDay2] : "",
-                  a.joinDate ? new Date(a.joinDate).toLocaleDateString("en-US") : "",
-                  a.agentStatus ?? "active",
-                ]);
-                const csv = [headers, ...csvRows].map(row => row.map(v => `"${v}"`).join(",")).join("\n");
-                const blob = new Blob([csv], { type: "text/csv" });
-                const url = URL.createObjectURL(blob);
-                const a2 = document.createElement("a");
-                a2.href = url; a2.download = `agents-${new Date().toISOString().slice(0,10)}.csv`; a2.click();
-                URL.revokeObjectURL(url);
-                toast.success(`Exported ${filteredAgents.length} agents`);
-              }}>
-                <Download className="h-3.5 w-3.5" /> Export CSV
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowExportModal(true)}>
+                <Download className="h-3.5 w-3.5" /> Export...
               </Button>
               <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setBulkCredResults([]); setBulkCredDialog(true); }}>
                 <RefreshCw className="h-3.5 w-3.5" /> Generate Credentials
@@ -1589,6 +1636,56 @@ export default function Operations() {
             </Button>
           </div>
         </DialogContent>
+
+      {/* ── Export Modal ── */}
+      <Dialog open={showExportModal} onOpenChange={setShowExportModal}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Export Agents</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Select the columns to include. Exports <strong>{filteredAgents.length}</strong> agent{filteredAgents.length !== 1 ? "s" : ""} matching current filters.
+            </p>
+            {/* Select All / Clear All */}
+            <div className="flex gap-2">
+              <button
+                className="text-xs text-primary underline-offset-2 hover:underline"
+                onClick={() => setSelectedExportCols(new Set(EXPORT_COLUMNS.map(c => c.key)))}
+              >Select All</button>
+              <span className="text-muted-foreground text-xs">·</span>
+              <button
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                onClick={() => setSelectedExportCols(new Set())}
+              >Clear All</button>
+            </div>
+            {/* Column checkboxes */}
+            <div className="grid grid-cols-2 gap-2">
+              {EXPORT_COLUMNS.map(col => (
+                <label key={col.key} className="flex items-center gap-2 cursor-pointer select-none">
+                  <Checkbox
+                    checked={selectedExportCols.has(col.key)}
+                    onCheckedChange={() => toggleExportCol(col.key)}
+                  />
+                  <span className="text-sm">{col.label}</span>
+                </label>
+              ))}
+            </div>
+            {/* Preview */}
+            {selectedExportCols.size > 0 && (
+              <p className="text-xs text-muted-foreground">
+                Preview columns: {EXPORT_COLUMNS.filter(c => selectedExportCols.has(c.key)).map(c => c.label).join(", ")}
+              </p>
+            )}
+            <div className="flex justify-end gap-2 pt-1">
+              <Button variant="outline" size="sm" onClick={() => setShowExportModal(false)}>Cancel</Button>
+              <Button size="sm" className="gap-1.5" onClick={runExport} disabled={selectedExportCols.size === 0}>
+                <Download className="h-3.5 w-3.5" /> Export CSV
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
       </Dialog>
     </div>
   );
