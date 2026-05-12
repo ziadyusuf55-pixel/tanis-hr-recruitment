@@ -19,7 +19,7 @@ export default function ChangePasswordPage() {
   const changePassword = trpc.agent.changePassword.useMutation({
     onSuccess: () => {
       toast.success("Password changed successfully! Welcome to Tanis Hub.");
-      navigate("/agent");
+      window.location.href = "/agent";
     },
     onError: (e) => {
       setError(e.message);

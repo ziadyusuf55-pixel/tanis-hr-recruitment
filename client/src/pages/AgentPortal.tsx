@@ -177,7 +177,11 @@ const ORIENTATION_STEPS = [
 
 export default function AgentPortal() {
   const [, navigate] = useLocation();
-  const { data: agent, isLoading } = trpc.agent.me.useQuery();
+  const { data: agent, isLoading, isFetching } = trpc.agent.me.useQuery(undefined, {
+    retry: false,
+    refetchOnWindowFocus: false,
+    staleTime: 0,
+  });
   const logoutMutation = trpc.agent.logout.useMutation();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   // Orientation
@@ -198,10 +202,10 @@ export default function AgentPortal() {
   }
 
   useEffect(() => {
-    if (!isLoading && !agent) {
+    if (!isLoading && !isFetching && !agent) {
       navigate("/login");
     }
-  }, [isLoading, agent, navigate]);
+  }, [isLoading, isFetching, agent, navigate]);
 
   // Check orientation on first load
   const { data: orientationData } = trpc.orientation.getStatus.useQuery(
@@ -234,7 +238,7 @@ export default function AgentPortal() {
     navigate("/login");
   }
 
-  if (isLoading) {
+  if (isLoading || isFetching) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: theme.bg }}>
         <div className="flex flex-col items-center gap-3">

@@ -681,3 +681,9 @@
 - [x] Backend: Admin resetAgentPassword mutation — sets a new password for any agent by traineeCode
 - [x] Frontend: "Reset Password" button in agent profile dialog (Operations) — opens a dialog to set new password
 - [x] Frontend: Show generated/set password to admin after reset with copy button
+
+### Agent Login Browser Fix (Round 48)
+- [x] Frontend: Use window.location.href (full page reload) instead of navigate() after agent login — ensures cookie is sent with first request
+- [x] Frontend: Use window.location.href after password change in ChangePasswordPage — same reason
+- [x] Frontend: Add retry:false, refetchOnWindowFocus:false, staleTime:0 to agent.me query in AgentPortal
+- [x] Frontend: Guard redirect with isFetching flag — prevents premature /login redirect while query is in flight

@@ -84,9 +84,9 @@ export default function Login() {
       const fullCode = `T-${traineeCode.trim()}`;
       const result = await agentLoginMutation.mutateAsync({ traineeCode: fullCode, password });
       if (result.mustChangePassword) {
-        navigate("/agent/change-password");
+        window.location.href = "/agent/change-password";
       } else {
-        navigate("/agent");
+        window.location.href = "/agent";
       }
     } catch (err: unknown) {
       const msg = (err as { message?: string })?.message ?? "Invalid credentials. Please try again.";

@@ -1,0 +1,60 @@
+{
+  "query": "SELECT candidateId, traineeCode, mustChangePassword FROM agent_credentials LIMIT 10;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2mcroMLez2dD7B1.d41ce960f4ad --database GKQCuajYkpcdyw75NP8gmu --execute SELECT candidateId, traineeCode, mustChangePassword FROM agent_credentials LIMIT 10;",
+  "rows": [
+    {
+      "candidateId": "600001",
+      "traineeCode": "T-5555",
+      "mustChangePassword": "0"
+    },
+    {
+      "candidateId": "270002",
+      "traineeCode": "T-6",
+      "mustChangePassword": "1"
+    },
+    {
+      "candidateId": "90033",
+      "traineeCode": "T-3",
+      "mustChangePassword": "1"
+    },
+    {
+      "candidateId": "90058",
+      "traineeCode": "T-2",
+      "mustChangePassword": "1"
+    },
+    {
+      "candidateId": "90039",
+      "traineeCode": "T-4",
+      "mustChangePassword": "1"
+    },
+    {
+      "candidateId": "720001",
+      "traineeCode": "T-19",
+      "mustChangePassword": "1"
+    },
+    {
+      "candidateId": "690006",
+      "traineeCode": "T-22",
+      "mustChangePassword": "1"
+    },
+    {
+      "candidateId": "90003",
+      "traineeCode": "T-1",
+      "mustChangePassword": "1"
+    },
+    {
+      "candidateId": "270004",
+      "traineeCode": "T-7",
+      "mustChangePassword": "1"
+    },
+    {
+      "candidateId": "750016",
+      "traineeCode": "T-28",
+      "mustChangePassword": "1"
+    }
+  ],
+  "messages": [],
+  "stdout": "candidateId\ttraineeCode\tmustChangePassword\n600001\tT-5555\t0\n270002\tT-6\t1\n90033\tT-3\t1\n90058\tT-2\t1\n90039\tT-4\t1\n720001\tT-19\t1\n690006\tT-22\t1\n90003\tT-1\t1\n270004\tT-7\t1\n750016\tT-28\t1\n",
+  "stderr": "",
+  "execution_time_ms": 1856
+}
