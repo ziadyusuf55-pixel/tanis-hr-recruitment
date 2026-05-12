@@ -580,3 +580,6 @@
 - [x] Frontend: Request Center (agent portal) — Resignation request already existed with 2-week minimum date enforcement
 - [x] Frontend: Admin Requests tab — "Approve Resignation" button for pending/in-progress resignation requests
 - [x] 40/40 tests passing, 0 TypeScript errors
+
+## Round 43 Bug Fix — CRDTS Not Saving
+- [x] Fix CRDTS field not persisting when saved in Edit Agent dialog — root cause: listWorkforceAgents SELECT was missing crdts/agentStatus/dialerCredentials columns, so the edit form always opened with undefined; fixed by adding those columns to the list query

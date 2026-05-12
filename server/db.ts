@@ -1108,6 +1108,9 @@ export async function listWorkforceAgents(campaignId?: number) {
     joinDate: workforceAgents.joinDate,
     isActive: workforceAgents.isActive,
     createdAt: workforceAgents.createdAt,
+    dialerCredentials: workforceAgents.dialerCredentials,
+    crdts: workforceAgents.crdts,
+    agentStatus: workforceAgents.agentStatus,
   }).from(workforceAgents)
     .leftJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
     .orderBy(workforceAgents.fullName);

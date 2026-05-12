@@ -1,0 +1,18 @@
+{
+  "query": "SHOW COLUMNS FROM workforce_agents LIKE 'crdts';",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2mcroMLez2dD7B1.d41ce960f4ad --database GKQCuajYkpcdyw75NP8gmu --execute SHOW COLUMNS FROM workforce_agents LIKE 'crdts';",
+  "rows": [
+    {
+      "Field": "crdts",
+      "Type": "varchar(500)",
+      "Null": "YES",
+      "Key": "",
+      "Default": "NULL",
+      "Extra": ""
+    }
+  ],
+  "messages": [],
+  "stdout": "Field\tType\tNull\tKey\tDefault\tExtra\ncrdts\tvarchar(500)\tYES\t\tNULL\t\n",
+  "stderr": "",
+  "execution_time_ms": 1822
+}
