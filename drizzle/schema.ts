@@ -214,18 +214,31 @@ export type InsertAgentCredential = typeof agentCredentials.$inferInsert;
  */
 export const payrollRecords = mysqlTable("payroll_records", {
   id: int("id").autoincrement().primaryKey(),
-  candidateId: int("candidateId").notNull(),
-  agentCode: varchar("agentCode", { length: 100 }),
-  month: varchar("month", { length: 7 }).notNull(), // format: "2025-06"
+  candidateId: int("candidateId"),                              // optional legacy link
+  agentCode: varchar("agentCode", { length: 100 }),             // traineeCode (company ID)
+  crdts: varchar("crdts", { length: 100 }),                     // dialer ID — primary matching key
+  alias: varchar("alias", { length: 100 }),
+  month: varchar("month", { length: 7 }).notNull(),             // format: "2025-06"
   baseSalary: decimal("baseSalary", { precision: 10, scale: 2 }),
   workingHours: decimal("workingHours", { precision: 8, scale: 2 }),
-  overtimeHours: decimal("overtimeHours", { precision: 8, scale: 2 }),
-  commission: decimal("commission", { precision: 10, scale: 2 }).default("0"),
-  deductions: decimal("deductions", { precision: 10, scale: 2 }).default("0"),
+  ot1x5Hours: decimal("ot1x5Hours", { precision: 8, scale: 2 }).default("0"),  // OT 1.5x hours
+  ot2xHours: decimal("ot2xHours", { precision: 8, scale: 2 }).default("0"),    // OT 2x hours
+  ot3xHours: decimal("ot3xHours", { precision: 8, scale: 2 }).default("0"),    // OT 3x hours
+  commissionEgp: decimal("commissionEgp", { precision: 10, scale: 2 }).default("0"),
+  qualityDeductions: decimal("qualityDeductions", { precision: 10, scale: 2 }).default("0"),
+  attendanceDeductions: decimal("attendanceDeductions", { precision: 10, scale: 2 }).default("0"),
+  totalDeductions: decimal("totalDeductions", { precision: 10, scale: 2 }).default("0"),
   netPay: decimal("netPay", { precision: 10, scale: 2 }),
+  qualityDetail: text("qualityDetail"),                         // itemized quality violations
+  attendanceDetail: text("attendanceDetail"),                   // itemized attendance incidents
+  paymentStatus: mysqlEnum("paymentStatus", ["pending", "paid"]).default("pending").notNull(),
+  paidAt: bigint("paidAt", { mode: "number" }),                 // UTC ms — when admin marked as paid
   uploadedBy: varchar("uploadedBy", { length: 255 }),
   uploadedAt: bigint("uploadedAt", { mode: "number" }),
   // legacy fields kept for backward compat
+  overtimeHours: decimal("overtimeHours", { precision: 8, scale: 2 }),
+  commission: decimal("commission", { precision: 10, scale: 2 }).default("0"),
+  deductions: decimal("deductions", { precision: 10, scale: 2 }).default("0"),
   grossSalary: decimal("grossSalary", { precision: 10, scale: 2 }),
   paymentDate: bigint("paymentDate", { mode: "number" }),
   status: mysqlEnum("status", ["pending", "paid", "on_hold"]).default("pending").notNull(),
@@ -405,6 +418,7 @@ export const workforceAgents = mysqlTable("workforce_agents", {
   crdts: varchar("crdts", { length: 500 }),                         // CRDTS field — admin fills manually
   agentStatus: mysqlEnum("agentStatus", ["active", "inactive", "resigned", "terminated"]).default("active").notNull(),
   isActive: boolean("isActive").default(true).notNull(),
+  orientationShown: boolean("orientationShown").default(false).notNull(), // true after agent completes orientation tour
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -541,3 +555,94 @@ export const agentSeparations = mysqlTable("agent_separations", {
 });
 export type AgentSeparation = typeof agentSeparations.$inferSelect;
 export type InsertAgentSeparation = typeof agentSeparations.$inferInsert;
+
+/**
+ * Agent violations — deductions logged by TL or QA, approved by manager.
+ * Feeds into payroll automatically via Python script.
+ */
+export const agentViolations = mysqlTable("agent_violations", {
+  id: int("id").autoincrement().primaryKey(),
+  agentCode: varchar("agentCode", { length: 100 }).notNull(),   // traineeCode
+  crdts: varchar("crdts", { length: 100 }),                     // dialer ID
+  date: varchar("date", { length: 10 }).notNull(),              // YYYY-MM-DD
+  type: varchar("type", { length: 100 }).notNull(),             // e.g. 'lateness', 'wrong_disposition'
+  category: mysqlEnum("category", ["attendance", "quality"]).notNull(),
+  hours: decimal("hours", { precision: 6, scale: 2 }),          // for attendance violations
+  deduction: decimal("deduction", { precision: 10, scale: 2 }), // EGP amount
+  description: text("description"),
+  status: mysqlEnum("status", ["pending", "approved", "rejected"]).default("pending").notNull(),
+  approvedBy: varchar("approvedBy", { length: 255 }),
+  approvedAt: bigint("approvedAt", { mode: "number" }),
+  month: varchar("month", { length: 7 }),                       // YYYY-MM — derived from date
+  uploadedAt: bigint("uploadedAt", { mode: "number" }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type AgentViolation = typeof agentViolations.$inferSelect;
+export type InsertAgentViolation = typeof agentViolations.$inferInsert;
+
+/**
+ * Agent performance — monthly KPIs from Vicidial export (Python-generated).
+ * Matched by CRDTS. Admin uploads Excel monthly.
+ */
+export const agentPerformance = mysqlTable("agent_performance", {
+  id: int("id").autoincrement().primaryKey(),
+  agentCode: varchar("agentCode", { length: 100 }),             // traineeCode (resolved from CRDTS)
+  crdts: varchar("crdts", { length: 100 }).notNull(),           // primary matching key
+  alias: varchar("alias", { length: 100 }),
+  month: varchar("month", { length: 7 }).notNull(),             // YYYY-MM
+  loginHours: decimal("loginHours", { precision: 8, scale: 2 }),
+  revenue: decimal("revenue", { precision: 12, scale: 2 }),
+  cost: decimal("cost", { precision: 12, scale: 2 }),
+  profit: decimal("profit", { precision: 12, scale: 2 }),
+  revPerHour: decimal("revPerHour", { precision: 10, scale: 2 }),
+  uploadedBy: varchar("uploadedBy", { length: 255 }),
+  uploadedAt: bigint("uploadedAt", { mode: "number" }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type AgentPerformance = typeof agentPerformance.$inferSelect;
+export type InsertAgentPerformance = typeof agentPerformance.$inferInsert;
+
+/**
+ * Adherence log — attendance violations logged by TL in real time.
+ * Downloaded from Google Sheets as Excel at month end, uploaded to Hub.
+ */
+export const adherenceLog = mysqlTable("adherence_log", {
+  id: int("id").autoincrement().primaryKey(),
+  agentCode: varchar("agentCode", { length: 100 }),
+  crdts: varchar("crdts", { length: 100 }),
+  alias: varchar("alias", { length: 100 }),
+  date: varchar("date", { length: 10 }).notNull(),              // YYYY-MM-DD
+  month: varchar("month", { length: 7 }),                       // YYYY-MM
+  type: varchar("type", { length: 100 }).notNull(),             // lateness, NSNC, early_exit, etc.
+  hours: decimal("hours", { precision: 6, scale: 2 }),
+  deduction: decimal("deduction", { precision: 10, scale: 2 }),
+  status: mysqlEnum("status", ["pending", "approved", "rejected"]).default("approved").notNull(),
+  notes: text("notes"),
+  uploadedBy: varchar("uploadedBy", { length: 255 }),
+  uploadedAt: bigint("uploadedAt", { mode: "number" }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type AdherenceLog = typeof adherenceLog.$inferSelect;
+export type InsertAdherenceLog = typeof adherenceLog.$inferInsert;
+
+/**
+ * Quality log — QA evaluations logged weekly.
+ * Downloaded from Google Sheets as Excel at month end, uploaded to Hub.
+ */
+export const qualityLog = mysqlTable("quality_log", {
+  id: int("id").autoincrement().primaryKey(),
+  agentCode: varchar("agentCode", { length: 100 }),
+  crdts: varchar("crdts", { length: 100 }),
+  alias: varchar("alias", { length: 100 }),
+  date: varchar("date", { length: 10 }).notNull(),              // YYYY-MM-DD
+  month: varchar("month", { length: 7 }),                       // YYYY-MM
+  type: varchar("type", { length: 100 }).notNull(),             // wrong_disposition, misleading_customer, etc.
+  score: decimal("score", { precision: 5, scale: 2 }),
+  penalty: decimal("penalty", { precision: 10, scale: 2 }),
+  notes: text("notes"),
+  uploadedBy: varchar("uploadedBy", { length: 255 }),
+  uploadedAt: bigint("uploadedAt", { mode: "number" }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type QualityLog = typeof qualityLog.$inferSelect;
+export type InsertQualityLog = typeof qualityLog.$inferInsert;

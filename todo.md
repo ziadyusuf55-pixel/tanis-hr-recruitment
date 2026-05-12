@@ -583,3 +583,62 @@
 
 ## Round 43 Bug Fix — CRDTS Not Saving
 - [x] Fix CRDTS field not persisting when saved in Edit Agent dialog — root cause: listWorkforceAgents SELECT was missing crdts/agentStatus/dialerCredentials columns, so the edit form always opened with undefined; fixed by adding those columns to the list query
+
+## Round 44 — Hub Adjustments (Full List)
+
+### Schema & Backend
+- [ ] DB: Update payroll_records columns to match Python output (CRDTS as key, otHours1x5/2x/3x, commissionEgp, qualityDeductions, attendanceDeductions, totalDeductions, netPay, qualityDetail, attendanceDetail, paymentStatus [pending/paid], paidAt)
+- [ ] DB: Add orientationShown boolean to workforce_agents (default false)
+- [ ] DB: Create agent_violations table (id, agentCode, date, type, amount, description, createdAt)
+- [ ] DB: Create agent_performance table (id, agentCode, month [YYYY-MM], loginHours, revenue, cost, profit, revPerHour, uploadedAt)
+- [ ] DB: Create adherence_log table (id, agentCode, date, type, hours, deduction, status, notes, createdAt)
+- [ ] DB: Create quality_log table (id, agentCode, date, type, score, penalty, notes, createdAt)
+- [ ] Backend: payroll.upload — update to match new Python columns, match by CRDTS
+- [ ] Backend: payroll.setStatus mutation — admin flips status to paid/pending per agent per month
+- [ ] Backend: payroll.getStatusPage query — all agents with CRDTS, alias, name, netPay, status, paidAt for a given month
+- [ ] Backend: workforce.setOrientationShown mutation — mark orientation as shown for agent
+- [ ] Backend: workforce.resetOrientation mutation — admin resets orientation flag for an agent
+- [ ] Backend: violations.getMyViolations query — agent gets own violations
+- [ ] Backend: violations.list query — admin lists all violations (filter by agent/month)
+- [ ] Backend: performance.upload mutation — admin uploads Agent Stats Excel, matched by CRDTS
+- [ ] Backend: performance.getByMonth query — admin gets all agent performance for a month
+- [ ] Backend: adherence.upload mutation — admin uploads adherence log Excel
+- [ ] Backend: adherence.list query — admin views adherence log
+- [ ] Backend: quality.upload mutation — admin uploads quality log Excel
+- [ ] Backend: quality.list query — admin views quality log
+
+### Payroll Upload Update
+- [ ] Frontend: Update Payroll admin page upload to accept new Python column headers
+- [ ] Frontend: Update payroll template download to match new columns
+- [ ] Frontend: Update payroll breakdown display (OT 1.5x/2x/3x, quality/attendance deductions itemized)
+
+### Payroll Status Admin Page
+- [ ] Frontend: New admin page "Payroll Status" — table: CRDTS, Alias, Name, Net Pay, Status, Payment Date
+- [ ] Frontend: Month selector filter
+- [ ] Frontend: Manual Pending → Paid flip button per agent row
+- [ ] Frontend: Export list as CSV/Excel
+
+### Orientation Tour
+- [ ] Frontend: First-login orientation popup for agent portal (step-by-step tour, Next/Done buttons)
+- [ ] Frontend: Tour covers: Profile, Requests, Payroll, Schedule, Violations tabs
+- [ ] Frontend: Show only once — store flag in DB, mark shown after Done
+- [ ] Frontend: Admin can reset orientation flag per agent from agent profile
+
+### Agent Portal — Read-only Views
+- [ ] Frontend: Agent portal Profile tab — show read-only Operation Plan for current week (their row only)
+- [ ] Frontend: Agent portal Profile tab — break schedule already shown, ensure it is read-only (no edit controls)
+
+### Agent Portal — Violations Tab & Payroll Update
+- [ ] Frontend: Add Violations tab to agent portal navigation
+- [ ] Frontend: Violations tab — table: date, type, amount, description. Month selector
+- [ ] Frontend: Update agent Payroll tab — show OT 1.5x/2x/3x separately, deductions itemized (quality + attendance), net pay
+- [ ] Frontend: Payroll status shows Pending or Paid (admin-controlled)
+
+### Admin — CRDTS/Payment Page, Monthly Break, Export, Dashboards
+- [x] Frontend: Add "CRDTS & Payment" page to admin sidebar
+- [x] Frontend: Monthly break view toggle in Break Schedule tab (show all 30 days)
+- [x] Frontend: Export agent list as Excel/CSV (name, alias, CRDTS) from Operations agents tab
+- [x] Frontend: Agent Performance Dashboard page — upload Agent Stats Excel, view table by month
+- [x] Frontend: Adherence Log page — upload adherence Excel, view table, filter by agent/month
+- [x] Frontend: Quality Log page — upload quality Excel, view table, filter by agent/month
+- [x] 40/40+ tests still passing (40 tests)

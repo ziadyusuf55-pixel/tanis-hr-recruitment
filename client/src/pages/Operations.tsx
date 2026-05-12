@@ -33,6 +33,7 @@ import {
   Clock,
   UserX,
   ShieldOff,
+  Download,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -349,16 +350,18 @@ function getWeekDates(weekOffset: number): string[] {
     return d.toISOString().slice(0, 10);
   });
 }
-
+function getMonthDates(year: number, month: number): string[] {
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  return Array.from({ length: daysInMonth }, (_, i) => {
+    const d = new Date(year, month, i + 1);
+    return d.toISOString().slice(0, 10);
+  });
+}
 function formatDateLabel(dateStr: string): string {
   const d = new Date(dateStr + "T00:00:00");
   return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
-
-// ─── Break Schedule Tab Component ────────────────────────────────────────────
-// breakEntries: { [date]: Array<{ start: string; end: string }> }
 type MultiBreakEntries = Record<string, Array<{ start: string; end: string }>>;
-
 type BreakScheduleTabProps = {
   campaigns: Campaign[];
   agents: WorkforceAgent[];
@@ -376,29 +379,36 @@ type BreakScheduleTabProps = {
   setQuickFillEnd: (v: string) => void;
   upsertBreaks: ReturnType<typeof trpc.breakSchedule.upsert.useMutation>;
 };
-
 function BreakScheduleTab({
   campaigns, agents, breakCampaignId, setBreakCampaignId,
   breakAgentCode, setBreakAgentCode, breakWeekOffset, setBreakWeekOffset,
   breakEntries, setBreakEntries, quickFillStart, setQuickFillStart,
   quickFillEnd, setQuickFillEnd, upsertBreaks,
 }: BreakScheduleTabProps) {
+  const [viewMode, setViewMode] = useState<"weekly" | "monthly">("weekly");
+  const [monthYear, setMonthYear] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
   const weekDates = getWeekDates(breakWeekOffset);
   const weekStart = weekDates[0];
   const weekEnd = weekDates[6];
-
+  const [monthY, monthM] = monthYear.split("-").map(Number);
+  const monthDates = getMonthDates(monthY, monthM - 1);
+  const monthStart = monthDates[0];
+  const monthEnd = monthDates[monthDates.length - 1];
+  const activeDates = viewMode === "weekly" ? weekDates : monthDates;
+  const activeStart = viewMode === "weekly" ? weekStart : monthStart;
+  const activeEnd = viewMode === "weekly" ? weekEnd : monthEnd;
   const campaignAgents = breakCampaignId
     ? agents.filter(a => a.campaignId === breakCampaignId && a.isActive)
     : [];
-
   const { data: existingBreaks = [] } = trpc.breakSchedule.getByAgent.useQuery(
-    { agentCode: breakAgentCode!, startDate: weekStart, endDate: weekEnd },
+    { agentCode: breakAgentCode!, startDate: activeStart, endDate: activeEnd },
     { enabled: !!breakAgentCode }
   );
-
-  // Sync existing breaks (multi-slot) into local state when agent/week changes
   const [synced, setSynced] = useState<string | null>(null);
-  const syncKey = `${breakAgentCode}-${weekStart}`;
+  const syncKey = `${breakAgentCode}-${activeStart}-${viewMode}`;
   if (synced !== syncKey) {
     setSynced(syncKey);
     const merged: MultiBreakEntries = {};
@@ -408,21 +418,15 @@ function BreakScheduleTab({
     }
     setBreakEntries(merged);
   }
-
-  // Add a new empty break slot to a specific day
   const addBreakToDay = (date: string) => {
     const existing = breakEntries[date] ?? [];
     setBreakEntries({ ...breakEntries, [date]: [...existing, { start: "", end: "" }] });
   };
-
-  // Update a specific slot for a day
   const updateSlot = (date: string, idx: number, field: "start" | "end", value: string) => {
     const slots = [...(breakEntries[date] ?? [])];
     slots[idx] = { ...slots[idx], [field]: value };
     setBreakEntries({ ...breakEntries, [date]: slots });
   };
-
-  // Remove a specific slot from a day
   const removeSlot = (date: string, idx: number) => {
     const slots = (breakEntries[date] ?? []).filter((_, i) => i !== idx);
     const updated = { ...breakEntries };
@@ -430,19 +434,16 @@ function BreakScheduleTab({
     else updated[date] = slots;
     setBreakEntries(updated);
   };
-
-  // Quick Fill: add one break slot to all days (appends, does not replace)
   const handleQuickFill = () => {
     const updated = { ...breakEntries };
-    for (const date of weekDates) {
+    for (const date of activeDates) {
       updated[date] = [...(updated[date] ?? []), { start: quickFillStart, end: quickFillEnd }];
     }
     setBreakEntries(updated);
   };
-
   const handleSave = () => {
     if (!breakAgentCode) return;
-    const entries = weekDates.map(date => ({
+    const entries = activeDates.map(date => ({
       agentCode: breakAgentCode,
       date,
       slots: (breakEntries[date] ?? [])
@@ -451,56 +452,65 @@ function BreakScheduleTab({
     }));
     upsertBreaks.mutate({ entries });
   };
-
   const weekLabel = (() => {
     const s = new Date(weekDates[0] + "T00:00:00");
     const e = new Date(weekDates[6] + "T00:00:00");
-    return `${s.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${e.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+    return s.toLocaleDateString("en-US", { month: "short", day: "numeric" }) + " - " + e.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
   })();
-
+  const monthLabel = new Date(monthY, monthM - 1).toLocaleString("en-US", { month: "long", year: "numeric" });
   const totalSlots = Object.values(breakEntries).reduce((acc, slots) => acc + slots.length, 0);
-
   return (
     <div className="space-y-5">
-      {/* Selectors */}
       <div className="flex flex-wrap gap-3 items-end">
         <div>
           <label className="text-xs font-medium text-muted-foreground mb-1 block">Campaign</label>
-          <select
-            className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm min-w-[180px]"
+          <select className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm min-w-[180px]"
             value={breakCampaignId ?? ""}
-            onChange={e => { setBreakCampaignId(e.target.value ? Number(e.target.value) : null); setBreakAgentCode(null); setBreakEntries({}); }}
-          >
+            onChange={e => { setBreakCampaignId(e.target.value ? Number(e.target.value) : null); setBreakAgentCode(null); setBreakEntries({}); }}>
             <option value="">Select campaign...</option>
             {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
         </div>
         <div>
           <label className="text-xs font-medium text-muted-foreground mb-1 block">Agent</label>
-          <select
-            className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm min-w-[200px]"
+          <select className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm min-w-[200px]"
             value={breakAgentCode ?? ""}
             onChange={e => { setBreakAgentCode(e.target.value || null); setBreakEntries({}); }}
-            disabled={!breakCampaignId}
-          >
+            disabled={!breakCampaignId}>
             <option value="">{breakCampaignId ? "Select agent..." : "Select campaign first"}</option>
             {campaignAgents.map(a => <option key={a.traineeCode} value={a.traineeCode}>{a.fullName} ({a.traineeCode})</option>)}
           </select>
         </div>
-        {/* Week navigator */}
         <div className="flex items-center gap-2 ml-auto">
-          <button
-            className="p-1.5 rounded-md border border-input hover:bg-muted transition-colors"
-            onClick={() => { setBreakWeekOffset(breakWeekOffset - 1); setBreakEntries({}); setSynced(null); }}
-          ><ChevronLeft className="h-4 w-4" /></button>
-          <span className="text-sm font-medium min-w-[200px] text-center">{weekLabel}</span>
-          <button
-            className="p-1.5 rounded-md border border-input hover:bg-muted transition-colors"
-            onClick={() => { setBreakWeekOffset(breakWeekOffset + 1); setBreakEntries({}); setSynced(null); }}
-          ><ChevronRight className="h-4 w-4" /></button>
+          <div className="flex rounded-md border border-input overflow-hidden">
+            <button className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === "weekly" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+              onClick={() => { setViewMode("weekly"); setBreakEntries({}); setSynced(null); }}>Weekly</button>
+            <button className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === "monthly" ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}
+              onClick={() => { setViewMode("monthly"); setBreakEntries({}); setSynced(null); }}>Monthly</button>
+          </div>
+          {viewMode === "weekly" ? (
+            <>
+              <button className="p-1.5 rounded-md border border-input hover:bg-muted transition-colors"
+                onClick={() => { setBreakWeekOffset(breakWeekOffset - 1); setBreakEntries({}); setSynced(null); }}>
+                <ChevronLeft className="h-4 w-4" /></button>
+              <span className="text-sm font-medium min-w-[200px] text-center">{weekLabel}</span>
+              <button className="p-1.5 rounded-md border border-input hover:bg-muted transition-colors"
+                onClick={() => { setBreakWeekOffset(breakWeekOffset + 1); setBreakEntries({}); setSynced(null); }}>
+                <ChevronRight className="h-4 w-4" /></button>
+            </>
+          ) : (
+            <>
+              <button className="p-1.5 rounded-md border border-input hover:bg-muted transition-colors"
+                onClick={() => { const d = new Date(monthY, monthM - 2); setMonthYear(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`); setBreakEntries({}); setSynced(null); }}>
+                <ChevronLeft className="h-4 w-4" /></button>
+              <span className="text-sm font-medium min-w-[160px] text-center">{monthLabel}</span>
+              <button className="p-1.5 rounded-md border border-input hover:bg-muted transition-colors"
+                onClick={() => { const d = new Date(monthY, monthM); setMonthYear(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`); setBreakEntries({}); setSynced(null); }}>
+                <ChevronRight className="h-4 w-4" /></button>
+            </>
+          )}
         </div>
       </div>
-
       {!breakAgentCode ? (
         <div className="rounded-xl border border-dashed p-12 text-center text-muted-foreground">
           <Clock className="h-8 w-8 mx-auto mb-3 opacity-40" />
@@ -508,58 +518,36 @@ function BreakScheduleTab({
         </div>
       ) : (
         <>
-          {/* Quick Fill */}
           <div className="rounded-xl border p-4 bg-muted/30">
             <p className="text-sm font-medium mb-1">Quick Fill</p>
-            <p className="text-xs text-muted-foreground mb-3">Add one break slot to all 7 days at once. Existing breaks are preserved.</p>
+            <p className="text-xs text-muted-foreground mb-3">Add one break slot to all {activeDates.length} days at once. Existing breaks are preserved.</p>
             <div className="flex flex-wrap gap-3 items-end">
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Break Start</label>
-                <input
-                  type="time"
-                  className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
-                  value={quickFillStart}
-                  onChange={e => setQuickFillStart(e.target.value)}
-                />
+                <input type="time" className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={quickFillStart} onChange={e => setQuickFillStart(e.target.value)} />
               </div>
               <div>
                 <label className="text-xs text-muted-foreground mb-1 block">Break End</label>
-                <input
-                  type="time"
-                  className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
-                  value={quickFillEnd}
-                  onChange={e => setQuickFillEnd(e.target.value)}
-                />
+                <input type="time" className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={quickFillEnd} onChange={e => setQuickFillEnd(e.target.value)} />
               </div>
               <Button size="sm" variant="outline" onClick={handleQuickFill} className="gap-1.5">
                 <RefreshCw className="h-3.5 w-3.5" /> Add to All Days
               </Button>
             </div>
           </div>
-
-          {/* Day-by-day grid — multiple breaks per day */}
           <div className="space-y-3">
-            {weekDates.map((date, dayIdx) => {
+            {activeDates.map((date, dayIdx) => {
               const slots = breakEntries[date] ?? [];
               return (
-                <div
-                  key={date}
-                  className={`rounded-xl border overflow-hidden ${dayIdx % 2 === 0 ? "" : ""}`}
-                >
-                  {/* Day header */}
+                <div key={date} className="rounded-xl border overflow-hidden">
                   <div className="flex items-center justify-between px-4 py-2.5 bg-muted/40 border-b">
                     <span className="text-sm font-semibold">{formatDateLabel(date)}</span>
-                    <button
-                      className="flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80 transition-colors"
-                      onClick={() => addBreakToDay(date)}
-                    >
+                    <button className="flex items-center gap-1 text-xs font-medium text-primary hover:text-primary/80 transition-colors" onClick={() => addBreakToDay(date)}>
                       <span className="text-base leading-none">+</span> Add Break
                     </button>
                   </div>
-
-                  {/* Break slots */}
                   {slots.length === 0 ? (
-                    <div className="px-4 py-3 text-xs text-muted-foreground italic">No breaks scheduled — click "Add Break" to add one</div>
+                    <div className="px-4 py-3 text-xs text-muted-foreground italic">No breaks scheduled</div>
                   ) : (
                     <table className="w-full text-sm">
                       <thead>
@@ -576,31 +564,18 @@ function BreakScheduleTab({
                           <tr key={slotIdx} className="border-b last:border-0">
                             <td className="px-4 py-2 text-xs text-muted-foreground">{slotIdx + 1}</td>
                             <td className="px-4 py-2">
-                              <input
-                                type="time"
-                                className="h-8 rounded-md border border-input bg-background px-2 py-1 text-sm"
-                                value={slot.start}
-                                onChange={e => updateSlot(date, slotIdx, "start", e.target.value)}
-                              />
+                              <input type="time" className="h-8 rounded-md border border-input bg-background px-2 py-1 text-sm" value={slot.start} onChange={e => updateSlot(date, slotIdx, "start", e.target.value)} />
                             </td>
                             <td className="px-4 py-2">
-                              <input
-                                type="time"
-                                className="h-8 rounded-md border border-input bg-background px-2 py-1 text-sm"
-                                value={slot.end}
-                                onChange={e => updateSlot(date, slotIdx, "end", e.target.value)}
-                              />
+                              <input type="time" className="h-8 rounded-md border border-input bg-background px-2 py-1 text-sm" value={slot.end} onChange={e => updateSlot(date, slotIdx, "end", e.target.value)} />
                             </td>
                             <td className="px-4 py-2 text-muted-foreground text-xs">
-                              {slot.start && slot.end
-                                ? `${to12h(slot.start)} – ${to12h(slot.end)}`
-                                : <span className="opacity-40">—</span>}
+                              {slot.start && slot.end ? `${to12h(slot.start)} - ${to12h(slot.end)}` : ""}
                             </td>
                             <td className="px-4 py-2">
-                              <button
-                                className="text-red-500 hover:text-red-700 transition-colors"
-                                onClick={() => removeSlot(date, slotIdx)}
-                              ><Trash2 className="h-3.5 w-3.5" /></button>
+                              <button className="text-red-500 hover:text-red-700 transition-colors" onClick={() => removeSlot(date, slotIdx)}>
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
                             </td>
                           </tr>
                         ))}
@@ -611,13 +586,8 @@ function BreakScheduleTab({
               );
             })}
           </div>
-
           <div className="flex justify-end">
-            <Button
-              onClick={handleSave}
-              disabled={upsertBreaks.isPending}
-              className="gap-1.5"
-            >
+            <Button onClick={handleSave} disabled={upsertBreaks.isPending} className="gap-1.5">
               <CheckCircle2 className="h-4 w-4" />
               {upsertBreaks.isPending ? "Saving..." : `Save Break Schedule${totalSlots > 0 ? ` (${totalSlots} slot${totalSlots !== 1 ? "s" : ""})` : ""}`}
             </Button>
@@ -906,6 +876,28 @@ export default function Operations() {
             </div>
             <span className="text-sm text-muted-foreground">{filteredAgents.length} agent{filteredAgents.length !== 1 ? "s" : ""}</span>
             <div className="ml-auto flex items-center gap-2">
+              <Button size="sm" variant="outline" className="gap-1.5" onClick={() => {
+                if (filteredAgents.length === 0) { toast.error("No agents to export"); return; }
+                const headers = ["Agent Code", "Full Name", "Alias", "CRDTS", "Campaign", "Shift", "Team Leader", "Off Day 1", "Off Day 2", "Join Date", "Status"];
+                const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+                const csvRows = (filteredAgents as WorkforceAgent[]).map(a => [
+                  a.traineeCode, a.fullName, a.alias ?? "", a.crdts ?? "",
+                  a.campaignName ?? "", a.shiftHours ?? "", a.teamLeader ?? "",
+                  a.offDay1 != null ? DAYS[a.offDay1] : "",
+                  a.offDay2 != null ? DAYS[a.offDay2] : "",
+                  a.joinDate ? new Date(a.joinDate).toLocaleDateString("en-US") : "",
+                  a.agentStatus ?? "active",
+                ]);
+                const csv = [headers, ...csvRows].map(row => row.map(v => `"${v}"`).join(",")).join("\n");
+                const blob = new Blob([csv], { type: "text/csv" });
+                const url = URL.createObjectURL(blob);
+                const a2 = document.createElement("a");
+                a2.href = url; a2.download = `agents-${new Date().toISOString().slice(0,10)}.csv`; a2.click();
+                URL.revokeObjectURL(url);
+                toast.success(`Exported ${filteredAgents.length} agents`);
+              }}>
+                <Download className="h-3.5 w-3.5" /> Export CSV
+              </Button>
               <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setBulkCredResults([]); setBulkCredDialog(true); }}>
                 <RefreshCw className="h-3.5 w-3.5" /> Generate Credentials
               </Button>

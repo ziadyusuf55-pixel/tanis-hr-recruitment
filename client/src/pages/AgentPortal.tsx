@@ -143,11 +143,47 @@ function formatCurrency(amount: string | number | null | undefined) {
 
 type Tab = "profile" | "payroll" | "requests" | "referrals" | "documents" | "payment" | "comments";
 
+// ─── Orientation Steps ───────────────────────────────────────────────────────
+const ORIENTATION_STEPS = [
+  {
+    title: "Welcome to Tanis Hub! 👋",
+    body: "This is your personal agent portal where you can manage everything related to your role at Tanis. Let's take a quick tour so you know where everything is.",
+  },
+  {
+    title: "Profile Tab 👤",
+    body: "Your Profile tab shows your agent information, campaign assignment, break schedule, and day offs. All information here is managed by your team leader — you can view but not edit it.",
+  },
+  {
+    title: "Payroll Tab 💰",
+    body: "The Payroll tab shows your monthly salary breakdown — base salary, overtime, commission, deductions, and net pay. You'll also see the payment status (Pending or Paid) for each month.",
+  },
+  {
+    title: "Requests Tab 📋",
+    body: "Use the Requests tab to submit any formal request: day off, paid leave, HR letter, schedule change, or resignation. Your team leader will review and respond to each request.",
+  },
+  {
+    title: "Documents Tab 📁",
+    body: "Upload and manage your required documents here — national ID, contracts, certificates, and anything else HR needs from you.",
+  },
+  {
+    title: "Payment Tab 💳",
+    body: "Set your preferred payment method (Instapay, Vodafone Cash, or bank transfer) so payroll knows where to send your salary each month.",
+  },
+  {
+    title: "You're all set! ✅",
+    body: "That's everything you need to know to get started. If you have any questions, reach out to your team leader. Good luck and welcome to the team!",
+  },
+];
+
 export default function AgentPortal() {
   const [, navigate] = useLocation();
   const { data: agent, isLoading } = trpc.agent.me.useQuery();
   const logoutMutation = trpc.agent.logout.useMutation();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
+  // Orientation
+  const [showOrientation, setShowOrientation] = useState(false);
+  const [orientationStep, setOrientationStep] = useState(0);
+  const markOrientationMutation = trpc.orientation.markShown.useMutation();
   const [isDark, setIsDark] = useState<boolean>(() => {
     const saved = localStorage.getItem(THEME_KEY);
     return saved !== null ? saved === "dark" : true; // default dark
@@ -166,6 +202,32 @@ export default function AgentPortal() {
       navigate("/login");
     }
   }, [isLoading, agent, navigate]);
+
+  // Check orientation on first load
+  const { data: orientationData } = trpc.orientation.getStatus.useQuery(
+    undefined,
+    { enabled: !!agent }
+  );
+  useEffect(() => {
+    if (orientationData && !orientationData.shown) {
+      setShowOrientation(true);
+      setOrientationStep(0);
+    }
+  }, [orientationData]);
+
+  function handleOrientationNext() {
+    if (orientationStep < ORIENTATION_STEPS.length - 1) {
+      setOrientationStep(s => s + 1);
+    } else {
+      setShowOrientation(false);
+      markOrientationMutation.mutate(undefined);
+    }
+  }
+
+  function handleOrientationSkip() {
+    setShowOrientation(false);
+    markOrientationMutation.mutate(undefined);
+  }
 
   async function handleLogout() {
     await logoutMutation.mutateAsync();
@@ -322,6 +384,54 @@ export default function AgentPortal() {
         {activeTab === "referrals" && <ReferralTab referrerCandidateId={agent.candidateId} theme={theme} />}
         {activeTab === "comments" && <AgentCommentsTab theme={theme} />}
       </main>
+
+      {/* ── Orientation Popup ── */}
+      {showOrientation && (() => {
+        const step = ORIENTATION_STEPS[orientationStep];
+        const isLast = orientationStep === ORIENTATION_STEPS.length - 1;
+        return (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(4px)" }}
+          >
+            <div
+              className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
+              style={{ background: isDark ? "#1a1a1a" : "#ffffff", border: `1px solid ${isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)"}` }}
+            >
+              {/* Step indicator */}
+              <div className="flex gap-1.5 mb-5">
+                {ORIENTATION_STEPS.map((_, i) => (
+                  <div
+                    key={i}
+                    className="h-1 rounded-full flex-1 transition-all duration-300"
+                    style={{ background: i <= orientationStep ? BRAND : (isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.12)") }}
+                  />
+                ))}
+              </div>
+              {/* Content */}
+              <h2 className="text-lg font-bold mb-2" style={{ color: isDark ? "#fff" : "#1a1a1a" }}>{step.title}</h2>
+              <p className="text-sm leading-relaxed mb-6" style={{ color: isDark ? "rgba(255,255,255,0.65)" : "rgba(0,0,0,0.60)" }}>{step.body}</p>
+              {/* Actions */}
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  onClick={handleOrientationSkip}
+                  className="text-sm px-3 py-1.5 rounded-lg transition-all"
+                  style={{ color: isDark ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.35)" }}
+                >
+                  Skip tour
+                </button>
+                <button
+                  onClick={handleOrientationNext}
+                  className="px-5 py-2 rounded-xl text-sm font-semibold text-white transition-all"
+                  style={{ background: BRAND }}
+                >
+                  {isLast ? "Get started" : "Next"}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -367,6 +477,12 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
   const bsEnd = weekSaturday.toISOString().slice(0, 10);
   const { data: myBreaks = [] } = trpc.breakSchedule.getMyBreaks.useQuery(
     { startDate: bsStart, endDate: bsEnd },
+    { enabled: !!wfProfile }
+  );
+  // Operation plan for current week
+  const [opWeekOffset, setOpWeekOffset] = useState(0);
+  const { data: myOpPlan } = trpc.workforce.getMyOperationPlan.useQuery(
+    { weekOffset: opWeekOffset },
     { enabled: !!wfProfile }
   );
 
@@ -443,6 +559,44 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
             </div>
           </div>
 
+          {/* Operation Plan card */}
+          {myOpPlan && (() => {
+            const weekLabel = (() => {
+              const d = new Date(myOpPlan.weekStart + "T00:00:00");
+              const end = new Date(d); end.setDate(d.getDate() + 6);
+              return `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${end.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}`;
+            })();
+            return (
+              <div className="rounded-xl p-4" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <Calendar className="w-4 h-4" style={{ color: BRAND_LIGHT }} />
+                    <p className="text-xs uppercase tracking-wider font-medium" style={{ color: theme.textFaint }}>My Operation Plan</p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => setOpWeekOffset(o => o - 1)} className="p-1 rounded-lg transition-all hover:opacity-70" style={{ color: theme.textMuted }}>◀</button>
+                    <span className="text-xs font-medium px-2" style={{ color: theme.text }}>{weekLabel}</span>
+                    <button onClick={() => setOpWeekOffset(o => o + 1)} className="p-1 rounded-lg transition-all hover:opacity-70" style={{ color: theme.textMuted }}>▶</button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-7 gap-1">
+                  {myOpPlan.days.map(day => {
+                    const isWork = day.status === "work";
+                    return (
+                      <div key={day.date} className="rounded-lg p-2 text-center" style={{ background: isWork ? "oklch(0.32 0.18 28 / 0.15)" : (theme === DARK ? "rgba(255,255,255,0.05)" : "rgba(0,0,0,0.04)"), border: `1px solid ${isWork ? "oklch(0.32 0.18 28 / 0.3)" : theme.surfaceBorder}` }}>
+                        <p className="text-[10px] font-medium mb-1" style={{ color: theme.textFaint }}>{day.label}</p>
+                        <p className="text-xs font-bold" style={{ color: isWork ? BRAND_LIGHT : theme.textMuted }}>{isWork ? "Work" : "Off"}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+                {myOpPlan.shiftHours && (
+                  <p className="text-xs mt-2" style={{ color: theme.textMuted }}>Shift: {myOpPlan.shiftHours as string}</p>
+                )}
+              </div>
+            );
+          })()}
+
           {/* Break Schedule card */}
           <div className="rounded-xl p-4" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
             <div className="flex items-center gap-2 mb-3">
@@ -490,26 +644,15 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
 
 // ─── Payroll Tab ─────────────────────────────────────────────────────────────
 
-type AgentPayrollRecord = {
-  id: number;
-  month: string;
-  baseSalary: string | null;
-  workingHours: string | null;
-  overtimeHours: string | null;
-  commission: string | null;
-  deductions: string | null;
-  netPay: string | null;
-};
-
 function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
-  const { data: months = [], isLoading: loadingMonths } = trpc.agent.getMyPayrollMonths.useQuery();
+  const { data: months = [], isLoading: loadingMonths } = trpc.payrollV2.getMyMonthsFromCookie.useQuery();
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
   const activeMonth = selectedMonth ?? months[0] ?? null;
   const monthIndex = months.indexOf(activeMonth ?? "");
-  const { data: record, isLoading: loadingRecord } = trpc.agent.getMyPayrollRecord.useQuery(
+  const { data: record, isLoading: loadingRecord } = trpc.payrollV2.getMyRecordFromCookie.useQuery(
     { month: activeMonth! },
     { enabled: !!activeMonth }
-  ) as { data: AgentPayrollRecord | null | undefined; isLoading: boolean };
+  );
 
   const prevMonth = monthIndex < months.length - 1 ? months[monthIndex + 1] : null;
   const nextMonth = monthIndex > 0 ? months[monthIndex - 1] : null;
@@ -518,15 +661,14 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
     const [y, mo] = m.split("-");
     return new Date(parseInt(y), parseInt(mo) - 1).toLocaleString("en-US", { month: "long", year: "numeric" });
   }
-
-  function fmtEGP(val: string | null | undefined): string {
-    if (!val) return "—";
-    const n = parseFloat(val);
+  function fmtEGP(val: string | number | null | undefined): string {
+    if (val === null || val === undefined || val === "") return "—";
+    const n = typeof val === "number" ? val : parseFloat(val);
     return isNaN(n) ? "—" : `EGP ${n.toLocaleString("en-EG", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
   }
-  function fmtNum(val: string | null | undefined, suffix = ""): string {
-    if (!val) return "—";
-    const n = parseFloat(val);
+  function fmtNum(val: string | number | null | undefined, suffix = ""): string {
+    if (val === null || val === undefined || val === "") return "—";
+    const n = typeof val === "number" ? val : parseFloat(val as string);
     if (isNaN(n)) return "—";
     return n > 0 ? `${n.toLocaleString("en-EG", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}${suffix}` : "—";
   }
@@ -546,71 +688,112 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
     );
   }
 
+  const r = record as {
+    month: string;
+    crdts: string | null;
+    alias: string | null;
+    baseSalary: string | null;
+    workingHours: string | null;
+    ot1x5Hours: string | null;
+    ot2xHours: string | null;
+    ot3xHours: string | null;
+    commissionEgp: string | null;
+    qualityDeductions: string | null;
+    attendanceDeductions: string | null;
+    totalDeductions: string | null;
+    netPay: string | null;
+    qualityDetail: string | null;
+    attendanceDetail: string | null;
+    paymentStatus: string | null;
+    paymentDate: number | null;
+  } | null | undefined;
+
   return (
     <div className="space-y-4">
       {/* Month selector */}
       <div className="flex items-center gap-3">
-        <button
-          disabled={!prevMonth}
-          onClick={() => setSelectedMonth(prevMonth!)}
+        <button disabled={!prevMonth} onClick={() => setSelectedMonth(prevMonth!)}
           className="h-8 w-8 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30 text-lg"
-          style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}
-        >
-          &#8249;
-        </button>
+          style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}>&#8249;</button>
         <span className="text-base font-semibold min-w-[160px] text-center" style={{ color: theme.text }}>
           {activeMonth ? formatMonthLabel(activeMonth) : "—"}
         </span>
-        <button
-          disabled={!nextMonth}
-          onClick={() => setSelectedMonth(nextMonth!)}
+        <button disabled={!nextMonth} onClick={() => setSelectedMonth(nextMonth!)}
           className="h-8 w-8 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30 text-lg"
-          style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}
-        >
-          &#8250;
-        </button>
+          style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}>&#8250;</button>
       </div>
 
-      {/* Payroll breakdown card */}
       {loadingRecord ? (
         <div className="h-48 rounded-xl animate-pulse" style={{ background: theme.cardBg }} />
-      ) : !record ? (
-        <EmptyState
-          icon={<CreditCard className="w-8 h-8" style={{ color: theme.textFaint }} />}
-          title="No record for this month"
-          subtitle="Your payroll for this period has not been uploaded yet."
-          theme={theme}
-        />
+      ) : !r ? (
+        <EmptyState icon={<CreditCard className="w-8 h-8" style={{ color: theme.textFaint }} />}
+          title="No record for this month" subtitle="Your payroll for this period has not been uploaded yet." theme={theme} />
       ) : (
-        <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
-          <div className="px-5 py-4" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
-            <p className="font-semibold text-lg" style={{ color: theme.text }}>{formatMonthLabel(record.month)}</p>
-            <p className="text-xs mt-0.5" style={{ color: theme.textFaint }}>Payroll breakdown</p>
+        <div className="space-y-3">
+          {/* Status badge */}
+          <div className="flex items-center justify-between">
+            <p className="text-sm font-medium" style={{ color: theme.textMuted }}>{formatMonthLabel(r.month)}</p>
+            <span className="text-xs font-semibold px-3 py-1 rounded-full" style={{
+              background: r.paymentStatus === "paid" ? "oklch(0.45 0.15 142 / 0.2)" : "oklch(0.65 0.18 55 / 0.2)",
+              color: r.paymentStatus === "paid" ? "oklch(0.65 0.15 142)" : "oklch(0.75 0.18 55)",
+            }}>{r.paymentStatus === "paid" ? "✓ Paid" : "⏳ Pending"}</span>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-3">
-            {[
-              { label: "Base Salary", value: fmtEGP(record.baseSalary), red: false, accent: false },
-              { label: "Working Hours", value: fmtNum(record.workingHours, " hrs"), red: false, accent: false },
-              { label: "Overtime Hours", value: fmtNum(record.overtimeHours, " hrs"), red: false, accent: false },
-              { label: "Commission", value: fmtEGP(record.commission), red: false, accent: false },
-              { label: "Deductions", value: record.deductions && parseFloat(record.deductions) > 0 ? `- ${fmtEGP(record.deductions)}` : "—", red: true, accent: false },
-              { label: "Net Pay", value: fmtEGP(record.netPay), red: false, accent: true },
-            ].map(({ label, value, red, accent }, i) => (
-              <div
-                key={label}
-                className="px-5 py-4"
-                style={{
-                  borderTop: i >= 3 ? `1px solid ${theme.cardBorder}` : undefined,
-                  borderLeft: i % 3 !== 0 ? `1px solid ${theme.cardBorder}` : undefined,
-                }}
-              >
-                <p className="text-xs mb-1" style={{ color: theme.textFaint }}>{label}</p>
-                <p className="text-sm font-semibold" style={{ color: red ? "#ef4444" : accent ? BRAND_LIGHT : theme.text }}>
-                  {value}
-                </p>
-              </div>
-            ))}
+
+          {/* Earnings */}
+          <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+            <div className="px-4 py-3" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+              <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.textFaint }}>Earnings</p>
+            </div>
+            <div className="divide-y" style={{ borderColor: theme.cardBorder }}>
+              {[
+                { label: "Base Salary", value: fmtEGP(r.baseSalary) },
+                { label: "Working Hours", value: fmtNum(r.workingHours, " hrs") },
+                { label: "OT 1.5×", value: fmtNum(r.ot1x5Hours, " hrs") },
+                { label: "OT 2×", value: fmtNum(r.ot2xHours, " hrs") },
+                { label: "OT 3×", value: fmtNum(r.ot3xHours, " hrs") },
+                { label: "Commission", value: fmtEGP(r.commissionEgp) },
+              ].map(({ label, value }) => (
+                <div key={label} className="flex items-center justify-between px-4 py-3">
+                  <p className="text-sm" style={{ color: theme.textMuted }}>{label}</p>
+                  <p className="text-sm font-medium" style={{ color: theme.text }}>{value}</p>
+                </div>
+              ))}
+            </div>
           </div>
+
+          {/* Deductions */}
+          <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+            <div className="px-4 py-3" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+              <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.textFaint }}>Deductions</p>
+            </div>
+            <div className="divide-y" style={{ borderColor: theme.cardBorder }}>
+              {([
+                { label: "Quality Deductions", value: fmtEGP(r.qualityDeductions), detail: r.qualityDetail, bold: false },
+                { label: "Attendance Deductions", value: fmtEGP(r.attendanceDeductions), detail: r.attendanceDetail, bold: false },
+                { label: "Total Deductions", value: fmtEGP(r.totalDeductions), detail: null, bold: true },
+              ] as Array<{ label: string; value: string; detail: string | null; bold: boolean }>).map(({ label, value, detail, bold }) => (
+                <div key={label} className="px-4 py-3">
+                  <div className="flex items-center justify-between">
+                    <p className={`text-sm ${bold ? "font-semibold" : ""}`} style={{ color: bold ? "#ef4444" : theme.textMuted }}>{label}</p>
+                    <p className={`text-sm ${bold ? "font-semibold" : "font-medium"}`} style={{ color: bold ? "#ef4444" : theme.text }}>{value !== "—" ? `- ${value}` : "—"}</p>
+                  </div>
+                  {detail && <p className="text-xs mt-1 leading-relaxed" style={{ color: theme.textFaint }}>{detail}</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Net Pay */}
+          <div className="rounded-xl px-5 py-4 flex items-center justify-between" style={{ background: "oklch(0.32 0.18 28 / 0.12)", border: "1px solid oklch(0.32 0.18 28 / 0.25)" }}>
+            <p className="font-semibold" style={{ color: theme.text }}>Net Pay</p>
+            <p className="text-xl font-bold" style={{ color: BRAND_LIGHT }}>{fmtEGP(r.netPay)}</p>
+          </div>
+
+          {r.paymentDate && (
+            <p className="text-xs text-center" style={{ color: theme.textFaint }}>
+              Payment date: {new Date(r.paymentDate).toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" })}
+            </p>
+          )}
         </div>
       )}
     </div>

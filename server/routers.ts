@@ -47,7 +47,7 @@ import {
   upsertAgentCredential,
   changeAgentPassword,
   getPayrollByCandidateId,
-  upsertPayrollRecord,
+  upsertPayrollRecordLegacy,
   deletePayrollRecord,
   upsertPayrollFromExcel,
   getPayrollMonths,
@@ -137,6 +137,31 @@ import {
   terminateAgent,
   approveResignationRequest,
   getSeparationsByAgent,
+  // Payroll v2
+  upsertPayrollRecordV2,
+  getPayrollStatusPage,
+  setPayrollStatus,
+  getMyPayrollMonthsByCrdts,
+  getMyPayrollRecordByCrdts,
+  // Orientation
+  markOrientationShown,
+  resetOrientation,
+  getOrientationStatus,
+  // Violations
+  bulkInsertViolations,
+  listViolations,
+  // Performance v2
+  bulkUpsertPerformance,
+  getPerformanceByMonth,
+  getPerformanceMonths,
+  // Adherence
+  bulkInsertAdherence,
+  listAdherence,
+  getAdherenceMonths,
+  // Quality
+  bulkInsertQuality,
+  listQuality,
+  getQualityMonths,
 } from "./db";
 import { notifyOwner } from "./_core/notification";
 import { sendInterviewNotification } from "./email";
@@ -760,7 +785,7 @@ const agentRouter = router({
       notes: z.string().nullable().optional(),
     }))
     .mutation(async ({ input }) => {
-      await upsertPayrollRecord(input);
+      await upsertPayrollRecordLegacy(input);
       return { success: true };
     }),
 
@@ -1396,6 +1421,39 @@ const workforceRouter = router({
       return { agent, documents, paymentMethods, comments };
     }),
 
+  getMyOperationPlan: publicProcedure
+    .input(z.object({ weekOffset: z.number().int().optional() }))
+    .query(async ({ ctx, input }) => {
+      const code = getAgentCookieFromReq(ctx.req);
+      if (!code) return null;
+      const agent = await getWorkforceAgentByCode(code);
+      if (!agent || !agent.campaignId) return null;
+      const campaign = await getCampaignById(agent.campaignId as number);
+      const now = new Date();
+      const dayOfWeek = now.getDay();
+      const daysToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+      const monday = new Date(now);
+      monday.setDate(now.getDate() + daysToMonday + (input.weekOffset ?? 0) * 7);
+      monday.setHours(0, 0, 0, 0);
+      const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const FULL_DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+      const weekDays = Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(monday);
+        d.setDate(monday.getDate() + i);
+        return { date: d, dayOfWeek: d.getDay(), label: DAY_NAMES[d.getDay()], fullLabel: FULL_DAY_NAMES[d.getDay()] };
+      });
+      const days = weekDays.map(day => {
+        const isOff = agent.offDay1 === day.dayOfWeek || agent.offDay2 === day.dayOfWeek;
+        const isCampaignOff = campaign?.workDays === "weekdays" && (day.dayOfWeek === 0 || day.dayOfWeek === 6);
+        return { date: day.date.toISOString().split("T")[0], label: day.label, fullLabel: day.fullLabel, status: (isOff || isCampaignOff) ? "off" : "work" as "off" | "work" };
+      });
+      return {
+        weekStart: monday.toISOString().split("T")[0],
+        weekDays: weekDays.map(d => ({ date: d.date.toISOString().split("T")[0], label: d.label, fullLabel: d.fullLabel })),
+        days,
+        shiftHours: agent.shiftHours,
+      };
+    }),
   bulkGenerateCredentials: protectedProcedure
     .input(z.object({ campaignId: z.number().optional() }))
     .mutation(async ({ input }) => {
@@ -1775,6 +1833,220 @@ const separationRouter = router({
     .query(({ input }) => getSeparationsByAgent(input.agentCode)),
 });
 
+// ─── Payroll v2 Router ───────────────────────────────────────────────────────
+const payrollV2Router = router({
+  uploadPayrollV2: protectedProcedure
+    .input(z.object({
+      month: z.string(), // YYYY-MM
+      rows: z.array(z.object({
+        crdts: z.string(),
+        alias: z.string().optional(),
+        agentCode: z.string().optional(),
+        baseSalary: z.number().optional(),
+        workingHours: z.number().optional(),
+        ot1x5Hours: z.number().optional(),
+        ot2xHours: z.number().optional(),
+        ot3xHours: z.number().optional(),
+        commissionEgp: z.number().optional(),
+        qualityDeductions: z.number().optional(),
+        attendanceDeductions: z.number().optional(),
+        totalDeductions: z.number().optional(),
+        netPay: z.number().optional(),
+        qualityDetail: z.string().optional(),
+        attendanceDetail: z.string().optional(),
+      })),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const uploadedBy = ctx.user?.name ?? "admin";
+      const uploadedAt = Date.now();
+      for (const row of input.rows) {
+        await upsertPayrollRecordV2({ ...row, month: input.month, uploadedBy, uploadedAt });
+      }
+      return { success: true, count: input.rows.length };
+    }),
+
+  getStatusPage: protectedProcedure
+    .input(z.object({ month: z.string() }))
+    .query(({ input }) => getPayrollStatusPage(input.month)),
+
+  setStatus: protectedProcedure
+    .input(z.object({ id: z.number(), status: z.enum(["pending", "paid"]) }))
+    .mutation(({ input }) => setPayrollStatus(input.id, input.status)),
+
+  getMyMonths: publicProcedure
+    .input(z.object({ crdts: z.string() }))
+    .query(({ input }) => getMyPayrollMonthsByCrdts(input.crdts)),
+  getMyRecord: publicProcedure
+    .input(z.object({ crdts: z.string(), month: z.string() }))
+    .query(({ input }) => getMyPayrollRecordByCrdts(input.crdts, input.month)),
+  // Agent portal: derive CRDTS from cookie automatically
+  getMyMonthsFromCookie: publicProcedure.query(async ({ ctx }) => {
+    const code = getAgentCookieFromReq(ctx.req);
+    if (!code) return [];
+    const agent = await getWorkforceAgentByCode(code);
+    if (!agent?.crdts) return [];
+    return getMyPayrollMonthsByCrdts(agent.crdts);
+  }),
+  getMyRecordFromCookie: publicProcedure
+    .input(z.object({ month: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const code = getAgentCookieFromReq(ctx.req);
+      if (!code) return null;
+      const agent = await getWorkforceAgentByCode(code);
+      if (!agent?.crdts) return null;
+      return getMyPayrollRecordByCrdts(agent.crdts, input.month);
+    }),
+});
+
+// ─── Orientation Router ───────────────────────────────────────────────────────
+const orientationRouter = router({
+  getStatus: publicProcedure.query(async ({ ctx }) => {
+    const token = getAgentCookieFromReq(ctx.req);
+    if (!token) return { shown: true }; // not an agent session, skip
+    try {
+      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+      if (payload.type !== "agent") return { shown: true };
+      const shown = await getOrientationStatus(payload.traineeCode);
+      return { shown };
+    } catch { return { shown: true }; }
+  }),
+  markShown: publicProcedure.mutation(async ({ ctx }) => {
+    const token = getAgentCookieFromReq(ctx.req);
+    if (!token) return;
+    try {
+      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+      if (payload.type !== "agent") return;
+      await markOrientationShown(payload.traineeCode);
+    } catch { return; }
+  }),
+  reset: protectedProcedure
+    .input(z.object({ traineeCode: z.string() }))
+    .mutation(({ input }) => resetOrientation(input.traineeCode)),
+});
+
+// ─── Violations Router ────────────────────────────────────────────────────────
+const violationsRouter = router({
+  bulkInsert: protectedProcedure
+    .input(z.array(z.object({
+      agentCode: z.string(),
+      crdts: z.string().optional(),
+      date: z.string(),
+      type: z.string(),
+      category: z.enum(["attendance", "quality"]),
+      hours: z.number().optional(),
+      deduction: z.number().optional(),
+      description: z.string().optional(),
+      month: z.string().optional(),
+    })))
+    .mutation(async ({ input, ctx }) => {
+      const uploadedBy = ctx.user?.name ?? "admin";
+      const uploadedAt = Date.now();
+      await bulkInsertViolations(input.map(r => ({ ...r, uploadedBy, uploadedAt })));
+      return { success: true };
+    }),
+
+  list: protectedProcedure
+    .input(z.object({
+      agentCode: z.string().optional(),
+      month: z.string().optional(),
+      category: z.enum(["attendance", "quality"]).optional(),
+    }))
+    .query(({ input }) => listViolations(input)),
+
+  myViolations: publicProcedure
+    .input(z.object({ agentCode: z.string(), month: z.string().optional() }))
+    .query(({ input }) => listViolations({ agentCode: input.agentCode, month: input.month })),
+});
+
+// ─── Performance v2 Router ────────────────────────────────────────────────────
+const performanceV2Router = router({
+  bulkUpsert: protectedProcedure
+    .input(z.object({
+      month: z.string(),
+      rows: z.array(z.object({
+        crdts: z.string(),
+        alias: z.string().optional(),
+        agentCode: z.string().optional(),
+        loginHours: z.number().optional(),
+        revenue: z.number().optional(),
+        cost: z.number().optional(),
+        profit: z.number().optional(),
+        revPerHour: z.number().optional(),
+      })),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const uploadedBy = ctx.user?.name ?? "admin";
+      const uploadedAt = Date.now();
+      await bulkUpsertPerformance(input.rows.map(r => ({ ...r, month: input.month, uploadedBy, uploadedAt })));
+      return { success: true };
+    }),
+
+  getByMonth: protectedProcedure
+    .input(z.object({ month: z.string() }))
+    .query(({ input }) => getPerformanceByMonth(input.month)),
+
+  getMonths: protectedProcedure
+    .query(() => getPerformanceMonths()),
+});
+
+// ─── Adherence Router ─────────────────────────────────────────────────────────
+const adherenceRouter = router({
+  bulkInsert: protectedProcedure
+    .input(z.array(z.object({
+      agentCode: z.string().optional(),
+      crdts: z.string().optional(),
+      alias: z.string().optional(),
+      date: z.string(),
+      month: z.string().optional(),
+      type: z.string(),
+      hours: z.number().optional(),
+      deduction: z.number().optional(),
+      notes: z.string().optional(),
+    })))
+    .mutation(async ({ input, ctx }) => {
+      const uploadedBy = ctx.user?.name ?? "admin";
+      const uploadedAt = Date.now();
+      await bulkInsertAdherence(input.map(r => ({ ...r, uploadedBy, uploadedAt })));
+      return { success: true };
+    }),
+
+  list: protectedProcedure
+    .input(z.object({ agentCode: z.string().optional(), month: z.string().optional() }))
+    .query(({ input }) => listAdherence(input)),
+
+  getMonths: protectedProcedure
+    .query(() => getAdherenceMonths()),
+});
+
+// ─── Quality Router ───────────────────────────────────────────────────────────
+const qualityRouter = router({
+  bulkInsert: protectedProcedure
+    .input(z.array(z.object({
+      agentCode: z.string().optional(),
+      crdts: z.string().optional(),
+      alias: z.string().optional(),
+      date: z.string(),
+      month: z.string().optional(),
+      type: z.string(),
+      score: z.number().optional(),
+      penalty: z.number().optional(),
+      notes: z.string().optional(),
+    })))
+    .mutation(async ({ input, ctx }) => {
+      const uploadedBy = ctx.user?.name ?? "admin";
+      const uploadedAt = Date.now();
+      await bulkInsertQuality(input.map(r => ({ ...r, uploadedBy, uploadedAt })));
+      return { success: true };
+    }),
+
+  list: protectedProcedure
+    .input(z.object({ agentCode: z.string().optional(), month: z.string().optional() }))
+    .query(({ input }) => listQuality(input)),
+
+  getMonths: protectedProcedure
+    .query(() => getQualityMonths()),
+});
+
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -1798,6 +2070,12 @@ export const appRouter = router({
   overtime: overtimeRouter,
   breakSchedule: breakScheduleRouter,
   separation: separationRouter,
+  payrollV2: payrollV2Router,
+  orientation: orientationRouter,
+  violations: violationsRouter,
+  performanceV2: performanceV2Router,
+  adherence: adherenceRouter,
+  quality: qualityRouter,
 });
 
 export type AppRouter = typeof appRouter;;

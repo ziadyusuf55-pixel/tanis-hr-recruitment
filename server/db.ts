@@ -671,7 +671,7 @@ export async function getPayrollByCandidateId(candidateId: number) {
     .orderBy(desc(payrollRecords.month));
 }
 
-export async function upsertPayrollRecord(data: {
+export async function upsertPayrollRecordLegacy(data: {
   candidateId: number;
   month: string;
   grossSalary?: number | null;
@@ -1704,4 +1704,295 @@ export async function getAgentRequestById(id: number) {
   if (!db) return null;
   const rows = await db.select().from(agentRequests).where(eq(agentRequests.id, id)).limit(1);
   return rows[0] ?? null;
+}
+
+// ─── Payroll v2 Helpers (Python-output, CRDTS-matched) ────────────────────────
+export async function upsertPayrollRecordV2(data: {
+  crdts: string; alias?: string; agentCode?: string; month: string;
+  baseSalary?: number; workingHours?: number;
+  ot1x5Hours?: number; ot2xHours?: number; ot3xHours?: number;
+  commissionEgp?: number; qualityDeductions?: number; attendanceDeductions?: number;
+  totalDeductions?: number; netPay?: number;
+  qualityDetail?: string; attendanceDetail?: string;
+  uploadedBy?: string; uploadedAt?: number;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  const { payrollRecords } = await import("../drizzle/schema");
+  // Try to find existing record by crdts + month
+  const existing = await db.select({ id: payrollRecords.id })
+    .from(payrollRecords)
+    .where(and(eq(payrollRecords.crdts, data.crdts), eq(payrollRecords.month, data.month)))
+    .limit(1);
+  const toStr = (v?: number) => v != null ? String(v) : null;
+  const vals = {
+    crdts: data.crdts,
+    alias: data.alias,
+    agentCode: data.agentCode,
+    month: data.month,
+    baseSalary: toStr(data.baseSalary),
+    workingHours: toStr(data.workingHours),
+    ot1x5Hours: toStr(data.ot1x5Hours),
+    ot2xHours: toStr(data.ot2xHours),
+    ot3xHours: toStr(data.ot3xHours),
+    commissionEgp: toStr(data.commissionEgp),
+    qualityDeductions: toStr(data.qualityDeductions),
+    attendanceDeductions: toStr(data.attendanceDeductions),
+    totalDeductions: toStr(data.totalDeductions),
+    netPay: toStr(data.netPay),
+    qualityDetail: data.qualityDetail,
+    attendanceDetail: data.attendanceDetail,
+    uploadedBy: data.uploadedBy,
+    uploadedAt: data.uploadedAt,
+  };
+  if (existing.length > 0) {
+    await db.update(payrollRecords).set(vals)
+      .where(and(eq(payrollRecords.crdts, data.crdts), eq(payrollRecords.month, data.month)));
+  } else {
+    await db.insert(payrollRecords).values({ ...vals, candidateId: 0 });
+  }
+}
+
+export async function getPayrollStatusPage(month: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { payrollRecords } = await import("../drizzle/schema");
+  return db.select({
+    id: payrollRecords.id,
+    crdts: payrollRecords.crdts,
+    alias: payrollRecords.alias,
+    agentCode: payrollRecords.agentCode,
+    netPay: payrollRecords.netPay,
+    paymentStatus: payrollRecords.paymentStatus,
+    paidAt: payrollRecords.paidAt,
+    month: payrollRecords.month,
+  }).from(payrollRecords).where(eq(payrollRecords.month, month));
+}
+
+export async function setPayrollStatus(id: number, status: "pending" | "paid") {
+  const db = await getDb();
+  if (!db) return;
+  const { payrollRecords } = await import("../drizzle/schema");
+  await db.update(payrollRecords).set({
+    paymentStatus: status,
+    paidAt: status === "paid" ? Date.now() : null,
+  }).where(eq(payrollRecords.id, id));
+}
+
+export async function getMyPayrollRecordByCrdts(crdts: string, month: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const { payrollRecords } = await import("../drizzle/schema");
+  const rows = await db.select().from(payrollRecords)
+    .where(and(eq(payrollRecords.crdts, crdts), eq(payrollRecords.month, month)))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function getMyPayrollMonthsByCrdts(crdts: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { payrollRecords } = await import("../drizzle/schema");
+  const rows = await db.selectDistinct({ month: payrollRecords.month })
+    .from(payrollRecords)
+    .where(eq(payrollRecords.crdts, crdts))
+    .orderBy(desc(payrollRecords.month));
+  return rows.map(r => r.month);
+}
+
+// ─── Orientation Helpers ──────────────────────────────────────────────────────
+export async function markOrientationShown(traineeCode: string) {
+  const db = await getDb();
+  if (!db) return;
+  const { workforceAgents } = await import("../drizzle/schema");
+  await db.update(workforceAgents).set({ orientationShown: true })
+    .where(eq(workforceAgents.traineeCode, traineeCode));
+}
+
+export async function resetOrientation(traineeCode: string) {
+  const db = await getDb();
+  if (!db) return;
+  const { workforceAgents } = await import("../drizzle/schema");
+  await db.update(workforceAgents).set({ orientationShown: false })
+    .where(eq(workforceAgents.traineeCode, traineeCode));
+}
+
+// ─── Violations Helpers ───────────────────────────────────────────────────────
+export async function bulkInsertViolations(rows: Array<{
+  agentCode: string; crdts?: string; date: string; type: string;
+  category: "attendance" | "quality"; hours?: number; deduction?: number;
+  description?: string; month?: string; uploadedAt?: number; uploadedBy?: string;
+}>) {
+  const db = await getDb();
+  if (!db) return;
+  const { agentViolations } = await import("../drizzle/schema");
+  if (rows.length === 0) return;
+  await db.insert(agentViolations).values(rows.map(r => ({
+    ...r,
+    status: "approved" as const,
+    hours: r.hours != null ? String(r.hours) : null,
+    deduction: r.deduction != null ? String(r.deduction) : null,
+  })));
+}
+
+export async function listViolations(filters: { agentCode?: string; month?: string; category?: "attendance" | "quality" }) {
+  const db = await getDb();
+  if (!db) return [];
+  const { agentViolations } = await import("../drizzle/schema");
+  let q = db.select().from(agentViolations).$dynamic();
+  const conditions = [];
+  if (filters.agentCode) conditions.push(eq(agentViolations.agentCode, filters.agentCode));
+  if (filters.month) conditions.push(eq(agentViolations.month, filters.month));
+  if (filters.category) conditions.push(eq(agentViolations.category, filters.category));
+  if (conditions.length > 0) q = q.where(and(...conditions));
+  return q.orderBy(desc(agentViolations.createdAt));
+}
+
+export async function getMyViolations(agentCode: string, month?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { agentViolations } = await import("../drizzle/schema");
+  const conditions = [eq(agentViolations.agentCode, agentCode)];
+  if (month) conditions.push(eq(agentViolations.month, month));
+  return db.select().from(agentViolations)
+    .where(and(...conditions))
+    .orderBy(desc(agentViolations.createdAt));
+}
+
+// ─── Agent Performance Helpers ────────────────────────────────────────────────
+export async function bulkUpsertPerformance(rows: Array<{
+  crdts: string; alias?: string; agentCode?: string; month: string;
+  loginHours?: number; revenue?: number; cost?: number; profit?: number; revPerHour?: number;
+  uploadedBy?: string; uploadedAt?: number;
+}>) {
+  const db = await getDb();
+  if (!db) return;
+  const { agentPerformance } = await import("../drizzle/schema");
+  for (const row of rows) {
+    const existing = await db.select({ id: agentPerformance.id })
+      .from(agentPerformance)
+      .where(and(eq(agentPerformance.crdts, row.crdts), eq(agentPerformance.month, row.month)))
+      .limit(1);
+    const rowStr = {
+        ...row,
+        loginHours: row.loginHours != null ? String(row.loginHours) : null,
+        revenue: row.revenue != null ? String(row.revenue) : null,
+        cost: row.cost != null ? String(row.cost) : null,
+        profit: row.profit != null ? String(row.profit) : null,
+        revPerHour: row.revPerHour != null ? String(row.revPerHour) : null,
+      };
+      if (existing.length > 0) {
+        await db.update(agentPerformance).set(rowStr)
+          .where(and(eq(agentPerformance.crdts, row.crdts), eq(agentPerformance.month, row.month)));
+      } else {
+        await db.insert(agentPerformance).values(rowStr);
+      }
+  }
+}
+
+export async function getPerformanceByMonth(month: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { agentPerformance } = await import("../drizzle/schema");
+  return db.select().from(agentPerformance)
+    .where(eq(agentPerformance.month, month))
+    .orderBy(agentPerformance.alias);
+}
+
+export async function getPerformanceMonths() {
+  const db = await getDb();
+  if (!db) return [];
+  const { agentPerformance } = await import("../drizzle/schema");
+  const rows = await db.selectDistinct({ month: agentPerformance.month })
+    .from(agentPerformance).orderBy(desc(agentPerformance.month));
+  return rows.map(r => r.month);
+}
+
+// ─── Adherence Log Helpers ────────────────────────────────────────────────────
+export async function bulkInsertAdherence(rows: Array<{
+  agentCode?: string; crdts?: string; alias?: string; date: string; month?: string;
+  type: string; hours?: number; deduction?: number; notes?: string;
+  uploadedBy?: string; uploadedAt?: number;
+}>) {
+  const db = await getDb();
+  if (!db) return;
+  const { adherenceLog } = await import("../drizzle/schema");
+  if (rows.length === 0) return;
+  await db.insert(adherenceLog).values(rows.map(r => ({
+    ...r,
+    status: "approved" as const,
+    hours: r.hours != null ? String(r.hours) : null,
+    deduction: r.deduction != null ? String(r.deduction) : null,
+  })));
+}
+
+export async function listAdherence(filters: { agentCode?: string; month?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const { adherenceLog } = await import("../drizzle/schema");
+  let q = db.select().from(adherenceLog).$dynamic();
+  const conditions = [];
+  if (filters.agentCode) conditions.push(eq(adherenceLog.agentCode, filters.agentCode));
+  if (filters.month) conditions.push(eq(adherenceLog.month, filters.month));
+  if (conditions.length > 0) q = q.where(and(...conditions));
+  return q.orderBy(desc(adherenceLog.createdAt));
+}
+
+export async function getAdherenceMonths() {
+  const db = await getDb();
+  if (!db) return [];
+  const { adherenceLog } = await import("../drizzle/schema");
+  const rows = await db.selectDistinct({ month: adherenceLog.month })
+    .from(adherenceLog).orderBy(desc(adherenceLog.month));
+  return rows.map(r => r.month).filter(Boolean) as string[];
+}
+
+// ─── Quality Log Helpers ──────────────────────────────────────────────────────
+export async function bulkInsertQuality(rows: Array<{
+  agentCode?: string; crdts?: string; alias?: string; date: string; month?: string;
+  type: string; score?: number; penalty?: number; notes?: string;
+  uploadedBy?: string; uploadedAt?: number;
+}>) {
+  const db = await getDb();
+  if (!db) return;
+  const { qualityLog } = await import("../drizzle/schema");
+  if (rows.length === 0) return;
+  await db.insert(qualityLog).values(rows.map(r => ({
+    ...r,
+    score: r.score != null ? String(r.score) : null,
+    penalty: r.penalty != null ? String(r.penalty) : null,
+  })));
+}
+
+export async function listQuality(filters: { agentCode?: string; month?: string }) {
+  const db = await getDb();
+  if (!db) return [];
+  const { qualityLog } = await import("../drizzle/schema");
+  let q = db.select().from(qualityLog).$dynamic();
+  const conditions = [];
+  if (filters.agentCode) conditions.push(eq(qualityLog.agentCode, filters.agentCode));
+  if (filters.month) conditions.push(eq(qualityLog.month, filters.month));
+  if (conditions.length > 0) q = q.where(and(...conditions));
+  return q.orderBy(desc(qualityLog.createdAt));
+}
+
+export async function getQualityMonths() {
+  const db = await getDb();
+  if (!db) return [];
+  const { qualityLog } = await import("../drizzle/schema");
+  const rows = await db.selectDistinct({ month: qualityLog.month })
+    .from(qualityLog).orderBy(desc(qualityLog.month));
+  return rows.map(r => r.month).filter(Boolean) as string[];
+}
+
+export async function getOrientationStatus(traineeCode: string): Promise<boolean> {
+  const db = await getDb();
+  if (!db) return true;
+  const { workforceAgents } = await import("../drizzle/schema");
+  const agent = await db
+    .select({ orientationShown: workforceAgents.orientationShown })
+    .from(workforceAgents)
+    .where(eq(workforceAgents.traineeCode, traineeCode))
+    .limit(1);
+  return !!(agent[0]?.orientationShown);
 }

@@ -1,0 +1,9 @@
+{
+  "query": "\nALTER TABLE payroll_records\n  ADD COLUMN crdts VARCHAR(100),\n  ADD COLUMN alias VARCHAR(100),\n  ADD COLUMN ot1x5Hours DECIMAL(8,2) DEFAULT 0,\n  ADD COLUMN ot2xHours DECIMAL(8,2) DEFAULT 0,\n  ADD COLUMN ot3xHours DECIMAL(8,2) DEFAULT 0,\n  ADD COLUMN commissionEgp DECIMAL(10,2) DEFAULT 0,\n  ADD COLUMN qualityDeductions DECIMAL(10,2) DEFAULT 0,\n  ADD COLUMN attendanceDeductions DECIMAL(10,2) DEFAULT 0,\n  ADD COLUMN totalDeductions DECIMAL(10,2) DEFAULT 0,\n  ADD COLUMN qualityDetail TEXT,\n  ADD COLUMN attendanceDetail TEXT,\n  ADD COLUMN paymentStatus ENUM('pending','paid') DEFAULT 'pending' NOT NULL,\n  ADD COLUMN paidAt BIGINT;\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2mcroMLez2dD7B1.d41ce960f4ad --database GKQCuajYkpcdyw75NP8gmu --execute \nALTER TABLE payroll_records\n  ADD COLUMN crdts VARCHAR(100),\n  ADD COLUMN alias VARCHAR(100),\n  ADD COLUMN ot1x5Hours DECIMAL(8,2) DEFAULT 0,\n  ADD COLUMN ot2xHours DECIMAL(8,2) DEFAULT 0,\n  ADD COLUMN ot3xHours DECIMAL(8,2) DEFAULT 0,\n  ADD COLUMN commissionEgp DECIMAL(10,2) DEFAULT 0,\n  ADD COLUMN qualityDeductions DECIMAL(10,2) DEFAULT 0,\n  ADD COLUMN attendanceDeductions DECIMAL(10,2) DEFAULT 0,\n  ADD COLUMN totalDeductions DECIMAL(10,2) DEFAULT 0,\n  ADD COLUMN qualityDetail TEXT,\n  ADD COLUMN attendanceDetail TEXT,\n  ADD COLUMN paymentStatus ENUM('pending','paid') DEFAULT 'pending' NOT NULL,\n  ADD COLUMN paidAt BIGINT;\n",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 3705
+}
