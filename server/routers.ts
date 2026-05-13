@@ -1524,6 +1524,21 @@ const workforceRouter = router({
       }
       return { generated: results.length, credentials: results };
     }),
+  // Admin: force-delete an agent and their candidate record (for test/cleanup)
+  forceDelete: protectedProcedure
+    .input(z.object({ traineeCode: z.string() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { workforceAgents } = await import("../drizzle/schema");
+      const agent = await db.select({ candidateId: workforceAgents.candidateId })
+        .from(workforceAgents).where(eq(workforceAgents.traineeCode, input.traineeCode)).limit(1);
+      if (!agent[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Agent not found" });
+      await deleteCandidate(agent[0].candidateId);
+      return { success: true };
+    }),
 });
 // ─── Agent Comments Router ────────────────────────────────────────────────────
 const agentCommentsRouter = router({
@@ -2238,9 +2253,6 @@ const cycleTrackerRouter = router({
     }),
 });
 
-export type AppRouter = typeof appRouter;;
-
-
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -2272,4 +2284,5 @@ export const appRouter = router({
   quality: qualityRouter,
   cycleTracker: cycleTrackerRouter,
 });
+export type AppRouter = typeof appRouter;
 

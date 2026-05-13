@@ -764,3 +764,10 @@
 - [x] Operations integrity: Resign/Terminate/Reset Password buttons visible in agent detail dialog (click any agent row)
 - [x] Operations integrity: Add Agent dialog enforces Candidates-only rule (info banner + empty state)
 - [x] All 40 tests passing, 0 TypeScript errors
+
+## Round 52 — Fix Three Reported Issues
+- [x] Fix: Reset Password button now visible and functional on AgentProfilePage (Operations → click agent row)
+- [x] Fix: Resign and Terminate actions added to AgentProfilePage header (Actions dropdown)
+- [x] Fix: Force Delete button added to AgentProfilePage for permanent removal of test/duplicate agents
+- [x] Fix: AppRouter type export moved after appRouter definition (cycleTrackerRouter init order bug)
+- [x] Backend: workforce.forceDelete procedure added (cascade-deletes agent + candidate record)

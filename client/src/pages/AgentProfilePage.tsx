@@ -3,7 +3,7 @@ import { useParams, useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -11,19 +11,23 @@ import {
   ArrowLeft, User, FileText, CreditCard, MessageSquare,
   Plus, Trash2, ExternalLink, CheckCircle2, AlertTriangle, Info,
   Star, Building2, Phone, Mail, Calendar, Clock, Shield,
+  LogOut, XCircle, KeyRound, MoreVertical,
 } from "lucide-react";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem,
+  DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { toast } from "sonner";
 
 const BRAND = "#8B1A1A";
-
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 type Tab = "documents" | "payment" | "comments";
 
 const TAG_CONFIG = {
-  note:     { label: "Note",     icon: Info,         color: "bg-blue-100 text-blue-700 border-blue-200" },
-  warning:  { label: "Warning",  icon: AlertTriangle, color: "bg-amber-100 text-amber-700 border-amber-200" },
-  resolved: { label: "Resolved", icon: CheckCircle2, color: "bg-emerald-100 text-emerald-700 border-emerald-200" },
+  note:     { label: "Note",     icon: Info,          color: "bg-blue-100 text-blue-700 border-blue-200" },
+  warning:  { label: "Warning",  icon: AlertTriangle,  color: "bg-amber-100 text-amber-700 border-amber-200" },
+  resolved: { label: "Resolved", icon: CheckCircle2,  color: "bg-emerald-100 text-emerald-700 border-emerald-200" },
 };
 
 const DOC_TYPE_LABELS: Record<string, string> = {
@@ -57,8 +61,54 @@ export default function AgentProfilePage() {
     { enabled: !!traineeCode }
   );
   const { data: campaigns = [] } = trpc.campaigns.list.useQuery();
-
   const utils = trpc.useUtils();
+
+  // ── Separation dialogs ────────────────────────────────────────────────────
+  const [separationDialog, setSeparationDialog] = useState<"resign" | "terminate" | null>(null);
+  const [separationReason, setSeparationReason] = useState("");
+  const [deleteDialog, setDeleteDialog] = useState(false);
+  const [resetPwDialog, setResetPwDialog] = useState(false);
+  const [newPwResult, setNewPwResult] = useState<string | null>(null);
+
+  const resignOnSpot = trpc.separation.resignOnSpot.useMutation({
+    onSuccess: () => {
+      toast.success("Agent marked as resigned and removed from system");
+      setSeparationDialog(null);
+      setSeparationReason("");
+      utils.workforce.list.invalidate();
+      navigate("/operations");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const terminateAgent = trpc.separation.terminate.useMutation({
+    onSuccess: () => {
+      toast.success("Agent terminated and removed from system");
+      setSeparationDialog(null);
+      setSeparationReason("");
+      utils.workforce.list.invalidate();
+      navigate("/operations");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const forceDelete = trpc.workforce.forceDelete.useMutation({
+    onSuccess: () => {
+      toast.success("Agent and candidate record permanently deleted");
+      setDeleteDialog(false);
+      utils.workforce.list.invalidate();
+      navigate("/operations");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const resetPassword = trpc.agent.resetPassword.useMutation({
+    onSuccess: (data) => {
+      setNewPwResult(data.password);
+      setResetPwDialog(true);
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   // ── Comments ──────────────────────────────────────────────────────────────
   const [commentDialog, setCommentDialog] = useState(false);
@@ -92,10 +142,7 @@ export default function AgentProfilePage() {
     onError: (e) => toast.error(e.message),
   });
 
-  function openAddPayment() {
-    setPayForm({ type: "wallet" });
-    setPayDialog(true);
-  }
+  function openAddPayment() { setPayForm({ type: "wallet" }); setPayDialog(true); }
   function openEditPayment(pm: NonNullable<typeof profile>["paymentMethods"][number]) {
     setPayForm({
       id: pm.id, type: pm.type,
@@ -132,6 +179,7 @@ export default function AgentProfilePage() {
   const { agent, documents, paymentMethods, comments } = profile;
   const campaign = (campaigns as Array<{id: number; name: string}>).find(c => c.id === agent.campaignId);
   const offDays = [agent.offDay1, agent.offDay2].filter(d => d !== null && d !== undefined) as number[];
+  const isActive = agent.agentStatus === "active" || agent.isActive;
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
@@ -152,47 +200,35 @@ export default function AgentProfilePage() {
               <div className="flex items-center gap-3 flex-wrap">
                 <h1 className="text-xl font-bold text-foreground">{agent.fullName}</h1>
                 {agent.alias && <span className="text-muted-foreground text-sm">({agent.alias})</span>}
-                <Badge variant={agent.isActive ? "default" : "secondary"} className={agent.isActive ? "bg-emerald-100 text-emerald-700 border-emerald-200" : ""}>
-                  {agent.isActive ? "Active" : "Inactive"}
-                </Badge>
+                {agent.agentStatus === "resigned" ? (
+                  <Badge className="bg-red-100 text-red-700 border-red-200" variant="outline">Resigned</Badge>
+                ) : agent.agentStatus === "terminated" ? (
+                  <Badge className="bg-orange-100 text-orange-700 border-orange-200" variant="outline">Terminated</Badge>
+                ) : agent.isActive ? (
+                  <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200" variant="outline">Active</Badge>
+                ) : (
+                  <Badge variant="secondary">Inactive</Badge>
+                )}
               </div>
               <p className="text-sm text-muted-foreground mt-0.5 font-mono">{agent.traineeCode}</p>
               <div className="mt-3 flex flex-wrap gap-4 text-sm text-muted-foreground">
                 {campaign && (
-                  <span className="flex items-center gap-1.5">
-                    <Building2 className="h-3.5 w-3.5" />
-                    {campaign.name}
-                  </span>
+                  <span className="flex items-center gap-1.5"><Building2 className="h-3.5 w-3.5" />{campaign.name}</span>
                 )}
                 {agent.shiftHours && (
-                  <span className="flex items-center gap-1.5">
-                    <Clock className="h-3.5 w-3.5" />
-                    {agent.shiftHours}
-                  </span>
+                  <span className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" />{agent.shiftHours}</span>
                 )}
                 {agent.teamLeader && (
-                  <span className="flex items-center gap-1.5">
-                    <Shield className="h-3.5 w-3.5" />
-                    TL: {agent.teamLeader}
-                  </span>
+                  <span className="flex items-center gap-1.5"><Shield className="h-3.5 w-3.5" />TL: {agent.teamLeader}</span>
                 )}
                 {agent.phone && (
-                  <span className="flex items-center gap-1.5">
-                    <Phone className="h-3.5 w-3.5" />
-                    {agent.phone}
-                  </span>
+                  <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" />{agent.phone}</span>
                 )}
                 {agent.email && (
-                  <span className="flex items-center gap-1.5">
-                    <Mail className="h-3.5 w-3.5" />
-                    {agent.email}
-                  </span>
+                  <span className="flex items-center gap-1.5"><Mail className="h-3.5 w-3.5" />{agent.email}</span>
                 )}
                 {offDays.length > 0 && (
-                  <span className="flex items-center gap-1.5">
-                    <Calendar className="h-3.5 w-3.5" />
-                    Off: {offDays.map(d => DAY_NAMES[d]).join(", ")}
-                  </span>
+                  <span className="flex items-center gap-1.5"><Calendar className="h-3.5 w-3.5" />Off: {offDays.map(d => DAY_NAMES[d]).join(", ")}</span>
                 )}
                 {agent.joinDate && (
                   <span className="flex items-center gap-1.5">
@@ -201,6 +237,55 @@ export default function AgentProfilePage() {
                   </span>
                 )}
               </div>
+            </div>
+
+            {/* ── Action Buttons ── */}
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {/* Reset Password */}
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-amber-700 border-amber-300 hover:bg-amber-50"
+                onClick={() => resetPassword.mutate({ candidateId: agent.candidateId })}
+                disabled={resetPassword.isPending}
+              >
+                <KeyRound className="h-3.5 w-3.5" />
+                {resetPassword.isPending ? "Resetting…" : "Reset Password"}
+              </Button>
+
+              {/* More actions dropdown */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="sm" className="gap-1.5">
+                    <MoreVertical className="h-4 w-4" /> Actions
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-52">
+                  {isActive && (
+                    <>
+                      <DropdownMenuItem
+                        className="gap-2 text-amber-700 focus:text-amber-700 focus:bg-amber-50"
+                        onClick={() => { setSeparationReason(""); setSeparationDialog("resign"); }}
+                      >
+                        <LogOut className="h-4 w-4" /> Mark as Resigned
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="gap-2 text-red-700 focus:text-red-700 focus:bg-red-50"
+                        onClick={() => { setSeparationReason(""); setSeparationDialog("terminate"); }}
+                      >
+                        <XCircle className="h-4 w-4" /> Terminate Agent
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
+                  <DropdownMenuItem
+                    className="gap-2 text-destructive focus:text-destructive focus:bg-destructive/10"
+                    onClick={() => setDeleteDialog(true)}
+                  >
+                    <Trash2 className="h-4 w-4" /> Force Delete (Permanent)
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
         </CardContent>
@@ -362,7 +447,7 @@ export default function AgentProfilePage() {
             <div className="text-center py-16 text-muted-foreground">
               <MessageSquare className="h-10 w-10 mx-auto mb-3 opacity-30" />
               <p className="font-medium">No comments yet</p>
-              <p className="text-sm mt-1">Add notes or flag issues for this agent. They'll see these in their portal.</p>
+              <p className="text-sm mt-1">Add notes or flag issues for this agent.</p>
             </div>
           ) : (
             comments.map((c) => {
@@ -375,8 +460,7 @@ export default function AgentProfilePage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1.5 flex-wrap">
                           <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${tagCfg.color}`}>
-                            <TagIcon className="h-3 w-3" />
-                            {tagCfg.label}
+                            <TagIcon className="h-3 w-3" />{tagCfg.label}
                           </span>
                           <span className="text-xs text-muted-foreground">by {c.adminName}</span>
                           <span className="text-xs text-muted-foreground">
@@ -397,6 +481,109 @@ export default function AgentProfilePage() {
           )}
         </div>
       )}
+
+      {/* ── Separation Dialog (Resign / Terminate) ────────────────────────── */}
+      <Dialog open={!!separationDialog} onOpenChange={(open) => { if (!open) setSeparationDialog(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className={`flex items-center gap-2 ${separationDialog === "terminate" ? "text-red-700" : "text-amber-700"}`}>
+              {separationDialog === "terminate"
+                ? <><XCircle className="h-5 w-5" /> Terminate Agent</>
+                : <><LogOut className="h-5 w-5" /> Mark as Resigned</>
+              }
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className={`p-3 rounded-lg border text-sm ${separationDialog === "terminate" ? "bg-red-50 border-red-200 text-red-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
+              {separationDialog === "terminate"
+                ? "This will permanently terminate the agent and remove them from the system. A separation record will be kept."
+                : "This will mark the agent as resigned and remove them from the system. A separation record will be kept."
+              }
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                Reason <span className="text-destructive">*</span>
+              </label>
+              <Textarea
+                placeholder={separationDialog === "terminate" ? "Reason for termination…" : "Reason for resignation…"}
+                rows={3}
+                value={separationReason}
+                onChange={e => setSeparationReason(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setSeparationDialog(null)}>Cancel</Button>
+            <Button
+              disabled={!separationReason.trim() || resignOnSpot.isPending || terminateAgent.isPending}
+              className={separationDialog === "terminate" ? "bg-red-600 hover:bg-red-700 text-white" : "bg-amber-600 hover:bg-amber-700 text-white"}
+              onClick={() => {
+                if (!separationReason.trim()) return;
+                if (separationDialog === "resign") {
+                  resignOnSpot.mutate({ agentCode: traineeCode, reason: separationReason.trim() });
+                } else {
+                  terminateAgent.mutate({ agentCode: traineeCode, reason: separationReason.trim() });
+                }
+              }}
+            >
+              {separationDialog === "terminate" ? "Confirm Termination" : "Confirm Resignation"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Force Delete Confirmation Dialog ──────────────────────────────── */}
+      <Dialog open={deleteDialog} onOpenChange={setDeleteDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-destructive">
+              <Trash2 className="h-5 w-5" /> Permanently Delete Agent
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="p-3 rounded-lg border bg-red-50 border-red-200 text-sm text-red-800">
+              <strong>This cannot be undone.</strong> The agent <strong>{agent.fullName}</strong> ({traineeCode}) and their candidate record will be permanently deleted from the system, including all documents, comments, payment methods, and credentials.
+            </div>
+            <p className="text-sm text-muted-foreground">Use this only for test data or duplicate entries. For real separations, use Resign or Terminate instead.</p>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setDeleteDialog(false)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={forceDelete.isPending}
+              onClick={() => forceDelete.mutate({ traineeCode })}
+            >
+              {forceDelete.isPending ? "Deleting…" : "Delete Permanently"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Reset Password Result Dialog ──────────────────────────────────── */}
+      <Dialog open={resetPwDialog} onOpenChange={(open) => { if (!open) { setResetPwDialog(false); setNewPwResult(null); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-amber-700">
+              <KeyRound className="h-5 w-5" /> Password Reset
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">New temporary password for <strong>{agent.fullName}</strong>. Share this once — it will not be shown again.</p>
+            {newPwResult && (
+              <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                <code className="flex-1 text-sm font-mono font-bold text-amber-900">{newPwResult}</code>
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => { navigator.clipboard.writeText(newPwResult); toast.success("Copied"); }}>
+                  Copy
+                </Button>
+              </div>
+            )}
+            <p className="text-xs text-amber-700">The agent will be required to change this password on next login.</p>
+          </div>
+          <div className="flex justify-end pt-2">
+            <Button onClick={() => { setResetPwDialog(false); setNewPwResult(null); }}>Done</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* ── Add Comment Dialog ─────────────────────────────────────────────── */}
       <Dialog open={commentDialog} onOpenChange={setCommentDialog}>
