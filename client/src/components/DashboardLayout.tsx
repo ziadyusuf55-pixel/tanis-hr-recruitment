@@ -23,31 +23,52 @@ import {
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
 import { trpc } from "@/lib/trpc";
-import { LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings, Briefcase, Banknote, CreditCard, BarChart2, AlertCircle, Star, Wallet, FileText, Activity } from "lucide-react";
+import {
+  LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings,
+  Briefcase, Banknote, CreditCard, BarChart2, AlertCircle, Star, Wallet,
+  FileText, Activity, ChevronDown, ChevronRight,
+} from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import { Button } from "./ui/button";
 
-const menuItems = [
-  { icon: LayoutDashboard, label: "Dashboard", path: "/" },
-  { icon: Users, label: "Candidates", path: "/candidates" },
-  { icon: GraduationCap, label: "Training", path: "/training" },
-  { icon: Briefcase, label: "Operations", path: "/operations" },
-  { icon: Banknote, label: "Payroll", path: "/payroll" },
-  { icon: CreditCard, label: "Payment Status", path: "/payroll-status" },
-  { icon: BarChart2, label: "Performance", path: "/performance" },
-  { icon: AlertCircle, label: "Adherence Log", path: "/adherence" },
-  { icon: Star, label: "Quality Log", path: "/quality" },
-  { icon: Wallet, label: "Payment Preferences", path: "/payment-preferences" },
-  { icon: FileText, label: "All Documents", path: "/all-documents" },
+type NavLeaf = { icon: React.ElementType; label: string; path: string };
+type NavGroup = { icon: React.ElementType; label: string; key: string; children: NavLeaf[] };
+type NavItem = NavLeaf | NavGroup;
+const isGroup = (item: NavItem): item is NavGroup => "children" in item;
+
+const NAV: NavItem[] = [
+  { icon: LayoutDashboard, label: "Dashboard",     path: "/" },
+  { icon: Users,           label: "Candidates",    path: "/candidates" },
+  { icon: GraduationCap,  label: "Training",      path: "/training" },
+  {
+    icon: Briefcase, label: "Operations", key: "operations",
+    children: [
+      { icon: Briefcase,   label: "Agents",        path: "/operations" },
+      { icon: BarChart2,   label: "Performance",   path: "/performance" },
+      { icon: AlertCircle, label: "Adherence Log", path: "/adherence" },
+      { icon: Star,        label: "Quality Log",   path: "/quality" },
+    ],
+  },
+  {
+    icon: Banknote, label: "Payroll", key: "payroll",
+    children: [
+      { icon: Banknote,    label: "Payroll",              path: "/payroll" },
+      { icon: CreditCard,  label: "Payment Status",       path: "/payroll-status" },
+      { icon: Wallet,      label: "Payment Preferences",  path: "/payment-preferences" },
+      { icon: FileText,    label: "All Documents",        path: "/all-documents" },
+    ],
+  },
   { icon: Activity, label: "Cycle Tracker", path: "/cycle-tracker" },
-  { icon: Inbox, label: "Requests", path: "/requests" },
-  { icon: Settings, label: "Settings", path: "/settings" },
+  { icon: Inbox,    label: "Requests",      path: "/requests" },
+  { icon: Settings, label: "Settings",      path: "/settings" },
 ];
 
-const TANIS_LOGO_WHITE = "https://d2xsxph8kpxj0f.cloudfront.net/310419663028909162/GKQCuajYkpcdyw75NP8gmu/tanis-logo-white_d38279a7.png";
+const allLeaves = (items: NavItem[]): NavLeaf[] =>
+  items.flatMap(i => isGroup(i) ? i.children : [i]);
 
+const TANIS_LOGO_WHITE = "https://d2xsxph8kpxj0f.cloudfront.net/310419663028909162/GKQCuajYkpcdyw75NP8gmu/tanis-logo-white_d38279a7.png";
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
 const DEFAULT_WIDTH = 240;
 const MIN_WIDTH = 200;
@@ -107,6 +128,29 @@ function DashboardLayoutContent({
   const sidebarRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
 
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
+    const initial: Record<string, boolean> = {};
+    for (const item of NAV) {
+      if (isGroup(item)) {
+        initial[item.key] = item.children.some(
+          c => location === c.path || (c.path !== "/" && location.startsWith(c.path))
+        );
+      }
+    }
+    return initial;
+  });
+
+  useEffect(() => {
+    for (const item of NAV) {
+      if (isGroup(item)) {
+        const active = item.children.some(
+          c => location === c.path || (c.path !== "/" && location.startsWith(c.path))
+        );
+        if (active) setOpenGroups(prev => ({ ...prev, [item.key]: true }));
+      }
+    }
+  }, [location]);
+
   useEffect(() => {
     if (isCollapsed) setIsResizing(false);
   }, [isCollapsed]);
@@ -136,14 +180,83 @@ function DashboardLayoutContent({
   }, [isResizing, setSidebarWidth]);
 
   const initials = user?.name
-    ? user.name.split(" ").map((n) => n[0]).join("").toUpperCase().slice(0, 2)
+    ? user.name.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2)
     : "R";
 
-  // Unread requests badge — poll every 30s
   const { data: unreadCount = 0 } = trpc.requests.countUnread.useQuery(undefined, {
     refetchInterval: 30000,
     enabled: !!user,
   });
+
+  const renderLeaf = (item: NavLeaf, indent = false) => {
+    const isActive = location === item.path || (item.path !== "/" && location.startsWith(item.path));
+    const isRequests = item.path === "/requests";
+    const showBadge = isRequests && Number(unreadCount) > 0;
+    return (
+      <SidebarMenuItem key={item.path}>
+        <SidebarMenuButton
+          isActive={isActive}
+          onClick={() => setLocation(item.path)}
+          tooltip={item.label}
+          className={`h-9 rounded-lg font-normal text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent data-[active=true]:bg-white/10 data-[active=true]:text-sidebar-foreground${indent && !isCollapsed ? " pl-7" : ""}`}
+        >
+          <div className="relative shrink-0">
+            <item.icon className="h-4 w-4" />
+            {showBadge && (
+              <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-500 text-white text-[8px] flex items-center justify-center font-bold leading-none">
+                {Number(unreadCount) > 9 ? "9+" : unreadCount}
+              </span>
+            )}
+          </div>
+          <span className="text-sm flex-1">{item.label}</span>
+          {showBadge && !isCollapsed && (
+            <span className="ml-auto text-[10px] font-bold text-red-400">{Number(unreadCount) > 9 ? "9+" : unreadCount} new</span>
+          )}
+        </SidebarMenuButton>
+      </SidebarMenuItem>
+    );
+  };
+
+  const renderGroup = (group: NavGroup) => {
+    const isOpen = openGroups[group.key] ?? false;
+    const isAnyChildActive = group.children.some(
+      c => location === c.path || (c.path !== "/" && location.startsWith(c.path))
+    );
+    const toggle = () => setOpenGroups(prev => ({ ...prev, [group.key]: !prev[group.key] }));
+
+    if (isCollapsed) {
+      return (
+        <div key={group.key}>
+          {group.children.map(child => renderLeaf(child, false))}
+        </div>
+      );
+    }
+
+    return (
+      <div key={group.key}>
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            isActive={isAnyChildActive && !isOpen}
+            onClick={toggle}
+            tooltip={group.label}
+            className={`h-9 rounded-lg font-normal text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent${isAnyChildActive ? " text-sidebar-foreground" : ""}`}
+          >
+            <group.icon className="h-4 w-4 shrink-0" />
+            <span className="text-sm flex-1">{group.label}</span>
+            {isOpen
+              ? <ChevronDown className="h-3.5 w-3.5 text-sidebar-foreground/40 shrink-0" />
+              : <ChevronRight className="h-3.5 w-3.5 text-sidebar-foreground/40 shrink-0" />
+            }
+          </SidebarMenuButton>
+        </SidebarMenuItem>
+        {isOpen && (
+          <SidebarMenu className="gap-0.5 mt-0.5">
+            {group.children.map(child => renderLeaf(child, true))}
+          </SidebarMenu>
+        )}
+      </div>
+    );
+  };
 
   return (
     <>
@@ -153,7 +266,6 @@ function DashboardLayoutContent({
           className="border-r border-sidebar-border"
           disableTransition={isResizing}
         >
-          {/* Header */}
           <SidebarHeader className="h-16 border-b border-sidebar-border">
             <div className="flex items-center gap-3 px-3 h-full">
               <button
@@ -165,11 +277,7 @@ function DashboardLayoutContent({
               </button>
               {!isCollapsed && (
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <img
-                    src={TANIS_LOGO_WHITE}
-                    alt="Tanis"
-                    className="w-10 h-10 object-contain shrink-0 drop-shadow-sm"
-                  />
+                  <img src={TANIS_LOGO_WHITE} alt="Tanis" className="w-10 h-10 object-contain shrink-0 drop-shadow-sm" />
                   <div className="min-w-0">
                     <p className="text-sm font-bold text-sidebar-foreground truncate leading-none tracking-wide">Tanis Hub</p>
                     <p className="text-[10px] text-sidebar-foreground/50 truncate mt-0.5 uppercase tracking-widest">Operations</p>
@@ -179,41 +287,12 @@ function DashboardLayoutContent({
             </div>
           </SidebarHeader>
 
-          {/* Navigation */}
-          <SidebarContent className="py-3">
+          <SidebarContent className="py-3 overflow-y-auto">
             <SidebarMenu className="px-2 gap-0.5">
-              {menuItems.map((item) => {
-                const isActive = location === item.path || (item.path !== "/" && location.startsWith(item.path));
-                const isRequests = item.path === "/requests";
-                const showBadge = isRequests && Number(unreadCount) > 0;
-                return (
-                  <SidebarMenuItem key={item.path}>
-                    <SidebarMenuButton
-                      isActive={isActive}
-                      onClick={() => setLocation(item.path)}
-                      tooltip={item.label}
-                      className="h-9 rounded-lg font-normal text-sidebar-foreground/70 hover:text-sidebar-foreground hover:bg-sidebar-accent data-[active=true]:bg-white/10 data-[active=true]:text-sidebar-foreground"
-                    >
-                      <div className="relative shrink-0">
-                        <item.icon className="h-4 w-4" />
-                        {showBadge && (
-                          <span className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-500 text-white text-[8px] flex items-center justify-center font-bold leading-none">
-                            {Number(unreadCount) > 9 ? "9+" : unreadCount}
-                          </span>
-                        )}
-                      </div>
-                      <span className="text-sm flex-1">{item.label}</span>
-                      {showBadge && !isCollapsed && (
-                        <span className="ml-auto text-[10px] font-bold text-red-400">{Number(unreadCount) > 9 ? "9+" : unreadCount} new</span>
-                      )}
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
+              {NAV.map(item => isGroup(item) ? renderGroup(item) : renderLeaf(item))}
             </SidebarMenu>
           </SidebarContent>
 
-          {/* Footer / User */}
           <SidebarFooter className="p-3 border-t border-sidebar-border">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -246,7 +325,6 @@ function DashboardLayoutContent({
           </SidebarFooter>
         </Sidebar>
 
-        {/* Resize handle */}
         {!isCollapsed && (
           <div
             className="absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/30 transition-colors z-50"
@@ -260,7 +338,7 @@ function DashboardLayoutContent({
           <div className="flex border-b h-14 items-center gap-3 bg-background/95 px-4 backdrop-blur sticky top-0 z-40">
             <SidebarTrigger className="h-8 w-8 rounded-lg" />
             <span className="text-sm font-medium">
-              {menuItems.find((m) => location === m.path || (m.path !== "/" && location.startsWith(m.path)))?.label ?? "Menu"}
+              {allLeaves(NAV).find((m) => location === m.path || (m.path !== "/" && location.startsWith(m.path)))?.label ?? "Menu"}
             </span>
           </div>
         )}

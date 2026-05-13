@@ -754,3 +754,13 @@
 - [x] Frontend: Add Agent dialog — blue info banner explaining Candidates → Accept → Operations flow
 - [x] Frontend: Add Agent dialog — empty state when no accepted candidates available (with guidance to Candidates tab)
 - [x] All 40 tests passing, 0 TypeScript errors
+
+### Round 51 — Sidebar Reorganization & UX Improvements
+- [x] Sidebar: Operations group with sub-items (Agents, Performance, Adherence Log, Quality Log)
+- [x] Sidebar: Payroll group with sub-items (Payroll, Payment Status, Payment Preferences, All Documents)
+- [x] Sidebar: Groups auto-expand when navigating to a child page
+- [x] Sidebar: Collapsed state shows individual icons for all group children
+- [x] CandidateDetail: Added "Reset Password (Temp)" button in Portal Access section (generates T-XXXX-NNNN password, sets mustChangePassword)
+- [x] Operations integrity: Resign/Terminate/Reset Password buttons visible in agent detail dialog (click any agent row)
+- [x] Operations integrity: Add Agent dialog enforces Candidates-only rule (info banner + empty state)
+- [x] All 40 tests passing, 0 TypeScript errors

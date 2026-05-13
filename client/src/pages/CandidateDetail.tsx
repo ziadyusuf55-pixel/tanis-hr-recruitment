@@ -241,6 +241,13 @@ export default function CandidateDetail() {
     },
     onError: () => toast.error("Failed to generate credentials"),
   });
+  const resetPasswordMutation = trpc.agent.resetPassword.useMutation({
+    onSuccess: (data) => {
+      setShowGeneratedPassword(data.password);
+      toast.success("Password reset — new temporary password generated");
+    },
+    onError: () => toast.error("Failed to reset password"),
+  });
 
   const upsertPerformanceMutation = trpc.agent.upsertPerformance.useMutation({
     onSuccess: () => {
@@ -1128,19 +1135,30 @@ export default function CandidateDetail() {
                   <p className="text-xs text-amber-700">This password will not be shown again.</p>
                 </div>
               )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={async () => {
-                  const tc2 = (candidate as Record<string, unknown>)?.traineeCode as string | null;
-                  if (!tc2) { toast.error("No Trainee ID assigned"); return; }
-                  const result = await generateCredentialsMutation.mutateAsync({ candidateId: id, traineeCode: tc2 });
-                  setShowGeneratedPassword(result.password);
-                }}
-                disabled={generateCredentialsMutation.isPending}
-              >
-                Regenerate Password
-              </Button>
+              <div className="flex gap-2 flex-wrap">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={async () => {
+                    const tc2 = (candidate as Record<string, unknown>)?.traineeCode as string | null;
+                    if (!tc2) { toast.error("No Trainee ID assigned"); return; }
+                    const result = await generateCredentialsMutation.mutateAsync({ candidateId: id, traineeCode: tc2 });
+                    setShowGeneratedPassword(result.password);
+                  }}
+                  disabled={generateCredentialsMutation.isPending}
+                >
+                  Regenerate Password
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="border-amber-300 text-amber-700 hover:bg-amber-50"
+                  onClick={() => resetPasswordMutation.mutate({ candidateId: id })}
+                  disabled={resetPasswordMutation.isPending}
+                >
+                  {resetPasswordMutation.isPending ? "Resetting..." : "Reset Password (Temp)"}
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="space-y-3">
