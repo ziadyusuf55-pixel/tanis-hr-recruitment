@@ -160,7 +160,18 @@ export async function updateCandidateStatus(id: number, status: PipelineStage) {
 export async function deleteCandidate(id: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const { stageNotes, interviews, activityLog, batchCandidates, agentNotifications, referrals } = await import("../drizzle/schema");
+  const { stageNotes, interviews, activityLog, batchCandidates, agentNotifications, referrals, workforceAgents, agentCredentials, breakSchedules, scheduleChangeRequests, overtimeAvailability } = await import("../drizzle/schema");
+  // If this candidate was promoted to Operations, delete the workforce row and all linked data first
+  const wfRows = await db.select({ traineeCode: workforceAgents.traineeCode })
+    .from(workforceAgents).where(eq(workforceAgents.candidateId, id));
+  for (const wf of wfRows) {
+    const code = wf.traineeCode;
+    await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, code));
+    await db.delete(breakSchedules).where(eq(breakSchedules.agentCode, code));
+    await db.delete(scheduleChangeRequests).where(eq(scheduleChangeRequests.requesterCode, code));
+    await db.delete(overtimeAvailability).where(eq(overtimeAvailability.traineeCode, code));
+    await db.delete(workforceAgents).where(eq(workforceAgents.traineeCode, code));
+  }
   // Delete all child records before the candidate row
   await db.delete(stageNotes).where(eq(stageNotes.candidateId, id));
   await db.delete(interviews).where(eq(interviews.candidateId, id));
@@ -1142,29 +1153,22 @@ export async function listWorkforceAgents(campaignId?: number) {
 export async function getEligibleCandidatesForOps() {
   const db = await getDb();
   if (!db) return [];
-  const { batchCandidates, candidates: candidatesTable, workforceAgents } = await import("../drizzle/schema");
-  // Get all candidates who are in a batch (in training) — use raw SQL for status filter
-  const inTraining = await db.select({
-    candidateId: batchCandidates.candidateId,
-    traineeCode: batchCandidates.traineeCode,
+  const { candidates: candidatesTable, workforceAgents } = await import("../drizzle/schema");
+  // Get all accepted candidates who are NOT yet in Operations
+  const existingOpsIds = await db.select({ candidateId: workforceAgents.candidateId }).from(workforceAgents);
+  const opsIdSet = new Set(existingOpsIds.map(r => r.candidateId));
+  const accepted = await db.select({
+    candidateId: candidatesTable.id,
+    traineeCode: sql<string | null>`null`,
     name: candidatesTable.name,
     phone: candidatesTable.phone,
-    source: sql<string>`'training'`,
-  }).from(batchCandidates)
-    .innerJoin(candidatesTable, eq(batchCandidates.candidateId, candidatesTable.id));
-  // Get all existing workforce agents
-  const existingOps = await db.select({
-    candidateId: workforceAgents.candidateId,
-    traineeCode: workforceAgents.traineeCode,
-    name: workforceAgents.fullName,
-    phone: workforceAgents.phone,
-    source: sql<string>`'ops'`,
-  }).from(workforceAgents);
-  // Merge, deduplicate by candidateId (prefer ops if already there)
-  const merged = new Map<number, { candidateId: number; traineeCode: string | null; name: string; phone: string | null; source: string }>();
-  for (const r of inTraining) merged.set(r.candidateId, r);
-  for (const r of existingOps) merged.set(r.candidateId, r); // ops overrides training
-  return Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name));
+    source: sql<string>`'accepted'`,
+  }).from(candidatesTable)
+    .where(eq(candidatesTable.status, "accepted"));
+  // Filter out those already in Operations
+  return accepted
+    .filter(r => !opsIdSet.has(r.candidateId))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 export async function getWorkforceAgentByCode(traineeCode: string) {
   const db = await getDb();
@@ -1249,38 +1253,25 @@ export async function getSeparationsByAgent(agentCode: string) {
 
 /**
  * Mark agent as resigned on-spot:
- * 1. Sets agentStatus = 'resigned', isActive = false
- * 2. Blacklists the linked candidate
- * 3. Stores separation record
+ * 1. Stores separation record
+ * 2. Deletes candidate record (cascades to workforce row, credentials, breaks, etc.)
  */
 export async function markAgentResignedOnSpot(agentCode: string, reason: string, adminName: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const { workforceAgents, candidates, agentSeparations, agentCredentials, breakSchedules, scheduleChangeRequests, overtimeAvailability } = await import("../drizzle/schema");
+  const { workforceAgents, agentSeparations } = await import("../drizzle/schema");
   // Get agent to find candidateId
   const agent = await db.select({ candidateId: workforceAgents.candidateId })
     .from(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode)).limit(1);
   if (!agent[0]) throw new Error("Agent not found");
   const now = Date.now();
-  // Update agent status
-  await db.update(workforceAgents)
-    .set({ agentStatus: "resigned", isActive: false })
-    .where(eq(workforceAgents.traineeCode, agentCode));
-  // Blacklist candidate
-  await db.update(candidates)
-    .set({ status: "blacklisted" })
-    .where(eq(candidates.id, agent[0].candidateId));
-  // Revoke portal access
-  await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
-  // Clear operational data
-  await db.delete(breakSchedules).where(eq(breakSchedules.agentCode, agentCode));
-  await db.delete(scheduleChangeRequests).where(eq(scheduleChangeRequests.requesterCode, agentCode));
-  await db.delete(overtimeAvailability).where(eq(overtimeAvailability.traineeCode, agentCode));
-  // Store separation record
+  // Store separation record first (before cascade delete removes the workforce row)
   await db.insert(agentSeparations).values({
     agentCode, type: "on_spot", reason,
     effectiveAt: now, approvedBy: adminName, approvedAt: now,
   });
+  // Delete candidate record — cascades to workforce row, credentials, breaks, etc.
+  await deleteCandidate(agent[0].candidateId);
 }
 
 /**
@@ -1293,19 +1284,17 @@ export async function terminateAgent(agentCode: string, reason: string, adminNam
   if (!db) throw new Error("Database not available");
   const { workforceAgents, agentSeparations, agentCredentials, breakSchedules, scheduleChangeRequests, overtimeAvailability } = await import("../drizzle/schema");
   const now = Date.now();
-  await db.update(workforceAgents)
-    .set({ agentStatus: "terminated", isActive: false })
-    .where(eq(workforceAgents.traineeCode, agentCode));
-  // Revoke portal access
-  await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
-  // Clear operational data
-  await db.delete(breakSchedules).where(eq(breakSchedules.agentCode, agentCode));
-  await db.delete(scheduleChangeRequests).where(eq(scheduleChangeRequests.requesterCode, agentCode));
-  await db.delete(overtimeAvailability).where(eq(overtimeAvailability.traineeCode, agentCode));
+  // Fetch candidateId before deleting the workforce row
+  const agent = await db.select({ candidateId: workforceAgents.candidateId })
+    .from(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode)).limit(1);
+  if (!agent[0]) throw new Error("Agent not found");
+  // Store separation record first (before cascade delete removes the workforce row)
   await db.insert(agentSeparations).values({
     agentCode, type: "termination", reason,
     effectiveAt: now, approvedBy: adminName, approvedAt: now,
   });
+  // Delete candidate record — this cascades to workforce row, credentials, breaks, etc.
+  await deleteCandidate(agent[0].candidateId);
 }
 
 /**
@@ -1316,21 +1305,19 @@ export async function terminateAgent(agentCode: string, reason: string, adminNam
 export async function approveResignationRequest(agentCode: string, lastWorkingDay: string, reason: string, adminName: string, requestedAt: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const { workforceAgents, agentSeparations, agentCredentials, breakSchedules, scheduleChangeRequests, overtimeAvailability } = await import("../drizzle/schema");
+  const { workforceAgents, agentSeparations } = await import("../drizzle/schema");
   const now = Date.now();
-  await db.update(workforceAgents)
-    .set({ agentStatus: "resigned", isActive: false })
-    .where(eq(workforceAgents.traineeCode, agentCode));
-  // Revoke portal access
-  await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
-  // Clear operational data
-  await db.delete(breakSchedules).where(eq(breakSchedules.agentCode, agentCode));
-  await db.delete(scheduleChangeRequests).where(eq(scheduleChangeRequests.requesterCode, agentCode));
-  await db.delete(overtimeAvailability).where(eq(overtimeAvailability.traineeCode, agentCode));
+  // Fetch candidateId before deleting the workforce row
+  const agent = await db.select({ candidateId: workforceAgents.candidateId })
+    .from(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode)).limit(1);
+  if (!agent[0]) throw new Error("Agent not found");
+  // Store separation record first
   await db.insert(agentSeparations).values({
     agentCode, type: "resignation_request", reason, lastWorkingDay,
     requestedAt, effectiveAt: now, approvedBy: adminName, approvedAt: now,
   });
+  // Delete candidate record — cascades to workforce row, credentials, breaks, etc.
+  await deleteCandidate(agent[0].candidateId);
 }
 
 // ─── Agent Payment Methods ────────────────────────────────────────────────────

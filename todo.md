@@ -736,3 +736,21 @@
 - [x] Cycle Tracker: CycleTrackerTab in agent portal with 4 sections + disclaimer
 - [x] Cycle Tracker: admin upload page at /cycle-tracker with 3 upload cards
 - [x] All 40 tests passing
+
+### Operations Integrity Rules
+- [ ] Backend: markAgentResignedOnSpot — also delete the linked candidate record (by candidateId stored on workforceAgent)
+- [ ] Backend: terminateAgent — also delete the linked candidate record
+- [ ] Backend: approveResignationRequest — also delete the linked candidate record
+- [ ] Backend: deleteCandidate cascade — also delete the linked workforceAgent row (if promoted)
+- [ ] Frontend: remove standalone "Add Agent" button from Operations that bypasses candidates tab
+- [ ] Frontend: show clear message in Operations that agents are added by promoting Accepted candidates in the Candidates tab
+
+### Operations Integrity Rules — Completion Status
+- [x] Backend: deleteCandidate now cascades to workforce row, credentials, breaks, stage_notes, interviews, activity_log, batch_candidates, agent_notifications, referrals
+- [x] Backend: markAgentResignedOnSpot now calls deleteCandidate (full removal from system)
+- [x] Backend: terminateAgent now calls deleteCandidate (full removal from system)
+- [x] Backend: approveResignationRequest now calls deleteCandidate (full removal from system)
+- [x] Backend: getEligibleCandidatesForOps now returns only Accepted candidates not yet in Operations
+- [x] Frontend: Add Agent dialog — blue info banner explaining Candidates → Accept → Operations flow
+- [x] Frontend: Add Agent dialog — empty state when no accepted candidates available (with guidance to Candidates tab)
+- [x] All 40 tests passing, 0 TypeScript errors

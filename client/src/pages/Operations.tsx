@@ -1493,6 +1493,19 @@ export default function Operations() {
             <DialogTitle className="flex items-center gap-2"><UserPlus className="h-5 w-5 text-emerald-600" /> Add Agent to Operations</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
+            {/* Info banner */}
+            <div className="flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50 dark:border-blue-800 dark:bg-blue-950/40 px-3 py-2.5 text-xs text-blue-800 dark:text-blue-300">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mt-0.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <span>Only candidates with <strong>Accepted</strong> status appear here. To add an agent, go to the <strong>Candidates</strong> tab, find the candidate, and set their status to <em>Accepted</em> first.</span>
+            </div>
+            {/* Empty state when no eligible candidates */}
+            {(eligibleCandidates as Array<{candidateId: number; traineeCode: string | null; name: string; phone: string | null; source: string}>).length === 0 ? (
+              <div className="flex flex-col items-center gap-2 rounded-md border border-dashed border-muted-foreground/30 bg-muted/30 px-4 py-6 text-center">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 text-muted-foreground/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                <p className="text-sm font-medium text-muted-foreground">No accepted candidates available</p>
+                <p className="text-xs text-muted-foreground/70">Go to the <strong>Candidates</strong> tab and accept a candidate first, then they will appear here.</p>
+              </div>
+            ) : (
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Select Candidate</label>
               <select
@@ -1515,11 +1528,12 @@ export default function Operations() {
                 <option value="">Select candidate...</option>
                 {(eligibleCandidates as Array<{candidateId: number; traineeCode: string | null; name: string; phone: string | null; source: string}>).map(c => (
                   <option key={c.candidateId} value={c.candidateId}>
-                    {c.name}{c.traineeCode ? ` (${c.traineeCode})` : ""} — {c.source === "ops" ? "Already in Ops" : "Training"}
+                    {c.name}{c.traineeCode ? ` (${c.traineeCode})` : ""}
                   </option>
                 ))}
               </select>
             </div>
+            )}
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Trainee Code</label>
               <Input placeholder="e.g. TN-001" value={addAgentForm.traineeCode} onChange={e => setAddAgentForm(f => ({ ...f, traineeCode: e.target.value }))} />
