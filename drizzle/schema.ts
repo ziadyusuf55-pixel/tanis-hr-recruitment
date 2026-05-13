@@ -646,3 +646,68 @@ export const qualityLog = mysqlTable("quality_log", {
 });
 export type QualityLog = typeof qualityLog.$inferSelect;
 export type InsertQualityLog = typeof qualityLog.$inferInsert;
+
+// ─── Live Cycle Tracker ───────────────────────────────────────────────────────
+/**
+ * cycle_stats — agent performance stats uploaded every ~2 hours.
+ * One row per agent per date. Upserted on each upload by (crdts, date).
+ */
+export const cycleStats = mysqlTable("cycle_stats", {
+  id: int("id").autoincrement().primaryKey(),
+  crdts: varchar("crdts", { length: 100 }).notNull(),           // agent CRDTS
+  agentCode: varchar("agentCode", { length: 100 }),             // T-XXXX
+  alias: varchar("alias", { length: 100 }),
+  date: varchar("date", { length: 10 }).notNull(),              // YYYY-MM-DD
+  cycleKey: varchar("cycleKey", { length: 7 }).notNull(),       // YYYY-MM (cycle month, 26th prev → 25th this)
+  loginHours: decimal("loginHours", { precision: 8, scale: 2 }).default("0"),
+  totalCalls: int("totalCalls").default(0),
+  revenue: decimal("revenue", { precision: 12, scale: 2 }).default("0"),
+  cost: decimal("cost", { precision: 12, scale: 2 }).default("0"),
+  profit: decimal("profit", { precision: 12, scale: 2 }).default("0"),
+  uploadedAt: bigint("uploadedAt", { mode: "number" }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type CycleStats = typeof cycleStats.$inferSelect;
+export type InsertCycleStats = typeof cycleStats.$inferInsert;
+
+/**
+ * cycle_deductions — approved adherence violations for the current cycle.
+ * Upserted on each adherence upload by (crdts, date, violationType).
+ * status: approved → shown; rejected → hidden from agent view.
+ */
+export const cycleDeductions = mysqlTable("cycle_deductions", {
+  id: int("id").autoincrement().primaryKey(),
+  crdts: varchar("crdts", { length: 100 }).notNull(),
+  agentCode: varchar("agentCode", { length: 100 }),
+  alias: varchar("alias", { length: 100 }),
+  date: varchar("date", { length: 10 }).notNull(),              // YYYY-MM-DD
+  cycleKey: varchar("cycleKey", { length: 7 }).notNull(),
+  violationType: varchar("violationType", { length: 200 }).notNull(),
+  hours: decimal("hours", { precision: 8, scale: 2 }).default("0"),
+  deductionAmount: decimal("deductionAmount", { precision: 10, scale: 2 }).default("0"),
+  status: mysqlEnum("status", ["approved", "rejected"]).default("approved").notNull(),
+  uploadedAt: bigint("uploadedAt", { mode: "number" }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type CycleDeductions = typeof cycleDeductions.$inferSelect;
+export type InsertCycleDeductions = typeof cycleDeductions.$inferInsert;
+
+/**
+ * cycle_ot — overtime events for the current cycle.
+ * Upserted on each OT upload by (crdts, date, otType).
+ */
+export const cycleOT = mysqlTable("cycle_ot", {
+  id: int("id").autoincrement().primaryKey(),
+  crdts: varchar("crdts", { length: 100 }).notNull(),
+  agentCode: varchar("agentCode", { length: 100 }),
+  alias: varchar("alias", { length: 100 }),
+  date: varchar("date", { length: 10 }).notNull(),              // YYYY-MM-DD
+  cycleKey: varchar("cycleKey", { length: 7 }).notNull(),
+  otType: varchar("otType", { length: 20 }).notNull(),          // "1.5x" | "2x" | "3x"
+  hours: decimal("hours", { precision: 8, scale: 2 }).default("0"),
+  egpAmount: decimal("egpAmount", { precision: 10, scale: 2 }).default("0"),
+  uploadedAt: bigint("uploadedAt", { mode: "number" }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type CycleOT = typeof cycleOT.$inferSelect;
+export type InsertCycleOT = typeof cycleOT.$inferInsert;

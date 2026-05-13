@@ -21,6 +21,7 @@ import AdherenceLog from "./pages/AdherenceLog";
 import QualityLog from "./pages/QualityLog";
 import PaymentPreferences from "./pages/PaymentPreferences";
 import AllDocuments from "./pages/AllDocuments";
+import CycleTrackerAdmin from "./pages/CycleTrackerAdmin";
 import AgentProfilePage from "./pages/AgentProfilePage";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import { useAuth } from "./_core/hooks/useAuth";
@@ -76,6 +77,7 @@ function Router() {
       <Route path="/quality" component={() => <ProtectedRoute component={QualityLog} />} />
       <Route path="/payment-preferences" component={() => <ProtectedRoute component={PaymentPreferences} />} />
       <Route path="/all-documents" component={() => <ProtectedRoute component={AllDocuments} />} />
+      <Route path="/cycle-tracker" component={() => <ProtectedRoute component={CycleTrackerAdmin} />} />
       <Route path="/requests" component={() => <ProtectedRoute component={Requests} />} />
       <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
       <Route path="/admin-invite" component={AdminInviteAccept} />

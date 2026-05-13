@@ -30,11 +30,17 @@ import {
   FileText,
   Wallet,
   Calendar,
+  LayoutGrid,
   Upload,
   CheckCircle,
   XCircle,
   Clock,
   Star,
+  TrendingUp,
+  Activity,
+  AlertCircle,
+  BarChart2,
+  Zap,
 } from "lucide-react";
 
 const TANIS_LOGO_WHITE =
@@ -141,39 +147,7 @@ function formatCurrency(amount: string | number | null | undefined) {
   return `EGP ${num.toLocaleString()}`;
 }
 
-type Tab = "profile" | "payroll" | "requests" | "referrals" | "documents" | "payment" | "comments";
-
-// ─── Orientation Steps ───────────────────────────────────────────────────────
-const ORIENTATION_STEPS = [
-  {
-    title: "Welcome to Tanis Hub! 👋",
-    body: "This is your personal agent portal where you can manage everything related to your role at Tanis. Let's take a quick tour so you know where everything is.",
-  },
-  {
-    title: "Profile Tab 👤",
-    body: "Your Profile tab shows your agent information, campaign assignment, break schedule, and day offs. All information here is managed by your team leader — you can view but not edit it.",
-  },
-  {
-    title: "Payroll Tab 💰",
-    body: "The Payroll tab shows your monthly salary breakdown — base salary, overtime, commission, deductions, and net pay. You'll also see the payment status (Pending or Paid) for each month.",
-  },
-  {
-    title: "Requests Tab 📋",
-    body: "Use the Requests tab to submit any formal request: day off, paid leave, HR letter, schedule change, or resignation. Your team leader will review and respond to each request.",
-  },
-  {
-    title: "Documents Tab 📁",
-    body: "Upload and manage your required documents here — national ID, contracts, certificates, and anything else HR needs from you.",
-  },
-  {
-    title: "Payment Tab 💳",
-    body: "Set your preferred payment method (Instapay, Vodafone Cash, or bank transfer) so payroll knows where to send your salary each month.",
-  },
-  {
-    title: "You're all set! ✅",
-    body: "That's everything you need to know to get started. If you have any questions, reach out to your team leader. Good luck and welcome to the team!",
-  },
-];
+type Tab = "profile" | "opplan" | "cycle" | "payroll" | "requests" | "referrals" | "documents" | "payment" | "comments";
 
 export default function AgentPortal() {
   const [, navigate] = useLocation();
@@ -184,9 +158,6 @@ export default function AgentPortal() {
   });
   const logoutMutation = trpc.agent.logout.useMutation();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
-  // Orientation
-  const [showOrientation, setShowOrientation] = useState(false);
-  const [orientationStep, setOrientationStep] = useState(0);
   const markOrientationMutation = trpc.orientation.markShown.useMutation();
   const [isDark, setIsDark] = useState<boolean>(() => {
     const saved = localStorage.getItem(THEME_KEY);
@@ -207,32 +178,16 @@ export default function AgentPortal() {
     }
   }, [isLoading, isFetching, agent, navigate]);
 
-  // Check orientation on first load
+    // Auto-mark orientation shown on first visit (no popup)
   const { data: orientationData } = trpc.orientation.getStatus.useQuery(
     undefined,
     { enabled: !!agent }
   );
   useEffect(() => {
     if (orientationData && !orientationData.shown) {
-      setShowOrientation(true);
-      setOrientationStep(0);
-    }
-  }, [orientationData]);
-
-  function handleOrientationNext() {
-    if (orientationStep < ORIENTATION_STEPS.length - 1) {
-      setOrientationStep(s => s + 1);
-    } else {
-      setShowOrientation(false);
       markOrientationMutation.mutate(undefined);
     }
-  }
-
-  function handleOrientationSkip() {
-    setShowOrientation(false);
-    markOrientationMutation.mutate(undefined);
-  }
-
+  }, [orientationData]);
   async function handleLogout() {
     await logoutMutation.mutateAsync();
     navigate("/login");
@@ -256,6 +211,8 @@ export default function AgentPortal() {
 
   const navItems: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: "profile", label: "Profile", icon: <User className="w-4 h-4" /> },
+    { id: "opplan", label: "Op Plan", icon: <LayoutGrid className="w-4 h-4" /> },
+    { id: "cycle", label: "Cycle", icon: <Activity className="w-4 h-4" /> },
     { id: "payroll", label: "Payroll", icon: <CreditCard className="w-4 h-4" /> },
     { id: "requests", label: "Requests", icon: <MessageSquare className="w-4 h-4" /> },
     { id: "documents", label: "Documents", icon: <FileText className="w-4 h-4" /> },
@@ -381,6 +338,8 @@ export default function AgentPortal() {
       {/* ── Content ── */}
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
         {activeTab === "profile" && <ProfileTab agent={agent} theme={theme} />}
+        {activeTab === "opplan" && <OperationPlanTab theme={theme} />}
+        {activeTab === "cycle" && <CycleTrackerTab theme={theme} />}
         {activeTab === "payroll" && <PayrollTab theme={theme} />}
         {activeTab === "requests" && <RequestCenterTab candidateId={agent.candidateId} theme={theme} />}
         {activeTab === "documents" && <DocumentsTab theme={theme} />}
@@ -389,59 +348,28 @@ export default function AgentPortal() {
         {activeTab === "comments" && <AgentCommentsTab theme={theme} />}
       </main>
 
-      {/* ── Orientation Popup ── */}
-      {showOrientation && (() => {
-        const step = ORIENTATION_STEPS[orientationStep];
-        const isLast = orientationStep === ORIENTATION_STEPS.length - 1;
-        return (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center p-4"
-            style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(4px)" }}
-          >
-            <div
-              className="w-full max-w-md rounded-2xl p-6 shadow-2xl"
-              style={{ background: isDark ? "#1a1a1a" : "#ffffff", border: `1px solid ${isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.08)"}` }}
-            >
-              {/* Step indicator */}
-              <div className="flex gap-1.5 mb-5">
-                {ORIENTATION_STEPS.map((_, i) => (
-                  <div
-                    key={i}
-                    className="h-1 rounded-full flex-1 transition-all duration-300"
-                    style={{ background: i <= orientationStep ? BRAND : (isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.12)") }}
-                  />
-                ))}
-              </div>
-              {/* Content */}
-              <h2 className="text-lg font-bold mb-2" style={{ color: isDark ? "#fff" : "#1a1a1a" }}>{step.title}</h2>
-              <p className="text-sm leading-relaxed mb-6" style={{ color: isDark ? "rgba(255,255,255,0.65)" : "rgba(0,0,0,0.60)" }}>{step.body}</p>
-              {/* Actions */}
-              <div className="flex items-center justify-between gap-3">
-                <button
-                  onClick={handleOrientationSkip}
-                  className="text-sm px-3 py-1.5 rounded-lg transition-all"
-                  style={{ color: isDark ? "rgba(255,255,255,0.4)" : "rgba(0,0,0,0.35)" }}
-                >
-                  Skip tour
-                </button>
-                <button
-                  onClick={handleOrientationNext}
-                  className="px-5 py-2 rounded-xl text-sm font-semibold text-white transition-all"
-                  style={{ background: BRAND }}
-                >
-                  {isLast ? "Get started" : "Next"}
-                </button>
-              </div>
-            </div>
-          </div>
-        );
-      })()}
+
     </div>
   );
 }
 
-// ─── Profile Tab ─────────────────────────────────────────────────────────────
-
+/// ─── Shared Types ─────────────────────────────────────────────────────
+type AgentData = {
+  candidateId: number;
+  fullName?: string;
+  name?: string;
+  email: string | null;
+  phone: string | null;
+  traineeCode?: string;
+  positionApplied?: string | null;
+  batch?: { assignedAt: number | Date | null } | null;
+};
+const COMMENT_TAG_CONFIG = {
+  note:     { label: "Note",     color: "bg-blue-500/20 text-blue-400",    border: "border-blue-500/30" },
+  warning:  { label: "Warning",  color: "bg-amber-500/20 text-amber-400",  border: "border-amber-500/30" },
+  resolved: { label: "Resolved", color: "bg-emerald-500/20 text-emerald-400", border: "border-emerald-500/30" },
+};
+// ─── Profile Tab ──────────────────────────────────────────────────────
 const DAY_NAMES_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
   const { data: wfProfile } = trpc.workforce.getMyProfile.useQuery();
@@ -454,15 +382,14 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
     { label: "Agent ID", value: wfProfile.traineeCode as string },
     { label: "Full Name", value: wfProfile.fullName as string },
     { label: "Alias / English Name", value: (wfProfile.alias as string | null) ?? "—" },
+    { label: "Phone", value: (wfProfile.phone as string | null) ?? "—" },
+    { label: "Email", value: (wfProfile.email as string | null) ?? "—" },
+    { label: "Dialer Credentials", value: (wfProfile.dialerCredentials as string | null) ?? "—" },
     { label: "Campaign", value: (wfProfile.campaignName as string | null) ?? "—" },
     { label: "Join Date", value: joinDate },
-    { label: "Shift Hours", value: (wfProfile.shiftHours as string | null) ?? "—" },
     { label: "Team Leader", value: (wfProfile.teamLeader as string | null) ?? "—" },
     { label: "Off Day 1", value: wfProfile.offDay1 != null ? DAY_NAMES_FULL[wfProfile.offDay1 as number] : "—" },
     { label: "Off Day 2", value: wfProfile.offDay2 != null ? DAY_NAMES_FULL[wfProfile.offDay2 as number] : "—" },
-    { label: "Phone", value: (wfProfile.phone as string | null) ?? "—" },
-    { label: "Email", value: (wfProfile.email as string | null) ?? "—" },
-    { label: "Credentials", value: (wfProfile.dialerCredentials as string | null) ?? "—" },
   ] : [
     { label: "Full Name", value: agent.name },
     { label: "Agent ID", value: agent.traineeCode },
@@ -714,6 +641,14 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
 
   return (
     <div className="space-y-4">
+      {/* Inline help message */}
+      <div className="rounded-xl p-4 flex gap-3" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <CreditCard className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: BRAND }} />
+        <div>
+          <p className="text-sm font-semibold mb-0.5" style={{ color: theme.text }}>Your Payroll</p>
+          <p className="text-xs leading-relaxed" style={{ color: theme.textFaint }}>This tab shows your monthly salary breakdown — base pay, overtime (1.5×, 2×, 3×), commissions, and any deductions. Use the arrows to browse previous months. Payment status shows whether your salary has been processed.</p>
+        </div>
+      </div>
       {/* Month selector */}
       <div className="flex items-center gap-3">
         <button disabled={!prevMonth} onClick={() => setSelectedMonth(prevMonth!)}
@@ -952,6 +887,14 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
 
   return (
     <div className="space-y-6">
+      {/* Inline help message */}
+      <div className="rounded-xl p-4 flex gap-3" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <MessageSquare className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: BRAND }} />
+        <div>
+          <p className="text-sm font-semibold mb-0.5" style={{ color: theme.text }}>Requests Center</p>
+          <p className="text-xs leading-relaxed" style={{ color: theme.textFaint }}>Submit formal requests here — day off, paid leave, HR letter, schedule change, or resignation. Your team leader will review and respond. You can track the status of each request below.</p>
+        </div>
+      </div>
       <div className="flex items-center justify-between">
         <SectionTitle theme={theme}>My Requests</SectionTitle>
         {!showForm && (
@@ -1510,6 +1453,14 @@ function DocumentsTab({ theme }: { theme: Theme }) {
   const docMap = new Map((docs as unknown as DocItem[]).map((d) => [d.docType, d]));
   return (
     <div className="space-y-6">
+      {/* Inline help message */}
+      <div className="rounded-xl p-4 flex gap-3" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <FileText className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: BRAND }} />
+        <div>
+          <p className="text-sm font-semibold mb-0.5" style={{ color: theme.text }}>Documents</p>
+          <p className="text-xs leading-relaxed" style={{ color: theme.textFaint }}>Upload your required documents here (National ID, contracts, certificates). HR will review and approve each one. Make sure all files are clear and legible.</p>
+        </div>
+      </div>
       <div className="rounded-xl p-4" style={{ background: "oklch(0.32 0.18 28 / 0.12)", border: "1px solid oklch(0.32 0.18 28 / 0.25)" }}>
         <p className="text-sm font-semibold mb-1" style={{ color: theme.text }}>Required Documents for Contract</p>
         <p className="text-xs" style={{ color: theme.textMuted }}>
@@ -1646,6 +1597,14 @@ function PaymentMethodsTab({ theme }: { theme: Theme }) {
   }
   return (
     <div className="space-y-6">
+      {/* Inline help message */}
+      <div className="rounded-xl p-4 flex gap-3" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <Wallet className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: BRAND }} />
+        <div>
+          <p className="text-sm font-semibold mb-0.5" style={{ color: theme.text }}>Payment Methods</p>
+          <p className="text-xs leading-relaxed" style={{ color: theme.textFaint }}>Add your preferred payment method so payroll knows where to send your salary. You can add Instapay, Vodafone Cash, or bank transfer. Mark one as preferred and HR will use it for your monthly payment.</p>
+        </div>
+      </div>
       <div className="flex items-center justify-between">
         <SectionTitle theme={theme}>Payment Methods</SectionTitle>
         <button
@@ -1781,390 +1740,343 @@ function PaymentMethodsTab({ theme }: { theme: Theme }) {
 }
 
 
-// ─── Operation Plan Tab ───────────────────────────────────────────────────────
-const DAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-type WfAgent = {
-  id: number;
-  traineeCode: string;
-  fullName: string;
-  alias: string | null;
-  offDay1: number | null;
-  offDay2: number | null;
-  campaignId: number | null;
+
+// ─── Operation Plan Tab ──────────────────────────────────────────────────────
+type CampaignPlanData = {
+  campaignName: string;
+  weekStart: string;
+  weekDays: { date: string; label: string }[];
+  grid: {
+    traineeCode: string;
+    fullName: string;
+    alias: string | null;
+    teamLeader: string | null;
+    isMe: boolean;
+    days: { date: string; label: string; status: "off" | "work" }[];
+  }[];
+  myCode: string;
 };
-type ScReq = {
-  id: number;
-  requesterCode: string;
-  targetCode: string;
-  requesterNewOff1: number | null;
-  requesterNewOff2: number | null;
-  targetNewOff1: number | null;
-  targetNewOff2: number | null;
-  message: string | null;
-  status: string;
-  createdAt: Date | number;
-};
+
 function OperationPlanTab({ theme }: { theme: Theme }) {
-  const utils = trpc.useUtils();
-  const { data: myProfile } = trpc.workforce.getMyProfile.useQuery();
-  const campaignId = myProfile?.campaignId as number | null | undefined;
-  const myCode = myProfile?.traineeCode as string | undefined;
-  const { data: agents = [] } = trpc.workforce.getCampaignAgents.useQuery(
-    { campaignId: campaignId! },
-    { enabled: !!campaignId }
-  );
-  const { data: myRequests = [] } = trpc.scheduleChange.listMine.useQuery();
-  const createRequest = trpc.scheduleChange.request.useMutation({
-    onSuccess: () => { utils.scheduleChange.listMine.invalidate(); setShowForm(false); resetForm(); },
-  });
-  const peerApprove = trpc.scheduleChange.peerApprove.useMutation({
-    onSuccess: () => utils.scheduleChange.listMine.invalidate(),
-  });
-  const [showForm, setShowForm] = useState(false);
-  const [targetCode, setTargetCode] = useState("");
-  const [reqOff1, setReqOff1] = useState<number>(0);
-  const [reqOff2, setReqOff2] = useState<number>(1);
-  const [tgtOff1, setTgtOff1] = useState<number>(0);
-  const [tgtOff2, setTgtOff2] = useState<number>(1);
-  const [msg, setMsg] = useState("");
-  // Monthly calendar
-  const [calYear, setCalYear] = useState(() => new Date().getFullYear());
-  const [calMonth, setCalMonth] = useState(() => new Date().getMonth() + 1);
-  const [calExpandedDay, setCalExpandedDay] = useState<string | null>(null);
-  const { data: monthPlan } = trpc.campaigns.getOperationPlanMonth.useQuery(
-    { campaignId: campaignId!, year: calYear, month: calMonth },
-    { enabled: !!campaignId }
-  );
-  function resetForm() { setTargetCode(""); setReqOff1(0); setReqOff2(1); setTgtOff1(0); setTgtOff2(1); setMsg(""); }
-  const typedAgents = agents as unknown as WfAgent[];
-  const typedRequests = myRequests as unknown as ScReq[];
-  const pendingPeerApproval = typedRequests.filter(r => r.targetCode === myCode && r.status === "pending_peer");
-  const myOutgoing = typedRequests.filter(r => r.requesterCode === myCode);
-  if (!myProfile) {
+  const [weekOffset, setWeekOffset] = useState(0);
+  const { data: plan, isLoading } = trpc.workforce.getFullCampaignPlan.useQuery({ weekOffset });
+
+  if (isLoading && !plan) {
     return (
-      <div className="flex flex-col items-center justify-center py-16 gap-3">
-        <Calendar className="w-10 h-10" style={{ color: theme.textFaint }} />
-        <p className="text-sm" style={{ color: theme.textMuted }}>You are not yet assigned to an operations campaign.</p>
+      <div className="flex items-center justify-center py-16">
+        <div className="w-6 h-6 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: BRAND }} />
       </div>
     );
   }
+
+  if (!plan) {
+    return (
+      <EmptyState
+        icon={<LayoutGrid className="w-8 h-8" style={{ color: theme.textFaint }} />}
+        title="No operation plan yet"
+        subtitle="Your campaign's operation plan will appear here once set up by your team leader."
+        theme={theme}
+      />
+    );
+  }
+
+  const p = plan as CampaignPlanData;
+
+  function formatWeekLabel(dateStr: string) {
+    const d = new Date(dateStr);
+    const end = new Date(d);
+    end.setDate(d.getDate() + 6);
+    return `${d.toLocaleDateString("en-GB", { day: "numeric", month: "short" })} – ${end.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })}`;
+  }
+
   return (
-    <div className="space-y-8">
-      {/* Monthly Calendar View */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <SectionTitle theme={theme}>Monthly Operation Plan</SectionTitle>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => { const d = new Date(calYear, calMonth - 2, 1); setCalYear(d.getFullYear()); setCalMonth(d.getMonth() + 1); setCalExpandedDay(null); }}
-              className="w-7 h-7 rounded-lg flex items-center justify-center transition-all"
-              style={{ background: theme.surface, color: theme.textMuted }}
-            ><ChevronLeft className="w-3.5 h-3.5" /></button>
-            <span className="text-sm font-semibold px-2 min-w-[110px] text-center" style={{ color: theme.text }}>
-              {new Date(calYear, calMonth - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" })}
-            </span>
-            <button
-              onClick={() => { const d = new Date(calYear, calMonth, 1); setCalYear(d.getFullYear()); setCalMonth(d.getMonth() + 1); setCalExpandedDay(null); }}
-              className="w-7 h-7 rounded-lg flex items-center justify-center transition-all"
-              style={{ background: theme.surface, color: theme.textMuted }}
-            ><ChevronRight className="w-3.5 h-3.5" /></button>
-          </div>
+    <div className="space-y-6">
+      {/* Inline help */}
+      <div className="rounded-xl p-4 flex gap-3" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <LayoutGrid className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: BRAND }} />
+        <div>
+          <p className="text-sm font-semibold mb-0.5" style={{ color: theme.text }}>Campaign Operation Plan</p>
+          <p className="text-xs leading-relaxed" style={{ color: theme.textFaint }}>This is the full weekly schedule for your campaign. Green = working day, grey = day off. Use the arrows to browse other weeks.</p>
         </div>
-        {monthPlan && (() => {
-          const { days, grid } = monthPlan;
-          const firstDayOfWeek = new Date(calYear, calMonth - 1, 1).getDay();
-          const today = new Date().toISOString().split("T")[0];
-          return (
-            <div className="space-y-2">
-              <div className="grid grid-cols-7 gap-1 text-center">
-                {["Sun","Mon","Tue","Wed","Thu","Fri","Sat"].map(d => (
-                  <div key={d} className="text-[10px] font-semibold py-1" style={{ color: theme.textFaint }}>{d}</div>
-                ))}
-              </div>
-              <div className="grid grid-cols-7 gap-1">
-                {Array.from({length: firstDayOfWeek}).map((_,i) => <div key={`e-${i}`} />)}
-                {days.map(day => {
-                  const myStatus = grid.find(a => a.traineeCode === myCode)?.days.find(d => d.date === day.date)?.status;
-                  const working = grid.filter(a => a.days.find(d => d.date === day.date)?.status === "work").length;
-                  const isToday = day.date === today;
-                  const isExpanded = calExpandedDay === day.date;
-                  const isMyOff = myStatus === "off";
-                  return (
-                    <div key={day.date}
-                      onClick={() => setCalExpandedDay(isExpanded ? null : day.date)}
-                      className="rounded-lg p-1.5 cursor-pointer transition-all min-h-[56px]"
-                      style={{
-                        background: isExpanded ? `${BRAND}22` : isToday ? `${BRAND}15` : theme.surface,
-                        border: `1px solid ${isExpanded ? BRAND : isToday ? `${BRAND}60` : theme.surfaceBorder}`,
-                      }}
-                    >
-                      <div className="text-[10px] font-bold" style={{ color: isToday ? BRAND_LIGHT : theme.text }}>{day.dayNum}</div>
-                      <div className="text-[9px] mt-0.5" style={{ color: isMyOff ? "#ef4444" : "#22c55e" }}>
-                        {isMyOff ? "Off" : "Work"}
-                      </div>
-                      <div className="text-[9px]" style={{ color: theme.textFaint }}>{working} on</div>
-                    </div>
-                  );
-                })}
-              </div>
-              {calExpandedDay && (() => {
-                const workingAgents = grid.filter(a => a.days.find(d => d.date === calExpandedDay)?.status === "work");
-                const offAgents = grid.filter(a => a.days.find(d => d.date === calExpandedDay)?.status === "off");
-                return (
-                  <div className="rounded-xl p-4 space-y-3" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
-                    <div className="flex items-center justify-between">
-                      <p className="text-sm font-semibold" style={{ color: theme.text }}>
-                        {new Date(calExpandedDay + "T12:00:00").toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
-                      </p>
-                      <button onClick={() => setCalExpandedDay(null)} className="text-xs" style={{ color: theme.textFaint }}>✕</button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <p className="text-[10px] font-semibold mb-1.5" style={{ color: "#22c55e" }}>Working ({workingAgents.length})</p>
-                        <div className="space-y-1">
-                          {workingAgents.map(a => (
-                            <div key={a.traineeCode} className="text-xs rounded px-2 py-1" style={{ background: "#22c55e15", color: "#22c55e" }}>
-                              {a.alias ?? a.fullName}{a.traineeCode === myCode ? " (You)" : ""}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                      <div>
-                        <p className="text-[10px] font-semibold mb-1.5" style={{ color: theme.textMuted }}>Off ({offAgents.length})</p>
-                        <div className="space-y-1">
-                          {offAgents.map(a => (
-                            <div key={a.traineeCode} className="text-xs rounded px-2 py-1" style={{ background: theme.surface, color: theme.textMuted }}>
-                              {a.alias ?? a.fullName}{a.traineeCode === myCode ? " (You)" : ""}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()}
-              <p className="text-[10px]" style={{ color: theme.textFaint }}>Click any day to see who is working. Your status is shown in each cell.</p>
-            </div>
-          );
-        })()}
       </div>
 
-      {/* Weekly Schedule Grid */}
-      <div>
-        <SectionTitle theme={theme}>Campaign Weekly Schedule</SectionTitle>
-        <p className="text-xs mb-4" style={{ color: theme.textMuted }}>
-          Green = Working day &nbsp;·&nbsp; Red = Off day &nbsp;·&nbsp; Your row is highlighted.
-        </p>
-        <div className="rounded-xl overflow-hidden" style={{ border: `1px solid ${theme.surfaceBorder}` }}>
+      {/* Campaign header + week nav */}
+      <div className="rounded-xl p-5 flex items-center justify-between" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <div>
+          <h2 className="text-base font-bold" style={{ color: theme.text }}>{p.campaignName}</h2>
+          <p className="text-xs mt-0.5" style={{ color: theme.textFaint }}>{p.grid.length} agents</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setWeekOffset(w => w - 1)}
+            className="h-8 w-8 rounded-lg flex items-center justify-center text-lg"
+            style={{ background: theme.inputBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}>&#8249;</button>
+          <span className="text-xs font-medium min-w-[140px] text-center" style={{ color: theme.textMuted }}>
+            {formatWeekLabel(p.weekStart)}
+          </span>
+          <button onClick={() => setWeekOffset(w => w + 1)}
+            className="h-8 w-8 rounded-lg flex items-center justify-center text-lg"
+            style={{ background: theme.inputBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}>&#8250;</button>
+          {weekOffset !== 0 && (
+            <button onClick={() => setWeekOffset(0)}
+              className="text-xs px-2 py-1 rounded-lg"
+              style={{ background: BRAND, color: "white" }}>Today</button>
+          )}
+        </div>
+      </div>
+
+      {/* Schedule grid */}
+      <div className="rounded-xl overflow-hidden" style={{ border: `1px solid ${theme.cardBorder}` }}>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr style={{ background: theme.cardBg, borderBottom: `1px solid ${theme.cardBorder}` }}>
+                <th className="text-left px-4 py-3 font-semibold sticky left-0 z-10" style={{ color: theme.textFaint, background: theme.cardBg, minWidth: 160 }}>Agent</th>
+                <th className="text-left px-4 py-3 font-semibold" style={{ color: theme.textFaint }}>TL</th>
+                {p.weekDays.map(d => (
+                  <th key={d.date} className="px-3 py-3 font-semibold text-center" style={{ color: theme.textFaint }}>{d.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {p.grid.map((agent, idx) => (
+                <tr
+                  key={agent.traineeCode}
+                  style={{
+                    background: agent.isMe
+                      ? `${BRAND}18`
+                      : idx % 2 === 0 ? theme.bg : theme.cardBg,
+                    borderBottom: `1px solid ${theme.cardBorder}`,
+                  }}
+                >
+                  <td className="px-4 py-2.5 sticky left-0 z-10" style={{ background: agent.isMe ? `${BRAND}18` : idx % 2 === 0 ? theme.bg : theme.cardBg }}>
+                    <div className="flex items-center gap-2">
+                      {agent.isMe && <span className="text-xs px-1.5 py-0.5 rounded font-bold" style={{ background: BRAND, color: "white" }}>You</span>}
+                      <div>
+                        <div className="font-medium" style={{ color: theme.text }}>{agent.fullName}</div>
+                        <div style={{ color: theme.textFaint }}>T-{agent.traineeCode}{agent.alias ? ` · ${agent.alias}` : ""}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-2.5" style={{ color: theme.textMuted }}>{agent.teamLeader ?? "—"}</td>
+                  {agent.days.map(day => (
+                    <td key={day.date} className="px-3 py-2.5 text-center">
+                      {day.status === "work" ? (
+                        <span className="inline-block w-6 h-6 rounded-full" style={{ background: "oklch(0.55 0.18 145 / 0.25)", border: "1px solid oklch(0.55 0.18 145 / 0.5)" }} title="Working" />
+                      ) : (
+                        <span className="inline-block w-6 h-6 rounded-full" style={{ background: theme.inputBg, border: `1px solid ${theme.cardBorder}` }} title="Day off" />
+                      )}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Legend */}
+      <div className="flex items-center gap-4 text-xs" style={{ color: theme.textFaint }}>
+        <div className="flex items-center gap-1.5">
+          <span className="inline-block w-4 h-4 rounded-full" style={{ background: "oklch(0.55 0.18 145 / 0.25)", border: "1px solid oklch(0.55 0.18 145 / 0.5)" }} />
+          Working
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="inline-block w-4 h-4 rounded-full" style={{ background: theme.inputBg, border: `1px solid ${theme.cardBorder}` }} />
+          Day off
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Cycle Tracker Tab ────────────────────────────────────────────────────
+function CycleTrackerTab({ theme }: { theme: Theme }) {
+  const { data, isLoading } = trpc.cycleTracker.getMyTracker.useQuery(undefined, {
+    refetchInterval: 2 * 60 * 60 * 1000, // refetch every 2 hours
+    staleTime: 30 * 60 * 1000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <div className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: BRAND, borderTopColor: "transparent" }} />
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 gap-3">
+        <Activity className="w-10 h-10" style={{ color: theme.textFaint }} />
+        <p className="text-sm" style={{ color: theme.textMuted }}>No cycle data available yet.</p>
+        <p className="text-xs text-center max-w-xs" style={{ color: theme.textFaint }}>Your CRDTS hasn't been linked to any cycle data. Ask your admin to upload the stats Excel.</p>
+      </div>
+    );
+  }
+
+  const { stats, todayStats, deductions, ot, cycleKey, dateRange } = data;
+
+  // Today section
+  const todayLoginHours = todayStats?.reduce((s, r) => s + parseFloat(String(r.loginHours ?? 0)), 0) ?? 0;
+  const todayCalls = todayStats?.reduce((s, r) => s + (r.totalCalls ?? 0), 0) ?? 0;
+  const todayRevenue = todayStats?.reduce((s, r) => s + parseFloat(String(r.revenue ?? 0)), 0) ?? 0;
+
+  // Cycle totals
+  const cycleLoginHours = stats.reduce((s, r) => s + parseFloat(String(r.loginHours ?? 0)), 0);
+  const cycleCalls = stats.reduce((s, r) => s + (r.totalCalls ?? 0), 0);
+  const cycleRevenue = stats.reduce((s, r) => s + parseFloat(String(r.revenue ?? 0)), 0);
+  const cycleCost = stats.reduce((s, r) => s + parseFloat(String(r.cost ?? 0)), 0);
+  const cycleProfit = stats.reduce((s, r) => s + parseFloat(String(r.profit ?? 0)), 0);
+  const revenuePerHour = cycleLoginHours > 0 ? cycleRevenue / cycleLoginHours : 0;
+
+  // Deductions total
+  const totalDeductions = deductions.reduce((s, r) => s + parseFloat(String(r.deductionAmount ?? 0)), 0);
+
+  // OT totals
+  const totalOTHours = ot.reduce((s, r) => s + parseFloat(String(r.hours ?? 0)), 0);
+  const totalOTEgp = ot.reduce((s, r) => s + parseFloat(String(r.egpAmount ?? 0)), 0);
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  return (
+    <div className="space-y-6">
+      {/* Disclaimer */}
+      <div className="rounded-xl p-4 flex items-start gap-3" style={{ background: "oklch(0.65 0.18 85 / 0.12)", border: "1px solid oklch(0.65 0.18 85 / 0.3)" }}>
+        <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" style={{ color: "oklch(0.65 0.18 85)" }} />
+        <div>
+          <p className="text-xs font-semibold" style={{ color: "oklch(0.65 0.18 85)" }}>Indicative Data Only</p>
+          <p className="text-xs mt-0.5" style={{ color: theme.textMuted }}>Data shown is indicative and subject to change. Final payslip available on the 25th. Cycle: {dateRange.start} → {dateRange.end}</p>
+        </div>
+      </div>
+
+      {/* Section 1 — Today */}
+      <div className="rounded-xl p-5 space-y-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <div className="flex items-center gap-2">
+          <Zap className="w-4 h-4" style={{ color: BRAND }} />
+          <h3 className="font-semibold text-sm" style={{ color: theme.text }}>Today — {today}</h3>
+          {todayStats && todayStats.length === 0 && (
+            <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: theme.inputBg, color: theme.textFaint }}>No data yet</span>
+          )}
+        </div>
+        <div className="grid grid-cols-3 gap-4">
+          {[
+            { label: "Login Hours", value: todayLoginHours.toFixed(1) + "h", icon: <Clock className="w-4 h-4" /> },
+            { label: "Total Calls", value: todayCalls.toLocaleString(), icon: <BarChart2 className="w-4 h-4" /> },
+            { label: "Revenue", value: `EGP ${todayRevenue.toLocaleString()}`, icon: <TrendingUp className="w-4 h-4" /> },
+          ].map(({ label, value, icon }) => (
+            <div key={label} className="rounded-lg p-3 text-center" style={{ background: theme.inputBg }}>
+              <div className="flex justify-center mb-1" style={{ color: theme.textFaint }}>{icon}</div>
+              <div className="text-lg font-bold" style={{ color: theme.text }}>{value}</div>
+              <div className="text-xs" style={{ color: theme.textFaint }}>{label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Section 2 — This Cycle Performance */}
+      <div className="rounded-xl p-5 space-y-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <div className="flex items-center gap-2">
+          <TrendingUp className="w-4 h-4" style={{ color: BRAND }} />
+          <h3 className="font-semibold text-sm" style={{ color: theme.text }}>This Cycle Performance</h3>
+          <span className="text-xs" style={{ color: theme.textFaint }}>{stats.length} days recorded</span>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          {[
+            { label: "Total Login Hours", value: cycleLoginHours.toFixed(1) + "h" },
+            { label: "Total Calls", value: cycleCalls.toLocaleString() },
+            { label: "Total Revenue", value: `EGP ${cycleRevenue.toLocaleString()}` },
+            { label: "Total Cost", value: `EGP ${cycleCost.toLocaleString()}` },
+            { label: "Total Profit", value: `EGP ${cycleProfit.toLocaleString()}` },
+            { label: "Revenue / Hour", value: `EGP ${revenuePerHour.toFixed(0)}` },
+          ].map(({ label, value }) => (
+            <div key={label} className="rounded-lg p-3" style={{ background: theme.inputBg }}>
+              <div className="text-base font-bold" style={{ color: theme.text }}>{value}</div>
+              <div className="text-xs mt-0.5" style={{ color: theme.textFaint }}>{label}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Section 3 — Deductions */}
+      <div className="rounded-xl p-5 space-y-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <XCircle className="w-4 h-4" style={{ color: "oklch(0.55 0.22 25)" }} />
+            <h3 className="font-semibold text-sm" style={{ color: theme.text }}>Deductions This Cycle</h3>
+          </div>
+          {totalDeductions > 0 && (
+            <span className="text-sm font-bold" style={{ color: "oklch(0.55 0.22 25)" }}>-EGP {totalDeductions.toLocaleString()}</span>
+          )}
+        </div>
+        {deductions.length === 0 ? (
+          <p className="text-sm text-center py-4" style={{ color: theme.textFaint }}>No approved deductions this cycle.</p>
+        ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-xs">
               <thead>
-                <tr style={{ background: theme.surface }}>
-                  <th className="text-left px-4 py-3 font-semibold" style={{ color: theme.text, minWidth: 140 }}>Agent</th>
-                  {DAY_SHORT.map(d => (
-                    <th key={d} className="px-3 py-3 font-semibold text-center" style={{ color: theme.text, minWidth: 52 }}>{d}</th>
+                <tr style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+                  {["Date", "Violation", "Hours", "Amount"].map(h => (
+                    <th key={h} className="text-left py-2 px-2 font-semibold" style={{ color: theme.textFaint }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
-                {typedAgents.map((a, i) => {
-                  const isMe = a.traineeCode === myCode;
-                  return (
-                    <tr
-                      key={a.id}
-                      style={{
-                        background: isMe ? "oklch(0.32 0.18 28 / 0.12)" : i % 2 === 0 ? theme.bg : theme.surface,
-                        borderTop: `1px solid ${theme.surfaceBorder}`,
-                      }}
-                    >
-                      <td className="px-4 py-2.5">
-                        <div className="flex items-center gap-2">
-                          {isMe && <span className="text-[10px] px-1.5 py-0.5 rounded font-bold" style={{ background: BRAND, color: "white" }}>You</span>}
-                          <span className="font-medium truncate" style={{ color: theme.text }}>{a.alias ?? a.fullName}</span>
-                        </div>
-                      </td>
-                      {[0,1,2,3,4,5,6].map(day => {
-                        const isOff = a.offDay1 === day || a.offDay2 === day;
-                        return (
-                          <td key={day} className="px-3 py-2.5 text-center">
-                            <span
-                              className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-semibold"
-                              style={{
-                                background: isOff ? "#ef444422" : "#22c55e22",
-                                color: isOff ? "#ef4444" : "#22c55e",
-                              }}
-                            >
-                              {isOff ? "Off" : "On"}
-                            </span>
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
+                {deductions.map((d, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+                    <td className="py-2 px-2" style={{ color: theme.textMuted }}>{d.date}</td>
+                    <td className="py-2 px-2" style={{ color: theme.text }}>{d.violationType}</td>
+                    <td className="py-2 px-2" style={{ color: theme.textMuted }}>{parseFloat(String(d.hours ?? 0)).toFixed(1)}h</td>
+                    <td className="py-2 px-2 font-medium" style={{ color: "oklch(0.55 0.22 25)" }}>-EGP {parseFloat(String(d.deductionAmount ?? 0)).toLocaleString()}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
-        </div>
+        )}
       </div>
-      {/* Pending peer approval requests */}
-      {pendingPeerApproval.length > 0 && (
-        <div>
-          <SectionTitle theme={theme}>Pending Your Approval</SectionTitle>
-          <div className="space-y-3">
-            {pendingPeerApproval.map(r => (
-              <div key={r.id} className="rounded-xl p-4" style={{ background: theme.surface, border: `1px solid oklch(0.85 0.18 85 / 0.4)` }}>
-                <p className="text-sm font-medium mb-1" style={{ color: theme.text }}>
-                  <span style={{ color: BRAND_LIGHT }}>{r.requesterCode}</span> wants to swap schedules with you.
-                </p>
-                {r.message && <p className="text-xs mb-3 italic" style={{ color: theme.textMuted }}>"{r.message}"</p>}
-                <p className="text-xs mb-3" style={{ color: theme.textMuted }}>
-                  Their new off days: {r.requesterNewOff1 != null ? DAY_SHORT[r.requesterNewOff1] : "—"} & {r.requesterNewOff2 != null ? DAY_SHORT[r.requesterNewOff2] : "—"} &nbsp;·&nbsp;
-                  Your new off days: {r.targetNewOff1 != null ? DAY_SHORT[r.targetNewOff1] : "—"} & {r.targetNewOff2 != null ? DAY_SHORT[r.targetNewOff2] : "—"}
-                </p>
-                <div className="flex gap-2">
-                  <button onClick={() => peerApprove.mutate({ id: r.id, approve: true })}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium" style={{ background: "#22c55e22", color: "#22c55e" }}>
-                    Approve
-                  </button>
-                  <button onClick={() => peerApprove.mutate({ id: r.id, approve: false })}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium" style={{ background: "#ef444422", color: "#ef4444" }}>
-                    Decline
-                  </button>
-                </div>
-              </div>
-            ))}
+
+      {/* Section 4 — OT */}
+      <div className="rounded-xl p-5 space-y-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-4 h-4" style={{ color: "oklch(0.55 0.18 145)" }} />
+            <h3 className="font-semibold text-sm" style={{ color: theme.text }}>OT This Cycle</h3>
           </div>
+          {totalOTHours > 0 && (
+            <span className="text-sm font-bold" style={{ color: "oklch(0.55 0.18 145)" }}>+{totalOTHours.toFixed(1)}h · EGP {totalOTEgp.toLocaleString()}</span>
+          )}
         </div>
-      )}
-      {/* My outgoing requests */}
-      {myOutgoing.length > 0 && (
-        <div>
-          <SectionTitle theme={theme}>My Schedule Change Requests</SectionTitle>
-          <div className="space-y-2">
-            {myOutgoing.map(r => (
-              <div key={r.id} className="rounded-xl p-4 flex items-center justify-between" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
-                <div>
-                  <p className="text-sm font-medium" style={{ color: theme.text }}>Swap with {r.targetCode}</p>
-                  <p className="text-xs mt-0.5" style={{ color: theme.textMuted }}>
-                    New off days: {r.requesterNewOff1 != null ? DAY_SHORT[r.requesterNewOff1] : "—"} & {r.requesterNewOff2 != null ? DAY_SHORT[r.requesterNewOff2] : "—"}
-                  </p>
-                </div>
-                <span className="text-xs px-2 py-1 rounded-full font-medium capitalize" style={{
-                  background: r.status === "approved" ? "#22c55e22" : r.status === "rejected" ? "#ef444422" : "#eab30822",
-                  color: r.status === "approved" ? "#22c55e" : r.status === "rejected" ? "#ef4444" : "#eab308",
-                }}>
-                  {r.status.replace("_", " ")}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-      {/* Request schedule change form */}
-      <div>
-        <div className="flex items-center justify-between mb-4">
-          <SectionTitle theme={theme}>Request Schedule Change</SectionTitle>
-          <button onClick={() => setShowForm(v => !v)}
-            className="text-xs px-3 py-1.5 rounded-lg font-medium" style={{ background: BRAND, color: "white" }}>
-            {showForm ? "Cancel" : "+ New Request"}
-          </button>
-        </div>
-        {showForm && (
-          <div className="rounded-xl p-5 space-y-4" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
-            <p className="text-xs" style={{ color: theme.textMuted }}>
-              Select the agent you want to swap schedules with, then specify the new off days for both of you. The other agent must approve first, then the manager will review.
-            </p>
-            <div>
-              <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Agent to swap with</label>
-              <select value={targetCode} onChange={e => setTargetCode(e.target.value)}
-                className="w-full rounded-lg px-3 py-2 text-sm border" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }}>
-                <option value="">Select agent...</option>
-                {typedAgents.filter(a => a.traineeCode !== myCode).map(a => (
-                  <option key={a.traineeCode} value={a.traineeCode}>{a.alias ?? a.fullName} ({a.traineeCode})</option>
+        {ot.length === 0 ? (
+          <p className="text-sm text-center py-4" style={{ color: theme.textFaint }}>No OT recorded this cycle.</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+                  {["Date", "OT Type", "Hours", "Amount"].map(h => (
+                    <th key={h} className="text-left py-2 px-2 font-semibold" style={{ color: theme.textFaint }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {ot.map((o, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+                    <td className="py-2 px-2" style={{ color: theme.textMuted }}>{o.date}</td>
+                    <td className="py-2 px-2">
+                      <span className="px-1.5 py-0.5 rounded text-xs font-medium" style={{ background: "oklch(0.55 0.18 145 / 0.15)", color: "oklch(0.55 0.18 145)" }}>{o.otType}</span>
+                    </td>
+                    <td className="py-2 px-2" style={{ color: theme.textMuted }}>{parseFloat(String(o.hours ?? 0)).toFixed(1)}h</td>
+                    <td className="py-2 px-2 font-medium" style={{ color: "oklch(0.55 0.18 145)" }}>+EGP {parseFloat(String(o.egpAmount ?? 0)).toLocaleString()}</td>
+                  </tr>
                 ))}
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Your new off day 1</label>
-                <select value={reqOff1} onChange={e => setReqOff1(Number(e.target.value))}
-                  className="w-full rounded-lg px-3 py-2 text-sm border" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }}>
-                  {DAY_SHORT.map((d, i) => <option key={d} value={i}>{d}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Your new off day 2</label>
-                <select value={reqOff2} onChange={e => setReqOff2(Number(e.target.value))}
-                  className="w-full rounded-lg px-3 py-2 text-sm border" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }}>
-                  {DAY_SHORT.map((d, i) => <option key={d} value={i}>{d}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Their new off day 1</label>
-                <select value={tgtOff1} onChange={e => setTgtOff1(Number(e.target.value))}
-                  className="w-full rounded-lg px-3 py-2 text-sm border" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }}>
-                  {DAY_SHORT.map((d, i) => <option key={d} value={i}>{d}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Their new off day 2</label>
-                <select value={tgtOff2} onChange={e => setTgtOff2(Number(e.target.value))}
-                  className="w-full rounded-lg px-3 py-2 text-sm border" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }}>
-                  {DAY_SHORT.map((d, i) => <option key={d} value={i}>{d}</option>)}
-                </select>
-              </div>
-            </div>
-            <div>
-              <label className="text-xs uppercase tracking-wider mb-1 block" style={{ color: theme.textFaint }}>Message (optional)</label>
-              <textarea value={msg} onChange={e => setMsg(e.target.value)} rows={2} placeholder="Reason for schedule change..."
-                className="w-full rounded-lg px-3 py-2 text-sm border resize-none" style={{ background: theme.bg, color: theme.text, borderColor: theme.surfaceBorder }} />
-            </div>
-            <button
-              onClick={() => createRequest.mutate({ targetCode, requesterNewOff1: reqOff1, requesterNewOff2: reqOff2, targetNewOff1: tgtOff1, targetNewOff2: tgtOff2, message: msg || undefined })}
-              disabled={!targetCode || createRequest.isPending}
-              className="px-4 py-2 rounded-lg text-sm font-medium disabled:opacity-50"
-              style={{ background: BRAND, color: "white" }}
-            >
-              {createRequest.isPending ? "Submitting..." : "Submit Request"}
-            </button>
+              </tbody>
+            </table>
           </div>
         )}
       </div>
     </div>
   );
 }
-
-type AgentData = {
-  candidateId: number;
-  traineeCode: string;
-  name: string;
-  phone: string | null;
-  email: string | null;
-  positionApplied: string;
-  location: string | null;
-  age: number | null;
-  createdAt: Date;
-  batch: {
-    id: number;
-    name: string;
-    trainerName: string | null;
-    startDate: number | null;
-    notes: string | null;
-    traineeCode: string;
-    assignedAt: Date | null;
-    attendedSessions: number | null;
-    totalSessions: number | null;
-    trainerNotes: string | null;
-  } | null;
-};
-
-// ─── Agent Comments Tab (read-only for agents) ────────────────────────────────
-const COMMENT_TAG_CONFIG = {
-  note:     { label: "Note",     color: "bg-blue-500/20 text-blue-400",    border: "border-blue-500/30" },
-  warning:  { label: "Warning",  color: "bg-amber-500/20 text-amber-400",  border: "border-amber-500/30" },
-  resolved: { label: "Resolved", color: "bg-emerald-500/20 text-emerald-400", border: "border-emerald-500/30" },
-};
 
 function AgentCommentsTab({ theme }: { theme: Theme }) {
   const { data: comments = [], isLoading } = trpc.agentComments.listMine.useQuery();

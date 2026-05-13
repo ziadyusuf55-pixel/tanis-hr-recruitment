@@ -687,3 +687,52 @@
 - [x] Frontend: Use window.location.href after password change in ChangePasswordPage — same reason
 - [x] Frontend: Add retry:false, refetchOnWindowFocus:false, staleTime:0 to agent.me query in AgentPortal
 - [x] Frontend: Guard redirect with isFetching flag — prevents premature /login redirect while query is in flight
+
+### Round 49 — Agent Portal Improvements & Live Cycle Tracker
+
+#### Agent Profile Fixes
+- [ ] Frontend: Agent portal Profile tab — show Email, Phone, and Portal Credentials (Agent ID) as read-only fields
+- [ ] Frontend: Agent portal Profile tab — remove Shift Hours field
+
+#### Inline Contextual Tour (replace popup)
+- [ ] Frontend: Remove popup orientation tour modal from AgentPortal
+- [ ] Frontend: Add inline contextual help message at top of each tab: Profile, Payroll, Requests, Documents, Payment, Violations
+- [ ] Frontend: Each tab message explains what the tab is for (dismissible per tab, stored in localStorage)
+
+#### Full Campaign Operation Plan
+- [ ] Frontend: Agent portal — add "Operation Plan" tab showing full campaign schedule (all agents, all shifts, read-only)
+- [ ] Backend: agent.getOperationPlan query — returns full operation plan for agent's campaign
+
+#### Live Cycle Tracker — Schema & Backend
+- [ ] DB: Create cycle_stats table (id, agentCode, cycleStart, date, loginHours, totalCalls, revenue, cost, profit, revPerHour, uploadedAt)
+- [ ] DB: Create cycle_ot table (id, agentCode, cycleStart, date, otType [1.5x/2x/3x], hours, egpAmount, uploadedAt)
+- [ ] DB: Cycle deductions reuse existing adherence_log table (filter by cycleStart, status=Approved)
+- [ ] Backend: cycleTracker.uploadStats mutation — admin uploads Stats Excel matched by CRDTS, upserts into cycle_stats for current cycle
+- [ ] Backend: cycleTracker.uploadOT mutation — admin uploads OT Excel matched by CRDTS, upserts into cycle_ot for current cycle
+- [ ] Backend: cycleTracker.getMyTracker query — agent gets their own cycle data: today stats, cumulative performance, approved deductions, OT list
+- [ ] Backend: cycle reset logic — getCycleStart() helper returns 26th of previous month if before 25th, else 26th of current month
+- [ ] Backend: cycleTracker.adminUploadStats — admin-facing upload with cycle date range display
+
+#### Live Cycle Tracker — Frontend (Agent Portal)
+- [ ] Frontend: Add "Cycle Tracker" tab to agent portal navigation
+- [ ] Frontend: Cycle Tracker tab — disclaimer banner at top: "Data shown is indicative and subject to change. Final payslip available on 25th."
+- [ ] Frontend: Section 1 — Today: login hours, total calls, revenue for today
+- [ ] Frontend: Section 2 — This Cycle Performance: cumulative login hours, calls, revenue, cost, profit, rev/hour
+- [ ] Frontend: Section 3 — Deductions This Cycle: itemized table (date, violation type, hours, EGP), running total
+- [ ] Frontend: Section 4 — OT This Cycle: itemized table (date, OT type, hours, EGP), running total hours + EGP
+- [ ] Frontend: All sections show "No data yet" gracefully when empty
+
+#### Live Cycle Tracker — Admin Upload Pages
+- [ ] Frontend: Admin "Cycle Stats Upload" page — shows current cycle date range, upload Stats Excel button, preview table, confirm
+- [ ] Frontend: Admin "Cycle OT Upload" page — shows current cycle date range, upload OT Excel button, preview table, confirm
+- [ ] Frontend: Admin sidebar — add "Cycle Stats" and "Cycle OT" under a "Live Tracker" section
+
+### Round 49 Completion Status
+- [x] Agent profile: show email, phone, credentials; remove Shift Hours
+- [x] Agent portal: replace popup orientation tour with inline contextual messages per tab (Payroll, Requests, Documents, Payment Methods)
+- [x] Agent portal: full campaign Operation Plan tab (weekly schedule grid for all agents in campaign)
+- [x] Cycle Tracker: 3 new DB tables (cycle_stats, cycle_deductions, cycle_ot)
+- [x] Cycle Tracker: backend procedures (uploadStats, uploadDeductions, uploadOT, getMyTracker, getCurrentCycle)
+- [x] Cycle Tracker: CycleTrackerTab in agent portal with 4 sections + disclaimer
+- [x] Cycle Tracker: admin upload page at /cycle-tracker with 3 upload cards
+- [x] All 40 tests passing

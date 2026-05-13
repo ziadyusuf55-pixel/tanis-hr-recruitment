@@ -162,6 +162,13 @@ import {
   bulkInsertQuality,
   listQuality,
   getQualityMonths,
+  // Cycle Tracker
+  getCurrentCycleKey,
+  getCycleDateRange,
+  upsertCycleStats,
+  upsertCycleDeductions,
+  upsertCycleOT,
+  getCycleTrackerForAgent,
 } from "./db";
 import { notifyOwner } from "./_core/notification";
 import { sendInterviewNotification } from "./email";
@@ -1459,6 +1466,50 @@ const workforceRouter = router({
         shiftHours: agent.shiftHours,
       };
     }),
+  getFullCampaignPlan: publicProcedure
+    .input(z.object({ weekOffset: z.number().int().optional() }))
+    .query(async ({ ctx, input }) => {
+      const _tok = getAgentCookieFromReq(ctx.req);
+      if (!_tok) return null;
+      let _code: string;
+      try { _code = (jwt.verify(_tok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; } catch { return null; }
+      const me = await getWorkforceAgentByCode(_code);
+      if (!me || !me.campaignId) return null;
+      const campaignId = me.campaignId as number;
+      const agents = await listWorkforceAgents(campaignId);
+      const campaign = await getCampaignById(campaignId);
+      const now = new Date();
+      const dayOfWeek = now.getDay();
+      const daysToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+      const monday = new Date(now);
+      monday.setDate(now.getDate() + daysToMonday + (input.weekOffset ?? 0) * 7);
+      monday.setHours(0, 0, 0, 0);
+      const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+      const weekDays = Array.from({ length: 7 }, (_, i) => {
+        const d = new Date(monday);
+        d.setDate(monday.getDate() + i);
+        return { date: d.toISOString().split("T")[0], dayOfWeek: d.getDay(), label: DAY_NAMES[d.getDay()] };
+      });
+      const grid = agents.map(agent => ({
+        traineeCode: agent.traineeCode,
+        fullName: agent.fullName,
+        alias: agent.alias,
+        teamLeader: agent.teamLeader,
+        isMe: agent.traineeCode === _code,
+        days: weekDays.map(day => {
+          const isOff = agent.offDay1 === day.dayOfWeek || agent.offDay2 === day.dayOfWeek;
+          const isCampaignOff = campaign?.workDays === "weekdays" && (day.dayOfWeek === 0 || day.dayOfWeek === 6);
+          return { date: day.date, label: day.label, status: (isOff || isCampaignOff) ? "off" : "work" as "off" | "work" };
+        }),
+      }));
+      return {
+        campaignName: campaign?.name ?? "",
+        weekStart: monday.toISOString().split("T")[0],
+        weekDays: weekDays.map(d => ({ date: d.date, label: d.label })),
+        grid,
+        myCode: _code,
+      };
+    }),
   bulkGenerateCredentials: protectedProcedure
     .input(z.object({ campaignId: z.number().optional() }))
     .mutation(async ({ input }) => {
@@ -2084,6 +2135,112 @@ const qualityRouter = router({
     .query(() => getQualityMonths()),
 });
 
+
+// ─── Cycle Tracker Router ────────────────────────────────────────────────────
+const cycleTrackerRouter = router({
+  // Admin: upload stats Excel rows
+  uploadStats: protectedProcedure
+    .input(z.object({
+      rows: z.array(z.object({
+        crdts: z.string(),
+        agentCode: z.string().optional(),
+        alias: z.string().optional(),
+        date: z.string(),          // YYYY-MM-DD
+        loginHours: z.number().default(0),
+        totalCalls: z.number().default(0),
+        revenue: z.number().default(0),
+        cost: z.number().default(0),
+        profit: z.number().default(0),
+      }))
+    }))
+    .mutation(async ({ input }) => {
+      const cycleKey = getCurrentCycleKey();
+      const rows = input.rows.map(r => ({ ...r, cycleKey }));
+      await upsertCycleStats(rows);
+      return { count: rows.length, cycleKey };
+    }),
+
+  // Admin: upload deductions Excel rows
+  uploadDeductions: protectedProcedure
+    .input(z.object({
+      rows: z.array(z.object({
+        crdts: z.string(),
+        agentCode: z.string().optional(),
+        alias: z.string().optional(),
+        date: z.string(),
+        violationType: z.string(),
+        hours: z.number().default(0),
+        deductionAmount: z.number().default(0),
+        status: z.enum(["approved", "rejected"]).default("approved"),
+      }))
+    }))
+    .mutation(async ({ input }) => {
+      const cycleKey = getCurrentCycleKey();
+      const rows = input.rows.map(r => ({ ...r, cycleKey }));
+      await upsertCycleDeductions(rows);
+      return { count: rows.length, cycleKey };
+    }),
+
+  // Admin: upload OT Excel rows
+  uploadOT: protectedProcedure
+    .input(z.object({
+      rows: z.array(z.object({
+        crdts: z.string(),
+        agentCode: z.string().optional(),
+        alias: z.string().optional(),
+        date: z.string(),
+        otType: z.string(),        // "1.5x" | "2x" | "3x"
+        hours: z.number().default(0),
+        egpAmount: z.number().default(0),
+      }))
+    }))
+    .mutation(async ({ input }) => {
+      const cycleKey = getCurrentCycleKey();
+      const rows = input.rows.map(r => ({ ...r, cycleKey }));
+      await upsertCycleOT(rows);
+      return { count: rows.length, cycleKey };
+    }),
+
+  // Agent: get their own cycle tracker data
+  getMyTracker: publicProcedure
+    .query(async ({ ctx }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) return null;
+      let traineeCode: string;
+      try {
+        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
+        traineeCode = decoded.traineeCode;
+      } catch { return null; }
+      // Get CRDTS from workforce profile
+      const { workforceAgents } = await import("../drizzle/schema");
+      const { getDb } = await import("./db");
+      const dbConn = await getDb();
+      if (!dbConn) return null;
+      const { eq } = await import("drizzle-orm");
+      const agent = await dbConn.select({ crdts: workforceAgents.crdts })
+        .from(workforceAgents)
+        .where(eq(workforceAgents.traineeCode, traineeCode))
+        .limit(1);
+      const crdts = agent[0]?.crdts;
+      if (!crdts) return null;
+      const cycleKey = getCurrentCycleKey();
+      const dateRange = getCycleDateRange(cycleKey);
+      const data = await getCycleTrackerForAgent(crdts, cycleKey);
+      return { ...data, cycleKey, dateRange };
+    }),
+
+  // Admin: get current cycle key
+  getCurrentCycle: protectedProcedure
+    .query(async () => {
+      const cycleKey = getCurrentCycleKey();
+      const dateRange = getCycleDateRange(cycleKey);
+      return { cycleKey, dateRange };
+    }),
+});
+
+export type AppRouter = typeof appRouter;;
+
+
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -2113,7 +2270,6 @@ export const appRouter = router({
   performanceV2: performanceV2Router,
   adherence: adherenceRouter,
   quality: qualityRouter,
+  cycleTracker: cycleTrackerRouter,
 });
-
-export type AppRouter = typeof appRouter;;
 

@@ -23,7 +23,7 @@ import {
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
 import { trpc } from "@/lib/trpc";
-import { LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings, Briefcase, Banknote, CreditCard, BarChart2, AlertCircle, Star, Wallet, FileText } from "lucide-react";
+import { LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings, Briefcase, Banknote, CreditCard, BarChart2, AlertCircle, Star, Wallet, FileText, Activity } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
@@ -41,6 +41,7 @@ const menuItems = [
   { icon: Star, label: "Quality Log", path: "/quality" },
   { icon: Wallet, label: "Payment Preferences", path: "/payment-preferences" },
   { icon: FileText, label: "All Documents", path: "/all-documents" },
+  { icon: Activity, label: "Cycle Tracker", path: "/cycle-tracker" },
   { icon: Inbox, label: "Requests", path: "/requests" },
   { icon: Settings, label: "Settings", path: "/settings" },
 ];

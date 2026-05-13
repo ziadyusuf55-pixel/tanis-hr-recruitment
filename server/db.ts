@@ -7,6 +7,9 @@ import {
   agentRequests,
   batchCandidates,
   candidates,
+  cycleDeductions,
+  cycleOT,
+  cycleStats,
   interviews,
   stageNotes,
   trainingBatches,
@@ -2024,4 +2027,162 @@ export async function getOrientationStatus(traineeCode: string): Promise<boolean
     .where(eq(workforceAgents.traineeCode, traineeCode))
     .limit(1);
   return !!(agent[0]?.orientationShown);
+}
+
+// ─── Cycle Tracker Helpers ────────────────────────────────────────────────────
+/** Returns the current cycle key (YYYY-MM) based on today's date.
+ *  Cycle runs from 26th of previous month to 25th of current month.
+ *  If today >= 26, cycle key = current month. If today <= 25, cycle key = current month.
+ *  e.g. May 13 → cycle key "2026-05" (26 Apr – 25 May)
+ *       May 26 → cycle key "2026-06" (26 May – 25 Jun)
+ */
+export function getCurrentCycleKey(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth() + 1; // 1-12
+  const day = now.getDate();
+  // If today is 26th or later, the cycle belongs to next month
+  if (day >= 26) {
+    const nextMonth = month === 12 ? 1 : month + 1;
+    const nextYear = month === 12 ? year + 1 : year;
+    return `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
+  }
+  return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+export function getCycleDateRange(cycleKey: string): { start: string; end: string } {
+  const [yearStr, monthStr] = cycleKey.split("-");
+  const year = parseInt(yearStr);
+  const month = parseInt(monthStr); // 1-12
+  // Cycle starts on 26th of previous month
+  const prevMonth = month === 1 ? 12 : month - 1;
+  const prevYear = month === 1 ? year - 1 : year;
+  const start = `${prevYear}-${String(prevMonth).padStart(2, "0")}-26`;
+  const end = `${year}-${String(month).padStart(2, "0")}-25`;
+  return { start, end };
+}
+
+export async function upsertCycleStats(rows: Array<{
+  crdts: string; agentCode?: string; alias?: string;
+  date: string; cycleKey: string;
+  loginHours: number; totalCalls: number; revenue: number; cost: number; profit: number;
+}>) {
+  const db = await getDb();
+  if (!db || rows.length === 0) return;
+  const now = Date.now();
+  for (const row of rows) {
+    await db.insert(cycleStats).values({
+      crdts: row.crdts,
+      agentCode: row.agentCode,
+      alias: row.alias,
+      date: row.date,
+      cycleKey: row.cycleKey,
+      loginHours: String(row.loginHours),
+      totalCalls: row.totalCalls,
+      revenue: String(row.revenue),
+      cost: String(row.cost),
+      profit: String(row.profit),
+      uploadedAt: now,
+    }).onDuplicateKeyUpdate({
+      set: {
+        agentCode: row.agentCode,
+        alias: row.alias,
+        loginHours: String(row.loginHours),
+        totalCalls: row.totalCalls,
+        revenue: String(row.revenue),
+        cost: String(row.cost),
+        profit: String(row.profit),
+        uploadedAt: now,
+      }
+    });
+  }
+}
+
+export async function upsertCycleDeductions(rows: Array<{
+  crdts: string; agentCode?: string; alias?: string;
+  date: string; cycleKey: string;
+  violationType: string; hours: number; deductionAmount: number;
+  status: "approved" | "rejected";
+}>) {
+  const db = await getDb();
+  if (!db || rows.length === 0) return;
+  const now = Date.now();
+  for (const row of rows) {
+    await db.insert(cycleDeductions).values({
+      crdts: row.crdts,
+      agentCode: row.agentCode,
+      alias: row.alias,
+      date: row.date,
+      cycleKey: row.cycleKey,
+      violationType: row.violationType,
+      hours: String(row.hours),
+      deductionAmount: String(row.deductionAmount),
+      status: row.status,
+      uploadedAt: now,
+    }).onDuplicateKeyUpdate({
+      set: {
+        agentCode: row.agentCode,
+        alias: row.alias,
+        hours: String(row.hours),
+        deductionAmount: String(row.deductionAmount),
+        status: row.status,
+        uploadedAt: now,
+      }
+    });
+  }
+}
+
+export async function upsertCycleOT(rows: Array<{
+  crdts: string; agentCode?: string; alias?: string;
+  date: string; cycleKey: string;
+  otType: string; hours: number; egpAmount: number;
+}>) {
+  const db = await getDb();
+  if (!db || rows.length === 0) return;
+  const now = Date.now();
+  for (const row of rows) {
+    await db.insert(cycleOT).values({
+      crdts: row.crdts,
+      agentCode: row.agentCode,
+      alias: row.alias,
+      date: row.date,
+      cycleKey: row.cycleKey,
+      otType: row.otType,
+      hours: String(row.hours),
+      egpAmount: String(row.egpAmount),
+      uploadedAt: now,
+    }).onDuplicateKeyUpdate({
+      set: {
+        agentCode: row.agentCode,
+        alias: row.alias,
+        hours: String(row.hours),
+        egpAmount: String(row.egpAmount),
+        uploadedAt: now,
+      }
+    });
+  }
+}
+
+export async function getCycleTrackerForAgent(crdts: string, cycleKey: string) {
+  const db = await getDb();
+  if (!db) return { stats: [], deductions: [], ot: [] };
+  const today = new Date().toISOString().slice(0, 10);
+  const [stats, deductions, ot] = await Promise.all([
+    db.select().from(cycleStats)
+      .where(and(eq(cycleStats.crdts, crdts), eq(cycleStats.cycleKey, cycleKey)))
+      .orderBy(cycleStats.date),
+    db.select().from(cycleDeductions)
+      .where(and(
+        eq(cycleDeductions.crdts, crdts),
+        eq(cycleDeductions.cycleKey, cycleKey),
+        eq(cycleDeductions.status, "approved")
+      ))
+      .orderBy(cycleDeductions.date),
+    db.select().from(cycleOT)
+      .where(and(eq(cycleOT.crdts, crdts), eq(cycleOT.cycleKey, cycleKey)))
+      .orderBy(cycleOT.date),
+  ]);
+  // Today's stats (latest row for today)
+  const todayStats = stats.filter(s => s.date === today);
+  return { stats, todayStats, deductions, ot };
 }
