@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { getErrorMessage } from "@/lib/errorMessage";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -64,11 +65,11 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
 
   const reviewDoc = trpc.documents.review.useMutation({
     onSuccess: () => { utils.documents.listByAgent.invalidate({ traineeCode: agent.traineeCode }); toast.success("Document updated"); },
-    onError: (e: { message: string }) => toast.error(e.message),
+    onError: (e: { message: string }) => toast.error(getErrorMessage(e)),
   });
   const addPaymentComment = trpc.paymentMethods.addComment.useMutation({
     onSuccess: () => { utils.paymentMethods.listAll.invalidate(); toast.success("Comment added"); },
-    onError: (e: { message: string }) => toast.error(e.message),
+    onError: (e: { message: string }) => toast.error(getErrorMessage(e)),
   });
 
   // Separation state
@@ -81,7 +82,7 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
   const [copied, setCopied] = useState(false);
   const resetPassword = trpc.agent.resetPassword.useMutation({
     onSuccess: (data) => { setNewPwResult(data); },
-    onError: (e: { message: string }) => toast.error(e.message),
+    onError: (e: { message: string }) => toast.error(getErrorMessage(e)),
   });
   function copyPassword() {
     if (!newPwResult) return;
@@ -97,7 +98,7 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
       setSeparationReason("");
       onClose();
     },
-    onError: (e: { message: string }) => toast.error(e.message),
+    onError: (e: { message: string }) => toast.error(getErrorMessage(e)),
   });
 
   const terminateAgent = trpc.separation.terminate.useMutation({
@@ -107,7 +108,7 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
       setSeparationReason("");
       onClose();
     },
-    onError: (e: { message: string }) => toast.error(e.message),
+    onError: (e: { message: string }) => toast.error(getErrorMessage(e)),
   });
 
   type Doc = { id: number; docType: string; fileUrl: string; status: string; adminComment?: string | null; uploadedAt: Date | number | string };
@@ -684,7 +685,7 @@ export default function Operations() {
   const [quickFillEnd, setQuickFillEnd] = useState("14:30");
   const upsertBreaks = trpc.breakSchedule.upsert.useMutation({
     onSuccess: () => { toast.success("Break schedule saved"); utils.breakSchedule.getByAgent.invalidate(); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
   const [, navigate] = useLocation();
   const [planCampaignId, setPlanCampaignId] = useState<number | null>(null);
@@ -713,15 +714,15 @@ export default function Operations() {
   const [campaignForm, setCampaignForm] = useState(EMPTY_CAMPAIGN);
   const createCampaign = trpc.campaigns.create.useMutation({
     onSuccess: () => { utils.campaigns.list.invalidate(); toast.success("Campaign created"); setCampaignDialog(false); setCampaignForm(EMPTY_CAMPAIGN); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
   const updateCampaign = trpc.campaigns.update.useMutation({
     onSuccess: () => { utils.campaigns.list.invalidate(); toast.success("Campaign updated"); setCampaignDialog(false); setEditingCampaign(null); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
   const deleteCampaign = trpc.campaigns.delete.useMutation({
     onSuccess: () => { utils.campaigns.list.invalidate(); toast.success("Campaign deleted"); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
 
   // Agent edit
@@ -736,7 +737,7 @@ export default function Operations() {
   const [editForm, setEditForm] = useState<EditForm>({});
   const updateAgent = trpc.workforce.update.useMutation({
     onSuccess: () => { utils.workforce.list.invalidate(); toast.success("Agent updated"); setEditDialog(false); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
 
   // Add Agent to Operations
@@ -817,7 +818,7 @@ export default function Operations() {
       setAddAgentDialog(false);
       setAddAgentForm(EMPTY_ADD_FORM);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
   // Bulk Generate Credentials
   const [bulkCredDialog, setBulkCredDialog] = useState(false);
@@ -827,7 +828,7 @@ export default function Operations() {
       setBulkCredResults(data.credentials);
       toast.success(`Generated credentials for ${data.generated} agent(s)`);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
   const downloadCredentialsCSV = () => {
     const header = "Agent Name,Agent Code,Password";
@@ -847,7 +848,7 @@ export default function Operations() {
   const [overtimeMessage, setOvertimeMessage] = useState("");
   const sendOvertimeAlert = trpc.campaigns.sendOvertimeAlert.useMutation({
     onSuccess: (data) => { toast.success(`Overtime alert sent to ${data.sent} agents`); setOvertimeDialog(false); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
 
   const filteredAgents = (agents as WorkforceAgent[]).filter(a =>

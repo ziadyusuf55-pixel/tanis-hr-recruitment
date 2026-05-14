@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { getErrorMessage } from "@/lib/errorMessage";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -87,30 +88,30 @@ export default function Training() {
   // Mutations
   const createBatch = trpc.batches.create.useMutation({
     onSuccess: () => { utils.batches.list.invalidate(); toast.success("Batch created"); setCreateOpen(false); setForm(EMPTY_FORM); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
   const deleteBatch = trpc.batches.delete.useMutation({
     onSuccess: () => { utils.batches.list.invalidate(); toast.success("Batch deleted"); setSelectedBatchId(null); setDeleteBatchId(null); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
   const assignCandidate = trpc.batches.assignCandidate.useMutation({
     onSuccess: () => { utils.batches.listCandidates.invalidate({ batchId: selectedBatchId! }); utils.batches.list.invalidate(); toast.success("Agent assigned to batch"); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
   const removeCandidate = trpc.batches.removeCandidate.useMutation({
     onSuccess: () => { utils.batches.listCandidates.invalidate({ batchId: selectedBatchId! }); utils.batches.list.invalidate(); toast.success("Agent removed from batch"); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
   const setTraineeCode = trpc.batches.setTraineeCode.useMutation({
     onSuccess: () => { utils.batches.listCandidates.invalidate({ batchId: selectedBatchId! }); toast.success("Trainee code saved"); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
   const [bulkCredentials, setBulkCredentials] = useState<Array<{ traineeCode: string; password: string }> | null>(null);
   const [resetResult, setResetResult] = useState<{ traineeCode: string; password: string } | null>(null);
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const resetPasswordMutation = trpc.agent.resetPassword.useMutation({
     onSuccess: (data) => { setResetResult(data); setResetDialogOpen(true); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
   const bulkGenerateMutation = trpc.batches.bulkGenerateCredentials.useMutation({
     onSuccess: (data) => {
@@ -121,14 +122,14 @@ export default function Training() {
         toast.success(`Credentials generated for ${data.generated} agent(s)`);
       }
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
   const toggleSlackJoined = trpc.batches.toggleSlackJoined.useMutation({
     onSuccess: (_data, vars) => {
       utils.batches.listCandidates.invalidate({ batchId: selectedBatchId! });
       toast.success(vars.value ? "Mock call passed" : "Mock call pending");
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
 
   // Transfer to Operations
@@ -142,7 +143,7 @@ export default function Training() {
       setTransferDialogOpen(false);
       setTransferCandidate(null);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
   const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
@@ -267,7 +268,15 @@ export default function Training() {
                 </tr>
               </thead>
               <tbody className="divide-y">
-                {(batchCandidates as BatchCandidate[]).map((c) => (
+                {[...(batchCandidates as BatchCandidate[])].sort((a, b) => {
+                    if (!a.traineeCode && !b.traineeCode) return 0;
+                    if (!a.traineeCode) return 1;
+                    if (!b.traineeCode) return -1;
+                    const numA = parseInt(a.traineeCode.replace(/\D/g, ""), 10) || 0;
+                    const numB = parseInt(b.traineeCode.replace(/\D/g, ""), 10) || 0;
+                    if (numA !== numB) return numA - numB;
+                    return a.traineeCode.localeCompare(b.traineeCode);
+                  }).map((c) => (
                   <tr key={c.id} className="hover:bg-muted/20 transition-colors">
                     <td className="px-4 py-3 font-medium">{c.name}</td>
                     <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell">{c.phone ?? "—"}</td>

@@ -266,6 +266,7 @@ export default function Candidates() {
 
   const [view, setView] = useState<"board" | "list">("board");
   const [showRejected, setShowRejected] = useState(false);
+  const [showSeparated, setShowSeparated] = useState(false);
   const [hiddenStages, setHiddenStages] = useState<Set<string>>(new Set());
   const toggleHideStage = (stage: string) => setHiddenStages((prev) => {
     const next = new Set(prev);
@@ -296,6 +297,21 @@ export default function Candidates() {
   // Derive unique wave numbers from all candidates for the filter dropdown
   const waveNumbers = Array.from(new Set(allCandidates.map((c) => (c as unknown as { wave?: number }).wave).filter(Boolean) as number[])).sort((a, b) => a - b);
   const filtered = allCandidates.filter((c) => {
+    // If showSeparated is active, show resigned + terminated only
+    if (showSeparated) {
+      if (c.status !== "resigned" && c.status !== "terminated") return false;
+      const q = search.toLowerCase();
+      if (!q) return true;
+      if (c.name.toLowerCase().includes(q)) return true;
+      if ((c.email ?? "").toLowerCase().includes(q)) return true;
+      const qDigits = q.replace(/\D/g, "");
+      const storedDigits = (c.phone ?? "").replace(/\D/g, "");
+      if (qDigits.length >= 4 && storedDigits.endsWith(qDigits)) return true;
+      if ((c.phone ?? "").toLowerCase().includes(q)) return true;
+      return false;
+    }
+    // Always hide resigned/terminated from main pipeline view
+    if (c.status === "resigned" || c.status === "terminated") return false;
     // If showRejected is active, show rejected + blacklisted; otherwise hide both
     if (showRejected) return c.status === "rejected" || c.status === "blacklisted";
     const matchesSearch = !search || (() => {
@@ -315,6 +331,7 @@ export default function Candidates() {
     return matchesSearch && matchesWave;
   });
   const rejectedCount = allCandidates.filter((c) => c.status === "rejected" || c.status === "blacklisted").length;
+  const separatedCount = allCandidates.filter((c) => c.status === "resigned" || c.status === "terminated").length;
 
   const handleAddSubmit = () => {
     if (!form.name.trim()) { toast.error("Name is required"); return; }
@@ -495,7 +512,7 @@ export default function Candidates() {
           </Select>
         )}
         <button
-          onClick={() => { setShowRejected((v) => !v); clearSelection(); }}
+          onClick={() => { setShowRejected((v) => !v); setShowSeparated(false); clearSelection(); }}
           className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-colors ${
             showRejected
               ? "bg-red-600 border-red-600 text-white hover:bg-red-700"
@@ -504,6 +521,17 @@ export default function Candidates() {
         >
           <UserX className="h-3.5 w-3.5" />
           Rejected / Blacklisted{rejectedCount > 0 && <span className={`ml-0.5 rounded-full px-1.5 py-0 text-[10px] font-bold ${showRejected ? "bg-white/20 text-white" : "bg-red-100 text-red-700"}`}>{rejectedCount}</span>}
+        </button>
+        <button
+          onClick={() => { setShowSeparated((v) => !v); setShowRejected(false); clearSelection(); }}
+          className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-colors ${
+            showSeparated
+              ? "bg-orange-600 border-orange-600 text-white hover:bg-orange-700"
+              : "bg-white border-border text-muted-foreground hover:text-foreground hover:border-orange-300 hover:bg-orange-50"
+          }`}
+        >
+          <Clock className="h-3.5 w-3.5" />
+          Resigned / Terminated{separatedCount > 0 && <span className={`ml-0.5 rounded-full px-1.5 py-0 text-[10px] font-bold ${showSeparated ? "bg-white/20 text-white" : "bg-orange-100 text-orange-700"}`}>{separatedCount}</span>}
         </button>
         {!showRejected && (
           <Tabs value={view} onValueChange={(v) => { setView(v as "board" | "list"); clearSelection(); }}>

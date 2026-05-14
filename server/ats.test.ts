@@ -57,6 +57,7 @@ vi.mock("./db", () => ({
   listActivityByCandidateId: vi.fn().mockResolvedValue([]),
   checkDuplicateByPhone: vi.fn().mockResolvedValue(null),
   getReApplicants: vi.fn().mockResolvedValue([]),
+  getTurnoverRate: vi.fn().mockResolvedValue({ rate: 5.0, separationsThisMonth: 1, currentHeadcount: 20 }),
 }));
 
 vi.mock("./email", () => ({

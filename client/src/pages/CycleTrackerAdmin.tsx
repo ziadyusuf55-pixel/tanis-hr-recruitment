@@ -4,7 +4,9 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Upload, BarChart2, XCircle, Zap, CheckCircle, AlertCircle, RefreshCw } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Upload, BarChart2, XCircle, Zap, CheckCircle, AlertCircle, RefreshCw, Trash2 } from "lucide-react";
 import DashboardLayout from "@/components/DashboardLayout";
 import * as XLSX from "xlsx";
 
@@ -19,7 +21,6 @@ function parseString(v: unknown): string {
 }
 function parseDate(v: unknown): string {
   if (!v) return "";
-  // Excel serial date
   if (typeof v === "number") {
     const d = XLSX.SSF.parse_date_code(v);
     if (d) {
@@ -29,7 +30,6 @@ function parseDate(v: unknown): string {
     }
   }
   const s = String(v).trim();
-  // Try to parse common date formats
   const d = new Date(s);
   if (!isNaN(d.getTime())) {
     return d.toISOString().slice(0, 10);
@@ -129,6 +129,90 @@ function UploadSection({ title, description, icon, color, columnHint, onUpload }
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// ─── Delete Stats Section ──────────────────────────────────────────────────────
+function DeleteStatsSection({ cycleKey }: { cycleKey?: string }) {
+  const [deleteDate, setDeleteDate] = useState("");
+  const [deleteCycleKey, setDeleteCycleKey] = useState(cycleKey ?? "");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmType, setConfirmType] = useState<"date" | "cycle">("date");
+
+  const deleteByDateMutation = trpc.cycleTracker.deleteStatsForDate.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Deleted ${data.deleted} rows for ${deleteDate}`);
+      setDeleteDate("");
+      setConfirmOpen(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteByCycleMutation = trpc.cycleTracker.deleteStatsForCycle.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Deleted ${data.deleted} rows for cycle ${deleteCycleKey}`);
+      setConfirmOpen(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  function openConfirm(type: "date" | "cycle") {
+    if (type === "date" && !deleteDate) { toast.error("Enter a date first"); return; }
+    if (type === "cycle" && !deleteCycleKey) { toast.error("Enter a cycle key first"); return; }
+    setConfirmType(type);
+    setConfirmOpen(true);
+  }
+
+  function handleConfirm() {
+    if (confirmType === "date") deleteByDateMutation.mutate({ date: deleteDate });
+    else deleteByCycleMutation.mutate({ cycleKey: deleteCycleKey });
+  }
+
+  return (
+    <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 space-y-4">
+      <div className="flex items-center gap-2">
+        <Trash2 className="w-4 h-4 text-destructive" />
+        <h3 className="text-sm font-semibold text-destructive">Delete / Revert Uploaded Data</h3>
+      </div>
+      <p className="text-xs text-muted-foreground">Use this to undo a bad upload. Deletes all stats rows matching the date or cycle. This cannot be undone.</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <p className="text-xs font-medium">Delete by specific date</p>
+          <div className="flex gap-2">
+            <Input type="date" value={deleteDate} onChange={e => setDeleteDate(e.target.value)} className="h-8 text-xs" />
+            <Button size="sm" variant="destructive" className="h-8 text-xs" onClick={() => openConfirm("date")} disabled={!deleteDate}>
+              Delete
+            </Button>
+          </div>
+        </div>
+        <div className="space-y-2">
+          <p className="text-xs font-medium">Delete entire cycle (YYYY-MM)</p>
+          <div className="flex gap-2">
+            <Input placeholder="e.g. 2026-05" value={deleteCycleKey} onChange={e => setDeleteCycleKey(e.target.value)} className="h-8 text-xs" />
+            <Button size="sm" variant="destructive" className="h-8 text-xs" onClick={() => openConfirm("cycle")} disabled={!deleteCycleKey}>
+              Delete
+            </Button>
+          </div>
+        </div>
+      </div>
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm Delete</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            {confirmType === "date"
+              ? `This will permanently delete all stats rows for date ${deleteDate}. Are you sure?`
+              : `This will permanently delete ALL stats rows for cycle ${deleteCycleKey}. This cannot be undone.`}
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)}>Cancel</Button>
+            <Button variant="destructive" onClick={handleConfirm} disabled={deleteByDateMutation.isPending || deleteByCycleMutation.isPending}>
+              {deleteByDateMutation.isPending || deleteByCycleMutation.isPending ? "Deleting..." : "Yes, Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
   );
 }
 
@@ -249,11 +333,14 @@ export default function CycleTrackerAdmin() {
           />
         </div>
 
-        {/* Template download hint */}
+        {/* Column name flexibility hint */}
         <div className="rounded-xl p-4 bg-muted/40 border text-xs text-muted-foreground">
           <p className="font-medium mb-1">Column name flexibility</p>
           <p>The parser accepts common column name variations (e.g. "Login Hours", "login_hours", "LoginHours"). The only strict requirement is a <strong>CRDTS</strong> column (or "Agent Code") and a <strong>Date</strong> column. Extra columns are ignored.</p>
         </div>
+
+        {/* Delete / Revert section */}
+        <DeleteStatsSection cycleKey={cycleInfo?.cycleKey} />
       </div>
     </DashboardLayout>
   );

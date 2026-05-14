@@ -1123,6 +1123,36 @@ export default function CandidateDetail() {
                 <span className="text-xs text-muted-foreground">Trainee ID:</span>
                 <span className="text-sm font-mono font-semibold">{credentials.traineeCode}</span>
               </div>
+              {/* Credential status grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="p-2 rounded-lg border bg-card text-xs">
+                  <p className="text-muted-foreground font-medium mb-0.5">First Login</p>
+                  {credentials.firstLoginAt ? (
+                    <p className="text-emerald-700 font-semibold">{new Date(credentials.firstLoginAt).toLocaleString()}</p>
+                  ) : (
+                    <p className="text-orange-600 font-semibold">Never logged in</p>
+                  )}
+                </div>
+                <div className="p-2 rounded-lg border bg-card text-xs">
+                  <p className="text-muted-foreground font-medium mb-0.5">Last Login</p>
+                  {credentials.lastLoginAt ? (
+                    <p className="text-foreground font-semibold">{new Date(credentials.lastLoginAt).toLocaleString()}</p>
+                  ) : (
+                    <p className="text-muted-foreground">—</p>
+                  )}
+                </div>
+                <div className="p-2 rounded-lg border bg-card text-xs">
+                  <p className="text-muted-foreground font-medium mb-0.5">Password Status</p>
+                  {credentials.mustChangePassword ? (
+                    <p className="text-amber-600 font-semibold">Temp password active</p>
+                  ) : (
+                    <p className="text-emerald-700 font-semibold">Password set by agent</p>
+                  )}
+                  {credentials.passwordResetAt && (
+                    <p className="text-muted-foreground mt-0.5">Reset: {new Date(credentials.passwordResetAt).toLocaleDateString()}</p>
+                  )}
+                </div>
+              </div>
               {showGeneratedPassword && (
                 <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg space-y-2">
                   <p className="text-xs font-semibold text-amber-800">New password generated — share this once:</p>

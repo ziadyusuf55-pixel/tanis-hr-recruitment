@@ -771,3 +771,20 @@
 - [x] Fix: Force Delete button added to AgentProfilePage for permanent removal of test/duplicate agents
 - [x] Fix: AppRouter type export moved after appRouter definition (cycleTrackerRouter init order bug)
 - [x] Backend: workforce.forceDelete procedure added (cascade-deletes agent + candidate record)
+
+## Round 53 — Feature Batch (14 items)
+- [x] Agent portal: show email, phone, CRDTS in profile tab
+- [x] Cycle tracker: display revenue/cost/profit in USD ($) not EGP
+- [x] Unpaid leave: allow any day (remove 2-week advance restriction)
+- [x] Training page: sort candidates by trainee ID (list view)
+- [x] Candidates tab: add "Show Resigned/Terminated" filter
+- [x] ID retirement: mark resigned/terminated IDs as retired (never reusable)
+- [x] Schema: add resigned/terminated to PIPELINE_STAGES enum
+- [x] Dashboard: add monthly turnover rate KPI card
+- [x] Error messages: replace raw DB errors with human-readable messages
+- [x] Credential status: track firstLoginAt, lastLoginAt, passwordResetAt
+- [x] CandidateDetail: show first login, last login, password status in Portal Access
+- [x] Notification bell: already implemented in AgentPortal
+- [x] Delete performance stats by date in CycleTrackerAdmin
+- [x] Delete payroll records by month in Payroll admin
+- [x] Open Graph metadata: title, description, Tanis logo image

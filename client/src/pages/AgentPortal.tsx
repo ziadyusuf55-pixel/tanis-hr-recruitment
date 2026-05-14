@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { getErrorMessage } from "@/lib/errorMessage";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
@@ -384,6 +385,7 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
     { label: "Alias / English Name", value: (wfProfile.alias as string | null) ?? "—" },
     { label: "Phone", value: (wfProfile.phone as string | null) ?? "—" },
     { label: "Email", value: (wfProfile.email as string | null) ?? "—" },
+    { label: "CRDTS", value: (wfProfile.crdts as string | null) ?? "—" },
     { label: "Dialer Credentials", value: (wfProfile.dialerCredentials as string | null) ?? "—" },
     { label: "Campaign", value: (wfProfile.campaignName as string | null) ?? "—" },
     { label: "Join Date", value: joinDate },
@@ -776,8 +778,10 @@ function getStatusLabel(status: string) {
   return map[status] ?? "Pending";
 }
 
-function getMinDateStr() {
+function getMinDateStr(type?: string) {
   const d = new Date();
+  // Unpaid day off can be requested for any day (including today)
+  if (type === "day_off") return d.toISOString().split("T")[0];
   d.setDate(d.getDate() + 14);
   return d.toISOString().split("T")[0];
 }
@@ -792,7 +796,7 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
       resetForm();
       setShowForm(false);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
   const uploadMutation = trpc.requests.uploadAttachment.useMutation();
 
@@ -837,7 +841,7 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
       setForm((f) => ({ ...f, attachmentUrl: result.url, attachmentName: file.name }));
       toast.success("File uploaded");
     } catch (e: unknown) {
-      toast.error((e as Error).message ?? "Upload failed");
+      toast.error(getErrorMessage(e, "Upload failed"));
     } finally {
       setUploading(false);
     }
@@ -937,9 +941,9 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
           {needsDate && isMultiDate && (
             <div className="space-y-1.5">
               <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>
-                Select Dates <span className="normal-case" style={{ color: theme.textFaint }}>(min. 2 weeks from today — pick multiple)</span>
+                Select Dates <span className="normal-case" style={{ color: theme.textFaint }}>{form.type === "day_off" ? "(any date — pick multiple)" : "(min. 2 weeks from today — pick multiple)"}</span>
               </Label>
-              <MultiDatePicker selectedDates={form.requestedDates} onToggle={toggleDate} minDate={getMinDateStr()} theme={theme} />
+              <MultiDatePicker selectedDates={form.requestedDates} onToggle={toggleDate} minDate={getMinDateStr(form.type)} theme={theme} />
               {form.requestedDates.length > 0 && (
                 <p className="text-xs" style={{ color: theme.textFaint }}>
                   {form.requestedDates.length} day{form.requestedDates.length > 1 ? "s" : ""} selected:{" "}
@@ -953,9 +957,9 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
             <div className="space-y-1.5">
               <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>
                 {form.type === "resignation" ? "Last Working Day" : "Requested Date"}
-                <span className="ml-1 normal-case" style={{ color: theme.textFaint }}>(min. 2 weeks from today)</span>
+                <span className="ml-1 normal-case" style={{ color: theme.textFaint }}>{form.type === "day_off" ? "(any date)" : "(min. 2 weeks from today)"}</span>
               </Label>
-              <Input type="date" min={getMinDateStr()} value={form.requestedDate} onChange={(e) => setForm((f) => ({ ...f, requestedDate: e.target.value }))} style={inputStyle} />
+              <Input type="date" min={getMinDateStr(form.type)} value={form.requestedDate} onChange={(e) => setForm((f) => ({ ...f, requestedDate: e.target.value }))} style={inputStyle} />
             </div>
           )}
 
@@ -1200,7 +1204,7 @@ function ReferralTab({ referrerCandidateId, theme }: { referrerCandidateId: numb
       setForm({ name: "", phone: "", note: "" });
       setShowForm(false);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
 
   const [showForm, setShowForm] = useState(false);
@@ -1962,7 +1966,7 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
           {[
             { label: "Login Hours", value: todayLoginHours.toFixed(1) + "h", icon: <Clock className="w-4 h-4" /> },
             { label: "Total Calls", value: todayCalls.toLocaleString(), icon: <BarChart2 className="w-4 h-4" /> },
-            { label: "Revenue", value: `EGP ${todayRevenue.toLocaleString()}`, icon: <TrendingUp className="w-4 h-4" /> },
+            { label: "Revenue", value: `$${todayRevenue.toLocaleString()}`, icon: <TrendingUp className="w-4 h-4" /> },
           ].map(({ label, value, icon }) => (
             <div key={label} className="rounded-lg p-3 text-center" style={{ background: theme.inputBg }}>
               <div className="flex justify-center mb-1" style={{ color: theme.textFaint }}>{icon}</div>
@@ -1984,10 +1988,10 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
           {[
             { label: "Total Login Hours", value: cycleLoginHours.toFixed(1) + "h" },
             { label: "Total Calls", value: cycleCalls.toLocaleString() },
-            { label: "Total Revenue", value: `EGP ${cycleRevenue.toLocaleString()}` },
-            { label: "Total Cost", value: `EGP ${cycleCost.toLocaleString()}` },
-            { label: "Total Profit", value: `EGP ${cycleProfit.toLocaleString()}` },
-            { label: "Revenue / Hour", value: `EGP ${revenuePerHour.toFixed(0)}` },
+            { label: "Total Revenue", value: `$${cycleRevenue.toLocaleString()}` },
+            { label: "Total Cost", value: `$${cycleCost.toLocaleString()}` },
+            { label: "Total Profit", value: `$${cycleProfit.toLocaleString()}` },
+            { label: "Revenue / Hour", value: `$${revenuePerHour.toFixed(2)}` },
           ].map(({ label, value }) => (
             <div key={label} className="rounded-lg p-3" style={{ background: theme.inputBg }}>
               <div className="text-base font-bold" style={{ color: theme.text }}>{value}</div>

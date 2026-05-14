@@ -1259,19 +1259,27 @@ export async function getSeparationsByAgent(agentCode: string) {
 export async function markAgentResignedOnSpot(agentCode: string, reason: string, adminName: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const { workforceAgents, agentSeparations } = await import("../drizzle/schema");
+  const { workforceAgents, agentSeparations, agentCredentials, breakSchedules, scheduleChangeRequests, overtimeAvailability, batchCandidates } = await import("../drizzle/schema");
   // Get agent to find candidateId
   const agent = await db.select({ candidateId: workforceAgents.candidateId })
     .from(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode)).limit(1);
   if (!agent[0]) throw new Error("Agent not found");
   const now = Date.now();
-  // Store separation record first (before cascade delete removes the workforce row)
+  // Store separation record
   await db.insert(agentSeparations).values({
     agentCode, type: "on_spot", reason,
     effectiveAt: now, approvedBy: adminName, approvedAt: now,
   });
-  // Delete candidate record — cascades to workforce row, credentials, breaks, etc.
-  await deleteCandidate(agent[0].candidateId);
+  // Remove from workforce (retire ID — keep candidate record with 'resigned' status)
+  await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
+  await db.delete(breakSchedules).where(eq(breakSchedules.agentCode, agentCode));
+  await db.delete(scheduleChangeRequests).where(eq(scheduleChangeRequests.requesterCode, agentCode));
+  await db.delete(overtimeAvailability).where(eq(overtimeAvailability.traineeCode, agentCode));
+  await db.delete(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode));
+  // Remove from batch assignments
+  await db.delete(batchCandidates).where(eq(batchCandidates.candidateId, agent[0].candidateId));
+  // Mark candidate as resigned — ID permanently retired, never reusable
+  await db.update(candidates).set({ status: "resigned", updatedAt: new Date() }).where(eq(candidates.id, agent[0].candidateId));
 }
 
 /**
@@ -1282,19 +1290,27 @@ export async function markAgentResignedOnSpot(agentCode: string, reason: string,
 export async function terminateAgent(agentCode: string, reason: string, adminName: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const { workforceAgents, agentSeparations, agentCredentials, breakSchedules, scheduleChangeRequests, overtimeAvailability } = await import("../drizzle/schema");
+  const { workforceAgents, agentSeparations, agentCredentials, breakSchedules, scheduleChangeRequests, overtimeAvailability, batchCandidates } = await import("../drizzle/schema");
   const now = Date.now();
-  // Fetch candidateId before deleting the workforce row
+  // Fetch candidateId before removing the workforce row
   const agent = await db.select({ candidateId: workforceAgents.candidateId })
     .from(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode)).limit(1);
   if (!agent[0]) throw new Error("Agent not found");
-  // Store separation record first (before cascade delete removes the workforce row)
+  // Store separation record
   await db.insert(agentSeparations).values({
     agentCode, type: "termination", reason,
     effectiveAt: now, approvedBy: adminName, approvedAt: now,
   });
-  // Delete candidate record — this cascades to workforce row, credentials, breaks, etc.
-  await deleteCandidate(agent[0].candidateId);
+  // Remove from workforce (retire ID — keep candidate record with 'terminated' status)
+  await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
+  await db.delete(breakSchedules).where(eq(breakSchedules.agentCode, agentCode));
+  await db.delete(scheduleChangeRequests).where(eq(scheduleChangeRequests.requesterCode, agentCode));
+  await db.delete(overtimeAvailability).where(eq(overtimeAvailability.traineeCode, agentCode));
+  await db.delete(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode));
+  // Remove from batch assignments
+  await db.delete(batchCandidates).where(eq(batchCandidates.candidateId, agent[0].candidateId));
+  // Mark candidate as terminated — ID permanently retired, never reusable
+  await db.update(candidates).set({ status: "terminated", updatedAt: new Date() }).where(eq(candidates.id, agent[0].candidateId));
 }
 
 /**
@@ -1305,19 +1321,27 @@ export async function terminateAgent(agentCode: string, reason: string, adminNam
 export async function approveResignationRequest(agentCode: string, lastWorkingDay: string, reason: string, adminName: string, requestedAt: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const { workforceAgents, agentSeparations } = await import("../drizzle/schema");
+  const { workforceAgents, agentSeparations, agentCredentials, breakSchedules, scheduleChangeRequests, overtimeAvailability, batchCandidates } = await import("../drizzle/schema");
   const now = Date.now();
-  // Fetch candidateId before deleting the workforce row
+  // Fetch candidateId before removing the workforce row
   const agent = await db.select({ candidateId: workforceAgents.candidateId })
     .from(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode)).limit(1);
   if (!agent[0]) throw new Error("Agent not found");
-  // Store separation record first
+  // Store separation record
   await db.insert(agentSeparations).values({
     agentCode, type: "resignation_request", reason, lastWorkingDay,
     requestedAt, effectiveAt: now, approvedBy: adminName, approvedAt: now,
   });
-  // Delete candidate record — cascades to workforce row, credentials, breaks, etc.
-  await deleteCandidate(agent[0].candidateId);
+  // Remove from workforce (retire ID — keep candidate record with 'resigned' status)
+  await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
+  await db.delete(breakSchedules).where(eq(breakSchedules.agentCode, agentCode));
+  await db.delete(scheduleChangeRequests).where(eq(scheduleChangeRequests.requesterCode, agentCode));
+  await db.delete(overtimeAvailability).where(eq(overtimeAvailability.traineeCode, agentCode));
+  await db.delete(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode));
+  // Remove from batch assignments
+  await db.delete(batchCandidates).where(eq(batchCandidates.candidateId, agent[0].candidateId));
+  // Mark candidate as resigned — ID permanently retired, never reusable
+  await db.update(candidates).set({ status: "resigned", updatedAt: new Date() }).where(eq(candidates.id, agent[0].candidateId));
 }
 
 // ─── Agent Payment Methods ────────────────────────────────────────────────────
@@ -2172,4 +2196,24 @@ export async function getCycleTrackerForAgent(crdts: string, cycleKey: string) {
   // Today's stats (latest row for today)
   const todayStats = stats.filter(s => s.date === today);
   return { stats, todayStats, deductions, ot };
+}
+
+export async function getTurnoverRate(): Promise<{ rate: number; separationsThisMonth: number; currentHeadcount: number }> {
+  const db = await getDb();
+  const { agentSeparations, workforceAgents } = await import("../drizzle/schema");
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+
+  if (!db) return { rate: 0, separationsThisMonth: 0, currentHeadcount: 0 };
+  const [separationsResult, headcountResult] = await Promise.all([
+    db.select({ count: sql<number>`count(*)`.mapWith(Number) }).from(agentSeparations).where(gte(agentSeparations.effectiveAt, monthStart)),
+    db.select({ count: sql<number>`count(*)`.mapWith(Number) }).from(workforceAgents).where(eq(workforceAgents.agentStatus, "active")),
+  ]);
+
+  const separationsThisMonth = Number(separationsResult[0]?.count ?? 0);
+  const currentHeadcount = Number(headcountResult[0]?.count ?? 0);
+  const avgHeadcount = currentHeadcount + separationsThisMonth / 2;
+  const rate = avgHeadcount > 0 ? Math.round((separationsThisMonth / avgHeadcount) * 100 * 10) / 10 : 0;
+
+  return { rate, separationsThisMonth, currentHeadcount };
 }

@@ -1,0 +1,9 @@
+{
+  "query": "\nALTER TABLE agent_credentials\n  ADD COLUMN firstLoginAt BIGINT NULL,\n  ADD COLUMN lastLoginAt BIGINT NULL,\n  ADD COLUMN passwordResetAt BIGINT NULL;\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2mcroMLez2dD7B1.d41ce960f4ad --database GKQCuajYkpcdyw75NP8gmu --execute \nALTER TABLE agent_credentials\n  ADD COLUMN firstLoginAt BIGINT NULL,\n  ADD COLUMN lastLoginAt BIGINT NULL,\n  ADD COLUMN passwordResetAt BIGINT NULL;\n",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 2332
+}

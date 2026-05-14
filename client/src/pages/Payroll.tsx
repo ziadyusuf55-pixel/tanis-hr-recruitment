@@ -4,7 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Upload, Download, ChevronLeft, ChevronRight, FileSpreadsheet, CheckCircle2, Clock } from "lucide-react";
+import { Upload, Download, ChevronLeft, ChevronRight, FileSpreadsheet, CheckCircle2, Clock, Trash2 } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 
@@ -472,6 +474,58 @@ export default function PayrollPage() {
               </div>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Delete Payroll Section ── */}
+      <DeletePayrollSection />
+    </div>
+  );
+}
+
+// ─── Delete Payroll Section ────────────────────────────────────────────────────
+function DeletePayrollSection() {
+  const [deleteMonth, setDeleteMonth] = useState("");
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const utils = trpc.useUtils();
+
+  const deleteForMonthMutation = trpc.payrollV2.deleteForMonth.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Deleted ${data.deleted} payroll rows for ${deleteMonth}`);
+      setDeleteMonth("");
+      setConfirmOpen(false);
+      utils.payrollV2.getStatusPage.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  return (
+    <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 space-y-4">
+      <div className="flex items-center gap-2">
+        <Trash2 className="w-4 h-4 text-destructive" />
+        <h3 className="text-sm font-semibold text-destructive">Delete Payroll Sheet</h3>
+      </div>
+      <p className="text-xs text-muted-foreground">Delete all payroll records for a specific month. Use this to revert a bad import. This cannot be undone.</p>
+      <div className="flex gap-2 max-w-sm">
+        <Input type="month" value={deleteMonth} onChange={e => setDeleteMonth(e.target.value)} className="h-8 text-xs" />
+        <Button size="sm" variant="destructive" className="h-8 text-xs" onClick={() => { if (!deleteMonth) { toast.error("Select a month"); return; } setConfirmOpen(true); }} disabled={!deleteMonth}>
+          Delete Month
+        </Button>
+      </div>
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Confirm Delete Payroll</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            This will permanently delete all payroll records for <strong>{deleteMonth}</strong>. This cannot be undone.
+          </p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)}>Cancel</Button>
+            <Button variant="destructive" onClick={() => deleteForMonthMutation.mutate({ month: deleteMonth })} disabled={deleteForMonthMutation.isPending}>
+              {deleteForMonthMutation.isPending ? "Deleting..." : "Yes, Delete"}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

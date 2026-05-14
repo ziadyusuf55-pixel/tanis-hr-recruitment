@@ -45,6 +45,9 @@ export const PIPELINE_STAGES = [
   "whatsapp_group_added",
   "rejected",
   "blacklisted",
+  // Separation statuses — ID permanently retired, never reusable
+  "resigned",
+  "terminated",
 ] as const;
 
 export type PipelineStage = (typeof PIPELINE_STAGES)[number];
@@ -72,6 +75,9 @@ export const candidates = mysqlTable("candidates", {
     "whatsapp_group_added",
     "rejected",
     "blacklisted",
+    // Separation statuses — ID permanently retired, never reusable
+    "resigned",
+    "terminated",
   ])
     .default("applied")
     .notNull(),
@@ -113,6 +119,8 @@ export const stageNotes = mysqlTable("stage_notes", {
     "whatsapp_group_added",
     "rejected",
     "blacklisted",
+    "resigned",
+    "terminated",
   ]).notNull(),
   note: text("note").notNull(),
   recruiterName: varchar("recruiterName", { length: 255 }),
@@ -202,6 +210,9 @@ export const agentCredentials = mysqlTable("agent_credentials", {
   traineeCode: varchar("traineeCode", { length: 100 }).notNull().unique(), // login username
   passwordHash: varchar("passwordHash", { length: 255 }).notNull(),
   mustChangePassword: boolean("mustChangePassword").default(true).notNull(), // force password change on first login
+  firstLoginAt: bigint("firstLoginAt", { mode: "number" }), // null = never logged in
+  lastLoginAt: bigint("lastLoginAt", { mode: "number" }), // last successful login timestamp
+  passwordResetAt: bigint("passwordResetAt", { mode: "number" }), // when password was last reset by admin
   generatedAt: timestamp("generatedAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { getErrorMessage } from "@/lib/errorMessage";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -82,7 +83,7 @@ export default function Requests() {
       toast.success("Request updated");
       setSelected(null);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
 
   const approveResignation = trpc.separation.approveResignation.useMutation({
@@ -91,7 +92,7 @@ export default function Requests() {
       toast.success("Resignation approved. Agent status updated, portal access revoked.");
       setSelected(null);
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
 
   const [selected, setSelected] = useState<AgentRequest | null>(null);
@@ -474,11 +475,11 @@ function ScheduleChangeApprovals() {
   const { data: allReqs = [] } = trpc.scheduleChange.listAll.useQuery();
   const managerApprove = trpc.scheduleChange.managerApprove.useMutation({
     onSuccess: () => { utils.scheduleChange.listAll.invalidate(); toast.success("Schedule change approved"); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
   const managerReject = trpc.scheduleChange.managerApprove.useMutation({
     onSuccess: () => { utils.scheduleChange.listAll.invalidate(); toast.success("Schedule change rejected"); },
-    onError: (e) => toast.error(e.message),
+    onError: (e) => toast.error(getErrorMessage(e)),
   });
 
   const typed = allReqs as ScReq[];

@@ -7,7 +7,7 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
 import {
-  Users, UserCheck, CalendarClock, TrendingUp,
+  Users, UserCheck, CalendarClock, TrendingUp, TrendingDown,
   MessageCircle, Mic, Video, Send, UserX, Timer, ArrowRight,
 } from "lucide-react";
 import { useLocation } from "wouter";
@@ -94,6 +94,34 @@ export default function Dashboard() {
         <RateCard title="WhatsApp Response" value={kpis?.whatsappResponseRate} icon={<MessageCircle className="h-4 w-4" />} isLoading={isLoading} description="Replied to intro message" color="text-green-600" bgColor="bg-green-100" />
         <RateCard title="Voice Note Pass Rate" value={kpis?.voiceNotePassRate} icon={<Mic className="h-4 w-4" />} isLoading={isLoading} description="Passed initial screening" color="text-blue-600" bgColor="bg-blue-100" />
         <RateCard title="Interview Show Rate" value={kpis?.interviewShowRate} icon={<Video className="h-4 w-4" />} isLoading={isLoading} description="Attended Google Meet" color="text-violet-600" bgColor="bg-violet-100" />
+      </div>
+
+      {/* Turnover Rate — always this calendar month */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="bg-card border border-border rounded-xl p-5 flex flex-col gap-1">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs font-medium text-muted-foreground">Monthly Turnover Rate</p>
+            <div className="h-6 w-6 rounded-md bg-red-100 flex items-center justify-center text-red-600">
+              <TrendingDown className="h-4 w-4" />
+            </div>
+          </div>
+          {isLoading ? (
+            <Skeleton className="h-9 w-16" />
+          ) : (
+            <p className={`text-3xl font-bold ${
+              (kpis?.turnoverRate ?? 0) === 0 ? "text-emerald-600" :
+              (kpis?.turnoverRate ?? 0) <= 5 ? "text-yellow-600" : "text-red-600"
+            }`}>
+              {kpis?.turnoverRate ?? 0}%
+            </p>
+          )}
+          <p className="text-xs text-muted-foreground mt-1">
+            {kpis?.turnoverSeparations ?? 0} separation{(kpis?.turnoverSeparations ?? 0) !== 1 ? "s" : ""} ÷ {kpis?.turnoverHeadcount ?? 0} active agents
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Formula: (separations ÷ headcount) × 100 — current month
+          </p>
+        </div>
       </div>
 
       {/* Funnel + Side Stats */}

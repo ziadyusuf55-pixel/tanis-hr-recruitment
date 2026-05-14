@@ -19,10 +19,11 @@ import {
   getAvgTimeToHire,
   getBatchById,
   getCandidateBatch,
-  getCandidateById,
   getCandidatesAddedSince,
   getInterviewsScheduledSince,
   getPipelineCounts,
+  getTurnoverRate,
+  getCandidateById,
   getReApplicants,
   listActivityByCandidateId,
   listAllActivity,
@@ -189,6 +190,8 @@ const PIPELINE_STAGES_ZOD = z.enum([
   "whatsapp_group_added",
   "rejected",
   "blacklisted",
+  "resigned",
+  "terminated",
 ]);
 
 const authRouter = router({
@@ -530,12 +533,18 @@ const dashboardRouter = router({
         if (period === "week") sinceMs = now - 7 * 24 * 60 * 60 * 1000;
         else if (period === "month") sinceMs = now - 30 * 24 * 60 * 60 * 1000;
 
-        const [newCandidates, scheduledInterviews, pipelineCounts, avgTimeToHire] =
+        // Turnover rate: always computed for the current calendar month
+        const monthStart = new Date();
+        monthStart.setDate(1);
+        monthStart.setHours(0, 0, 0, 0);
+        const monthStartMs = monthStart.getTime();
+        const [newCandidates, scheduledInterviews, pipelineCounts, avgTimeToHire, turnoverData] =
           await Promise.all([
             getCandidatesAddedSince(sinceMs),
             getInterviewsScheduledSince(sinceMs),
             getPipelineCounts(period),
             getAvgTimeToHire(sinceMs),
+            getTurnoverRate(),
           ]);
 
         const totalInPipeline = pipelineCounts.reduce((sum, p) => sum + p.count, 0);
@@ -595,6 +604,10 @@ const dashboardRouter = router({
           },
           // Scheduled interviews
           scheduledInterviews,
+          // Turnover rate: (separations this month / avg headcount) * 100
+          turnoverRate: turnoverData.rate,
+          turnoverSeparations: turnoverData.separationsThisMonth,
+          turnoverHeadcount: turnoverData.currentHeadcount,
         };
       }),
 });
@@ -629,7 +642,14 @@ const agentRouter = router({
     .input(z.object({ candidateId: z.number() }))
     .query(async ({ input }) => {
       const cred = await getAgentCredentialByCandidateId(input.candidateId);
-      return { exists: !!cred, traineeCode: cred?.traineeCode ?? null };
+      return {
+        exists: !!cred,
+        traineeCode: cred?.traineeCode ?? null,
+        mustChangePassword: cred?.mustChangePassword ?? null,
+        firstLoginAt: cred?.firstLoginAt ?? null,
+        lastLoginAt: cred?.lastLoginAt ?? null,
+        passwordResetAt: cred?.passwordResetAt ?? null,
+      };
     }),
 
   // Agent login — public procedure (no admin auth needed)
@@ -671,6 +691,22 @@ const agentRouter = router({
       }
       // Successful login — clear failed attempts
       await clearLoginAttempts(input.traineeCode, "agent");
+      // Track first login and last login timestamps
+      {
+        const { getDb } = await import("./db");
+        const { eq: eqOp } = await import("drizzle-orm");
+        const db = await getDb();
+        if (db) {
+          const { agentCredentials } = await import("../drizzle/schema");
+          const now = Date.now();
+          await db.update(agentCredentials)
+            .set({
+              lastLoginAt: now,
+              ...(cred.firstLoginAt == null ? { firstLoginAt: now } : {}),
+            })
+            .where(eqOp(agentCredentials.candidateId, cred.candidateId));
+        }
+      }
       // Create a signed JWT for the agent session
       const token = jwt.sign(
         { candidateId: cred.candidateId, traineeCode: cred.traineeCode, type: "agent" },
@@ -694,6 +730,18 @@ const agentRouter = router({
       const newPassword = generatePassword(cred.traineeCode);
       const passwordHash = await bcrypt.hash(newPassword, 10);
       await upsertAgentCredential(input.candidateId, cred.traineeCode, passwordHash);
+      // Track when password was reset by admin
+      {
+        const { getDb } = await import("./db");
+        const { eq: eqOp } = await import("drizzle-orm");
+        const db = await getDb();
+        if (db) {
+          const { agentCredentials } = await import("../drizzle/schema");
+          await db.update(agentCredentials)
+            .set({ passwordResetAt: Date.now() })
+            .where(eqOp(agentCredentials.candidateId, input.candidateId));
+        }
+      }
       return { traineeCode: cred.traineeCode, password: newPassword };
     }),
   // Agent logout
@@ -845,6 +893,18 @@ const agentRouter = router({
     .query(async ({ input }) => {
       return getPayrollByMonth(input.month);
     }),
+  // Admin: delete all payroll rows for a specific month (undo a bad import)
+  deletePayrollForMonth: protectedProcedure
+    .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq: eqOp } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { payrollRecords } = await import("../drizzle/schema");
+      const result = await db.delete(payrollRecords).where(eqOp(payrollRecords.month, input.month));
+      return { deleted: (result as { rowsAffected?: number }).rowsAffected ?? 0 };
+    }),
   // Agent-facing payroll procedures
   getMyPayrollMonths: publicProcedure
     .query(async ({ ctx }) => {
@@ -942,16 +1002,19 @@ const requestsRouter = router({
       if (dateRequiredTypes.includes(input.type)) {
         const hasDates = (input.requestedDates && input.requestedDates.length > 0) || input.requestedDate;
         if (!hasDates) throw new TRPCError({ code: "BAD_REQUEST", message: "Please select a date for this request" });
-        // Check the earliest selected date is at least 14 calendar days from today
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const minDate = new Date(today);
-        minDate.setDate(minDate.getDate() + 14);
-        const checkDate = input.requestedDates?.[0]
-          ? new Date(input.requestedDates[0])
-          : input.requestedDate ? new Date(input.requestedDate) : null;
-        if (checkDate && checkDate < minDate) {
-          throw new TRPCError({ code: "BAD_REQUEST", message: "Date must be at least 2 weeks from today" });
+        // Unpaid day off can be requested for any date (no advance notice required)
+        if (input.type !== "day_off") {
+          // Check the earliest selected date is at least 14 calendar days from today
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const minDate = new Date(today);
+          minDate.setDate(minDate.getDate() + 14);
+          const checkDate = input.requestedDates?.[0]
+            ? new Date(input.requestedDates[0])
+            : input.requestedDate ? new Date(input.requestedDate) : null;
+          if (checkDate && checkDate < minDate) {
+            throw new TRPCError({ code: "BAD_REQUEST", message: "Date must be at least 2 weeks from today" });
+          }
         }
       }
       await createAgentRequest({
@@ -1999,9 +2062,20 @@ const payrollV2Router = router({
         return getMyPayrollRecordByCrdts(agent.crdts, input.month);
       } catch { return null; }
     }),
+  // Admin: delete all payroll V2 rows for a specific month (undo a bad import)
+  deleteForMonth: protectedProcedure
+    .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq: eqOp } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { payrollRecords } = await import("../drizzle/schema");
+      const result = await db.delete(payrollRecords).where(eqOp(payrollRecords.month, input.month));
+      return { deleted: (result as { rowsAffected?: number }).rowsAffected ?? 0 };
+    }),
 });
-
-// ─── Orientation Router ───────────────────────────────────────────────────────
+// ─── Orientation Router ────────────────────────────────────────────────────────
 const orientationRouter = router({
   getStatus: publicProcedure.query(async ({ ctx }) => {
     const token = getAgentCookieFromReq(ctx.req);
@@ -2250,6 +2324,30 @@ const cycleTrackerRouter = router({
       const cycleKey = getCurrentCycleKey();
       const dateRange = getCycleDateRange(cycleKey);
       return { cycleKey, dateRange };
+    }),
+  // Admin: delete all stats for a specific date (undo a bad upload)
+  deleteStatsForDate: protectedProcedure
+    .input(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq: eqOp } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { cycleStats } = await import("../drizzle/schema");
+      const result = await db.delete(cycleStats).where(eqOp(cycleStats.date, input.date));
+      return { deleted: (result as { rowsAffected?: number }).rowsAffected ?? 0 };
+    }),
+  // Admin: delete all stats for a specific cycle month (e.g. "2026-05")
+  deleteStatsForCycle: protectedProcedure
+    .input(z.object({ cycleKey: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq: eqOp } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { cycleStats } = await import("../drizzle/schema");
+      const result = await db.delete(cycleStats).where(eqOp(cycleStats.cycleKey, input.cycleKey));
+      return { deleted: (result as { rowsAffected?: number }).rowsAffected ?? 0 };
     }),
 });
 
