@@ -1136,6 +1136,7 @@ export async function listWorkforceAgents(campaignId?: number) {
     dialerCredentials: workforceAgents.dialerCredentials,
     crdts: workforceAgents.crdts,
     agentStatus: workforceAgents.agentStatus,
+    nestingStatus: workforceAgents.nestingStatus,
   }).from(workforceAgents)
     .leftJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
     .orderBy(workforceAgents.fullName);
@@ -1195,6 +1196,7 @@ export async function getWorkforceAgentByCode(traineeCode: string) {
     dialerCredentials: workforceAgents.dialerCredentials,
     crdts: workforceAgents.crdts,
     agentStatus: workforceAgents.agentStatus,
+    nestingStatus: workforceAgents.nestingStatus,
   }).from(workforceAgents)
     .leftJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
     .where(eq(workforceAgents.traineeCode, traineeCode))

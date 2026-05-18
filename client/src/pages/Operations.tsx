@@ -391,6 +391,7 @@ type WorkforceAgent = {
   crdts?: string | null;
   agentStatus?: string | null;
   dialerCredentials?: string | null;
+  nestingStatus?: "nesting" | "active" | "senior" | null;
 };
 
 type ForecastDay = {
@@ -1097,15 +1098,26 @@ export default function Operations() {
                         {agent.joinDate ? new Date(agent.joinDate).toLocaleDateString() : "—"}
                       </td>
                       <td className="px-4 py-3">
-                        {agent.agentStatus === "resigned" ? (
-                          <Badge className="text-xs bg-red-100 text-red-700 border-red-200" variant="outline">Resigned</Badge>
-                        ) : agent.agentStatus === "terminated" ? (
-                          <Badge className="text-xs bg-orange-100 text-orange-700 border-orange-200" variant="outline">Terminated</Badge>
-                        ) : agent.isActive ? (
-                          <Badge className="text-xs bg-emerald-100 text-emerald-700 border-emerald-200" variant="outline">Active</Badge>
-                        ) : (
-                          <Badge className="text-xs bg-muted text-muted-foreground" variant="outline">Inactive</Badge>
-                        )}
+                        <div className="flex flex-col gap-1">
+                          {agent.agentStatus === "resigned" ? (
+                            <Badge className="text-xs bg-red-100 text-red-700 border-red-200" variant="outline">Resigned</Badge>
+                          ) : agent.agentStatus === "terminated" ? (
+                            <Badge className="text-xs bg-orange-100 text-orange-700 border-orange-200" variant="outline">Terminated</Badge>
+                          ) : agent.isActive ? (
+                            <Badge className="text-xs bg-emerald-100 text-emerald-700 border-emerald-200" variant="outline">Active</Badge>
+                          ) : (
+                            <Badge className="text-xs bg-muted text-muted-foreground" variant="outline">Inactive</Badge>
+                          )}
+                          {agent.nestingStatus && agent.agentStatus !== "resigned" && agent.agentStatus !== "terminated" && (
+                            <Badge variant="outline" className={`text-[10px] ${
+                              agent.nestingStatus === "nesting" ? "bg-amber-50 text-amber-700 border-amber-200" :
+                              agent.nestingStatus === "senior" ? "bg-purple-50 text-purple-700 border-purple-200" :
+                              "bg-sky-50 text-sky-700 border-sky-200"
+                            }`}>
+                              {agent.nestingStatus === "nesting" ? "Nesting" : agent.nestingStatus === "senior" ? "Senior" : "Active"}
+                            </Badge>
+                          )}
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-right">
                         <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={(e) => { e.stopPropagation(); openEditAgent(agent); }}>

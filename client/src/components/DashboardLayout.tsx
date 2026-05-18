@@ -26,7 +26,7 @@ import { trpc } from "@/lib/trpc";
 import {
   LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings,
   Briefcase, Banknote, CreditCard, BarChart2, AlertCircle, Star, Wallet,
-  FileText, Activity, ChevronDown, ChevronRight, TrendingUp,
+  FileText, Activity, ChevronDown, ChevronRight, TrendingUp, BookOpen,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -49,6 +49,7 @@ const NAV: NavItem[] = [
       { icon: BarChart2,   label: "Performance",   path: "/performance" },
       { icon: AlertCircle, label: "Adherence Log", path: "/adherence" },
       { icon: Star,        label: "Quality Log",   path: "/quality" },
+      { icon: BookOpen,    label: "Coaching",      path: "/coaching-admin" },
     ],
   },
   {

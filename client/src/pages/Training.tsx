@@ -151,6 +151,7 @@ export default function Training() {
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [deleteBatchId, setDeleteBatchId] = useState<number | null>(null);
+  const [batchView, setBatchView] = useState<"grid" | "list">(() => (localStorage.getItem("training-batch-view") as "grid" | "list") ?? "grid");
   const [assignSearch, setAssignSearch] = useState("");
   const [assignOpen, setAssignOpen] = useState(false);
 
@@ -613,10 +614,10 @@ export default function Training() {
       </div>
     );
   }
-  // Batch list vieww
+  // Batch list view
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
             <GraduationCap className="h-6 w-6 text-primary" />
@@ -626,9 +627,32 @@ export default function Training() {
             Organise agents (WhatsApp Group Added) into training cohorts and assign trainee codes
           </p>
         </div>
-        <Button onClick={() => setCreateOpen(true)} className="gap-1.5">
-          <Plus className="h-4 w-4" /> New Batch
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* Grid / List toggle */}
+          <div className="flex rounded-lg border overflow-hidden h-9">
+            <button
+              onClick={() => { setBatchView("grid"); localStorage.setItem("training-batch-view", "grid"); }}
+              className={`px-3 flex items-center gap-1.5 text-xs font-medium transition-colors ${
+                batchView === "grid" ? "bg-primary text-white" : "bg-white text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" /><rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" /></svg>
+              Grid
+            </button>
+            <button
+              onClick={() => { setBatchView("list"); localStorage.setItem("training-batch-view", "list"); }}
+              className={`px-3 flex items-center gap-1.5 text-xs font-medium border-l transition-colors ${
+                batchView === "list" ? "bg-primary text-white" : "bg-white text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" /></svg>
+              List
+            </button>
+          </div>
+          <Button onClick={() => setCreateOpen(true)} className="gap-1.5">
+            <Plus className="h-4 w-4" /> New Batch
+          </Button>
+        </div>
       </div>
 
       {isLoading ? (
@@ -646,7 +670,7 @@ export default function Training() {
             <Plus className="h-4 w-4" /> Create First Batch
           </Button>
         </div>
-      ) : (
+      ) : batchView === "grid" ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {(batches as Batch[]).map((batch) => (
             <button
@@ -682,6 +706,60 @@ export default function Training() {
               </div>
             </button>
           ))}
+        </div>
+      ) : (
+        /* List view */
+        <div className="rounded-xl border overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/40">
+                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Batch Name</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden sm:table-cell">Trainer</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden md:table-cell">Start Date</th>
+                <th className="text-center px-4 py-3 text-xs font-medium text-muted-foreground">Agents</th>
+                <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden lg:table-cell">Notes</th>
+                <th className="w-10" />
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {(batches as Batch[]).map((batch, i) => (
+                <tr
+                  key={batch.id}
+                  className={`hover:bg-muted/30 cursor-pointer transition-colors ${i % 2 === 0 ? "" : "bg-muted/10"}`}
+                  onClick={() => setSelectedBatchId(batch.id)}
+                >
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <div className="h-7 w-7 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+                        <GraduationCap className="h-4 w-4 text-primary" />
+                      </div>
+                      <span className="font-medium">{batch.name}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs hidden sm:table-cell">
+                    {batch.trainerName ?? "—"}
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs hidden md:table-cell">
+                    {batch.startDate
+                      ? new Date(batch.startDate).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                      : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <span className="inline-flex items-center gap-1 text-xs font-medium">
+                      <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                      {batch.candidateCount}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-muted-foreground text-xs max-w-xs truncate hidden lg:table-cell">
+                    {batch.notes ?? "—"}
+                  </td>
+                  <td className="px-4 py-3">
+                    <ChevronRight className="h-4 w-4 text-muted-foreground/40" />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 

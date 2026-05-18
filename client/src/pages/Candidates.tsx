@@ -547,6 +547,20 @@ export default function Candidates() {
             </TabsList>
           </Tabs>
         )}
+        {/* Select All button — visible in board view */}
+        {view === "board" && !showRejected && !showSeparated && (
+          <button
+            onClick={() => allFilteredSelected ? clearSelection() : toggleSelectAll(filteredIds)}
+            className={`h-9 px-3 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-colors ${
+              allFilteredSelected
+                ? "bg-primary border-primary text-white hover:bg-primary/90"
+                : "bg-white border-border text-muted-foreground hover:text-foreground hover:border-primary/40 hover:bg-primary/5"
+            }`}
+          >
+            <Checkbox checked={allFilteredSelected} className="h-3 w-3 pointer-events-none" />
+            {allFilteredSelected ? `Deselect All (${filteredIds.length})` : `Select All (${filteredIds.length})`}
+          </button>
+        )}
       </div>
 
       {/* Bulk action bar */}

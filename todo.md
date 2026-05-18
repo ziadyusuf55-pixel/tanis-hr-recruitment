@@ -797,3 +797,11 @@
 - [x] Item 13 — Coaching tab on AgentProfilePage: navigation link to Quality Log filtered by agent CRDTS + list of all coaching sessions (date, type, hours, bonus, status, cycle)
 - [x] Candidates page: hidden board columns now persist across page refreshes via localStorage
 - [x] All 40 tests passing, 0 TypeScript errors
+
+## Round 55 — Fix 5 Reported Issues
+- [x] Fix 1: Add Select All button to Candidates board view toolbar (toggles all filtered candidates; list view already had it)
+- [x] Fix 2: Add nesting status label (Nesting / Active / Senior) to Operations agent rows; nestingStatus added to DB query helpers
+- [x] Fix 3: Build CoachingAdmin page (/coaching-admin) — cycle selector, low-performer detection (< 80% team avg), per-agent coaching session log, approve/reject sessions, KPI cards
+- [x] Fix 4: Add List view toggle to Training batch landing page (Grid / List, persisted to localStorage)
+- [x] Fix 5: Cycle Tracker — replaced 4 separate upload buttons with single multi-tab Excel upload (tabs: Stats Upload, Deductions Upload, OT Upload, Coaching Upload); per-tab status shown after upload
+- [x] All 40 tests passing, 0 TypeScript errors
