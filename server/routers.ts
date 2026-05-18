@@ -2374,7 +2374,7 @@ const cycleTrackerRouter = router({
         avgRevPerHr: a.totalLoginHours > 0 ? a.totalRevenue / a.totalLoginHours : 0,
       }));
     }),
-  // Admin: delete all stats for a specific date (undo a bad upload)
+  // Admin: delete all stats rows for a specific date (undo a bad upload)
   deleteStatsForDate: protectedProcedure
     .input(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }))
     .mutation(async ({ input }) => {
@@ -2382,9 +2382,20 @@ const cycleTrackerRouter = router({
       const { eq: eqOp } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { cycleStats } = await import("../drizzle/schema");
-      const result = await db.delete(cycleStats).where(eqOp(cycleStats.date, input.date));
-      return { deleted: (result as { rowsAffected?: number }).rowsAffected ?? 0 };
+      const { cycleStats, cycleDeductions, cycleOT, coachingSessions } = await import("../drizzle/schema");
+      const [statsRes, dedRes, otRes, coachRes] = await Promise.all([
+        db.delete(cycleStats).where(eqOp(cycleStats.date, input.date)),
+        db.delete(cycleDeductions).where(eqOp(cycleDeductions.date, input.date)),
+        db.delete(cycleOT).where(eqOp(cycleOT.date, input.date)),
+        db.delete(coachingSessions).where(eqOp(coachingSessions.sessionDate, input.date)),
+      ]);
+      const total = (
+        ((statsRes as { rowsAffected?: number }).rowsAffected ?? 0) +
+        ((dedRes as { rowsAffected?: number }).rowsAffected ?? 0) +
+        ((otRes as { rowsAffected?: number }).rowsAffected ?? 0) +
+        ((coachRes as { rowsAffected?: number }).rowsAffected ?? 0)
+      );
+      return { deleted: total };
     }),
   // Admin: delete all stats for a specific cycle month (e.g. "2026-05")
   deleteStatsForCycle: protectedProcedure
@@ -2394,9 +2405,20 @@ const cycleTrackerRouter = router({
       const { eq: eqOp } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { cycleStats } = await import("../drizzle/schema");
-      const result = await db.delete(cycleStats).where(eqOp(cycleStats.cycleKey, input.cycleKey));
-      return { deleted: (result as { rowsAffected?: number }).rowsAffected ?? 0 };
+      const { cycleStats, cycleDeductions, cycleOT, coachingSessions } = await import("../drizzle/schema");
+      const [statsRes, dedRes, otRes, coachRes] = await Promise.all([
+        db.delete(cycleStats).where(eqOp(cycleStats.cycleKey, input.cycleKey)),
+        db.delete(cycleDeductions).where(eqOp(cycleDeductions.cycleKey, input.cycleKey)),
+        db.delete(cycleOT).where(eqOp(cycleOT.cycleKey, input.cycleKey)),
+        db.delete(coachingSessions).where(eqOp(coachingSessions.cycleKey, input.cycleKey)),
+      ]);
+      const total = (
+        ((statsRes as { rowsAffected?: number }).rowsAffected ?? 0) +
+        ((dedRes as { rowsAffected?: number }).rowsAffected ?? 0) +
+        ((otRes as { rowsAffected?: number }).rowsAffected ?? 0) +
+        ((coachRes as { rowsAffected?: number }).rowsAffected ?? 0)
+      );
+      return { deleted: total };
     }),
 });
 
@@ -2583,6 +2605,163 @@ const settingsRouter = router({
     }),
 });
 
+// ─── Coaching Cases Router (admin-only, NOT visible to agents) ───────────────
+const COACHING_STATUSES = ["pending", "in_progress", "improved", "no_change", "escalated", "terminated"] as const;
+type CoachingStatus = typeof COACHING_STATUSES[number];
+
+const coachingCasesRouter = router({
+  // Create a new coaching case
+  create: protectedProcedure
+    .input(z.object({
+      agentId: z.number(),
+      agentCrdts: z.string(),
+      agentAlias: z.string().optional(),
+      nestingLabel: z.string().optional(),
+      assignedBy: z.string().min(1),
+      cycleKey: z.string().regex(/^\d{4}-\d{2}$/),
+      followUpDate: z.string().optional(),
+      coachingReason: z.string().min(1),
+      whatHappened: z.string().optional(),
+      afterCoaching: z.string().optional(),
+      nextSteps: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { coachingCases, coachingCaseStatusLog } = await import("../drizzle/schema");
+      const result = await db.insert(coachingCases).values({
+        agentId: input.agentId,
+        agentCrdts: input.agentCrdts,
+        agentAlias: input.agentAlias ?? null,
+        nestingLabel: input.nestingLabel ?? null,
+        assignedBy: input.assignedBy,
+        cycleKey: input.cycleKey,
+        followUpDate: input.followUpDate ?? null,
+        coachingReason: input.coachingReason,
+        whatHappened: input.whatHappened ?? null,
+        afterCoaching: input.afterCoaching ?? null,
+        nextSteps: input.nextSteps ?? null,
+        status: "pending",
+      });
+      const caseId = (result as { insertId?: number }).insertId ?? 0;
+      await db.insert(coachingCaseStatusLog).values({
+        caseId,
+        fromStatus: null,
+        toStatus: "pending",
+        note: "Case created",
+        changedBy: input.assignedBy,
+      });
+      return { id: caseId };
+    }),
+
+  list: protectedProcedure
+    .input(z.object({
+      cycleKey: z.string().optional(),
+      status: z.string().optional(),
+      nestingLabel: z.string().optional(),
+      agentId: z.number().optional(),
+    }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { and, eq: eqOp, desc } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      const { coachingCases } = await import("../drizzle/schema");
+      const conditions = [];
+      if (input.cycleKey) conditions.push(eqOp(coachingCases.cycleKey, input.cycleKey));
+      if (input.status) conditions.push(eqOp(coachingCases.status, input.status as CoachingStatus));
+      if (input.nestingLabel) conditions.push(eqOp(coachingCases.nestingLabel, input.nestingLabel));
+      if (input.agentId) conditions.push(eqOp(coachingCases.agentId, input.agentId));
+      return db.select().from(coachingCases)
+        .where(conditions.length ? and(...conditions) : undefined)
+        .orderBy(desc(coachingCases.createdAt));
+    }),
+
+  getById: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq: eqOp, desc, and } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "NOT_FOUND", message: "DB unavailable" });
+      const { coachingCases, coachingCaseStatusLog, cycleStats, qualityLog } = await import("../drizzle/schema");
+      const [caseRow] = await db.select().from(coachingCases).where(eqOp(coachingCases.id, input.id)).limit(1);
+      if (!caseRow) throw new TRPCError({ code: "NOT_FOUND", message: "Case not found" });
+      const statusLog = await db.select().from(coachingCaseStatusLog)
+        .where(eqOp(coachingCaseStatusLog.caseId, input.id))
+        .orderBy(desc(coachingCaseStatusLog.createdAt));
+      const stats = await db.select().from(cycleStats)
+        .where(and(eqOp(cycleStats.crdts, caseRow.agentCrdts), eqOp(cycleStats.cycleKey, caseRow.cycleKey)))
+        .orderBy(desc(cycleStats.date)).limit(30);
+      const totalRevenue = stats.reduce((s, r) => s + parseFloat(String(r.revenue ?? 0)), 0);
+      const totalCalls = stats.reduce((s, r) => s + Number(r.totalCalls ?? 0), 0);
+      const totalLoginHours = stats.reduce((s, r) => s + parseFloat(String(r.loginHours ?? 0)), 0);
+      const avgRevPerHr = totalLoginHours > 0 ? totalRevenue / totalLoginHours : 0;
+      let qualityScore: number | null = null;
+      try {
+        const qRows = await db.select({ score: qualityLog.score }).from(qualityLog)
+          .where(eqOp(qualityLog.crdts, caseRow.agentCrdts))
+          .orderBy(desc(qualityLog.createdAt)).limit(1);
+        if (qRows.length) qualityScore = parseFloat(String(qRows[0].score ?? 0));
+      } catch { /* ignore */ }
+      return { ...caseRow, statusLog, performanceSnapshot: { totalRevenue, totalCalls, totalLoginHours, avgRevPerHr, days: stats.length }, qualityScore };
+    }),
+
+  update: protectedProcedure
+    .input(z.object({
+      id: z.number(),
+      followUpDate: z.string().optional(),
+      coachingReason: z.string().optional(),
+      whatHappened: z.string().optional(),
+      afterCoaching: z.string().optional(),
+      nextSteps: z.string().optional(),
+      nestingLabel: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq: eqOp } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { coachingCases } = await import("../drizzle/schema");
+      const { id, ...fields } = input;
+      await db.update(coachingCases).set(fields).where(eqOp(coachingCases.id, id));
+      return { ok: true };
+    }),
+
+  updateStatus: protectedProcedure
+    .input(z.object({
+      id: z.number(),
+      status: z.enum(COACHING_STATUSES),
+      note: z.string().optional(),
+      changedBy: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq: eqOp } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { coachingCases, coachingCaseStatusLog } = await import("../drizzle/schema");
+      const [existing] = await db.select({ status: coachingCases.status }).from(coachingCases).where(eqOp(coachingCases.id, input.id)).limit(1);
+      await db.update(coachingCases).set({ status: input.status, statusNote: input.note ?? null }).where(eqOp(coachingCases.id, input.id));
+      await db.insert(coachingCaseStatusLog).values({ caseId: input.id, fromStatus: existing?.status ?? null, toStatus: input.status, note: input.note ?? null, changedBy: input.changedBy ?? null });
+      return { ok: true };
+    }),
+
+  delete: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq: eqOp } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { coachingCases, coachingCaseStatusLog } = await import("../drizzle/schema");
+      await db.delete(coachingCaseStatusLog).where(eqOp(coachingCaseStatusLog.caseId, input.id));
+      await db.delete(coachingCases).where(eqOp(coachingCases.id, input.id));
+      return { ok: true };
+    }),
+});
+
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -2614,7 +2793,9 @@ export const appRouter = router({
   quality: qualityRouter,
   cycleTracker: cycleTrackerRouter,
   coaching: coachingRouter,
+  coachingCases: coachingCasesRouter,
   settings: settingsRouter,
 });
 export type AppRouter = typeof appRouter;
+
 

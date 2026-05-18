@@ -758,3 +758,50 @@ export const teamLeaders = mysqlTable("team_leaders", {
 });
 export type TeamLeader = typeof teamLeaders.$inferSelect;
 export type InsertTeamLeader = typeof teamLeaders.$inferInsert;
+
+/**
+ * coaching_cases — admin-only coaching records linked to Operations agents.
+ * NOT visible to agents on their portal.
+ * Each case tracks one coaching engagement from trigger to resolution.
+ */
+export const coachingCases = mysqlTable("coaching_cases", {
+  id: int("id").autoincrement().primaryKey(),
+  // Agent identity (from Operations workforce)
+  agentId: int("agentId").notNull(),                              // workforce.id
+  agentCrdts: varchar("agentCrdts", { length: 100 }).notNull(),
+  agentAlias: varchar("agentAlias", { length: 100 }),
+  nestingLabel: varchar("nestingLabel", { length: 50 }),          // Nesting | Active | Senior
+  // Coaching metadata
+  assignedBy: varchar("assignedBy", { length: 255 }).notNull(),   // manager / TL name
+  cycleKey: varchar("cycleKey", { length: 7 }).notNull(),         // YYYY-MM
+  followUpDate: varchar("followUpDate", { length: 10 }),          // YYYY-MM-DD
+  // Coaching content
+  coachingReason: text("coachingReason").notNull(),               // what triggered this session
+  whatHappened: text("whatHappened"),                             // notes from the session
+  afterCoaching: text("afterCoaching"),                           // observed improvement / response
+  nextSteps: text("nextSteps"),                                   // action items
+  // Status
+  status: mysqlEnum("status", ["pending", "in_progress", "improved", "no_change", "escalated", "terminated"])
+    .default("pending").notNull(),
+  statusNote: text("statusNote"),                                 // note attached to latest status change
+  // Timestamps
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type CoachingCase = typeof coachingCases.$inferSelect;
+export type InsertCoachingCase = typeof coachingCases.$inferInsert;
+
+/**
+ * coaching_case_status_log — audit trail of status changes on a coaching case.
+ */
+export const coachingCaseStatusLog = mysqlTable("coaching_case_status_log", {
+  id: int("id").autoincrement().primaryKey(),
+  caseId: int("caseId").notNull(),                               // coachingCases.id
+  fromStatus: varchar("fromStatus", { length: 50 }),
+  toStatus: varchar("toStatus", { length: 50 }).notNull(),
+  note: text("note"),
+  changedBy: varchar("changedBy", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type CoachingCaseStatusLog = typeof coachingCaseStatusLog.$inferSelect;
+export type InsertCoachingCaseStatusLog = typeof coachingCaseStatusLog.$inferInsert;

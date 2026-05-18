@@ -805,3 +805,15 @@
 - [x] Fix 4: Add List view toggle to Training batch landing page (Grid / List, persisted to localStorage)
 - [x] Fix 5: Cycle Tracker — replaced 4 separate upload buttons with single multi-tab Excel upload (tabs: Stats Upload, Deductions Upload, OT Upload, Coaching Upload); per-tab status shown after upload
 - [x] All 40 tests passing, 0 TypeScript errors
+
+## Round 56 — Delete Bug Fix + Coaching Redesign
+
+- [x] Fix delete bug: deleteStatsForDate and deleteStatsForCycle now also delete from cycleDeductions, cycleOT, and coachingSessions tables
+- [x] New schema: coaching_cases table (id, agentId, agentCrdts, agentAlias, assignedBy, coachingReason, whatHappened, afterCoaching, nextSteps, followUpDate, nestingLabel, status, statusNote, cycleKey, createdAt)
+- [x] New schema: coaching_case_status_log table (id, caseId, fromStatus, toStatus, note, changedBy, createdAt)
+- [x] Migration applied via webdev_execute_sql
+- [x] Backend: coachingCases.create, list, getById, updateStatus, update, delete procedures added to appRouter
+- [x] Frontend: CoachingAdmin rebuilt — agent picker (Operations agents only), coaching form (reason/what happened/after coaching/next steps/follow-up date/assigned by), performance snapshot (revenue/calls/login hrs/rev/hr + quality score), status timeline (Pending→In Progress→Improved→No Change→Escalated→Terminated with note on each change)
+- [x] Frontend: coaching case list with filters (cycle, status, nesting label), KPI cards, search
+- [x] Coaching log is admin-only — NOT visible to agents on their portal
+- [x] 40/40 tests passing, 0 TypeScript errors
