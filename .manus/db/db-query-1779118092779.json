@@ -1,0 +1,9 @@
+{
+  "query": "ALTER TABLE cycle_stats ADD COLUMN revPerHr DECIMAL(10,2) DEFAULT 0;",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2mcroMLez2dD7B1.d41ce960f4ad --database GKQCuajYkpcdyw75NP8gmu --execute ALTER TABLE cycle_stats ADD COLUMN revPerHr DECIMAL(10,2) DEFAULT 0;",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 2042
+}

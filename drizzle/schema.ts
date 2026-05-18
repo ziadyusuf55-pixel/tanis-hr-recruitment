@@ -260,6 +260,25 @@ export const payrollRecords = mysqlTable("payroll_records", {
 export type PayrollRecord = typeof payrollRecords.$inferSelect;
 export type InsertPayrollRecord = typeof payrollRecords.$inferInsert;
 
+// ─── Coaching Sessions ────────────────────────────────────────────────────────
+export const coachingSessions = mysqlTable("coaching_sessions", {
+  id: int("id").autoincrement().primaryKey(),
+  crdts: varchar("crdts", { length: 100 }).notNull(),           // agent dialer ID
+  agentCode: varchar("agentCode", { length: 100 }),             // traineeCode
+  alias: varchar("alias", { length: 100 }),
+  sessionDate: varchar("sessionDate", { length: 10 }).notNull(), // YYYY-MM-DD
+  cycleKey: varchar("cycleKey", { length: 7 }).notNull(),       // YYYY-MM
+  coachingHours: decimal("coachingHours", { precision: 8, scale: 2 }).default("0"),
+  bonusAmount: decimal("bonusAmount", { precision: 10, scale: 2 }).default("0"), // EGP
+  sessionType: varchar("sessionType", { length: 100 }),         // e.g. "Quality Coaching"
+  notes: text("notes"),
+  status: mysqlEnum("status", ["pending", "approved", "rejected"]).default("pending").notNull(),
+  uploadedAt: bigint("uploadedAt", { mode: "number" }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type CoachingSession = typeof coachingSessions.$inferSelect;
+export type InsertCoachingSession = typeof coachingSessions.$inferInsert;
+
 /**
  * Performance records — monthly operational KPIs per agent (post-training).
  * Admin fills these in; agents can view their own records in the portal.
@@ -428,6 +447,7 @@ export const workforceAgents = mysqlTable("workforce_agents", {
   dialerCredentials: varchar("dialerCredentials", { length: 500 }), // dialer/hub login credentials (admin fills manually)
   crdts: varchar("crdts", { length: 500 }),                         // CRDTS field — admin fills manually
   agentStatus: mysqlEnum("agentStatus", ["active", "inactive", "resigned", "terminated"]).default("active").notNull(),
+  nestingStatus: mysqlEnum("nestingStatus", ["nesting", "active", "senior"]).default("nesting").notNull(),
   isActive: boolean("isActive").default(true).notNull(),
   orientationShown: boolean("orientationShown").default(false).notNull(), // true after agent completes orientation tour
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -675,6 +695,7 @@ export const cycleStats = mysqlTable("cycle_stats", {
   revenue: decimal("revenue", { precision: 12, scale: 2 }).default("0"),
   cost: decimal("cost", { precision: 12, scale: 2 }).default("0"),
   profit: decimal("profit", { precision: 12, scale: 2 }).default("0"),
+  revPerHr: decimal("revPerHr", { precision: 10, scale: 2 }).default("0"),
   uploadedAt: bigint("uploadedAt", { mode: "number" }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
@@ -722,3 +743,18 @@ export const cycleOT = mysqlTable("cycle_ot", {
 });
 export type CycleOT = typeof cycleOT.$inferSelect;
 export type InsertCycleOT = typeof cycleOT.$inferInsert;
+
+/**
+ * team_leaders — fixed list of TL names managed in Settings.
+ * Used to populate the TL dropdown when editing agents in Operations.
+ */
+export const teamLeaders = mysqlTable("team_leaders", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull().unique(),
+  email: varchar("email", { length: 320 }),
+  phone: varchar("phone", { length: 64 }),
+  isActive: boolean("isActive").default(true).notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type TeamLeader = typeof teamLeaders.$inferSelect;
+export type InsertTeamLeader = typeof teamLeaders.$inferInsert;

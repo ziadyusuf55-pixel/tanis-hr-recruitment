@@ -267,10 +267,16 @@ export default function Candidates() {
   const [view, setView] = useState<"board" | "list">("board");
   const [showRejected, setShowRejected] = useState(false);
   const [showSeparated, setShowSeparated] = useState(false);
-  const [hiddenStages, setHiddenStages] = useState<Set<string>>(new Set());
+  const [hiddenStages, setHiddenStages] = useState<Set<string>>(() => {
+    try {
+      const saved = localStorage.getItem("candidates-hidden-stages");
+      return saved ? new Set(JSON.parse(saved) as string[]) : new Set();
+    } catch { return new Set(); }
+  });
   const toggleHideStage = (stage: string) => setHiddenStages((prev) => {
     const next = new Set(prev);
     if (next.has(stage)) next.delete(stage); else next.add(stage);
+    try { localStorage.setItem("candidates-hidden-stages", JSON.stringify(Array.from(next))); } catch {}
     return next;
   });
   const { data: allActivity = [] } = trpc.activity.listAll.useQuery({ limit: 300 });

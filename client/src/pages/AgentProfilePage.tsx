@@ -6,12 +6,16 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
 import {
   ArrowLeft, User, FileText, CreditCard, MessageSquare,
   Plus, Trash2, ExternalLink, CheckCircle2, AlertTriangle, Info,
   Star, Building2, Phone, Mail, Calendar, Clock, Shield,
-  LogOut, XCircle, KeyRound, MoreVertical,
+  LogOut, XCircle, KeyRound, MoreVertical, Pencil, GraduationCap,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -22,7 +26,7 @@ import { toast } from "sonner";
 const BRAND = "#8B1A1A";
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-type Tab = "documents" | "payment" | "comments";
+type Tab = "documents" | "payment" | "comments" | "coaching";
 
 const TAG_CONFIG = {
   note:     { label: "Note",     icon: Info,          color: "bg-blue-100 text-blue-700 border-blue-200" },
@@ -61,6 +65,7 @@ export default function AgentProfilePage() {
     { enabled: !!traineeCode }
   );
   const { data: campaigns = [] } = trpc.campaigns.list.useQuery();
+  const { data: teamLeaders = [] } = trpc.settings.listTeamLeaders.useQuery();
   const utils = trpc.useUtils();
 
   // ── Separation dialogs ────────────────────────────────────────────────────
@@ -109,6 +114,27 @@ export default function AgentProfilePage() {
     },
     onError: (e) => toast.error(e.message),
   });
+
+  // ── Edit Info ─────────────────────────────────────────────────────────────
+  const [editDialog, setEditDialog] = useState(false);
+  const [editForm, setEditForm] = useState<{
+    teamLeader: string; nestingStatus: "nesting" | "active" | "senior"; shiftHours: string;
+  }>({ teamLeader: "", nestingStatus: "active", shiftHours: "" });
+
+  const updateAgent = trpc.workforce.update.useMutation({
+    onSuccess: () => { refetch(); toast.success("Agent info updated"); setEditDialog(false); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  function openEditInfo() {
+    if (!profile) return;
+    setEditForm({
+      teamLeader: profile.agent?.teamLeader ?? "",
+      nestingStatus: ((profile.agent as any)?.nestingStatus as "nesting" | "active" | "senior") ?? "active",
+      shiftHours: profile.agent?.shiftHours ?? "",
+    });
+    setEditDialog(true);
+  }
 
   // ── Comments ──────────────────────────────────────────────────────────────
   const [commentDialog, setCommentDialog] = useState(false);
@@ -180,6 +206,7 @@ export default function AgentProfilePage() {
   const campaign = (campaigns as Array<{id: number; name: string}>).find(c => c.id === agent.campaignId);
   const offDays = [agent.offDay1, agent.offDay2].filter(d => d !== null && d !== undefined) as number[];
   const isActive = agent.agentStatus === "active" || agent.isActive;
+  const nestingStatus = (agent as any).nestingStatus as string | undefined;
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
@@ -208,6 +235,12 @@ export default function AgentProfilePage() {
                   <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200" variant="outline">Active</Badge>
                 ) : (
                   <Badge variant="secondary">Inactive</Badge>
+                )}
+                {nestingStatus === "nesting" && (
+                  <Badge className="bg-blue-100 text-blue-700 border-blue-200" variant="outline">Nesting</Badge>
+                )}
+                {nestingStatus === "senior" && (
+                  <Badge className="bg-purple-100 text-purple-700 border-purple-200" variant="outline">Senior</Badge>
                 )}
               </div>
               <p className="text-sm text-muted-foreground mt-0.5 font-mono">{agent.traineeCode}</p>
@@ -241,6 +274,10 @@ export default function AgentProfilePage() {
 
             {/* ── Action Buttons ── */}
             <div className="flex items-center gap-2 flex-shrink-0">
+              {/* Edit Info */}
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={openEditInfo}>
+                <Pencil className="h-3.5 w-3.5" /> Edit Info
+              </Button>
               {/* Reset Password */}
               <Button
                 variant="outline"
@@ -252,7 +289,6 @@ export default function AgentProfilePage() {
                 <KeyRound className="h-3.5 w-3.5" />
                 {resetPassword.isPending ? "Resetting…" : "Reset Password"}
               </Button>
-
               {/* More actions dropdown */}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
@@ -297,6 +333,7 @@ export default function AgentProfilePage() {
           { id: "documents", label: "Documents", icon: FileText, count: documents.length },
           { id: "payment",   label: "Payment Preferences", icon: CreditCard, count: paymentMethods.length },
           { id: "comments",  label: "Comments / Issues", icon: MessageSquare, count: comments.length },
+          { id: "coaching",  label: "Coaching", icon: GraduationCap, count: 0 },
         ] as const).map(tab => (
           <button
             key={tab.id}
@@ -310,54 +347,41 @@ export default function AgentProfilePage() {
             <tab.icon className="h-4 w-4" />
             {tab.label}
             {tab.count > 0 && (
-              <span className={`text-xs rounded-full px-1.5 py-0.5 ${activeTab === tab.id ? "bg-[#8B1A1A]/10 text-[#8B1A1A]" : "bg-muted text-muted-foreground"}`}>
-                {tab.count}
-              </span>
+              <span className={`text-xs rounded-full px-1.5 py-0.5 ${
+                activeTab === tab.id ? "bg-[#8B1A1A]/10 text-[#8B1A1A]" : "bg-muted text-muted-foreground"
+              }`}>{tab.count}</span>
             )}
           </button>
         ))}
       </div>
 
-      {/* ── Documents Tab ──────────────────────────────────────────────────── */}
+      {/* ── Documents Tab ─────────────────────────────────────────────────── */}
       {activeTab === "documents" && (
         <div className="space-y-3">
           {documents.length === 0 ? (
-            <div className="text-center py-16 text-muted-foreground">
+            <div className="text-center py-12 text-muted-foreground">
               <FileText className="h-10 w-10 mx-auto mb-3 opacity-30" />
-              <p className="font-medium">No documents uploaded yet</p>
-              <p className="text-sm mt-1">The agent hasn't uploaded any documents from their portal.</p>
+              <p className="text-sm">No documents uploaded yet.</p>
             </div>
           ) : (
-            documents.map((doc) => (
-              <Card key={doc.id} className="border shadow-none">
+            documents.map(doc => (
+              <Card key={doc.id} className="border-0 shadow-sm">
                 <CardContent className="p-4 flex items-center gap-4">
                   <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
                     <FileText className="h-5 w-5 text-muted-foreground" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm">{DOC_TYPE_LABELS[doc.docType] ?? doc.docType}</p>
-                    <p className="text-xs text-muted-foreground truncate">{doc.fileName ?? "Unnamed file"}</p>
-                    {doc.adminComment && (
-                      <p className="text-xs text-amber-600 mt-0.5">Note: {doc.adminComment}</p>
-                    )}
+                    <p className="text-sm font-medium">{DOC_TYPE_LABELS[doc.docType] ?? doc.docType}</p>
+                    {doc.adminComment && <p className="text-xs text-muted-foreground mt-0.5">{doc.adminComment}</p>}
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {new Date(doc.uploadedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                    </p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge
-                      variant="outline"
-                      className={
-                        doc.status === "approved" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
-                        doc.status === "rejected" ? "bg-red-50 text-red-700 border-red-200" :
-                        "bg-amber-50 text-amber-700 border-amber-200"
-                      }
-                    >
-                      {doc.status.charAt(0).toUpperCase() + doc.status.slice(1)}
-                    </Badge>
+                  <Button variant="ghost" size="sm" className="gap-1.5 text-muted-foreground" asChild>
                     <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer">
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <ExternalLink className="h-4 w-4" />
-                      </Button>
+                      <ExternalLink className="h-3.5 w-3.5" /> View
                     </a>
-                  </div>
+                  </Button>
                 </CardContent>
               </Card>
             ))
@@ -365,67 +389,53 @@ export default function AgentProfilePage() {
         </div>
       )}
 
-      {/* ── Payment Tab ────────────────────────────────────────────────────── */}
+      {/* ── Payment Tab ───────────────────────────────────────────────────── */}
       {activeTab === "payment" && (
         <div className="space-y-3">
           <div className="flex justify-end">
-            <Button className="gap-1.5 text-white" style={{ background: BRAND }} onClick={openAddPayment}>
+            <Button size="sm" className="gap-1.5 text-white" style={{ background: BRAND }} onClick={openAddPayment}>
               <Plus className="h-4 w-4" /> Add Payment Method
             </Button>
           </div>
           {paymentMethods.length === 0 ? (
-            <div className="text-center py-16 text-muted-foreground">
+            <div className="text-center py-12 text-muted-foreground">
               <CreditCard className="h-10 w-10 mx-auto mb-3 opacity-30" />
-              <p className="font-medium">No payment methods on file</p>
-              <p className="text-sm mt-1">Add a payment method to enable salary transfers.</p>
+              <p className="text-sm">No payment methods added yet.</p>
             </div>
           ) : (
-            paymentMethods.map((pm) => (
-              <Card key={pm.id} className={`border shadow-none ${pm.isPreferred ? "ring-2 ring-[#8B1A1A]/30" : ""}`}>
-                <CardContent className="p-4 flex items-start gap-4">
+            paymentMethods.map(pm => (
+              <Card key={pm.id} className={`border shadow-sm ${pm.isPreferred ? "border-[#8B1A1A]/30 bg-[#8B1A1A]/5" : ""}`}>
+                <CardContent className="p-4 flex items-center gap-4">
                   <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center flex-shrink-0">
                     <CreditCard className="h-5 w-5 text-muted-foreground" />
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <p className="font-medium text-sm">{PAYMENT_TYPE_LABELS[pm.type]}</p>
-                      {pm.isPreferred && (
-                        <Badge className="bg-[#8B1A1A]/10 text-[#8B1A1A] border-[#8B1A1A]/20 text-xs">
-                          <Star className="h-3 w-3 mr-1" /> Preferred
-                        </Badge>
-                      )}
+                      <p className="text-sm font-medium">{PAYMENT_TYPE_LABELS[pm.type]}</p>
+                      {pm.isPreferred && <Badge className="text-xs bg-[#8B1A1A]/10 text-[#8B1A1A] border-[#8B1A1A]/20" variant="outline"><Star className="h-2.5 w-2.5 mr-1" />Preferred</Badge>}
                     </div>
                     {pm.type === "wallet" && (
-                      <div className="text-sm text-muted-foreground mt-1 space-y-0.5">
-                        {pm.walletProvider && <p>{WALLET_PROVIDER_LABELS[pm.walletProvider] ?? pm.walletProvider}</p>}
-                        {pm.walletPhone && <p>📱 {pm.walletPhone}</p>}
-                        {pm.walletName && <p>👤 {pm.walletName}</p>}
-                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {pm.walletProvider ? WALLET_PROVIDER_LABELS[pm.walletProvider] : ""} {pm.walletPhone && `· ${pm.walletPhone}`} {pm.walletName && `· ${pm.walletName}`}
+                      </p>
                     )}
                     {pm.type === "bank" && (
-                      <div className="text-sm text-muted-foreground mt-1 space-y-0.5">
-                        {pm.bankName && <p>🏦 {pm.bankName}</p>}
-                        {pm.bankAccountOrPhone && <p>🔢 {pm.bankAccountOrPhone}</p>}
-                        {pm.bankFullName && <p>👤 {pm.bankFullName}</p>}
-                      </div>
-                    )}
-                    {pm.adminComment && (
-                      <p className="text-xs text-amber-600 mt-1 italic">{pm.adminComment}</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        {pm.bankName} {pm.bankAccountOrPhone && `· ${pm.bankAccountOrPhone}`} {pm.bankFullName && `· ${pm.bankFullName}`}
+                      </p>
                     )}
                   </div>
                   <div className="flex items-center gap-1">
                     {!pm.isPreferred && (
-                      <Button variant="ghost" size="sm" className="text-xs h-7"
-                        onClick={() => setPreferred.mutate({ id: pm.id, traineeCode })}>
-                        Set Preferred
+                      <Button variant="ghost" size="sm" className="h-8 text-xs gap-1" onClick={() => setPreferred.mutate({ id: pm.id, traineeCode })}>
+                        <Star className="h-3.5 w-3.5" /> Set Preferred
                       </Button>
                     )}
                     <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEditPayment(pm)}>
-                      <FileText className="h-4 w-4" />
+                      <Pencil className="h-3.5 w-3.5" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive"
-                      onClick={() => { if (confirm("Delete this payment method?")) deletePayment.mutate({ id: pm.id }); }}>
-                      <Trash2 className="h-4 w-4" />
+                    <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive" onClick={() => deletePayment.mutate({ id: pm.id })}>
+                      <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                   </div>
                 </CardContent>
@@ -435,43 +445,42 @@ export default function AgentProfilePage() {
         </div>
       )}
 
-      {/* ── Comments Tab ───────────────────────────────────────────────────── */}
+      {/* ── Comments Tab ──────────────────────────────────────────────────── */}
       {activeTab === "comments" && (
         <div className="space-y-3">
           <div className="flex justify-end">
-            <Button className="gap-1.5 text-white" style={{ background: BRAND }} onClick={() => setCommentDialog(true)}>
+            <Button size="sm" className="gap-1.5 text-white" style={{ background: BRAND }} onClick={() => setCommentDialog(true)}>
               <Plus className="h-4 w-4" /> Add Comment
             </Button>
           </div>
           {comments.length === 0 ? (
-            <div className="text-center py-16 text-muted-foreground">
+            <div className="text-center py-12 text-muted-foreground">
               <MessageSquare className="h-10 w-10 mx-auto mb-3 opacity-30" />
-              <p className="font-medium">No comments yet</p>
-              <p className="text-sm mt-1">Add notes or flag issues for this agent.</p>
+              <p className="text-sm">No comments or issues recorded yet.</p>
             </div>
           ) : (
-            comments.map((c) => {
-              const tagCfg = TAG_CONFIG[c.tag as keyof typeof TAG_CONFIG] ?? TAG_CONFIG.note;
-              const TagIcon = tagCfg.icon;
+            comments.map(c => {
+              const cfg = TAG_CONFIG[c.tag as keyof typeof TAG_CONFIG] ?? TAG_CONFIG.note;
+              const CfgIcon = cfg.icon;
               return (
-                <Card key={c.id} className="border shadow-none">
+                <Card key={c.id} className="border-0 shadow-sm">
                   <CardContent className="p-4">
                     <div className="flex items-start gap-3">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${cfg.color}`}>
+                        <CfgIcon className="h-4 w-4" />
+                      </div>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1.5 flex-wrap">
-                          <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border ${tagCfg.color}`}>
-                            <TagIcon className="h-3 w-3" />{tagCfg.label}
-                          </span>
-                          <span className="text-xs text-muted-foreground">by {c.adminName}</span>
+                        <div className="flex items-center gap-2 mb-1">
+                          <Badge className={`text-xs ${cfg.color}`} variant="outline">{cfg.label}</Badge>
                           <span className="text-xs text-muted-foreground">
-                            {new Date(c.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" })}
+                            {new Date(c.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                           </span>
                         </div>
-                        <p className="text-sm text-foreground whitespace-pre-wrap">{c.content}</p>
+                        <p className="text-sm">{c.content}</p>
                       </div>
                       <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:text-destructive flex-shrink-0"
-                        onClick={() => { if (confirm("Delete this comment?")) deleteComment.mutate({ id: c.id }); }}>
-                        <Trash2 className="h-4 w-4" />
+                        onClick={() => deleteComment.mutate({ id: c.id })}>
+                        <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>
                   </CardContent>
@@ -482,22 +491,81 @@ export default function AgentProfilePage() {
         </div>
       )}
 
+      {/* ── Coaching Tab ──────────────────────────────────────────────────── */}
+      {activeTab === "coaching" && (
+        <CoachingTab crdts={agent.crdts ?? ""} navigate={navigate} />
+      )}
+
+      {/* ── Edit Info Dialog ─────────────────────────────────────────────── */}
+      <Dialog open={editDialog} onOpenChange={setEditDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-5 w-5" style={{ color: BRAND }} /> Edit Agent Info
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label className="text-xs font-medium text-muted-foreground mb-1.5 block">Team Leader</Label>
+              <Select value={editForm.teamLeader || "none"} onValueChange={v => setEditForm(f => ({ ...f, teamLeader: v === "none" ? "" : v }))}>
+                <SelectTrigger><SelectValue placeholder="Select TL..." /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">No TL assigned</SelectItem>
+                  {(teamLeaders as Array<{id: number; name: string}>).map(tl => (
+                    <SelectItem key={tl.id} value={tl.name}>{tl.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs font-medium text-muted-foreground mb-1.5 block">Nesting Status</Label>
+              <Select value={editForm.nestingStatus} onValueChange={v => setEditForm(f => ({ ...f, nestingStatus: v as "nesting" | "active" | "senior" }))}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="nesting">Nesting</SelectItem>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="senior">Senior</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              <Label className="text-xs font-medium text-muted-foreground mb-1.5 block">Shift Hours</Label>
+              <Input placeholder="e.g. 9:00 AM - 5:00 PM" value={editForm.shiftHours} onChange={e => setEditForm(f => ({ ...f, shiftHours: e.target.value }))} />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => setEditDialog(false)}>Cancel</Button>
+            <Button
+              disabled={updateAgent.isPending}
+              className="text-white"
+              style={{ background: BRAND }}
+              onClick={() => updateAgent.mutate({
+                traineeCode,
+                teamLeader: editForm.teamLeader || undefined,
+                nestingStatus: editForm.nestingStatus,
+                shiftHours: editForm.shiftHours || undefined,
+              })}
+            >
+              Save Changes
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* ── Separation Dialog (Resign / Terminate) ────────────────────────── */}
       <Dialog open={!!separationDialog} onOpenChange={(open) => { if (!open) setSeparationDialog(null); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className={`flex items-center gap-2 ${separationDialog === "terminate" ? "text-red-700" : "text-amber-700"}`}>
-              {separationDialog === "terminate"
-                ? <><XCircle className="h-5 w-5" /> Terminate Agent</>
-                : <><LogOut className="h-5 w-5" /> Mark as Resigned</>
-              }
+              {separationDialog === "terminate" ? <XCircle className="h-5 w-5" /> : <LogOut className="h-5 w-5" />}
+              {separationDialog === "terminate" ? "Terminate Agent" : "Mark as Resigned"}
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className={`p-3 rounded-lg border text-sm ${separationDialog === "terminate" ? "bg-red-50 border-red-200 text-red-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
               {separationDialog === "terminate"
-                ? "This will permanently terminate the agent and remove them from the system. A separation record will be kept."
-                : "This will mark the agent as resigned and remove them from the system. A separation record will be kept."
+                ? `This will terminate ${agent.fullName} (${traineeCode}). Their ID will be permanently retired and cannot be reassigned.`
+                : `This will mark ${agent.fullName} (${traineeCode}) as resigned. Their ID will be permanently retired and cannot be reassigned.`
               }
             </div>
             <div>
@@ -715,6 +783,104 @@ export default function AgentProfilePage() {
           </div>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+// ─── CoachingTab ─────────────────────────────────────────────────────────────
+
+function CoachingTab({ crdts, navigate }: { crdts: string; navigate: (path: string) => void }) {
+  const { data: sessions = [], isLoading } = trpc.coaching.listByCrdts.useQuery(
+    { crdts },
+    { enabled: !!crdts }
+  );
+
+  const STATUS_COLORS: Record<string, string> = {
+    approved: "bg-emerald-100 text-emerald-700 border-emerald-200",
+    pending:  "bg-amber-100 text-amber-700 border-amber-200",
+    rejected: "bg-red-100 text-red-700 border-red-200",
+  };
+
+  const totalApproved = sessions
+    .filter(s => s.status === "approved")
+    .reduce((sum, s) => sum + parseFloat(String(s.bonusAmount ?? 0)), 0);
+
+  return (
+    <div className="space-y-4">
+      {/* Quick link to Quality Log filtered by this agent */}
+      {crdts && (
+        <div className="flex items-center gap-3 p-3 rounded-xl bg-muted/40 border border-border">
+          <Star className="h-4 w-4 text-amber-500 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium">Quality Scorecard</p>
+            <p className="text-xs text-muted-foreground">View all quality log entries for this agent</p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 shrink-0"
+            onClick={() => navigate(`/quality?crdts=${encodeURIComponent(crdts)}`)}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            Open Quality Log
+          </Button>
+        </div>
+      )}
+
+      {/* Coaching sessions summary */}
+      {sessions.length > 0 && (
+        <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-emerald-50 border border-emerald-200">
+          <GraduationCap className="h-4 w-4 text-emerald-600 shrink-0" />
+          <p className="text-sm text-emerald-800">
+            <strong>{sessions.filter(s => s.status === "approved").length}</strong> approved session{sessions.filter(s => s.status === "approved").length !== 1 ? "s" : ""} ·{" "}
+            Total bonus: <strong>${totalApproved.toFixed(2)}</strong>
+          </p>
+        </div>
+      )}
+
+      {/* Sessions list */}
+      {isLoading ? (
+        <div className="space-y-2">
+          {[1,2,3].map(i => <div key={i} className="h-14 rounded-xl bg-muted/40 animate-pulse" />)}
+        </div>
+      ) : sessions.length === 0 ? (
+        <div className="text-center py-12 text-muted-foreground">
+          <GraduationCap className="h-10 w-10 mx-auto mb-3 opacity-30" />
+          <p className="text-sm">No coaching sessions recorded for this agent.</p>
+          <p className="text-xs mt-1">Upload coaching data in the Cycle Tracker to see sessions here.</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {sessions.map(s => (
+            <Card key={s.id} className="border-0 shadow-sm">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                    <GraduationCap className="h-4 w-4 text-primary" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-medium">{s.sessionDate}</p>
+                      {s.sessionType && (
+                        <span className="text-[10px] bg-blue-100 text-blue-700 rounded px-1.5 py-0.5 font-medium">{s.sessionType}</span>
+                      )}
+                      <Badge variant="outline" className={`text-[10px] ${STATUS_COLORS[s.status ?? "pending"]}`}>
+                        {s.status ?? "pending"}
+                      </Badge>
+                    </div>
+                    <div className="flex items-center gap-3 mt-0.5 text-xs text-muted-foreground">
+                      <span>{s.coachingHours}h coaching</span>
+                      <span className="font-medium text-emerald-700">${parseFloat(String(s.bonusAmount ?? 0)).toFixed(2)} bonus</span>
+                      <span>Cycle: {s.cycleKey}</span>
+                    </div>
+                    {s.notes && <p className="text-xs text-muted-foreground mt-1 italic">{s.notes}</p>}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -23,6 +23,7 @@ import PaymentPreferences from "./pages/PaymentPreferences";
 import AllDocuments from "./pages/AllDocuments";
 import CycleTrackerAdmin from "./pages/CycleTrackerAdmin";
 import AgentProfilePage from "./pages/AgentProfilePage";
+import PerformanceReports from "./pages/PerformanceReports";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import { useAuth } from "./_core/hooks/useAuth";
 import { getLoginUrl } from "./const";
@@ -78,6 +79,7 @@ function Router() {
       <Route path="/payment-preferences" component={() => <ProtectedRoute component={PaymentPreferences} />} />
       <Route path="/all-documents" component={() => <ProtectedRoute component={AllDocuments} />} />
       <Route path="/cycle-tracker" component={() => <ProtectedRoute component={CycleTrackerAdmin} />} />
+      <Route path="/performance-reports" component={() => <ProtectedRoute component={PerformanceReports} />} />
       <Route path="/requests" component={() => <ProtectedRoute component={Requests} />} />
       <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
       <Route path="/admin-invite" component={AdminInviteAccept} />

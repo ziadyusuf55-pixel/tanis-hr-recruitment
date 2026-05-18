@@ -788,3 +788,12 @@
 - [x] Delete performance stats by date in CycleTrackerAdmin
 - [x] Delete payroll records by month in Payroll admin
 - [x] Open Graph metadata: title, description, Tanis logo image
+
+## Round 54 — Feature Batch (6 items)
+- [x] Item 3 — Coaching Bonus: sum all approved coaching sessions per agent per cycle; shown in payslip (not manually entered)
+- [x] Item 5 — Stats columns: CRDTS | Date | Login Hours | Total Calls | Revenue | Cost | Profit | Rev/Hr (all financial in USD $); Rev/Hr added to schema, migration, parser, and router
+- [x] Item 6 — TLs as fixed list defined in Settings (already implemented)
+- [x] Item 12 — Performance Reports: new dedicated sidebar section at /performance-reports with cycle selector, team KPI summary cards, per-agent table (Revenue, Calls, Login Hrs, Rev/Hr, Profit, Days), sortable, exportable CSV
+- [x] Item 13 — Coaching tab on AgentProfilePage: navigation link to Quality Log filtered by agent CRDTS + list of all coaching sessions (date, type, hours, bonus, status, cycle)
+- [x] Candidates page: hidden board columns now persist across page refreshes via localStorage
+- [x] All 40 tests passing, 0 TypeScript errors

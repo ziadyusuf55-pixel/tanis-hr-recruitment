@@ -222,6 +222,7 @@ export default function CycleTrackerAdmin() {
   const uploadStatsMutation = trpc.cycleTracker.uploadStats.useMutation();
   const uploadDeductionsMutation = trpc.cycleTracker.uploadDeductions.useMutation();
   const uploadOTMutation = trpc.cycleTracker.uploadOT.useMutation();
+  const uploadCoachingMutation = trpc.coaching.upload.useMutation();
 
   async function handleStatsUpload(file: File) {
     const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
@@ -237,6 +238,7 @@ export default function CycleTrackerAdmin() {
       revenue: parseNumber(r["Revenue"] ?? r["revenue"] ?? 0),
       cost: parseNumber(r["Cost"] ?? r["cost"] ?? 0),
       profit: parseNumber(r["Profit"] ?? r["profit"] ?? 0),
+      revPerHr: parseNumber(r["Rev/Hr"] ?? r["rev_per_hr"] ?? r["RevPerHr"] ?? r["Rev Per Hr"] ?? 0),
     })).filter(r => r.crdts && r.date);
     if (rows.length === 0) throw new Error("No valid rows found. Check CRDTS and Date columns.");
     return uploadStatsMutation.mutateAsync({ rows });
@@ -245,19 +247,64 @@ export default function CycleTrackerAdmin() {
   async function handleDeductionsUpload(file: File) {
     const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
     const ws = wb.Sheets[wb.SheetNames[0]];
+    // Use raw row arrays so we can normalize headers that contain newlines (e.g. from Quality Log)
+    const rawRows: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as unknown[][];
+    if (rawRows.length < 2) throw new Error("File appears empty.");
+    // Find the header row: first row that contains a cell with "CRDTS"
+    let headerRowIdx = 0;
+    for (let i = 0; i < Math.min(rawRows.length, 10); i++) {
+      if ((rawRows[i] as unknown[]).some(c => typeof c === "string" && c.replace(/\n/g, " ").toUpperCase().includes("CRDTS"))) {
+        headerRowIdx = i;
+        break;
+      }
+    }
+    // Normalize headers: strip newlines and trim
+    const headers = (rawRows[headerRowIdx] as unknown[]).map(h =>
+      typeof h === "string" ? h.replace(/\n/g, " ").trim().toLowerCase() : ""
+    );
+    const colIdx = (keys: string[]) => {
+      for (const key of keys) {
+        const idx = headers.findIndex(h => h.includes(key.toLowerCase()));
+        if (idx >= 0) return idx;
+      }
+      return -1;
+    };
+    const getVal = (row: unknown[], keys: string[]) => {
+      const idx = colIdx(keys);
+      return idx >= 0 ? (row as unknown[])[idx] : "";
+    };
+    const rows = (rawRows.slice(headerRowIdx + 1) as unknown[][]).map(row => ({
+      crdts: parseString(getVal(row, ["crdts", "agent code"])),
+      agentCode: parseString(getVal(row, ["agent code", "agent_code"])),
+      alias: parseString(getVal(row, ["alias"])),
+      date: parseDate(getVal(row, ["date"])),
+      violationType: parseString(getVal(row, ["violation type", "violationtype", "violation", "type"])),
+      hours: parseNumber(getVal(row, ["override hours", "escalation hours", "hours"])),
+      deductionAmount: parseNumber(getVal(row, ["deduction", "amount"])),
+      status: (parseString(getVal(row, ["status"]) || "approved").toLowerCase() === "rejected" ? "rejected" : "approved") as "approved" | "rejected",
+    })).filter(r => r.crdts && r.date && r.deductionAmount > 0);
+    if (rows.length === 0) throw new Error("No valid rows found. Ensure CRDTS, Date, and Deduction (EGP) columns are present and have values.");
+    return uploadDeductionsMutation.mutateAsync({ rows });
+  }
+
+  async function handleCoachingUpload(file: File) {
+    const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+    const ws = wb.Sheets[wb.SheetNames[0]];
     const raw: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
-    const rows = raw.map(r => ({
-      crdts: parseString(r["CRDTS"] ?? r["crdts"] ?? r["Agent Code"] ?? ""),
+    const cycleKey = cycleInfo?.cycleKey ?? new Date().toISOString().slice(0, 7);
+    const sessions = raw.map(r => ({
+      crdts: parseString(r["CRDTS"] ?? r["crdts"] ?? r["Agent Code"] ?? r["agent_code"] ?? ""),
       agentCode: parseString(r["Agent Code"] ?? r["agent_code"] ?? ""),
       alias: parseString(r["Alias"] ?? r["alias"] ?? ""),
-      date: parseDate(r["Date"] ?? r["date"] ?? ""),
-      violationType: parseString(r["Violation Type"] ?? r["violation_type"] ?? r["ViolationType"] ?? r["Type"] ?? ""),
-      hours: parseNumber(r["Hours"] ?? r["hours"] ?? 0),
-      deductionAmount: parseNumber(r["Deduction Amount"] ?? r["deduction_amount"] ?? r["Amount"] ?? r["Deduction"] ?? 0),
-      status: (parseString(r["Status"] ?? r["status"] ?? "approved").toLowerCase() === "rejected" ? "rejected" : "approved") as "approved" | "rejected",
-    })).filter(r => r.crdts && r.date);
-    if (rows.length === 0) throw new Error("No valid rows found. Check CRDTS and Date columns.");
-    return uploadDeductionsMutation.mutateAsync({ rows });
+      sessionDate: parseDate(r["Date"] ?? r["date"] ?? r["Session Date"] ?? ""),
+      coachingHours: parseNumber(r["Coaching Hours"] ?? r["coaching_hours"] ?? r["Hours"] ?? 0),
+      bonusAmount: parseNumber(r["Bonus Amount"] ?? r["bonus_amount"] ?? r["Bonus"] ?? r["Bonus (EGP)"] ?? 0),
+      sessionType: parseString(r["Session Type"] ?? r["session_type"] ?? r["Type"] ?? ""),
+      notes: parseString(r["Notes"] ?? r["notes"] ?? ""),
+    })).filter(s => s.crdts && s.sessionDate);
+    if (sessions.length === 0) throw new Error("No valid rows found. Ensure CRDTS and Date columns are present.");
+    const result = await uploadCoachingMutation.mutateAsync({ cycleKey, sessions });
+    return { count: result.inserted, cycleKey };
   }
 
   async function handleOTUpload(file: File) {
@@ -306,13 +353,13 @@ export default function CycleTrackerAdmin() {
         </div>
 
         {/* Upload cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <UploadSection
             title="Stats Upload"
             description="Upload every 2 hours during shift. Updates Today and This Cycle sections."
             icon={<BarChart2 className="w-4 h-4" />}
             color="oklch(0.55 0.18 250)"
-            columnHint="Required: CRDTS, Date | Optional: Agent Code, Alias, Login Hours, Total Calls, Revenue, Cost, Profit"
+            columnHint="Required: CRDTS, Date | Optional: Agent Code, Alias, Login Hours, Total Calls, Revenue, Cost, Profit, Rev/Hr"
             onUpload={handleStatsUpload}
           />
           <UploadSection
@@ -330,6 +377,14 @@ export default function CycleTrackerAdmin() {
             color="oklch(0.55 0.18 145)"
             columnHint="Required: CRDTS, Date, OT Type (1.5x/2x/3x) | Optional: Agent Code, Alias, Hours, EGP Amount"
             onUpload={handleOTUpload}
+          />
+          <UploadSection
+            title="Coaching Upload"
+            description="Upload coaching sessions per agent per cycle. Approved sessions add to payslip coaching bonus."
+            icon={<CheckCircle className="w-4 h-4" />}
+            color="oklch(0.55 0.18 300)"
+            columnHint="Required: CRDTS, Date | Optional: Agent Code, Alias, Coaching Hours, Bonus Amount (EGP), Session Type, Notes"
+            onUpload={handleCoachingUpload}
           />
         </div>
 

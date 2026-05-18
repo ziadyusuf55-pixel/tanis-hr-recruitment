@@ -386,7 +386,6 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
     { label: "Phone", value: (wfProfile.phone as string | null) ?? "—" },
     { label: "Email", value: (wfProfile.email as string | null) ?? "—" },
     { label: "CRDTS", value: (wfProfile.crdts as string | null) ?? "—" },
-    { label: "Dialer Credentials", value: (wfProfile.dialerCredentials as string | null) ?? "—" },
     { label: "Campaign", value: (wfProfile.campaignName as string | null) ?? "—" },
     { label: "Join Date", value: joinDate },
     { label: "Team Leader", value: (wfProfile.teamLeader as string | null) ?? "—" },
@@ -639,6 +638,7 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
     attendanceDetail: string | null;
     paymentStatus: string | null;
     paymentDate: number | null;
+    coachingBonus?: string | null;
   } | null | undefined;
 
   return (
@@ -693,6 +693,9 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
                 { label: "OT 2×", value: fmtNum(r.ot2xHours, " hrs") },
                 { label: "OT 3×", value: fmtNum(r.ot3xHours, " hrs") },
                 { label: "Commission", value: fmtEGP(r.commissionEgp) },
+                ...(r.coachingBonus && parseFloat(String(r.coachingBonus)) > 0
+                  ? [{ label: "Coaching Bonus", value: fmtEGP(r.coachingBonus) }]
+                  : []),
               ].map(({ label, value }) => (
                 <div key={label} className="flex items-center justify-between px-4 py-3">
                   <p className="text-sm" style={{ color: theme.textMuted }}>{label}</p>

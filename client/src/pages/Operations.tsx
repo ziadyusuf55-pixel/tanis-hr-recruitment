@@ -1044,8 +1044,8 @@ export default function Operations() {
                 <thead className="bg-muted/40 border-b">
                   <tr>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground">Agent</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell">CRDTS</th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden md:table-cell">Campaign</th>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden lg:table-cell">Shift</th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden lg:table-cell">Team Leader</th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden md:table-cell">Off Days</th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell">Join Date</th>
@@ -1063,12 +1063,22 @@ export default function Operations() {
                           {agent.alias && <span className="text-xs text-muted-foreground">({agent.alias})</span>}
                         </div>
                       </td>
+                      <td className="px-4 py-3 hidden sm:table-cell">
+                        {agent.crdts ? (
+                          <button
+                            className="font-mono text-xs bg-muted hover:bg-muted/80 px-2 py-1 rounded cursor-pointer border border-transparent hover:border-border transition-colors"
+                            title="Click to copy CRDTS"
+                            onClick={e => { e.stopPropagation(); navigator.clipboard.writeText(String(agent.crdts)); toast.success("CRDTS copied!"); }}
+                          >
+                            {agent.crdts}
+                          </button>
+                        ) : <span className="text-muted-foreground text-xs">—</span>}
+                      </td>
                       <td className="px-4 py-3 hidden md:table-cell">
                         {agent.campaignName ? (
                           <Badge variant="outline" className="text-xs">{agent.campaignName}</Badge>
                         ) : <span className="text-muted-foreground text-xs">—</span>}
                       </td>
-                      <td className="px-4 py-3 hidden lg:table-cell text-muted-foreground text-xs">{agent.shiftHours ?? "—"}</td>
                       <td className="px-4 py-3 hidden lg:table-cell text-muted-foreground text-xs">{agent.teamLeader ?? "—"}</td>
                       <td className="px-4 py-3 hidden md:table-cell">
                         <div className="flex gap-1">

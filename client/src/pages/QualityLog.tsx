@@ -2,8 +2,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
-import { Download, Upload, Star } from "lucide-react";
-import { useState, useRef } from "react";
+import { Download, Upload, Star, X } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 
@@ -32,6 +32,21 @@ export default function QualityLog() {
   const currentMonth = new Date().toISOString().slice(0, 7);
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
   const [monthInput, setMonthInput] = useState(currentMonth);
+  const [crdtsFilter, setCrdtsFilter] = useState<string>(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      return p.get("crdts") ?? "";
+    } catch { return ""; }
+  });
+
+  // Sync crdtsFilter from URL on mount
+  useEffect(() => {
+    try {
+      const p = new URLSearchParams(window.location.search);
+      const c = p.get("crdts");
+      if (c) setCrdtsFilter(c);
+    } catch {}
+  }, []);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadRows, setUploadRows] = useState<Array<Record<string, unknown>>>([]);
   const [uploadMonth, setUploadMonth] = useState(currentMonth);
@@ -107,9 +122,13 @@ export default function QualityLog() {
     XLSX.writeFile(wb, "quality-template.xlsx");
   }
 
-  const totalPenalties = rows.reduce((s, r) => s + (r.penalty ? parseFloat(r.penalty) : 0), 0);
-  const avgScore = rows.filter(r => r.score).length > 0
-    ? rows.reduce((s, r) => s + (r.score ? parseFloat(r.score) : 0), 0) / rows.filter(r => r.score).length
+  const filteredRows = crdtsFilter
+    ? rows.filter(r => (r.crdts ?? "").toLowerCase().includes(crdtsFilter.toLowerCase()))
+    : rows;
+
+  const totalPenalties = filteredRows.reduce((s, r) => s + (r.penalty ? parseFloat(r.penalty) : 0), 0);
+  const avgScore = filteredRows.filter(r => r.score).length > 0
+    ? filteredRows.reduce((s, r) => s + (r.score ? parseFloat(r.score) : 0), 0) / filteredRows.filter(r => r.score).length
     : null;
 
   return (
@@ -129,12 +148,20 @@ export default function QualityLog() {
         </div>
       </div>
 
-      {/* Month selector */}
-      <div className="flex items-center gap-3">
+      {/* Month selector + CRDTS filter */}
+      <div className="flex items-center gap-3 flex-wrap">
         <label className="text-sm font-medium text-muted-foreground">Month:</label>
         <input type="month" value={monthInput} onChange={e => setMonthInput(e.target.value)}
           className="border rounded-md px-3 py-1.5 text-sm bg-background" />
         <Button size="sm" onClick={() => setSelectedMonth(monthInput)}>Load</Button>
+        {crdtsFilter && (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 text-primary text-xs font-medium">
+            Filtered: {crdtsFilter}
+            <button onClick={() => setCrdtsFilter("")} className="ml-0.5 hover:text-destructive">
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Summary */}
@@ -182,15 +209,16 @@ export default function QualityLog() {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base">
-            {selectedMonth ? formatMonthLabel(selectedMonth) : "Select a month"} — {rows.length} record{rows.length !== 1 ? "s" : ""}
+            {selectedMonth ? formatMonthLabel(selectedMonth) : "Select a month"} — {filteredRows.length} record{filteredRows.length !== 1 ? "s" : ""}
+            {crdtsFilter && <span className="ml-2 text-xs font-normal text-muted-foreground">(filtered by CRDTS: {crdtsFilter})</span>}
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           {isLoading ? (
             <div className="p-8 text-center text-muted-foreground text-sm">Loading...</div>
-          ) : rows.length === 0 ? (
+          ) : filteredRows.length === 0 ? (
             <div className="p-8 text-center text-muted-foreground text-sm">
-              No quality records for {selectedMonth ? formatMonthLabel(selectedMonth) : "this month"}.
+              No quality records for {selectedMonth ? formatMonthLabel(selectedMonth) : "this month"}{crdtsFilter ? ` with CRDTS: ${crdtsFilter}` : ""}.
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -203,7 +231,7 @@ export default function QualityLog() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((row, i) => (
+                  {filteredRows.map((row, i) => (
                     <tr key={row.id} className={`border-b last:border-0 hover:bg-muted/30 transition-colors ${i % 2 === 0 ? "" : "bg-muted/10"}`}>
                       <td className="px-4 py-3 text-muted-foreground">{row.agentCode ?? "—"}</td>
                       <td className="px-4 py-3 font-mono text-xs">{row.crdts ?? "—"}</td>

@@ -1,0 +1,9 @@
+{
+  "query": "CREATE TABLE IF NOT EXISTS `coaching_sessions` (\n  `id` int NOT NULL AUTO_INCREMENT,\n  `crdts` varchar(100) NOT NULL,\n  `agentCode` varchar(100) DEFAULT NULL,\n  `alias` varchar(100) DEFAULT NULL,\n  `sessionDate` varchar(10) NOT NULL,\n  `cycleKey` varchar(7) NOT NULL,\n  `coachingHours` decimal(8,2) DEFAULT '0.00',\n  `bonusAmount` decimal(10,2) DEFAULT '0.00',\n  `sessionType` varchar(100) DEFAULT NULL,\n  `notes` text,\n  `status` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',\n  `uploadedAt` bigint DEFAULT NULL,\n  `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`),\n  KEY `idx_coaching_crdts` (`crdts`),\n  KEY `idx_coaching_cycle` (`cycleKey`)\n);",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2mcroMLez2dD7B1.d41ce960f4ad --database GKQCuajYkpcdyw75NP8gmu --execute CREATE TABLE IF NOT EXISTS `coaching_sessions` (\n  `id` int NOT NULL AUTO_INCREMENT,\n  `crdts` varchar(100) NOT NULL,\n  `agentCode` varchar(100) DEFAULT NULL,\n  `alias` varchar(100) DEFAULT NULL,\n  `sessionDate` varchar(10) NOT NULL,\n  `cycleKey` varchar(7) NOT NULL,\n  `coachingHours` decimal(8,2) DEFAULT '0.00',\n  `bonusAmount` decimal(10,2) DEFAULT '0.00',\n  `sessionType` varchar(100) DEFAULT NULL,\n  `notes` text,\n  `status` enum('pending','approved','rejected') NOT NULL DEFAULT 'pending',\n  `uploadedAt` bigint DEFAULT NULL,\n  `createdAt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`),\n  KEY `idx_coaching_crdts` (`crdts`),\n  KEY `idx_coaching_cycle` (`cycleKey`)\n);",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 1971
+}

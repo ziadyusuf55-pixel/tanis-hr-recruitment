@@ -2076,7 +2076,7 @@ export function getCycleDateRange(cycleKey: string): { start: string; end: strin
 export async function upsertCycleStats(rows: Array<{
   crdts: string; agentCode?: string; alias?: string;
   date: string; cycleKey: string;
-  loginHours: number; totalCalls: number; revenue: number; cost: number; profit: number;
+  loginHours: number; totalCalls: number; revenue: number; cost: number; profit: number; revPerHr?: number;
 }>) {
   const db = await getDb();
   if (!db || rows.length === 0) return;
@@ -2093,6 +2093,7 @@ export async function upsertCycleStats(rows: Array<{
       revenue: String(row.revenue),
       cost: String(row.cost),
       profit: String(row.profit),
+      revPerHr: String(row.revPerHr ?? 0),
       uploadedAt: now,
     }).onDuplicateKeyUpdate({
       set: {
@@ -2103,6 +2104,7 @@ export async function upsertCycleStats(rows: Array<{
         revenue: String(row.revenue),
         cost: String(row.cost),
         profit: String(row.profit),
+        revPerHr: String(row.revPerHr ?? 0),
         uploadedAt: now,
       }
     });

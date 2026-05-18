@@ -31,8 +31,207 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { UserPlus, Copy, Check, ShieldOff, ShieldCheck, Mail } from "lucide-react";
+import { UserPlus, Copy, Check, ShieldOff, ShieldCheck, Mail, Users, Trash2, Pencil } from "lucide-react";
 
+// ─── Team Leaders Section ────────────────────────────────────────────────────
+function TeamLeadersSection() {
+  const [addOpen, setAddOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editId, setEditId] = useState<number | null>(null);
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+
+  const utils = trpc.useUtils();
+  const { data: tls, isLoading } = trpc.settings.listTeamLeaders.useQuery();
+
+  const addMutation = trpc.settings.addTeamLeader.useMutation({
+    onSuccess: () => {
+      utils.settings.listTeamLeaders.invalidate();
+      setAddOpen(false);
+      setName(""); setEmail(""); setPhone("");
+      toast.success("Team leader added");
+    },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+
+  const updateMutation = trpc.settings.updateTeamLeader.useMutation({
+    onSuccess: () => {
+      utils.settings.listTeamLeaders.invalidate();
+      setEditOpen(false);
+      toast.success("Team leader updated");
+    },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+
+  const deleteMutation = trpc.settings.deleteTeamLeader.useMutation({
+    onSuccess: () => {
+      utils.settings.listTeamLeaders.invalidate();
+      toast.success("Team leader removed");
+    },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+
+  const toggleActiveMutation = trpc.settings.updateTeamLeader.useMutation({
+    onSuccess: () => utils.settings.listTeamLeaders.invalidate(),
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+
+  const openEdit = (tl: { id: number; name: string; email?: string | null; phone?: string | null }) => {
+    setEditId(tl.id);
+    setName(tl.name);
+    setEmail(tl.email ?? "");
+    setPhone(tl.phone ?? "");
+    setEditOpen(true);
+  };
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between pb-4">
+        <div>
+          <CardTitle className="text-base">Team Leaders</CardTitle>
+          <CardDescription className="text-sm mt-0.5">
+            Manage the fixed list of TLs available for agent assignment in Operations.
+          </CardDescription>
+        </div>
+        <Dialog open={addOpen} onOpenChange={(o) => { setAddOpen(o); if (!o) { setName(""); setEmail(""); setPhone(""); } }}>
+          <DialogTrigger asChild>
+            <Button size="sm" className="gap-2">
+              <Users className="h-4 w-4" />
+              Add TL
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Add Team Leader</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 pt-2">
+              <div className="space-y-1.5">
+                <Label>Full Name *</Label>
+                <Input placeholder="e.g. Ahmed Hassan" value={name} onChange={(e) => setName(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Email (optional)</Label>
+                <Input type="email" placeholder="ahmed@tanis-eg.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Phone (optional)</Label>
+                <Input placeholder="+20 1XX XXX XXXX" value={phone} onChange={(e) => setPhone(e.target.value)} />
+              </div>
+              <Button
+                className="w-full"
+                onClick={() => addMutation.mutate({ name: name.trim(), email: email.trim() || undefined, phone: phone.trim() || undefined })}
+                disabled={addMutation.isPending || !name.trim()}
+              >
+                {addMutation.isPending ? "Adding..." : "Add Team Leader"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="text-center py-6 text-muted-foreground text-sm">Loading...</div>
+        ) : !tls || tls.length === 0 ? (
+          <div className="text-center py-8 text-muted-foreground text-sm">
+            <Users className="h-8 w-8 mx-auto mb-2 opacity-30" />
+            No team leaders yet. Add your first TL above.
+          </div>
+        ) : (
+          <div className="divide-y divide-border">
+            {tls.map((tl) => (
+              <div key={tl.id} className="flex items-center justify-between py-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">{tl.name}</p>
+                  {tl.email && <p className="text-xs text-muted-foreground truncate">{tl.email}</p>}
+                  {tl.phone && <p className="text-xs text-muted-foreground">{tl.phone}</p>}
+                </div>
+                <div className="flex items-center gap-2 ml-4 shrink-0">
+                  <Badge variant={tl.isActive ? "default" : "secondary"} className="text-xs">
+                    {tl.isActive ? "Active" : "Inactive"}
+                  </Badge>
+                  <Button
+                    variant="ghost" size="icon" className="h-7 w-7"
+                    onClick={() => openEdit(tl)}
+                    title="Edit"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button
+                    variant="ghost" size="icon" className="h-7 w-7"
+                    onClick={() => toggleActiveMutation.mutate({ id: tl.id, isActive: !tl.isActive })}
+                    title={tl.isActive ? "Deactivate" : "Reactivate"}
+                  >
+                    {tl.isActive
+                      ? <ShieldOff className="h-3.5 w-3.5 text-amber-500" />
+                      : <ShieldCheck className="h-3.5 w-3.5 text-green-500" />
+                    }
+                  </Button>
+                  <AlertDialog>
+                    <AlertDialogTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-7 w-7" title="Delete">
+                        <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                      </Button>
+                    </AlertDialogTrigger>
+                    <AlertDialogContent>
+                      <AlertDialogHeader>
+                        <AlertDialogTitle>Remove {tl.name}?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                          This removes them from the TL list. Agents already assigned to this TL will keep the assignment text, but the TL won't appear in future dropdowns.
+                        </AlertDialogDescription>
+                      </AlertDialogHeader>
+                      <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction
+                          className="bg-destructive hover:bg-destructive/90"
+                          onClick={() => deleteMutation.mutate({ id: tl.id })}
+                        >
+                          Remove
+                        </AlertDialogAction>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
+                  </AlertDialog>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+
+      {/* Edit Dialog */}
+      <Dialog open={editOpen} onOpenChange={(o) => { setEditOpen(o); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Edit Team Leader</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div className="space-y-1.5">
+              <Label>Full Name *</Label>
+              <Input value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Email (optional)</Label>
+              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Phone (optional)</Label>
+              <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+            </div>
+            <Button
+              className="w-full"
+              onClick={() => editId !== null && updateMutation.mutate({ id: editId, name: name.trim(), email: email.trim() || undefined, phone: phone.trim() || undefined })}
+              disabled={updateMutation.isPending || !name.trim()}
+            >
+              {updateMutation.isPending ? "Saving..." : "Save Changes"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </Card>
+  );
+}
+
+// ─── Main Settings Page ──────────────────────────────────────────────────────
 export default function Settings() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteName, setInviteName] = useState("");
@@ -87,7 +286,7 @@ export default function Settings() {
     <div className="max-w-3xl mx-auto space-y-8">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
-        <p className="text-muted-foreground text-sm mt-1">Manage admin access and platform settings.</p>
+        <p className="text-muted-foreground text-sm mt-1">Manage admin access, team leaders, and platform settings.</p>
       </div>
 
       {/* Admin Management */}
@@ -232,6 +431,9 @@ export default function Settings() {
           )}
         </CardContent>
       </Card>
+
+      {/* Team Leaders */}
+      <TeamLeadersSection />
 
       {/* Security Info */}
       <Card>
