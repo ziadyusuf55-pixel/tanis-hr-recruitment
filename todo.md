@@ -817,3 +817,13 @@
 - [x] Frontend: coaching case list with filters (cycle, status, nesting label), KPI cards, search
 - [x] Coaching log is admin-only — NOT visible to agents on their portal
 - [x] 40/40 tests passing, 0 TypeScript errors
+
+## Round 57 — Historical Data Views
+
+- [x] Backend: cycleTracker.getMyTrackerHistory — returns list of all cycleKeys that have data for the agent (from cookie)
+- [x] Backend: cycleTracker.getMyTrackerByCycle — accepts cycleKey param, returns full tracker data for that cycle
+- [x] Backend: cycleTracker.getAgentHistory — admin procedure, accepts agentCrdts, returns all cycles with stats summary
+- [x] Backend: payrollV2.getAgentPayrollHistory — admin procedure, accepts crdts, returns all payroll records for that agent
+- [x] Frontend: Agent portal Cycle Tracker tab — cycle selector with ‹ › arrow nav; "Current" badge on active cycle; past cycles load from cache
+- [x] Frontend: AgentProfilePage (admin) — new "History" tab with two tables: Cycle Performance History (Revenue/Calls/Login Hrs/Rev/Hr/Profit/Deductions/OT/Days) + Payroll History (Base/Commission/OT/Deductions/Net Pay/Status)
+- [x] 40/40 tests passing, 0 TypeScript errors

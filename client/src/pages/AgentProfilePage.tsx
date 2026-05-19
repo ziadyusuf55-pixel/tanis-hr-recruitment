@@ -15,7 +15,7 @@ import {
   ArrowLeft, User, FileText, CreditCard, MessageSquare,
   Plus, Trash2, ExternalLink, CheckCircle2, AlertTriangle, Info,
   Star, Building2, Phone, Mail, Calendar, Clock, Shield,
-  LogOut, XCircle, KeyRound, MoreVertical, Pencil, GraduationCap,
+  LogOut, XCircle, KeyRound, MoreVertical, Pencil, GraduationCap, History,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -26,7 +26,7 @@ import { toast } from "sonner";
 const BRAND = "#8B1A1A";
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-type Tab = "documents" | "payment" | "comments" | "coaching";
+type Tab = "documents" | "payment" | "comments" | "coaching" | "history";
 
 const TAG_CONFIG = {
   note:     { label: "Note",     icon: Info,          color: "bg-blue-100 text-blue-700 border-blue-200" },
@@ -334,6 +334,7 @@ export default function AgentProfilePage() {
           { id: "payment",   label: "Payment Preferences", icon: CreditCard, count: paymentMethods.length },
           { id: "comments",  label: "Comments / Issues", icon: MessageSquare, count: comments.length },
           { id: "coaching",  label: "Coaching", icon: GraduationCap, count: 0 },
+          { id: "history",   label: "History",  icon: History, count: 0 },
         ] as const).map(tab => (
           <button
             key={tab.id}
@@ -494,6 +495,11 @@ export default function AgentProfilePage() {
       {/* ── Coaching Tab ──────────────────────────────────────────────────── */}
       {activeTab === "coaching" && (
         <CoachingTab crdts={agent.crdts ?? ""} navigate={navigate} />
+      )}
+
+      {/* ── History Tab ───────────────────────────────────────────────────────────────────── */}
+      {activeTab === "history" && (
+        <AgentHistoryTab crdts={agent.crdts ?? ""} />
       )}
 
       {/* ── Edit Info Dialog ─────────────────────────────────────────────── */}
@@ -879,6 +885,154 @@ function CoachingTab({ crdts, navigate }: { crdts: string; navigate: (path: stri
               </CardContent>
             </Card>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── AgentHistoryTab ──────────────────────────────────────────────────────────
+
+function AgentHistoryTab({ crdts }: { crdts: string }) {
+  const { data: cycleHistory = [], isLoading: loadingCycles } = trpc.cycleTracker.getAgentHistory.useQuery(
+    { crdts },
+    { enabled: !!crdts }
+  );
+  const { data: payrollHistory = [], isLoading: loadingPayroll } = trpc.payrollV2.getAgentPayrollHistory.useQuery(
+    { crdts },
+    { enabled: !!crdts }
+  );
+
+  function formatMonth(m: string) {
+    const [y, mo] = m.split("-");
+    return new Date(parseInt(y), parseInt(mo) - 1).toLocaleString("en-US", { month: "short", year: "numeric" });
+  }
+
+  function fmtUSD(v: number) { return v > 0 ? `$${v.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}` : "—"; }
+  function fmtEGP(v: string | number | null | undefined) {
+    if (!v) return "—";
+    const n = typeof v === "number" ? v : parseFloat(v as string);
+    return isNaN(n) || n === 0 ? "—" : `EGP ${n.toLocaleString("en-EG", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  }
+
+  const isLoading = loadingCycles || loadingPayroll;
+
+  if (isLoading) {
+    return (
+      <div className="space-y-3">
+        {[1, 2, 3].map(i => <div key={i} className="h-16 rounded-xl bg-muted/40 animate-pulse" />)}
+      </div>
+    );
+  }
+
+  const hasCycles = cycleHistory.length > 0;
+  const hasPayroll = payrollHistory.length > 0;
+
+  if (!hasCycles && !hasPayroll) {
+    return (
+      <div className="text-center py-16 text-muted-foreground">
+        <History className="h-10 w-10 mx-auto mb-3 opacity-30" />
+        <p className="text-sm">No historical data found for this agent.</p>
+        <p className="text-xs mt-1">Upload cycle stats or payroll data to see history here.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-8">
+      {/* ── Cycle Performance History ── */}
+      {hasCycles && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <History className="h-4 w-4" style={{ color: BRAND }} />
+            <h3 className="text-sm font-semibold">Cycle Performance History</h3>
+            <span className="text-xs text-muted-foreground">({cycleHistory.length} cycles)</span>
+          </div>
+          <div className="overflow-x-auto rounded-xl border">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-muted/40">
+                  <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Cycle</th>
+                  <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Period</th>
+                  <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Revenue</th>
+                  <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Calls</th>
+                  <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Login Hrs</th>
+                  <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Rev/Hr</th>
+                  <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Profit</th>
+                  <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Deductions</th>
+                  <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">OT Hrs</th>
+                  <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Days</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cycleHistory.map((c, i) => (
+                  <tr key={c.cycleKey} className={`border-b last:border-0 ${i % 2 === 0 ? "" : "bg-muted/20"}`}>
+                    <td className="px-4 py-2.5 font-medium">{formatMonth(c.cycleKey)}</td>
+                    <td className="px-4 py-2.5 text-xs text-muted-foreground">{c.dateRange.start} → {c.dateRange.end}</td>
+                    <td className="px-4 py-2.5 text-right font-medium text-green-700">{fmtUSD(c.totalRevenue)}</td>
+                    <td className="px-4 py-2.5 text-right">{c.totalCalls > 0 ? c.totalCalls.toLocaleString() : "—"}</td>
+                    <td className="px-4 py-2.5 text-right">{c.totalLoginHours > 0 ? c.totalLoginHours.toFixed(1) : "—"}</td>
+                    <td className="px-4 py-2.5 text-right">{c.revPerHr > 0 ? `$${c.revPerHr.toFixed(2)}` : "—"}</td>
+                    <td className="px-4 py-2.5 text-right">{fmtUSD(c.totalProfit)}</td>
+                    <td className="px-4 py-2.5 text-right text-red-600">{c.totalDeductions > 0 ? `$${c.totalDeductions.toFixed(2)}` : "—"}</td>
+                    <td className="px-4 py-2.5 text-right">{c.totalOTHours > 0 ? c.totalOTHours.toFixed(1) : "—"}</td>
+                    <td className="px-4 py-2.5 text-right text-muted-foreground">{c.days}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── Payroll History ── */}
+      {hasPayroll && (
+        <div>
+          <div className="flex items-center gap-2 mb-3">
+            <CreditCard className="h-4 w-4" style={{ color: BRAND }} />
+            <h3 className="text-sm font-semibold">Payroll History</h3>
+            <span className="text-xs text-muted-foreground">({payrollHistory.length} months)</span>
+          </div>
+          <div className="overflow-x-auto rounded-xl border">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b bg-muted/40">
+                  <th className="text-left px-4 py-2.5 font-medium text-muted-foreground">Month</th>
+                  <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Base</th>
+                  <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Commission</th>
+                  <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">OT 1.5×</th>
+                  <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">OT 2×</th>
+                  <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">OT 3×</th>
+                  <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Deductions</th>
+                  <th className="text-right px-4 py-2.5 font-medium text-muted-foreground">Net Pay</th>
+                  <th className="text-center px-4 py-2.5 font-medium text-muted-foreground">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payrollHistory.map((p, i) => (
+                  <tr key={p.id} className={`border-b last:border-0 ${i % 2 === 0 ? "" : "bg-muted/20"}`}>
+                    <td className="px-4 py-2.5 font-medium">{formatMonth(p.month)}</td>
+                    <td className="px-4 py-2.5 text-right">{fmtEGP(p.baseSalary)}</td>
+                    <td className="px-4 py-2.5 text-right text-green-700">{fmtEGP(p.commissionEgp)}</td>
+                    <td className="px-4 py-2.5 text-right">{p.ot1x5Hours && parseFloat(String(p.ot1x5Hours)) > 0 ? `${parseFloat(String(p.ot1x5Hours)).toFixed(1)}h` : "—"}</td>
+                    <td className="px-4 py-2.5 text-right">{p.ot2xHours && parseFloat(String(p.ot2xHours)) > 0 ? `${parseFloat(String(p.ot2xHours)).toFixed(1)}h` : "—"}</td>
+                    <td className="px-4 py-2.5 text-right">{p.ot3xHours && parseFloat(String(p.ot3xHours)) > 0 ? `${parseFloat(String(p.ot3xHours)).toFixed(1)}h` : "—"}</td>
+                    <td className="px-4 py-2.5 text-right text-red-600">{fmtEGP(p.totalDeductions)}</td>
+                    <td className="px-4 py-2.5 text-right font-semibold">{fmtEGP(p.netPay)}</td>
+                    <td className="px-4 py-2.5 text-center">
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                        p.paymentStatus === "paid"
+                          ? "bg-emerald-100 text-emerald-700"
+                          : "bg-amber-100 text-amber-700"
+                      }`}>
+                        {p.paymentStatus === "paid" ? "✓ Paid" : "⏳ Pending"}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

@@ -2063,6 +2063,21 @@ const payrollV2Router = router({
         return getMyPayrollRecordByCrdts(agent.crdts, input.month);
       } catch { return null; }
     }),
+  // Admin: get all payroll records for a specific agent by CRDTS
+  getAgentPayrollHistory: protectedProcedure
+    .input(z.object({ crdts: z.string() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { payrollRecords } = await import("../drizzle/schema");
+      const { eq, asc } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      const rows = await db.select().from(payrollRecords)
+        .where(eq(payrollRecords.crdts, input.crdts))
+        .orderBy(asc(payrollRecords.month));
+      return rows.reverse(); // newest first
+    }),
+
   // Admin: delete all payroll V2 rows for a specific month (undo a bad import)
   deleteForMonth: protectedProcedure
     .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
@@ -2374,6 +2389,89 @@ const cycleTrackerRouter = router({
         avgRevPerHr: a.totalLoginHours > 0 ? a.totalRevenue / a.totalLoginHours : 0,
       }));
     }),
+  // Agent: get list of all cycle keys that have data for this agent
+  getMyTrackerHistory: publicProcedure
+    .query(async ({ ctx }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) return [];
+      let traineeCode: string;
+      try {
+        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
+        traineeCode = decoded.traineeCode;
+      } catch { return []; }
+      const { workforceAgents, cycleStats } = await import("../drizzle/schema");
+      const { getDb } = await import("./db");
+      const dbConn = await getDb();
+      if (!dbConn) return [];
+      const { eq, asc } = await import("drizzle-orm");
+      const agent = await dbConn.select({ crdts: workforceAgents.crdts })
+        .from(workforceAgents).where(eq(workforceAgents.traineeCode, traineeCode)).limit(1);
+      const crdts = agent[0]?.crdts;
+      if (!crdts) return [];
+      const rows = await dbConn.selectDistinct({ cycleKey: cycleStats.cycleKey })
+        .from(cycleStats).where(eq(cycleStats.crdts, crdts)).orderBy(asc(cycleStats.cycleKey));
+      return rows.map(r => r.cycleKey).reverse(); // newest first
+    }),
+
+  // Agent: get cycle tracker data for a specific cycle (by cookie)
+  getMyTrackerByCycle: publicProcedure
+    .input(z.object({ cycleKey: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .query(async ({ ctx, input }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) return null;
+      let traineeCode: string;
+      try {
+        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
+        traineeCode = decoded.traineeCode;
+      } catch { return null; }
+      const { workforceAgents } = await import("../drizzle/schema");
+      const { getDb } = await import("./db");
+      const dbConn = await getDb();
+      if (!dbConn) return null;
+      const { eq } = await import("drizzle-orm");
+      const agent = await dbConn.select({ crdts: workforceAgents.crdts })
+        .from(workforceAgents).where(eq(workforceAgents.traineeCode, traineeCode)).limit(1);
+      const crdts = agent[0]?.crdts;
+      if (!crdts) return null;
+      const dateRange = getCycleDateRange(input.cycleKey);
+      const data = await getCycleTrackerForAgent(crdts, input.cycleKey);
+      return { ...data, cycleKey: input.cycleKey, dateRange };
+    }),
+
+  // Admin: get all cycle history for a specific agent by CRDTS
+  getAgentHistory: protectedProcedure
+    .input(z.object({ crdts: z.string() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { cycleStats, cycleDeductions, cycleOT } = await import("../drizzle/schema");
+      const { eq, asc } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      // Get all distinct cycle keys for this agent
+      const cycleRows = await db.selectDistinct({ cycleKey: cycleStats.cycleKey })
+        .from(cycleStats).where(eq(cycleStats.crdts, input.crdts)).orderBy(asc(cycleStats.cycleKey));
+      const cycleKeys = cycleRows.map(r => r.cycleKey).reverse();
+      // For each cycle, aggregate stats
+      const result = await Promise.all(cycleKeys.map(async (cycleKey) => {
+        const [stats, deds, ots] = await Promise.all([
+          db.select().from(cycleStats).where(eq(cycleStats.crdts, input.crdts)).then(rows => rows.filter(r => r.cycleKey === cycleKey)),
+          db.select().from(cycleDeductions).where(eq(cycleDeductions.crdts, input.crdts)).then(rows => rows.filter(r => r.cycleKey === cycleKey)),
+          db.select().from(cycleOT).where(eq(cycleOT.crdts, input.crdts)).then(rows => rows.filter(r => r.cycleKey === cycleKey)),
+        ]);
+        const totalRevenue = stats.reduce((s, r) => s + Number(r.revenue ?? 0), 0);
+        const totalCalls = stats.reduce((s, r) => s + Number(r.totalCalls ?? 0), 0);
+        const totalLoginHours = stats.reduce((s, r) => s + Number(r.loginHours ?? 0), 0);
+        const totalProfit = stats.reduce((s, r) => s + Number(r.profit ?? 0), 0);
+        const totalDeductions = deds.reduce((s, r) => s + Number(r.deductionAmount ?? 0), 0);
+        const totalOTHours = ots.reduce((s, r) => s + Number(r.hours ?? 0), 0);
+        const totalOTEgp = ots.reduce((s, r) => s + Number(r.egpAmount ?? 0), 0);
+        const revPerHr = totalLoginHours > 0 ? totalRevenue / totalLoginHours : 0;
+        const dateRange = getCycleDateRange(cycleKey);
+        return { cycleKey, dateRange, totalRevenue, totalCalls, totalLoginHours, totalProfit, totalDeductions, totalOTHours, totalOTEgp, revPerHr, days: stats.length };
+      }));
+      return result;
+    }),
+
   // Admin: delete all stats rows for a specific date (undo a bad upload)
   deleteStatsForDate: protectedProcedure
     .input(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }))

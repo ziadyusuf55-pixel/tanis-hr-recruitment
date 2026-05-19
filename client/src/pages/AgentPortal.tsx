@@ -1898,12 +1898,28 @@ function OperationPlanTab({ theme }: { theme: Theme }) {
 
 // ─── Cycle Tracker Tab ────────────────────────────────────────────────────
 function CycleTrackerTab({ theme }: { theme: Theme }) {
-  const { data, isLoading } = trpc.cycleTracker.getMyTracker.useQuery(undefined, {
-    refetchInterval: 2 * 60 * 60 * 1000, // refetch every 2 hours
-    staleTime: 30 * 60 * 1000,
-  });
+  // Load list of all available cycles for this agent
+  const { data: availableCycles = [], isLoading: loadingCycles } = trpc.cycleTracker.getMyTrackerHistory.useQuery();
+  const [selectedCycle, setSelectedCycle] = useState<string | null>(null);
+  // Default to current cycle key
+  const currentCycleKey = (() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`; })();
+  const activeCycle = selectedCycle ?? (availableCycles.includes(currentCycleKey) ? currentCycleKey : availableCycles[0] ?? currentCycleKey);
+  const cycleIndex = availableCycles.indexOf(activeCycle);
+  const prevCycle = cycleIndex < availableCycles.length - 1 ? availableCycles[cycleIndex + 1] : null; // older
+  const nextCycle = cycleIndex > 0 ? availableCycles[cycleIndex - 1] : null; // newer
+  const isCurrentCycle = activeCycle === currentCycleKey;
 
-  if (isLoading) {
+  const { data, isLoading } = trpc.cycleTracker.getMyTrackerByCycle.useQuery(
+    { cycleKey: activeCycle },
+    { enabled: !!activeCycle, refetchInterval: isCurrentCycle ? 2 * 60 * 60 * 1000 : false, staleTime: isCurrentCycle ? 30 * 60 * 1000 : Infinity }
+  );
+
+  function formatCycleLabel(ck: string) {
+    const [y, m] = ck.split("-");
+    return new Date(parseInt(y), parseInt(m) - 1).toLocaleString("en-US", { month: "long", year: "numeric" });
+  }
+
+  if (loadingCycles || isLoading) {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: BRAND, borderTopColor: "transparent" }} />
@@ -1955,6 +1971,22 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
           <p className="text-xs mt-0.5" style={{ color: theme.textMuted }}>Data shown is indicative and subject to change. Final payslip available on the 25th. Cycle: {dateRange.start} → {dateRange.end}</p>
         </div>
       </div>
+
+      {/* Cycle Selector */}
+      {availableCycles.length > 0 && (
+        <div className="flex items-center gap-3">
+          <button disabled={!prevCycle} onClick={() => setSelectedCycle(prevCycle!)}
+            className="h-8 w-8 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30 text-lg"
+            style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}>&#8249;</button>
+          <span className="text-base font-semibold min-w-[180px] text-center" style={{ color: theme.text }}>
+            {formatCycleLabel(activeCycle)}
+            {isCurrentCycle && <span className="ml-2 text-xs font-normal px-2 py-0.5 rounded-full" style={{ background: `${BRAND}22`, color: BRAND }}>Current</span>}
+          </span>
+          <button disabled={!nextCycle} onClick={() => setSelectedCycle(nextCycle!)}
+            className="h-8 w-8 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30 text-lg"
+            style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}>&#8250;</button>
+        </div>
+      )}
 
       {/* Section 1 — Today */}
       <div className="rounded-xl p-5 space-y-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
