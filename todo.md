@@ -846,3 +846,38 @@
 - [x] Frontend: Candidates page — "Import Calendar" button opens preview modal with same pattern
 - [x] HubSpot lifecycle stage → Tanis pipeline stage mapping built into importContacts procedure
 - [x] 43/43 tests passing, 0 TypeScript errors
+
+## Round 59 — Duplicate/Anomaly Fixes + Calendar Date Filter
+
+- [ ] Priority 1: Convert bulkInsertViolations to upsert on (agentCode, date, type) — prevent re-upload duplicates
+- [ ] Priority 1: Convert bulkInsertAdherence to upsert on (agentCode/crdts, date, type) — prevent re-upload duplicates
+- [ ] Priority 1: Convert bulkInsertQuality to upsert on (agentCode/crdts, date, type) — prevent re-upload duplicates
+- [ ] Priority 1: Add phone suffix dedup guard to bulkInsertCandidates — skip rows where phone already exists, return skipped count
+- [ ] Priority 1: Add final phone+email guard to importContacts (HubSpot) — skip if already exists in DB at import time
+- [ ] Priority 1: Add final phone+email guard to importCalendarEvents — skip if already exists in DB at import time
+- [ ] Priority 2: Cycle stats upload — return warnings list: CRDTS not in workforce, zero loginHours with revenue > 0, revenue > 3x agent's own average
+- [ ] Priority 2: Payroll upload — return warnings list: agentCode not found in workforce, netPay < 0, deductions > baseSalary
+- [ ] Priority 2: Show warnings panel on upload result screen (yellow warning cards, dismissible)
+- [ ] Priority 3: Normalize phone to Egyptian format (01XXXXXXXXX) before storing from HubSpot import
+- [ ] Priority 3: Normalize phone to Egyptian format before storing from Calendar import
+- [ ] Priority 3: Fix HubSpot phone dedup to use last-9-digit suffix match (same as candidate search) instead of exact match
+- [ ] Calendar import: Add date range filter to previewCalendarEvents procedure (accepts dateFrom/dateTo params)
+- [ ] Calendar import: Add date range selector to import modal UI (Today / Yesterday / Last 2 days / Last 7 days / Custom date picker)
+
+## Round 59 — Duplicate/Anomaly Fixes + Calendar Date Filter
+
+- [x] P1: Convert bulkInsertViolations to upsert on (agentCode, date, violationType) — added UNIQUE constraint + ON DUPLICATE KEY UPDATE
+- [x] P1: Convert bulkInsertAdherence to upsert on (agentCode, date, status) — added UNIQUE constraint + ON DUPLICATE KEY UPDATE
+- [x] P1: Convert bulkInsertQuality to upsert on (agentCode, date, evaluator) — added UNIQUE constraint + ON DUPLICATE KEY UPDATE
+- [x] P1: bulkInsertCandidates now checks phone suffix + email before each insert — skips duplicates, returns {inserted, skipped, skippedNames}
+- [x] P1: importContacts (HubSpot) now has final dedup guard (email + phone last-9-digit check) before inserting
+- [x] P1: importCalendarEvents now has final dedup guard (email + phone last-9-digit check) before inserting
+- [x] P2: uploadStats now returns warnings[] for: CRDTS not in workforce, zero login hours with revenue, revenue > 3x agent average
+- [x] P2: uploadPayrollV2 now returns warnings[] for: CRDTS not in workforce, negative net pay, deductions > base salary
+- [x] P3: importContacts normalizes phone to Egyptian format (01XXXXXXXXX) — strips +20/0020 country code
+- [x] P3: importCalendarEvents normalizes phone to Egyptian format (01XXXXXXXXX) — strips +20/0020 country code
+- [x] Calendar import modal: date range filter with preset buttons (Today / Yesterday / Last 2 days / Last 7 days / Last 30 days / Custom date picker)
+- [x] Calendar import modal: Change date range link to go back and re-fetch with different range
+- [x] Calendar import modal: raw event data preserved for proper import (meetLink, eventId, exact interviewDate)
+- [x] previewCalendarEvents converted from query to mutation to accept dateFrom/dateTo input
+- [x] 43/43 tests passing, 0 TypeScript errors

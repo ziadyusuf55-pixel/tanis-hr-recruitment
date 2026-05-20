@@ -107,11 +107,16 @@ export default function Candidates() {
   });
 
   const bulkImport = trpc.candidates.bulkImport.useMutation({
-    onSuccess: (res: { imported: number } | void) => {
+    onSuccess: (res) => {
       utils.candidates.list.invalidate();
       utils.dashboard.kpis.invalidate();
-      const count = (res as { imported: number } | undefined)?.imported ?? csvRows.length;
-      toast.success(`Imported ${count} candidates`);
+      const inserted = res?.inserted ?? csvRows.length;
+      const skipped = res?.skipped ?? 0;
+      if (skipped > 0) {
+        toast.success(`Imported ${inserted} candidates. ${skipped} skipped (already exist).`);
+      } else {
+        toast.success(`Imported ${inserted} candidates`);
+      }
       setImportOpen(false);
       setCsvRows([]);
     },
@@ -1625,7 +1630,15 @@ function CalendarImportPanel({
   onClose: () => void;
   onImported: () => void;
 }) {
-  const utils = trpc.useUtils();
+  // Date range state
+  const today = new Date().toISOString().slice(0, 10);
+  const [datePreset, setDatePreset] = useState<"today" | "yesterday" | "2days" | "7days" | "30days" | "custom">("2days");
+  const [customFrom, setCustomFrom] = useState(today);
+  const [customTo, setCustomTo] = useState(today);
+
+  // Raw events from backend (needed for proper import with meetLink etc.)
+  type CalEvent = { eventId: string; candidateName: string; candidateEmail: string; candidatePhone: string; interviewDate: string; meetLink: string; status: "new" | "duplicate"; matchedId?: number };
+  const [rawEvents, setRawEvents] = useState<CalEvent[]>([]);
 
   const doImport = trpc.integrations.importCalendarEvents.useMutation({
     onSuccess: (data: { imported: number }) => {
@@ -1635,12 +1648,28 @@ function CalendarImportPanel({
     onError: (err: unknown) => toast.error(getErrorMessage(err)),
   });
 
-  type CalEvent = { eventId: string; candidateName: string; candidateEmail: string; candidatePhone: string; interviewDate: string; meetLink: string; status: "new" | "duplicate"; matchedId?: number };
+  const doPreview = trpc.integrations.previewCalendarEvents.useMutation({
+    onError: (err: unknown) => toast.error(getErrorMessage(err)),
+  });
+
+  // Compute date range from preset
+  const getDateRange = () => {
+    const d = new Date();
+    const fmt = (dt: Date) => dt.toISOString().slice(0, 10);
+    if (datePreset === "today") return { dateFrom: fmt(d), dateTo: fmt(d) };
+    if (datePreset === "yesterday") { const y = new Date(d); y.setDate(y.getDate() - 1); return { dateFrom: fmt(y), dateTo: fmt(y) }; }
+    if (datePreset === "2days") { const f = new Date(d); f.setDate(f.getDate() - 2); return { dateFrom: fmt(f), dateTo: fmt(d) }; }
+    if (datePreset === "7days") { const f = new Date(d); f.setDate(f.getDate() - 7); return { dateFrom: fmt(f), dateTo: fmt(d) }; }
+    if (datePreset === "30days") { const f = new Date(d); f.setDate(f.getDate() - 30); return { dateFrom: fmt(f), dateTo: fmt(d) }; }
+    return { dateFrom: customFrom, dateTo: customTo };
+  };
 
   const handleFetch = async () => {
     setLoading(true);
     try {
-      const result = await utils.client.integrations.previewCalendarEvents.query();
+      const range = getDateRange();
+      const result = await doPreview.mutateAsync(range);
+      setRawEvents(result.events);
       const rows: ImportPreviewRow[] = result.events.map((e: CalEvent) => ({
         name: e.candidateName,
         email: e.candidateEmail,
@@ -1651,8 +1680,8 @@ function CalendarImportPanel({
       setPreview(rows);
       const newIds = new Set(rows.map((_, i) => i).filter((i) => rows[i].status === "new"));
       setSelectedIds(newIds);
-    } catch (err: unknown) {
-      toast.error(getErrorMessage(err));
+    } catch {
+      // error handled by onError above
     } finally {
       setLoading(false);
     }
@@ -1665,15 +1694,14 @@ function CalendarImportPanel({
   };
 
   const handleImport = () => {
-    const rows = Array.from(selectedIds).map((i) => preview[i]);
-    // Build events array matching the importCalendarEvents input schema
-    doImport.mutate({ events: rows.map((r, idx) => ({
-      eventId: `cal-${idx}`,
-      candidateName: r.name,
-      candidateEmail: r.email,
-      candidatePhone: r.phone,
-      interviewDate: r.source.replace("Interview ", ""),
-      meetLink: "",
+    const selectedRaw = Array.from(selectedIds).map((i) => rawEvents[i]).filter(Boolean);
+    doImport.mutate({ events: selectedRaw.map(e => ({
+      eventId: e.eventId,
+      candidateName: e.candidateName,
+      candidateEmail: e.candidateEmail,
+      candidatePhone: e.candidatePhone,
+      interviewDate: e.interviewDate,
+      meetLink: e.meetLink,
     })) });
   };
 
@@ -1683,23 +1711,60 @@ function CalendarImportPanel({
     return <span className="text-xs font-medium text-orange-700 bg-orange-100 px-2 py-0.5 rounded-full">Conflict</span>;
   };
 
+  const PRESETS = [
+    { key: "today", label: "Today" },
+    { key: "yesterday", label: "Yesterday" },
+    { key: "2days", label: "Last 2 days" },
+    { key: "7days", label: "Last 7 days" },
+    { key: "30days", label: "Last 30 days" },
+    { key: "custom", label: "Custom" },
+  ] as const;
+
   return (
     <div className="space-y-4 py-2">
+      {/* Date range filter */}
+      <div className="space-y-2">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Filter by Interview Date</p>
+        <div className="flex flex-wrap gap-1.5">
+          {PRESETS.map(p => (
+            <button
+              key={p.key}
+              onClick={() => setDatePreset(p.key)}
+              className={`text-xs px-3 py-1 rounded-full border transition-colors ${
+                datePreset === p.key
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-background border-border hover:bg-muted"
+              }`}
+            >{p.label}</button>
+          ))}
+        </div>
+        {datePreset === "custom" && (
+          <div className="flex gap-2 items-center">
+            <Input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)} className="h-8 text-xs w-36" />
+            <span className="text-xs text-muted-foreground">to</span>
+            <Input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} className="h-8 text-xs w-36" />
+          </div>
+        )}
+      </div>
+
       {preview.length === 0 ? (
-        <div className="text-center py-8 space-y-3">
+        <div className="text-center py-6 space-y-3">
           <Calendar className="h-10 w-10 text-muted-foreground mx-auto" />
-          <p className="text-sm text-muted-foreground">Fetches upcoming interview events from your connected Google Calendar.</p>
+          <p className="text-sm text-muted-foreground">Fetches interview events from your connected Google Calendar within the selected date range.</p>
           <p className="text-xs text-muted-foreground">Extracts candidate name, email, and phone from event attendees and description.</p>
           {loading ? (
             <Button disabled><RefreshCw className="h-4 w-4 mr-2 animate-spin" /> Fetching...</Button>
           ) : (
-            <Button onClick={() => handleFetch()}>Fetch Calendar Events</Button>
+            <Button onClick={handleFetch}>Fetch Calendar Events</Button>
           )}
         </div>
       ) : (
         <>
           <div className="flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">{preview.length} interview events found — {preview.filter(r => r.status === "new").length} new candidates</p>
+            <div className="space-y-0.5">
+              <p className="text-sm text-muted-foreground">{preview.length} interview events found — {preview.filter(r => r.status === "new").length} new candidates</p>
+              <button onClick={() => { setPreview([]); setRawEvents([]); setSelectedIds(new Set()); }} className="text-xs text-primary hover:underline">← Change date range</button>
+            </div>
             <div className="flex gap-2">
               <Button variant="outline" size="sm" onClick={() => {
                 const newIds = new Set(preview.map((_, i) => i).filter((i) => preview[i].status === "new"));
@@ -1716,7 +1781,7 @@ function CalendarImportPanel({
                   <th className="px-3 py-2 text-left font-medium">Name</th>
                   <th className="px-3 py-2 text-left font-medium">Email</th>
                   <th className="px-3 py-2 text-left font-medium">Phone</th>
-                  <th className="px-3 py-2 text-left font-medium">Event</th>
+                  <th className="px-3 py-2 text-left font-medium">Interview Date</th>
                   <th className="px-3 py-2 text-left font-medium">Status</th>
                 </tr>
               </thead>
@@ -1729,7 +1794,7 @@ function CalendarImportPanel({
                     <td className="px-3 py-2 font-medium">{row.name}</td>
                     <td className="px-3 py-2 text-muted-foreground">{row.email || "—"}</td>
                     <td className="px-3 py-2 text-muted-foreground">{row.phone || "—"}</td>
-                    <td className="px-3 py-2 text-muted-foreground truncate max-w-[120px]">{row.source}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{row.source}</td>
                     <td className="px-3 py-2">{statusBadge(row.status)}{row.existingName && <span className="ml-1 text-muted-foreground">({row.existingName})</span>}</td>
                   </tr>
                 ))}

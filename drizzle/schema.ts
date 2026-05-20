@@ -607,7 +607,9 @@ export const agentViolations = mysqlTable("agent_violations", {
   month: varchar("month", { length: 7 }),                       // YYYY-MM — derived from date
   uploadedAt: bigint("uploadedAt", { mode: "number" }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  uqViolationAgentDateType: uniqueIndex("uq_violation_agent_date_type").on(t.agentCode, t.date, t.type),
+}));
 export type AgentViolation = typeof agentViolations.$inferSelect;
 export type InsertAgentViolation = typeof agentViolations.$inferInsert;
 
@@ -652,7 +654,9 @@ export const adherenceLog = mysqlTable("adherence_log", {
   uploadedBy: varchar("uploadedBy", { length: 255 }),
   uploadedAt: bigint("uploadedAt", { mode: "number" }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  uqAdherenceAgentDateType: uniqueIndex("uq_adherence_agent_date_type").on(t.agentCode, t.date, t.type),
+}));
 export type AdherenceLog = typeof adherenceLog.$inferSelect;
 export type InsertAdherenceLog = typeof adherenceLog.$inferInsert;
 
@@ -674,7 +678,9 @@ export const qualityLog = mysqlTable("quality_log", {
   uploadedBy: varchar("uploadedBy", { length: 255 }),
   uploadedAt: bigint("uploadedAt", { mode: "number" }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  uqQualityAgentDateType: uniqueIndex("uq_quality_agent_date_type").on(t.agentCode, t.date, t.type),
+}));
 export type QualityLog = typeof qualityLog.$inferSelect;
 export type InsertQualityLog = typeof qualityLog.$inferInsert;
 

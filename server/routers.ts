@@ -2023,7 +2023,36 @@ const payrollV2Router = router({
       for (const row of input.rows) {
         await upsertPayrollRecordV2({ ...row, month: input.month, uploadedBy, uploadedAt });
       }
-      return { success: true, count: input.rows.length };
+
+      // Anomaly detection
+      const { getDb } = await import("./db");
+      const { workforceAgents } = await import("../drizzle/schema");
+      const db = await getDb();
+      const warnings: Array<{ crdts: string; alias?: string; type: string; message: string }> = [];
+
+      if (db) {
+        const agents = await db.select({ crdts: workforceAgents.crdts, alias: workforceAgents.alias }).from(workforceAgents);
+        const knownCrdts = new Set(agents.map(a => a.crdts).filter(Boolean) as string[]);
+        const crdtsToAlias = new Map(agents.filter(a => a.crdts).map(a => [a.crdts!, a.alias ?? a.crdts!]));
+
+        for (const row of input.rows) {
+          const alias = crdtsToAlias.get(row.crdts) ?? row.crdts;
+          // Agent not in workforce
+          if (!knownCrdts.has(row.crdts)) {
+            warnings.push({ crdts: row.crdts, alias, type: "unknown_agent", message: `CRDTS "${row.crdts}" not found in workforce roster` });
+          }
+          // Negative net pay
+          if (row.netPay !== undefined && row.netPay < 0) {
+            warnings.push({ crdts: row.crdts, alias, type: "negative_net_pay", message: `Net pay is negative (${row.netPay.toFixed(2)} EGP) — check deductions` });
+          }
+          // Total deductions exceed base salary
+          if (row.totalDeductions !== undefined && row.baseSalary !== undefined && row.baseSalary > 0 && row.totalDeductions > row.baseSalary) {
+            warnings.push({ crdts: row.crdts, alias, type: "deductions_exceed_salary", message: `Total deductions (${row.totalDeductions.toFixed(0)} EGP) exceed base salary (${row.baseSalary.toFixed(0)} EGP)` });
+          }
+        }
+      }
+
+      return { success: true, count: input.rows.length, warnings };
     }),
 
   getStatusPage: protectedProcedure
@@ -2263,7 +2292,54 @@ const cycleTrackerRouter = router({
       const cycleKey = getCurrentCycleKey();
       const rows = input.rows.map(r => ({ ...r, cycleKey }));
       await upsertCycleStats(rows);
-      return { count: rows.length, cycleKey };
+
+      // Anomaly detection
+      const { getDb } = await import("./db");
+      const { workforceAgents } = await import("../drizzle/schema");
+      const { cycleStats: cycleStatsTable } = await import("../drizzle/schema");
+      const db = await getDb();
+      const warnings: Array<{ crdts: string; alias?: string; type: string; message: string }> = [];
+
+      if (db) {
+        // Load known CRDTS from workforce
+        const agents = await db.select({ crdts: workforceAgents.crdts, alias: workforceAgents.alias }).from(workforceAgents);
+        const knownCrdts = new Set(agents.map(a => a.crdts).filter(Boolean) as string[]);
+        const crdtsToAlias = new Map(agents.filter(a => a.crdts).map(a => [a.crdts!, a.alias ?? a.crdts!]));
+
+        // Load historical averages for revenue spike detection
+        const { avg } = await import("drizzle-orm");
+        const allStats = await db.select({ crdts: cycleStatsTable.crdts, revenue: cycleStatsTable.revenue }).from(cycleStatsTable);
+        const avgByAgent = new Map<string, number>();
+        const grouped = new Map<string, number[]>();
+        for (const s of allStats) {
+          if (!s.crdts) continue;
+          if (!grouped.has(s.crdts)) grouped.set(s.crdts, []);
+          const rev = parseFloat(s.revenue ?? "0");
+          if (rev > 0) grouped.get(s.crdts)!.push(rev);
+        }
+        Array.from(grouped.entries()).forEach(([crdts, revs]) => {
+          if (revs.length > 0) avgByAgent.set(crdts, revs.reduce((a: number, b: number) => a + b, 0) / revs.length);
+        });
+
+        for (const row of rows) {
+          const alias = crdtsToAlias.get(row.crdts) ?? row.alias ?? row.crdts;
+          // Unknown CRDTS
+          if (!knownCrdts.has(row.crdts)) {
+            warnings.push({ crdts: row.crdts, alias, type: "unknown_agent", message: `CRDTS "${row.crdts}" not found in workforce roster` });
+          }
+          // Zero login hours with revenue
+          if (row.loginHours === 0 && row.revenue > 0) {
+            warnings.push({ crdts: row.crdts, alias, type: "zero_hours_revenue", message: `Revenue $${row.revenue} recorded with 0 login hours` });
+          }
+          // Revenue spike: > 3x historical average
+          const histAvg = avgByAgent.get(row.crdts);
+          if (histAvg && row.revenue > histAvg * 3) {
+            warnings.push({ crdts: row.crdts, alias, type: "revenue_spike", message: `Revenue $${row.revenue} is ${(row.revenue / histAvg).toFixed(1)}x above historical average ($${histAvg.toFixed(0)})` });
+          }
+        }
+      }
+
+      return { count: rows.length, cycleKey, warnings };
     }),
 
   // Admin: upload deductions Excel rows
@@ -2967,17 +3043,41 @@ const hubspotRouter = router({
       const { candidates: candidatesTable } = await import("../drizzle/schema");
       const now = Date.now();
       let imported = 0;
+
+      // Load existing phones/emails for final dedup guard
+      const existing = await db.select({ email: candidatesTable.email, phone: candidatesTable.phone }).from(candidatesTable);
+      const existingEmails = new Set(existing.filter(c => c.email).map(c => c.email!.toLowerCase()));
+      const existingPhones = new Set(existing.filter(c => c.phone).map(c => c.phone!.replace(/\D/g, "").slice(-9)));
+
       for (const c of input.contacts) {
+        // Normalize phone to Egyptian format (01XXXXXXXXX)
+        const rawPhone = c.phone?.replace(/\D/g, "") || "";
+        let normalizedPhone: string | null = null;
+        if (rawPhone) {
+          // Strip country code: +20 or 0020 → 0
+          const local = rawPhone.startsWith("20") ? "0" + rawPhone.slice(2) : rawPhone;
+          normalizedPhone = local.startsWith("0") ? local : "0" + local;
+          // Validate: Egyptian mobile is 11 digits starting with 01
+          if (!/^01[0-9]{9}$/.test(normalizedPhone)) normalizedPhone = rawPhone || null;
+        }
+
+        // Final dedup guard
+        const emailKey = c.email?.toLowerCase() || "";
+        const phoneKey = normalizedPhone?.replace(/\D/g, "").slice(-9) || "";
+        if ((emailKey && existingEmails.has(emailKey)) || (phoneKey && existingPhones.has(phoneKey))) continue;
+
         await db.insert(candidatesTable).values({
           name: c.name,
           email: c.email || null,
-          phone: c.phone || null,
+          phone: normalizedPhone,
           status: (c.stage as any) || "applied",
           positionApplied: "Call Center Agent",
           source: "other" as const,
           appliedAt: now,
           notes: `Imported from HubSpot`,
         });
+        if (emailKey) existingEmails.add(emailKey);
+        if (phoneKey) existingPhones.add(phoneKey);
         imported++;
       }
       return { imported };
@@ -3012,7 +3112,12 @@ const integrationsRouter = router({
   }),
 
   // Preview Google Calendar events as candidate imports
-  previewCalendarEvents: protectedProcedure.query(async () => {
+  previewCalendarEvents: protectedProcedure
+    .input(z.object({
+      dateFrom: z.string().optional(), // ISO date string, e.g. "2026-05-19"
+      dateTo: z.string().optional(),   // ISO date string, e.g. "2026-05-21"
+    }).optional())
+    .mutation(async ({ input }) => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
@@ -3047,9 +3152,13 @@ const integrationsRouter = router({
       }).where(eq(integrationsTokens.provider, "google"));
     }
 
-    // Fetch calendar events (last 90 days + upcoming 30 days)
-    const timeMin = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
-    const timeMax = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    // Fetch calendar events — use provided date range or default to last 90 days + next 30 days
+    const timeMin = input?.dateFrom
+      ? new Date(input.dateFrom + "T00:00:00").toISOString()
+      : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const timeMax = input?.dateTo
+      ? new Date(input.dateTo + "T23:59:59").toISOString()
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     const calUrl = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&maxResults=250&singleEvents=true&orderBy=startTime`;
     const calRes = await fetch(calUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
     if (!calRes.ok) {
@@ -3142,12 +3251,32 @@ const integrationsRouter = router({
       const { candidates: candidatesTable } = await import("../drizzle/schema");
       const now = Date.now();
       let imported = 0;
+
+      // Load existing phones/emails for final dedup guard
+      const existing = await db.select({ email: candidatesTable.email, phone: candidatesTable.phone }).from(candidatesTable);
+      const existingEmails = new Set(existing.filter(c => c.email).map(c => c.email!.toLowerCase()));
+      const existingPhones = new Set(existing.filter(c => c.phone).map(c => c.phone!.replace(/\D/g, "").slice(-9)));
+
       for (const e of input.events) {
+        // Normalize phone to Egyptian format (01XXXXXXXXX)
+        const rawPhone = e.candidatePhone?.replace(/\D/g, "") || "";
+        let normalizedPhone: string | null = null;
+        if (rawPhone) {
+          const local = rawPhone.startsWith("20") ? "0" + rawPhone.slice(2) : rawPhone;
+          normalizedPhone = local.startsWith("0") ? local : "0" + local;
+          if (!/^01[0-9]{9}$/.test(normalizedPhone)) normalizedPhone = rawPhone || null;
+        }
+
+        // Final dedup guard
+        const emailKey = e.candidateEmail?.toLowerCase() || "";
+        const phoneKey = normalizedPhone?.replace(/\D/g, "").slice(-9) || "";
+        if ((emailKey && existingEmails.has(emailKey)) || (phoneKey && existingPhones.has(phoneKey))) continue;
+
         const interviewTs = e.interviewDate ? new Date(e.interviewDate).getTime() : null;
         await db.insert(candidatesTable).values({
           name: e.candidateName,
           email: e.candidateEmail || null,
-          phone: e.candidatePhone || null,
+          phone: normalizedPhone,
           status: "interview_scheduled" as const,
           positionApplied: "Call Center Agent",
           source: "other" as const,
@@ -3155,6 +3284,8 @@ const integrationsRouter = router({
           appliedAt: interviewTs ?? now,
           notes: `Imported from Google Calendar. Interview: ${e.interviewDate}`,
         });
+        if (emailKey) existingEmails.add(emailKey);
+        if (phoneKey) existingPhones.add(phoneKey);
         imported++;
       }
       return { imported };

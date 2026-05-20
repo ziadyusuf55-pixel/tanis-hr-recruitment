@@ -250,26 +250,52 @@ export async function bulkInsertCandidates(
     source?: "linkedin" | "email" | "referral" | "walk_in" | "other";
     wave?: number;
   }>
-) {
+): Promise<{ inserted: number; skipped: number; skippedNames: string[] }> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const now = Date.now();
-  await db.insert(candidates).values(
-    rows.map((r) => ({
-      name: r.name,
-      email: r.email ?? undefined,
-      phone: r.phone ?? null,
-      positionApplied: r.positionApplied ?? "Call Center Agent",
-      resumeLink: r.resumeLink ?? null,
-      notes: r.notes ?? null,
-      age: r.age ?? null,
-      location: r.location ?? null,
-      source: r.source ?? null,
-      wave: r.wave ?? null,
-      status: "applied" as PipelineStage,
-      appliedAt: now,
-    }))
-  );
+
+  // Load existing candidates for dedup
+  const existing = await db.select({ id: candidates.id, email: candidates.email, phone: candidates.phone }).from(candidates);
+  const emailSet = new Set(existing.filter(c => c.email).map(c => c.email!.toLowerCase()));
+  const phoneSet = new Set(existing.filter(c => c.phone).map(c => c.phone!.replace(/\D/g, "").slice(-9)));
+
+  const toInsert: typeof rows = [];
+  const skippedNames: string[] = [];
+
+  for (const r of rows) {
+    const emailMatch = r.email && emailSet.has(r.email.toLowerCase());
+    const phoneMatch = r.phone && phoneSet.has(r.phone.replace(/\D/g, "").slice(-9));
+    if (emailMatch || phoneMatch) {
+      skippedNames.push(r.name);
+      continue;
+    }
+    toInsert.push(r);
+    // Add to sets to catch duplicates within the same file
+    if (r.email) emailSet.add(r.email.toLowerCase());
+    if (r.phone) phoneSet.add(r.phone.replace(/\D/g, "").slice(-9));
+  }
+
+  if (toInsert.length > 0) {
+    await db.insert(candidates).values(
+      toInsert.map((r) => ({
+        name: r.name,
+        email: r.email ?? undefined,
+        phone: r.phone ?? null,
+        positionApplied: r.positionApplied ?? "Call Center Agent",
+        resumeLink: r.resumeLink ?? null,
+        notes: r.notes ?? null,
+        age: r.age ?? null,
+        location: r.location ?? null,
+        source: r.source ?? null,
+        wave: r.wave ?? null,
+        status: "applied" as PipelineStage,
+        appliedAt: now,
+      }))
+    );
+  }
+
+  return { inserted: toInsert.length, skipped: skippedNames.length, skippedNames };
 }
 
 // ─── Activity Log ─────────────────────────────────────────────────────────────
@@ -1872,12 +1898,34 @@ export async function bulkInsertViolations(rows: Array<{
   if (!db) return;
   const { agentViolations } = await import("../drizzle/schema");
   if (rows.length === 0) return;
-  await db.insert(agentViolations).values(rows.map(r => ({
-    ...r,
-    status: "approved" as const,
-    hours: r.hours != null ? String(r.hours) : null,
-    deduction: r.deduction != null ? String(r.deduction) : null,
-  })));
+  const now = Date.now();
+  for (const r of rows) {
+    const vals = {
+      agentCode: r.agentCode,
+      crdts: r.crdts,
+      date: r.date,
+      type: r.type,
+      category: r.category,
+      status: "approved" as const,
+      hours: r.hours != null ? String(r.hours) : null,
+      deduction: r.deduction != null ? String(r.deduction) : null,
+      description: r.description,
+      month: r.month,
+      uploadedAt: r.uploadedAt ?? now,
+      uploadedBy: r.uploadedBy,
+    };
+    await db.insert(agentViolations).values(vals).onDuplicateKeyUpdate({
+      set: {
+        crdts: vals.crdts,
+        category: vals.category,
+        hours: vals.hours,
+        deduction: vals.deduction,
+        description: vals.description,
+        month: vals.month,
+        uploadedAt: vals.uploadedAt,
+      }
+    });
+  }
 }
 
 export async function listViolations(filters: { agentCode?: string; month?: string; category?: "attendance" | "quality" }) {
@@ -1963,12 +2011,34 @@ export async function bulkInsertAdherence(rows: Array<{
   if (!db) return;
   const { adherenceLog } = await import("../drizzle/schema");
   if (rows.length === 0) return;
-  await db.insert(adherenceLog).values(rows.map(r => ({
-    ...r,
-    status: "approved" as const,
-    hours: r.hours != null ? String(r.hours) : null,
-    deduction: r.deduction != null ? String(r.deduction) : null,
-  })));
+  const now = Date.now();
+  for (const r of rows) {
+    const vals = {
+      agentCode: r.agentCode,
+      crdts: r.crdts,
+      alias: r.alias,
+      date: r.date,
+      month: r.month,
+      type: r.type,
+      status: "approved" as const,
+      hours: r.hours != null ? String(r.hours) : null,
+      deduction: r.deduction != null ? String(r.deduction) : null,
+      notes: r.notes,
+      uploadedBy: r.uploadedBy,
+      uploadedAt: r.uploadedAt ?? now,
+    };
+    await db.insert(adherenceLog).values(vals).onDuplicateKeyUpdate({
+      set: {
+        crdts: vals.crdts,
+        alias: vals.alias,
+        month: vals.month,
+        hours: vals.hours,
+        deduction: vals.deduction,
+        notes: vals.notes,
+        uploadedAt: vals.uploadedAt,
+      }
+    });
+  }
 }
 
 export async function listAdherence(filters: { agentCode?: string; month?: string }) {
@@ -2002,11 +2072,33 @@ export async function bulkInsertQuality(rows: Array<{
   if (!db) return;
   const { qualityLog } = await import("../drizzle/schema");
   if (rows.length === 0) return;
-  await db.insert(qualityLog).values(rows.map(r => ({
-    ...r,
-    score: r.score != null ? String(r.score) : null,
-    penalty: r.penalty != null ? String(r.penalty) : null,
-  })));
+  const now = Date.now();
+  for (const r of rows) {
+    const vals = {
+      agentCode: r.agentCode,
+      crdts: r.crdts,
+      alias: r.alias,
+      date: r.date,
+      month: r.month,
+      type: r.type,
+      score: r.score != null ? String(r.score) : null,
+      penalty: r.penalty != null ? String(r.penalty) : null,
+      notes: r.notes,
+      uploadedBy: r.uploadedBy,
+      uploadedAt: r.uploadedAt ?? now,
+    };
+    await db.insert(qualityLog).values(vals).onDuplicateKeyUpdate({
+      set: {
+        crdts: vals.crdts,
+        alias: vals.alias,
+        month: vals.month,
+        score: vals.score,
+        penalty: vals.penalty,
+        notes: vals.notes,
+        uploadedAt: vals.uploadedAt,
+      }
+    });
+  }
 }
 
 export async function listQuality(filters: { agentCode?: string; month?: string }) {

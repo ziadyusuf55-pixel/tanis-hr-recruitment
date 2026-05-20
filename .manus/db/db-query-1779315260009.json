@@ -1,0 +1,9 @@
+{
+  "query": "\n-- Add unique constraint to agent_violations for upsert on (agentCode, date, type)\nALTER TABLE agent_violations ADD CONSTRAINT uq_violation_agent_date_type UNIQUE (agentCode, date, type);\n\n-- Add unique constraint to adherence_log for upsert on (agentCode, date, type)\nALTER TABLE adherence_log ADD CONSTRAINT uq_adherence_agent_date_type UNIQUE (agentCode, date, type);\n\n-- Add unique constraint to quality_log for upsert on (agentCode, date, type)\nALTER TABLE quality_log ADD CONSTRAINT uq_quality_agent_date_type UNIQUE (agentCode, date, type);\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2mcroMLez2dD7B1.d41ce960f4ad --database GKQCuajYkpcdyw75NP8gmu --execute \n-- Add unique constraint to agent_violations for upsert on (agentCode, date, type)\nALTER TABLE agent_violations ADD CONSTRAINT uq_violation_agent_date_type UNIQUE (agentCode, date, type);\n\n-- Add unique constraint to adherence_log for upsert on (agentCode, date, type)\nALTER TABLE adherence_log ADD CONSTRAINT uq_adherence_agent_date_type UNIQUE (agentCode, date, type);\n\n-- Add unique constraint to quality_log for upsert on (agentCode, date, type)\nALTER TABLE quality_log ADD CONSTRAINT uq_quality_agent_date_type UNIQUE (agentCode, date, type);\n",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 2931
+}
