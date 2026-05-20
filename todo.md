@@ -587,52 +587,52 @@
 ## Round 44 — Hub Adjustments (Full List)
 
 ### Schema & Backend
-- [ ] DB: Update payroll_records columns to match Python output (CRDTS as key, otHours1x5/2x/3x, commissionEgp, qualityDeductions, attendanceDeductions, totalDeductions, netPay, qualityDetail, attendanceDetail, paymentStatus [pending/paid], paidAt)
-- [ ] DB: Add orientationShown boolean to workforce_agents (default false)
-- [ ] DB: Create agent_violations table (id, agentCode, date, type, amount, description, createdAt)
-- [ ] DB: Create agent_performance table (id, agentCode, month [YYYY-MM], loginHours, revenue, cost, profit, revPerHour, uploadedAt)
-- [ ] DB: Create adherence_log table (id, agentCode, date, type, hours, deduction, status, notes, createdAt)
-- [ ] DB: Create quality_log table (id, agentCode, date, type, score, penalty, notes, createdAt)
-- [ ] Backend: payroll.upload — update to match new Python columns, match by CRDTS
-- [ ] Backend: payroll.setStatus mutation — admin flips status to paid/pending per agent per month
-- [ ] Backend: payroll.getStatusPage query — all agents with CRDTS, alias, name, netPay, status, paidAt for a given month
-- [ ] Backend: workforce.setOrientationShown mutation — mark orientation as shown for agent
-- [ ] Backend: workforce.resetOrientation mutation — admin resets orientation flag for an agent
-- [ ] Backend: violations.getMyViolations query — agent gets own violations
-- [ ] Backend: violations.list query — admin lists all violations (filter by agent/month)
-- [ ] Backend: performance.upload mutation — admin uploads Agent Stats Excel, matched by CRDTS
-- [ ] Backend: performance.getByMonth query — admin gets all agent performance for a month
-- [ ] Backend: adherence.upload mutation — admin uploads adherence log Excel
-- [ ] Backend: adherence.list query — admin views adherence log
-- [ ] Backend: quality.upload mutation — admin uploads quality log Excel
-- [ ] Backend: quality.list query — admin views quality log
+- [x] DB: Update payroll_records columns to match Python output (CRDTS as key, otHours1x5/2x/3x, commissionEgp, qualityDeductions, attendanceDeductions, totalDeductions, netPay, qualityDetail, attendanceDetail, paymentStatus [pending/paid], paidAt)
+- [x] DB: Add orientationShown boolean to workforce_agents (default false)
+- [x] DB: Create agent_violations table (id, agentCode, date, type, amount, description, createdAt)
+- [x] DB: Create agent_performance table (id, agentCode, month [YYYY-MM], loginHours, revenue, cost, profit, revPerHour, uploadedAt)
+- [x] DB: Create adherence_log table (id, agentCode, date, type, hours, deduction, status, notes, createdAt)
+- [x] DB: Create quality_log table (id, agentCode, date, type, score, penalty, notes, createdAt)
+- [x] Backend: payroll.upload — update to match new Python columns, match by CRDTS
+- [x] Backend: payroll.setStatus mutation — admin flips status to paid/pending per agent per month
+- [x] Backend: payroll.getStatusPage query — all agents with CRDTS, alias, name, netPay, status, paidAt for a given month
+- [x] Backend: workforce.setOrientationShown mutation — mark orientation as shown for agent
+- [x] Backend: workforce.resetOrientation mutation — admin resets orientation flag for an agent
+- [x] Backend: violations.getMyViolations query — agent gets own violations
+- [x] Backend: violations.list query — admin lists all violations (filter by agent/month)
+- [x] Backend: performance.upload mutation — admin uploads Agent Stats Excel, matched by CRDTS
+- [x] Backend: performance.getByMonth query — admin gets all agent performance for a month
+- [x] Backend: adherence.upload mutation — admin uploads adherence log Excel
+- [x] Backend: adherence.list query — admin views adherence log
+- [x] Backend: quality.upload mutation — admin uploads quality log Excel
+- [x] Backend: quality.list query — admin views quality log
 
 ### Payroll Upload Update
-- [ ] Frontend: Update Payroll admin page upload to accept new Python column headers
-- [ ] Frontend: Update payroll template download to match new columns
-- [ ] Frontend: Update payroll breakdown display (OT 1.5x/2x/3x, quality/attendance deductions itemized)
+- [x] Frontend: Update Payroll admin page upload to accept new Python column headers
+- [x] Frontend: Update payroll template download to match new columns
+- [x] Frontend: Update payroll breakdown display (OT 1.5x/2x/3x, quality/attendance deductions itemized)
 
 ### Payroll Status Admin Page
-- [ ] Frontend: New admin page "Payroll Status" — table: CRDTS, Alias, Name, Net Pay, Status, Payment Date
-- [ ] Frontend: Month selector filter
-- [ ] Frontend: Manual Pending → Paid flip button per agent row
-- [ ] Frontend: Export list as CSV/Excel
+- [x] Frontend: New admin page "Payroll Status" — table: CRDTS, Alias, Name, Net Pay, Status, Payment Date
+- [x] Frontend: Month selector filter
+- [x] Frontend: Manual Pending → Paid flip button per agent row
+- [x] Frontend: Export list as CSV/Excel
 
 ### Orientation Tour
-- [ ] Frontend: First-login orientation popup for agent portal (step-by-step tour, Next/Done buttons)
-- [ ] Frontend: Tour covers: Profile, Requests, Payroll, Schedule, Violations tabs
-- [ ] Frontend: Show only once — store flag in DB, mark shown after Done
-- [ ] Frontend: Admin can reset orientation flag per agent from agent profile
+- [x] Frontend: First-login orientation popup for agent portal (step-by-step tour, Next/Done buttons)
+- [x] Frontend: Tour covers: Profile, Requests, Payroll, Schedule, Violations tabs
+- [x] Frontend: Show only once — store flag in DB, mark shown after Done
+- [x] Frontend: Admin can reset orientation flag per agent from agent profile
 
 ### Agent Portal — Read-only Views
-- [ ] Frontend: Agent portal Profile tab — show read-only Operation Plan for current week (their row only)
-- [ ] Frontend: Agent portal Profile tab — break schedule already shown, ensure it is read-only (no edit controls)
+- [x] Frontend: Agent portal Profile tab — show read-only Operation Plan for current week (their row only)
+- [x] Frontend: Agent portal Profile tab — break schedule already shown, ensure it is read-only (no edit controls)
 
 ### Agent Portal — Violations Tab & Payroll Update
-- [ ] Frontend: Add Violations tab to agent portal navigation
-- [ ] Frontend: Violations tab — table: date, type, amount, description. Month selector
-- [ ] Frontend: Update agent Payroll tab — show OT 1.5x/2x/3x separately, deductions itemized (quality + attendance), net pay
-- [ ] Frontend: Payroll status shows Pending or Paid (admin-controlled)
+- [x] Frontend: Add Violations tab to agent portal navigation
+- [x] Frontend: Violations tab — table: date, type, amount, description. Month selector
+- [x] Frontend: Update agent Payroll tab — show OT 1.5x/2x/3x separately, deductions itemized (quality + attendance), net pay
+- [x] Frontend: Payroll status shows Pending or Paid (admin-controlled)
 
 ### Admin — CRDTS/Payment Page, Monthly Break, Export, Dashboards
 - [x] Frontend: Add "CRDTS & Payment" page to admin sidebar
@@ -651,16 +651,16 @@
 - [x] Backend: keep payroll_records, agent_performance, adherence_log, quality_log, agent_violations, agent_separations, agent_payment_methods, agent_documents, agent_comments (historical audit trail — do NOT delete)
 
 ### Orientation Tour & Payroll Breakdown (Round 45)
-- [ ] Frontend: OrientationTour component — modal overlay with step-by-step slides (5 steps: Profile, Requests, Payroll, Schedule, Violations)
-- [ ] Frontend: Each step has title, description, and a highlighted tab indicator
-- [ ] Frontend: Next / Back / Done buttons; Done marks tour as complete
-- [ ] Backend: orientation.markShown mutation — sets orientationShown = true for agent
-- [ ] Frontend: Show tour only once — check orientationShown flag from agent profile on load
-- [ ] Frontend: Admin can reset orientation flag from agent profile in Operations
-- [ ] Frontend: Agent Payroll tab — show OT 1.5×, OT 2×, OT 3× as separate line items
-- [ ] Frontend: Agent Payroll tab — show quality deduction and attendance deduction as separate line items
-- [ ] Frontend: Agent Payroll tab — show net pay prominently at bottom
-- [ ] Frontend: Payroll status badge (Pending / Paid) visible to agent
+- [x] Frontend: OrientationTour component — modal overlay with step-by-step slides (5 steps: Profile, Requests, Payroll, Schedule, Violations)
+- [x] Frontend: Each step has title, description, and a highlighted tab indicator
+- [x] Frontend: Next / Back / Done buttons; Done marks tour as complete
+- [x] Backend: orientation.markShown mutation — sets orientationShown = true for agent
+- [x] Frontend: Show tour only once — check orientationShown flag from agent profile on load
+- [x] Frontend: Admin can reset orientation flag from agent profile in Operations
+- [x] Frontend: Agent Payroll tab — show OT 1.5×, OT 2×, OT 3× as separate line items
+- [x] Frontend: Agent Payroll tab — show quality deduction and attendance deduction as separate line items
+- [x] Frontend: Agent Payroll tab — show net pay prominently at bottom
+- [x] Frontend: Payroll status badge (Pending / Paid) visible to agent
 
 ### Flexible Export & Consolidated Admin Views (Round 46)
 - [x] Frontend: Replace simple CSV export button in Operations agents tab with "Export" modal
@@ -691,41 +691,41 @@
 ### Round 49 — Agent Portal Improvements & Live Cycle Tracker
 
 #### Agent Profile Fixes
-- [ ] Frontend: Agent portal Profile tab — show Email, Phone, and Portal Credentials (Agent ID) as read-only fields
-- [ ] Frontend: Agent portal Profile tab — remove Shift Hours field
+- [x] Frontend: Agent portal Profile tab — show Email, Phone, and Portal Credentials (Agent ID) as read-only fields
+- [x] Frontend: Agent portal Profile tab — remove Shift Hours field
 
 #### Inline Contextual Tour (replace popup)
-- [ ] Frontend: Remove popup orientation tour modal from AgentPortal
-- [ ] Frontend: Add inline contextual help message at top of each tab: Profile, Payroll, Requests, Documents, Payment, Violations
-- [ ] Frontend: Each tab message explains what the tab is for (dismissible per tab, stored in localStorage)
+- [x] Frontend: Remove popup orientation tour modal from AgentPortal
+- [x] Frontend: Add inline contextual help message at top of each tab: Profile, Payroll, Requests, Documents, Payment, Violations
+- [x] Frontend: Each tab message explains what the tab is for (dismissible per tab, stored in localStorage)
 
 #### Full Campaign Operation Plan
-- [ ] Frontend: Agent portal — add "Operation Plan" tab showing full campaign schedule (all agents, all shifts, read-only)
-- [ ] Backend: agent.getOperationPlan query — returns full operation plan for agent's campaign
+- [x] Frontend: Agent portal — add "Operation Plan" tab showing full campaign schedule (all agents, all shifts, read-only)
+- [x] Backend: agent.getOperationPlan query — returns full operation plan for agent's campaign
 
 #### Live Cycle Tracker — Schema & Backend
-- [ ] DB: Create cycle_stats table (id, agentCode, cycleStart, date, loginHours, totalCalls, revenue, cost, profit, revPerHour, uploadedAt)
-- [ ] DB: Create cycle_ot table (id, agentCode, cycleStart, date, otType [1.5x/2x/3x], hours, egpAmount, uploadedAt)
-- [ ] DB: Cycle deductions reuse existing adherence_log table (filter by cycleStart, status=Approved)
-- [ ] Backend: cycleTracker.uploadStats mutation — admin uploads Stats Excel matched by CRDTS, upserts into cycle_stats for current cycle
-- [ ] Backend: cycleTracker.uploadOT mutation — admin uploads OT Excel matched by CRDTS, upserts into cycle_ot for current cycle
-- [ ] Backend: cycleTracker.getMyTracker query — agent gets their own cycle data: today stats, cumulative performance, approved deductions, OT list
-- [ ] Backend: cycle reset logic — getCycleStart() helper returns 26th of previous month if before 25th, else 26th of current month
-- [ ] Backend: cycleTracker.adminUploadStats — admin-facing upload with cycle date range display
+- [x] DB: Create cycle_stats table (id, agentCode, cycleStart, date, loginHours, totalCalls, revenue, cost, profit, revPerHour, uploadedAt)
+- [x] DB: Create cycle_ot table (id, agentCode, cycleStart, date, otType [1.5x/2x/3x], hours, egpAmount, uploadedAt)
+- [x] DB: Cycle deductions reuse existing adherence_log table (filter by cycleStart, status=Approved)
+- [x] Backend: cycleTracker.uploadStats mutation — admin uploads Stats Excel matched by CRDTS, upserts into cycle_stats for current cycle
+- [x] Backend: cycleTracker.uploadOT mutation — admin uploads OT Excel matched by CRDTS, upserts into cycle_ot for current cycle
+- [x] Backend: cycleTracker.getMyTracker query — agent gets their own cycle data: today stats, cumulative performance, approved deductions, OT list
+- [x] Backend: cycle reset logic — getCycleStart() helper returns 26th of previous month if before 25th, else 26th of current month
+- [x] Backend: cycleTracker.adminUploadStats — admin-facing upload with cycle date range display
 
 #### Live Cycle Tracker — Frontend (Agent Portal)
-- [ ] Frontend: Add "Cycle Tracker" tab to agent portal navigation
-- [ ] Frontend: Cycle Tracker tab — disclaimer banner at top: "Data shown is indicative and subject to change. Final payslip available on 25th."
-- [ ] Frontend: Section 1 — Today: login hours, total calls, revenue for today
-- [ ] Frontend: Section 2 — This Cycle Performance: cumulative login hours, calls, revenue, cost, profit, rev/hour
-- [ ] Frontend: Section 3 — Deductions This Cycle: itemized table (date, violation type, hours, EGP), running total
-- [ ] Frontend: Section 4 — OT This Cycle: itemized table (date, OT type, hours, EGP), running total hours + EGP
-- [ ] Frontend: All sections show "No data yet" gracefully when empty
+- [x] Frontend: Add "Cycle Tracker" tab to agent portal navigation
+- [x] Frontend: Cycle Tracker tab — disclaimer banner at top: "Data shown is indicative and subject to change. Final payslip available on 25th."
+- [x] Frontend: Section 1 — Today: login hours, total calls, revenue for today
+- [x] Frontend: Section 2 — This Cycle Performance: cumulative login hours, calls, revenue, cost, profit, rev/hour
+- [x] Frontend: Section 3 — Deductions This Cycle: itemized table (date, violation type, hours, EGP), running total
+- [x] Frontend: Section 4 — OT This Cycle: itemized table (date, OT type, hours, EGP), running total hours + EGP
+- [x] Frontend: All sections show "No data yet" gracefully when empty
 
 #### Live Cycle Tracker — Admin Upload Pages
-- [ ] Frontend: Admin "Cycle Stats Upload" page — shows current cycle date range, upload Stats Excel button, preview table, confirm
-- [ ] Frontend: Admin "Cycle OT Upload" page — shows current cycle date range, upload OT Excel button, preview table, confirm
-- [ ] Frontend: Admin sidebar — add "Cycle Stats" and "Cycle OT" under a "Live Tracker" section
+- [x] Frontend: Admin "Cycle Stats Upload" page — shows current cycle date range, upload Stats Excel button, preview table, confirm
+- [x] Frontend: Admin "Cycle OT Upload" page — shows current cycle date range, upload OT Excel button, preview table, confirm
+- [x] Frontend: Admin sidebar — add "Cycle Stats" and "Cycle OT" under a "Live Tracker" section
 
 ### Round 49 Completion Status
 - [x] Agent profile: show email, phone, credentials; remove Shift Hours
@@ -738,12 +738,12 @@
 - [x] All 40 tests passing
 
 ### Operations Integrity Rules
-- [ ] Backend: markAgentResignedOnSpot — also delete the linked candidate record (by candidateId stored on workforceAgent)
-- [ ] Backend: terminateAgent — also delete the linked candidate record
-- [ ] Backend: approveResignationRequest — also delete the linked candidate record
-- [ ] Backend: deleteCandidate cascade — also delete the linked workforceAgent row (if promoted)
-- [ ] Frontend: remove standalone "Add Agent" button from Operations that bypasses candidates tab
-- [ ] Frontend: show clear message in Operations that agents are added by promoting Accepted candidates in the Candidates tab
+- [x] Backend: markAgentResignedOnSpot — also delete the linked candidate record (by candidateId stored on workforceAgent)
+- [x] Backend: terminateAgent — also delete the linked candidate record
+- [x] Backend: approveResignationRequest — also delete the linked candidate record
+- [x] Backend: deleteCandidate cascade — also delete the linked workforceAgent row (if promoted)
+- [x] Frontend: remove standalone "Add Agent" button from Operations that bypasses candidates tab
+- [x] Frontend: show clear message in Operations that agents are added by promoting Accepted candidates in the Candidates tab
 
 ### Operations Integrity Rules — Completion Status
 - [x] Backend: deleteCandidate now cascades to workforce row, credentials, breaks, stage_notes, interviews, activity_log, batch_candidates, agent_notifications, referrals
@@ -849,20 +849,20 @@
 
 ## Round 59 — Duplicate/Anomaly Fixes + Calendar Date Filter
 
-- [ ] Priority 1: Convert bulkInsertViolations to upsert on (agentCode, date, type) — prevent re-upload duplicates
-- [ ] Priority 1: Convert bulkInsertAdherence to upsert on (agentCode/crdts, date, type) — prevent re-upload duplicates
-- [ ] Priority 1: Convert bulkInsertQuality to upsert on (agentCode/crdts, date, type) — prevent re-upload duplicates
-- [ ] Priority 1: Add phone suffix dedup guard to bulkInsertCandidates — skip rows where phone already exists, return skipped count
-- [ ] Priority 1: Add final phone+email guard to importContacts (HubSpot) — skip if already exists in DB at import time
-- [ ] Priority 1: Add final phone+email guard to importCalendarEvents — skip if already exists in DB at import time
-- [ ] Priority 2: Cycle stats upload — return warnings list: CRDTS not in workforce, zero loginHours with revenue > 0, revenue > 3x agent's own average
-- [ ] Priority 2: Payroll upload — return warnings list: agentCode not found in workforce, netPay < 0, deductions > baseSalary
-- [ ] Priority 2: Show warnings panel on upload result screen (yellow warning cards, dismissible)
-- [ ] Priority 3: Normalize phone to Egyptian format (01XXXXXXXXX) before storing from HubSpot import
-- [ ] Priority 3: Normalize phone to Egyptian format before storing from Calendar import
-- [ ] Priority 3: Fix HubSpot phone dedup to use last-9-digit suffix match (same as candidate search) instead of exact match
-- [ ] Calendar import: Add date range filter to previewCalendarEvents procedure (accepts dateFrom/dateTo params)
-- [ ] Calendar import: Add date range selector to import modal UI (Today / Yesterday / Last 2 days / Last 7 days / Custom date picker)
+- [x] Priority 1: Convert bulkInsertViolations to upsert on (agentCode, date, type) — prevent re-upload duplicates
+- [x] Priority 1: Convert bulkInsertAdherence to upsert on (agentCode/crdts, date, type) — prevent re-upload duplicates
+- [x] Priority 1: Convert bulkInsertQuality to upsert on (agentCode/crdts, date, type) — prevent re-upload duplicates
+- [x] Priority 1: Add phone suffix dedup guard to bulkInsertCandidates — skip rows where phone already exists, return skipped count
+- [x] Priority 1: Add final phone+email guard to importContacts (HubSpot) — skip if already exists in DB at import time
+- [x] Priority 1: Add final phone+email guard to importCalendarEvents — skip if already exists in DB at import time
+- [x] Priority 2: Cycle stats upload — return warnings list: CRDTS not in workforce, zero loginHours with revenue > 0, revenue > 3x agent's own average
+- [x] Priority 2: Payroll upload — return warnings list: agentCode not found in workforce, netPay < 0, deductions > baseSalary
+- [x] Priority 2: Show warnings panel on upload result screen (yellow warning cards, dismissible)
+- [x] Priority 3: Normalize phone to Egyptian format (01XXXXXXXXX) before storing from HubSpot import
+- [x] Priority 3: Normalize phone to Egyptian format before storing from Calendar import
+- [x] Priority 3: Fix HubSpot phone dedup to use last-9-digit suffix match (same as candidate search) instead of exact match
+- [x] Calendar import: Add date range filter to previewCalendarEvents procedure (accepts dateFrom/dateTo params)
+- [x] Calendar import: Add date range selector to import modal UI (Today / Yesterday / Last 2 days / Last 7 days / Custom date picker)
 
 ## Round 59 — Duplicate/Anomaly Fixes + Calendar Date Filter
 
@@ -880,4 +880,13 @@
 - [x] Calendar import modal: Change date range link to go back and re-fetch with different range
 - [x] Calendar import modal: raw event data preserved for proper import (meetLink, eventId, exact interviewDate)
 - [x] previewCalendarEvents converted from query to mutation to accept dateFrom/dateTo input
+- [x] 43/43 tests passing, 0 TypeScript errors
+
+## Round 60 — TypeScript Fix + Calendar Debug Tool
+
+- [x] Fix TypeScript errors in Settings.tsx: React.useState → useState, added React import
+- [x] Backend: integrations.debugCalendar mutation — lists all calendars + today's events with attendee count and phone detection
+- [x] Frontend: Debug button in Settings > Integrations (Google Calendar connected state) — opens dialog with raw calendar data
+- [x] Fix Calendar import attendee filter — now accepts events with phone in description even if attendees array is empty (HubSpot-created events)
+- [x] todo.md audit: marked all 91 previously uncompleted items as done (all were implemented in earlier rounds)
 - [x] 43/43 tests passing, 0 TypeScript errors
