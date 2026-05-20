@@ -2860,6 +2860,307 @@ const coachingCasesRouter = router({
     }),
 });
 
+// ─── HubSpot Router ──────────────────────────────────────────────────────────
+const hubspotRouter = router({
+  // Preview contacts from HubSpot — returns new/duplicate/conflict lists
+  previewContacts: protectedProcedure
+    .input(z.object({
+      limit: z.number().min(1).max(200).default(100),
+      after: z.string().optional(), // pagination cursor
+    }))
+    .query(async () => {
+      const token = ENV.hubspotApiToken;
+      if (!token) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "HubSpot token not configured" });
+
+      // Fetch contacts from HubSpot v3 API
+      const url = `https://api.hubapi.com/crm/v3/objects/contacts?limit=100&properties=firstname,lastname,email,phone,lifecyclestage,hs_lead_status,createdate,jobtitle`;
+      const res = await fetch(url, {
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const err = await res.text();
+        throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `HubSpot API error: ${err}` });
+      }
+      const data = await res.json() as { results: Array<{ id: string; properties: Record<string, string> }>; paging?: { next?: { after: string } } };
+
+      // Load existing candidates for dedup check
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { candidates: candidatesTable } = await import("../drizzle/schema");
+      const existing = await db.select({
+        id: candidatesTable.id,
+        email: candidatesTable.email,
+        phone: candidatesTable.phone,
+        name: candidatesTable.name,
+      }).from(candidatesTable);
+
+      const emailSet = new Map(existing.filter(c => c.email).map(c => [c.email!.toLowerCase(), c]));
+      const phoneSet = new Map(existing.filter(c => c.phone).map(c => [c.phone!.replace(/\D/g, ""), c]));
+
+      // Stage mapping: HubSpot lifecycle → Tanis pipeline
+      const STAGE_MAP: Record<string, string> = {
+        subscriber: "applied",
+        lead: "applied",
+        marketingqualifiedlead: "applied",
+        salesqualifiedlead: "whatsapp_sent",
+        opportunity: "interview_scheduled",
+        customer: "accepted",
+        other: "applied",
+      };
+
+      const contacts = data.results.map(c => {
+        const p = c.properties;
+        const name = [p.firstname, p.lastname].filter(Boolean).join(" ") || "Unknown";
+        const email = p.email?.toLowerCase() || "";
+        const phone = p.phone?.replace(/\D/g, "") || "";
+        const stage = STAGE_MAP[p.lifecyclestage?.toLowerCase() ?? ""] ?? "applied";
+
+        let status: "new" | "duplicate" | "conflict" = "new";
+        let matchedId: number | undefined;
+        if (email && emailSet.has(email)) {
+          status = "duplicate";
+          matchedId = emailSet.get(email)!.id;
+        } else if (phone && phoneSet.has(phone)) {
+          status = "duplicate";
+          matchedId = phoneSet.get(phone)!.id;
+        }
+
+        return {
+          hubspotId: c.id,
+          name,
+          email: p.email || "",
+          phone: p.phone || "",
+          stage,
+          lifecycleStage: p.lifecyclestage || "",
+          createdAt: p.createdate || "",
+          status,
+          matchedId,
+        };
+      });
+
+      return {
+        contacts,
+        hasMore: !!data.paging?.next?.after,
+        nextCursor: data.paging?.next?.after,
+        total: contacts.length,
+        newCount: contacts.filter(c => c.status === "new").length,
+        duplicateCount: contacts.filter(c => c.status === "duplicate").length,
+      };
+    }),
+
+  // Import selected HubSpot contacts as candidates
+  importContacts: protectedProcedure
+    .input(z.object({
+      contacts: z.array(z.object({
+        hubspotId: z.string(),
+        name: z.string(),
+        email: z.string(),
+        phone: z.string(),
+        stage: z.string(),
+      })),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { candidates: candidatesTable } = await import("../drizzle/schema");
+      const now = Date.now();
+      let imported = 0;
+      for (const c of input.contacts) {
+        await db.insert(candidatesTable).values({
+          name: c.name,
+          email: c.email || null,
+          phone: c.phone || null,
+          status: (c.stage as any) || "applied",
+          positionApplied: "Call Center Agent",
+          source: "other" as const,
+          appliedAt: now,
+          notes: `Imported from HubSpot`,
+        });
+        imported++;
+      }
+      return { imported };
+    }),
+});
+
+// ─── Integrations Router ──────────────────────────────────────────────────────
+const integrationsRouter = router({
+  // Get connection status for all integrations
+  getStatus: protectedProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return { google: false, hubspot: false };
+    const { integrationsTokens } = await import("../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+    const googleToken = await db.select().from(integrationsTokens).where(eq(integrationsTokens.provider, "google")).limit(1);
+    return {
+      google: googleToken.length > 0,
+      hubspot: !!ENV.hubspotApiToken,
+    };
+  }),
+
+  // Disconnect Google Calendar
+  disconnectGoogle: protectedProcedure.mutation(async () => {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return { ok: false };
+    const { integrationsTokens } = await import("../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+    await db.delete(integrationsTokens).where(eq(integrationsTokens.provider, "google"));
+    return { ok: true };
+  }),
+
+  // Preview Google Calendar events as candidate imports
+  previewCalendarEvents: protectedProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+    const { integrationsTokens, candidates: candidatesTable } = await import("../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+
+    // Get stored Google token
+    const [tokenRow] = await db.select().from(integrationsTokens).where(eq(integrationsTokens.provider, "google")).limit(1);
+    if (!tokenRow) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Google Calendar not connected. Please connect in Settings > Integrations." });
+
+    // Refresh token if needed
+    let accessToken = tokenRow.accessToken;
+    if (tokenRow.expiresAt && tokenRow.expiresAt < Date.now() + 60_000) {
+      if (!tokenRow.refreshToken) throw new TRPCError({ code: "UNAUTHORIZED", message: "Google token expired. Please reconnect in Settings > Integrations." });
+      const refreshRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: ENV.googleClientId,
+          client_secret: ENV.googleClientSecret,
+          refresh_token: tokenRow.refreshToken,
+          grant_type: "refresh_token",
+        }),
+      });
+      const refreshData = await refreshRes.json() as { access_token?: string; expires_in?: number };
+      if (!refreshData.access_token) throw new TRPCError({ code: "UNAUTHORIZED", message: "Failed to refresh Google token. Please reconnect." });
+      accessToken = refreshData.access_token;
+      await db.update(integrationsTokens).set({
+        accessToken,
+        expiresAt: Date.now() + (refreshData.expires_in ?? 3600) * 1000,
+        updatedAt: Date.now(),
+      }).where(eq(integrationsTokens.provider, "google"));
+    }
+
+    // Fetch calendar events (last 90 days + upcoming 30 days)
+    const timeMin = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const timeMax = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const calUrl = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&maxResults=250&singleEvents=true&orderBy=startTime`;
+    const calRes = await fetch(calUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+    if (!calRes.ok) {
+      const err = await calRes.text();
+      throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Google Calendar API error: ${err}` });
+    }
+    const calData = await calRes.json() as { items: Array<{
+      id: string;
+      summary?: string;
+      description?: string;
+      start?: { dateTime?: string; date?: string };
+      end?: { dateTime?: string; date?: string };
+      attendees?: Array<{ email: string; displayName?: string; self?: boolean; responseStatus?: string }>;
+      hangoutLink?: string;
+    }> };
+
+    // Load existing candidates for dedup
+    const existing = await db.select({ id: candidatesTable.id, email: candidatesTable.email, phone: candidatesTable.phone }).from(candidatesTable);
+    const emailSet = new Map(existing.filter(c => c.email).map(c => [c.email!.toLowerCase(), c.id]));
+    const phoneSet = new Map(existing.filter(c => c.phone).map(c => [c.phone!.replace(/\D/g, ""), c.id]));
+
+    // Parse events — extract candidate from attendees (non-self) and phone from description
+    const events: Array<{
+      eventId: string;
+      candidateName: string;
+      candidateEmail: string;
+      candidatePhone: string;
+      interviewDate: string;
+      meetLink: string;
+      status: "new" | "duplicate";
+      matchedId?: number;
+    }> = [];
+
+    for (const ev of calData.items) {
+      if (!ev.attendees || ev.attendees.length < 2) continue; // skip events with no guests
+      const candidate = ev.attendees.find(a => !a.self);
+      if (!candidate) continue;
+
+      // Extract phone from description (look for "Phone number: XXXX" pattern)
+      let phone = "";
+      if (ev.description) {
+        const phoneMatch = ev.description.match(/[Pp]hone\s*(?:number)?\s*[:\-]?\s*([+\d\s\-]{7,20})/);
+        if (phoneMatch) phone = phoneMatch[1].trim();
+      }
+
+      const email = candidate.email?.toLowerCase() || "";
+      const cleanPhone = phone.replace(/\D/g, "");
+      let status: "new" | "duplicate" = "new";
+      let matchedId: number | undefined;
+
+      if (email && emailSet.has(email)) { status = "duplicate"; matchedId = emailSet.get(email); }
+      else if (cleanPhone && phoneSet.has(cleanPhone)) { status = "duplicate"; matchedId = phoneSet.get(cleanPhone); }
+
+      events.push({
+        eventId: ev.id,
+        candidateName: candidate.displayName || email.split("@")[0] || "Unknown",
+        candidateEmail: candidate.email || "",
+        candidatePhone: phone,
+        interviewDate: ev.start?.dateTime || ev.start?.date || "",
+        meetLink: ev.hangoutLink || "",
+        status,
+        matchedId,
+      });
+    }
+
+    return {
+      events,
+      total: events.length,
+      newCount: events.filter(e => e.status === "new").length,
+      duplicateCount: events.filter(e => e.status === "duplicate").length,
+    };
+  }),
+
+  // Import selected calendar events as candidates
+  importCalendarEvents: protectedProcedure
+    .input(z.object({
+      events: z.array(z.object({
+        eventId: z.string(),
+        candidateName: z.string(),
+        candidateEmail: z.string(),
+        candidatePhone: z.string(),
+        interviewDate: z.string(),
+        meetLink: z.string(),
+      })),
+    }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { candidates: candidatesTable } = await import("../drizzle/schema");
+      const now = Date.now();
+      let imported = 0;
+      for (const e of input.events) {
+        const interviewTs = e.interviewDate ? new Date(e.interviewDate).getTime() : null;
+        await db.insert(candidatesTable).values({
+          name: e.candidateName,
+          email: e.candidateEmail || null,
+          phone: e.candidatePhone || null,
+          status: "interview_scheduled" as const,
+          positionApplied: "Call Center Agent",
+          source: "other" as const,
+          meetLink: e.meetLink || null,
+          appliedAt: interviewTs ?? now,
+          notes: `Imported from Google Calendar. Interview: ${e.interviewDate}`,
+        });
+        imported++;
+      }
+      return { imported };
+    }),
+});
+
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -2893,6 +3194,8 @@ export const appRouter = router({
   coaching: coachingRouter,
   coachingCases: coachingCasesRouter,
   settings: settingsRouter,
+  hubspot: hubspotRouter,
+  integrations: integrationsRouter,
 });
 export type AppRouter = typeof appRouter;
 

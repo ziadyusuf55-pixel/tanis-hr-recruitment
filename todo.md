@@ -827,3 +827,22 @@
 - [x] Frontend: Agent portal Cycle Tracker tab — cycle selector with ‹ › arrow nav; "Current" badge on active cycle; past cycles load from cache
 - [x] Frontend: AgentProfilePage (admin) — new "History" tab with two tables: Cycle Performance History (Revenue/Calls/Login Hrs/Rev/Hr/Profit/Deductions/OT/Days) + Payroll History (Base/Commission/OT/Deductions/Net Pay/Status)
 - [x] 40/40 tests passing, 0 TypeScript errors
+
+## Round 58 — HubSpot + Google Calendar Integration
+
+- [x] Store HUBSPOT_API_TOKEN, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET as secrets
+- [x] Add GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REDIRECT_URI to env.ts
+- [x] DB: Create integrations_tokens table (id, provider, accessToken, refreshToken, expiresAt, scope, createdAt, updatedAt)
+- [x] Backend: Google OAuth initiate route GET /api/oauth/google — redirects to Google consent screen
+- [x] Backend: Google OAuth callback route GET /api/oauth/google/callback — exchanges code for tokens, stores in DB
+- [x] Backend: integrations.getStatus query — returns {google: boolean, hubspot: boolean}
+- [x] Backend: integrations.disconnectGoogle mutation — deletes stored Google tokens
+- [x] Backend: hubspot.previewContacts query — fetches HubSpot contacts (firstname/lastname/email/phone/lifecyclestage), deduplicates by email+phone, returns new/duplicate/conflict list
+- [x] Backend: hubspot.importContacts mutation — creates candidates from selected HubSpot contacts with stage mapping (subscriber/lead→applied, opportunity→interview_scheduled, customer→accepted)
+- [x] Backend: integrations.previewCalendarEvents query — fetches calendar events (last 90 days + next 30 days), extracts attendee name/email + phone from description, deduplicates
+- [x] Backend: integrations.importCalendarEvents mutation — creates candidates from selected events at interview_scheduled stage with Meet link and interview date in notes
+- [x] Frontend: Settings page — Integrations section with HubSpot status card and Google Calendar connect/disconnect OAuth button
+- [x] Frontend: Candidates page — "Import HubSpot" button opens preview modal with Fetch Contacts, dedup table (New/Duplicate/Conflict badges), Select New Only / Select All, confirm import
+- [x] Frontend: Candidates page — "Import Calendar" button opens preview modal with same pattern
+- [x] HubSpot lifecycle stage → Tanis pipeline stage mapping built into importContacts procedure
+- [x] 43/43 tests passing, 0 TypeScript errors

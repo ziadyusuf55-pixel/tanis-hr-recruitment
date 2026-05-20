@@ -805,3 +805,18 @@ export const coachingCaseStatusLog = mysqlTable("coaching_case_status_log", {
 });
 export type CoachingCaseStatusLog = typeof coachingCaseStatusLog.$inferSelect;
 export type InsertCoachingCaseStatusLog = typeof coachingCaseStatusLog.$inferInsert;
+
+/**
+ * integrations_tokens — stores OAuth tokens for third-party integrations (Google Calendar, etc.)
+ */
+export const integrationsTokens = mysqlTable("integrations_tokens", {
+  id:           int("id").autoincrement().primaryKey(),
+  provider:     varchar("provider", { length: 50 }).notNull().unique(),
+  accessToken:  text("access_token").notNull(),
+  refreshToken: text("refresh_token"),
+  expiresAt:    bigint("expires_at", { mode: "number" }),
+  scope:        text("scope"),
+  createdAt:    bigint("created_at", { mode: "number" }).notNull(),
+  updatedAt:    bigint("updated_at", { mode: "number" }).notNull(),
+});
+export type IntegrationsToken = typeof integrationsTokens.$inferSelect;

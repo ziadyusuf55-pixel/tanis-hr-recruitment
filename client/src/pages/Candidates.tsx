@@ -1,5 +1,6 @@
 import { useState, useRef } from "react";
 import { trpc } from "@/lib/trpc";
+import { getErrorMessage } from "@/lib/errorMessage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -55,6 +56,10 @@ import {
   UserX,
   Clock,
   EyeOff,
+  Building2,
+  Calendar,
+  Download,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -285,6 +290,11 @@ export default function Candidates() {
   const [waveFilter, setWaveFilter] = useState<string>("all");
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [hubspotImportOpen, setHubspotImportOpen] = useState(false);
+  const [calendarImportOpen, setCalendarImportOpen] = useState(false);
+  const [importPreview, setImportPreview] = useState<Array<{ name: string; email: string; phone: string; source: string; status: "new" | "duplicate" | "conflict"; existingName?: string }>>([]);
+  const [importSelectedIds, setImportSelectedIds] = useState<Set<number>>(new Set());
+  const [importLoading, setImportLoading] = useState(false);
   const [form, setForm] = useState<CandidateForm>(EMPTY_FORM);
   const [csvRows, setCsvRows] = useState<CandidateForm[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -485,6 +495,20 @@ export default function Candidates() {
         <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => setImportOpen(true)} className="gap-2 h-9">
             <Upload className="h-3.5 w-3.5" /> Import CSV
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => {
+            setImportPreview([]);
+            setImportSelectedIds(new Set());
+            setHubspotImportOpen(true);
+          }} className="gap-2 h-9">
+            <Building2 className="h-3.5 w-3.5" /> Import HubSpot
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => {
+            setImportPreview([]);
+            setImportSelectedIds(new Set());
+            setCalendarImportOpen(true);
+          }} className="gap-2 h-9">
+            <Calendar className="h-3.5 w-3.5" /> Import Calendar
           </Button>
           <Button size="sm" onClick={() => setAddOpen(true)} className="gap-2 h-9">
             <Plus className="h-3.5 w-3.5" /> Add Candidate
@@ -965,6 +989,48 @@ export default function Candidates() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* HubSpot Import Dialog */}
+      <Dialog open={hubspotImportOpen} onOpenChange={(v) => { setHubspotImportOpen(v); if (!v) { setImportPreview([]); setImportSelectedIds(new Set()); } }}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building2 className="h-5 w-5 text-orange-600" /> Import from HubSpot CRM
+            </DialogTitle>
+          </DialogHeader>
+          <HubSpotImportPanel
+            preview={importPreview}
+            setPreview={setImportPreview}
+            selectedIds={importSelectedIds}
+            setSelectedIds={setImportSelectedIds}
+            loading={importLoading}
+            setLoading={setImportLoading}
+            onClose={() => setHubspotImportOpen(false)}
+            onImported={() => { utils.candidates.list.invalidate(); setHubspotImportOpen(false); }}
+          />
+        </DialogContent>
+      </Dialog>
+
+      {/* Google Calendar Import Dialog */}
+      <Dialog open={calendarImportOpen} onOpenChange={(v) => { setCalendarImportOpen(v); if (!v) { setImportPreview([]); setImportSelectedIds(new Set()); } }}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Calendar className="h-5 w-5 text-blue-600" /> Import from Google Calendar
+            </DialogTitle>
+          </DialogHeader>
+          <CalendarImportPanel
+            preview={importPreview}
+            setPreview={setImportPreview}
+            selectedIds={importSelectedIds}
+            setSelectedIds={setImportSelectedIds}
+            loading={importLoading}
+            setLoading={setImportLoading}
+            onClose={() => setCalendarImportOpen(false)}
+            onImported={() => { utils.candidates.list.invalidate(); setCalendarImportOpen(false); }}
+          />
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1389,6 +1455,295 @@ function CandidateList({
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// ─── Import Preview Row Type ──────────────────────────────────────────────────
+type ImportPreviewRow = {
+  name: string;
+  email: string;
+  phone: string;
+  source: string;
+  status: "new" | "duplicate" | "conflict";
+  existingName?: string;
+};
+
+// ─── HubSpot Import Panel ─────────────────────────────────────────────────────
+function HubSpotImportPanel({
+  preview,
+  setPreview,
+  selectedIds,
+  setSelectedIds,
+  loading,
+  setLoading,
+  onClose,
+  onImported,
+}: {
+  preview: ImportPreviewRow[];
+  setPreview: (rows: ImportPreviewRow[]) => void;
+  selectedIds: Set<number>;
+  setSelectedIds: (ids: Set<number>) => void;
+  loading: boolean;
+  setLoading: (v: boolean) => void;
+  onClose: () => void;
+  onImported: () => void;
+}) {
+  const utils = trpc.useUtils();
+  // Store raw hubspot data alongside preview rows
+  type HubSpotRow = ImportPreviewRow & { hubspotId: string; stage: string };
+  const [hsRows, setHsRows] = useState<HubSpotRow[]>([]);
+
+  const doImport = trpc.hubspot.importContacts.useMutation({
+    onSuccess: (data: { imported: number }) => {
+      toast.success(`Imported ${data.imported} candidates`);
+      onImported();
+    },
+    onError: (err: unknown) => toast.error(getErrorMessage(err)),
+  });
+
+  const handleFetch = async () => {
+    setLoading(true);
+    try {
+      const result = await utils.client.hubspot.previewContacts.query({ limit: 100 });
+      const rows: HubSpotRow[] = result.contacts.map((c: { hubspotId: string; name: string; email: string; phone: string; stage: string; status: "new" | "duplicate" | "conflict"; }) => ({
+        hubspotId: c.hubspotId,
+        name: c.name,
+        email: c.email,
+        phone: c.phone,
+        source: "HubSpot",
+        status: c.status,
+        stage: c.stage,
+      }));
+      setHsRows(rows);
+      setPreview(rows);
+      const newIds = new Set(rows.map((_, i) => i).filter((i) => rows[i].status === "new"));
+      setSelectedIds(newIds);
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleRow = (i: number) => {
+    const next = new Set(selectedIds);
+    if (next.has(i)) next.delete(i); else next.add(i);
+    setSelectedIds(next);
+  };
+
+  const handleImport = () => {
+    const rows = Array.from(selectedIds).map((i) => hsRows[i]).filter(Boolean);
+    doImport.mutate({ contacts: rows.map((r) => ({ hubspotId: r.hubspotId, name: r.name, email: r.email, phone: r.phone, stage: r.stage })) });
+  };
+
+  const statusBadge = (s: ImportPreviewRow["status"]) => {
+    if (s === "new") return <span className="text-xs font-medium text-green-700 bg-green-100 px-2 py-0.5 rounded-full">New</span>;
+    if (s === "duplicate") return <span className="text-xs font-medium text-yellow-700 bg-yellow-100 px-2 py-0.5 rounded-full">Duplicate</span>;
+    return <span className="text-xs font-medium text-orange-700 bg-orange-100 px-2 py-0.5 rounded-full">Conflict</span>;
+  };
+
+  return (
+    <div className="space-y-4 py-2">
+      {preview.length === 0 ? (
+        <div className="text-center py-8 space-y-3">
+          <Building2 className="h-10 w-10 text-muted-foreground mx-auto" />
+          <p className="text-sm text-muted-foreground">Click "Fetch Contacts" to preview HubSpot contacts before importing.</p>
+          <p className="text-xs text-muted-foreground">Duplicates are detected by phone number and email.</p>
+          <Button onClick={() => handleFetch()} disabled={loading} className="mt-2">
+            {loading ? <><RefreshCw className="h-4 w-4 mr-2 animate-spin" /> Fetching...</> : "Fetch Contacts"}
+          </Button>
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">{preview.length} contacts fetched — {preview.filter(r => r.status === "new").length} new, {preview.filter(r => r.status === "duplicate").length} duplicates</p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => {
+                const newIds = new Set(preview.map((_, i) => i).filter((i) => preview[i].status === "new"));
+                setSelectedIds(newIds);
+              }}>Select New Only</Button>
+              <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set(preview.map((_, i) => i)))}>Select All</Button>
+              <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set())}>Deselect All</Button>
+            </div>
+          </div>
+          <div className="border rounded-lg overflow-hidden max-h-64 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/50 sticky top-0">
+                <tr>
+                  <th className="w-8 px-3 py-2"></th>
+                  <th className="px-3 py-2 text-left font-medium">Name</th>
+                  <th className="px-3 py-2 text-left font-medium">Email</th>
+                  <th className="px-3 py-2 text-left font-medium">Phone</th>
+                  <th className="px-3 py-2 text-left font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.map((row, i) => (
+                  <tr key={i} className={`border-t ${selectedIds.has(i) ? "bg-primary/5" : ""} ${row.status === "duplicate" ? "opacity-60" : ""}`}>
+                    <td className="px-3 py-2">
+                      <Checkbox checked={selectedIds.has(i)} onCheckedChange={() => toggleRow(i)} />
+                    </td>
+                    <td className="px-3 py-2 font-medium">{row.name}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{row.email || "—"}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{row.phone || "—"}</td>
+                    <td className="px-3 py-2">{statusBadge(row.status)}{row.existingName && <span className="ml-1 text-muted-foreground">({row.existingName})</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button onClick={handleImport} disabled={selectedIds.size === 0 || doImport.isPending}>
+              {doImport.isPending ? "Importing..." : `Import ${selectedIds.size} Candidates`}
+            </Button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── Google Calendar Import Panel ─────────────────────────────────────────────
+function CalendarImportPanel({
+  preview,
+  setPreview,
+  selectedIds,
+  setSelectedIds,
+  loading,
+  setLoading,
+  onClose,
+  onImported,
+}: {
+  preview: ImportPreviewRow[];
+  setPreview: (rows: ImportPreviewRow[]) => void;
+  selectedIds: Set<number>;
+  setSelectedIds: (ids: Set<number>) => void;
+  loading: boolean;
+  setLoading: (v: boolean) => void;
+  onClose: () => void;
+  onImported: () => void;
+}) {
+  const utils = trpc.useUtils();
+
+  const doImport = trpc.integrations.importCalendarEvents.useMutation({
+    onSuccess: (data: { imported: number }) => {
+      toast.success(`Imported ${data.imported} candidates from calendar`);
+      onImported();
+    },
+    onError: (err: unknown) => toast.error(getErrorMessage(err)),
+  });
+
+  type CalEvent = { eventId: string; candidateName: string; candidateEmail: string; candidatePhone: string; interviewDate: string; meetLink: string; status: "new" | "duplicate"; matchedId?: number };
+
+  const handleFetch = async () => {
+    setLoading(true);
+    try {
+      const result = await utils.client.integrations.previewCalendarEvents.query();
+      const rows: ImportPreviewRow[] = result.events.map((e: CalEvent) => ({
+        name: e.candidateName,
+        email: e.candidateEmail,
+        phone: e.candidatePhone,
+        source: e.interviewDate ? `Interview ${new Date(e.interviewDate).toLocaleDateString()}` : "Calendar",
+        status: e.status === "duplicate" ? "duplicate" : "new",
+      }));
+      setPreview(rows);
+      const newIds = new Set(rows.map((_, i) => i).filter((i) => rows[i].status === "new"));
+      setSelectedIds(newIds);
+    } catch (err: unknown) {
+      toast.error(getErrorMessage(err));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const toggleRow = (i: number) => {
+    const next = new Set(selectedIds);
+    if (next.has(i)) next.delete(i); else next.add(i);
+    setSelectedIds(next);
+  };
+
+  const handleImport = () => {
+    const rows = Array.from(selectedIds).map((i) => preview[i]);
+    // Build events array matching the importCalendarEvents input schema
+    doImport.mutate({ events: rows.map((r, idx) => ({
+      eventId: `cal-${idx}`,
+      candidateName: r.name,
+      candidateEmail: r.email,
+      candidatePhone: r.phone,
+      interviewDate: r.source.replace("Interview ", ""),
+      meetLink: "",
+    })) });
+  };
+
+  const statusBadge = (s: ImportPreviewRow["status"]) => {
+    if (s === "new") return <span className="text-xs font-medium text-green-700 bg-green-100 px-2 py-0.5 rounded-full">New</span>;
+    if (s === "duplicate") return <span className="text-xs font-medium text-yellow-700 bg-yellow-100 px-2 py-0.5 rounded-full">Duplicate</span>;
+    return <span className="text-xs font-medium text-orange-700 bg-orange-100 px-2 py-0.5 rounded-full">Conflict</span>;
+  };
+
+  return (
+    <div className="space-y-4 py-2">
+      {preview.length === 0 ? (
+        <div className="text-center py-8 space-y-3">
+          <Calendar className="h-10 w-10 text-muted-foreground mx-auto" />
+          <p className="text-sm text-muted-foreground">Fetches upcoming interview events from your connected Google Calendar.</p>
+          <p className="text-xs text-muted-foreground">Extracts candidate name, email, and phone from event attendees and description.</p>
+          {loading ? (
+            <Button disabled><RefreshCw className="h-4 w-4 mr-2 animate-spin" /> Fetching...</Button>
+          ) : (
+            <Button onClick={() => handleFetch()}>Fetch Calendar Events</Button>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">{preview.length} interview events found — {preview.filter(r => r.status === "new").length} new candidates</p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => {
+                const newIds = new Set(preview.map((_, i) => i).filter((i) => preview[i].status === "new"));
+                setSelectedIds(newIds);
+              }}>Select New Only</Button>
+              <Button variant="outline" size="sm" onClick={() => setSelectedIds(new Set(preview.map((_, i) => i)))}>Select All</Button>
+            </div>
+          </div>
+          <div className="border rounded-lg overflow-hidden max-h-64 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="bg-muted/50 sticky top-0">
+                <tr>
+                  <th className="w-8 px-3 py-2"></th>
+                  <th className="px-3 py-2 text-left font-medium">Name</th>
+                  <th className="px-3 py-2 text-left font-medium">Email</th>
+                  <th className="px-3 py-2 text-left font-medium">Phone</th>
+                  <th className="px-3 py-2 text-left font-medium">Event</th>
+                  <th className="px-3 py-2 text-left font-medium">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.map((row, i) => (
+                  <tr key={i} className={`border-t ${selectedIds.has(i) ? "bg-primary/5" : ""} ${row.status === "duplicate" ? "opacity-60" : ""}`}>
+                    <td className="px-3 py-2">
+                      <Checkbox checked={selectedIds.has(i)} onCheckedChange={() => toggleRow(i)} />
+                    </td>
+                    <td className="px-3 py-2 font-medium">{row.name}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{row.email || "—"}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{row.phone || "—"}</td>
+                    <td className="px-3 py-2 text-muted-foreground truncate max-w-[120px]">{row.source}</td>
+                    <td className="px-3 py-2">{statusBadge(row.status)}{row.existingName && <span className="ml-1 text-muted-foreground">({row.existingName})</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={onClose}>Cancel</Button>
+            <Button onClick={handleImport} disabled={selectedIds.size === 0 || doImport.isPending}>
+              {doImport.isPending ? "Importing..." : `Import ${selectedIds.size} Candidates`}
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

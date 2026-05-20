@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -31,7 +31,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { UserPlus, Copy, Check, ShieldOff, ShieldCheck, Mail, Users, Trash2, Pencil } from "lucide-react";
+import { UserPlus, Copy, Check, ShieldOff, ShieldCheck, Mail, Users, Trash2, Pencil, Link2, Link2Off, RefreshCw, Calendar, Building2 } from "lucide-react";
 
 // ─── Team Leaders Section ────────────────────────────────────────────────────
 function TeamLeadersSection() {
@@ -232,6 +232,104 @@ function TeamLeadersSection() {
 }
 
 // ─── Main Settings Page ──────────────────────────────────────────────────────
+// ─── Integrations Section ────────────────────────────────────────────────────
+function IntegrationsSection() {
+  const utils = trpc.useUtils();
+  const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery();
+  const disconnectGoogle = trpc.integrations.disconnectGoogle.useMutation({
+    onSuccess: () => { refetch(); toast.success("Google Calendar disconnected"); },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
+
+  // Check for ?google=connected in URL after OAuth redirect
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("google") === "connected") {
+      toast.success("Google Calendar connected successfully!");
+      refetch();
+      // Clean up URL
+      const url = new URL(window.location.href);
+      url.searchParams.delete("google");
+      url.searchParams.delete("tab");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, []);
+
+  const handleConnectGoogle = () => {
+    const origin = window.location.origin;
+    window.location.href = `/api/oauth/google?origin=${encodeURIComponent(origin)}`;
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Integrations</CardTitle>
+        <CardDescription>Connect external services to import candidates automatically.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Google Calendar */}
+        <div className="flex items-center justify-between p-4 rounded-lg border bg-card">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-lg bg-blue-50 dark:bg-blue-950 flex items-center justify-center">
+              <Calendar className="h-5 w-5 text-blue-600" />
+            </div>
+            <div>
+              <p className="text-sm font-medium">Google Calendar</p>
+              <p className="text-xs text-muted-foreground">Import interview candidates from calendar events</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {isLoading ? (
+              <RefreshCw className="h-4 w-4 animate-spin text-muted-foreground" />
+            ) : status?.google ? (
+              <>
+                <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50 dark:bg-green-950">
+                  <Check className="h-3 w-3 mr-1" /> Connected
+                </Badge>
+                <Button variant="ghost" size="sm" onClick={() => disconnectGoogle.mutate()} disabled={disconnectGoogle.isPending}>
+                  <Link2Off className="h-4 w-4 mr-1" /> Disconnect
+                </Button>
+              </>
+            ) : (
+              <Button size="sm" onClick={handleConnectGoogle}>
+                <Link2 className="h-4 w-4 mr-1" /> Connect
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* HubSpot */}
+        <div className="flex items-center justify-between p-4 rounded-lg border bg-card">
+          <div className="flex items-center gap-3">
+            <div className="h-9 w-9 rounded-lg bg-orange-50 dark:bg-orange-950 flex items-center justify-center">
+              <Building2 className="h-5 w-5 text-orange-600" />
+            </div>
+            <div>
+              <p className="text-sm font-medium">HubSpot CRM</p>
+              <p className="text-xs text-muted-foreground">Import contacts from your HubSpot account</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {status?.hubspot ? (
+              <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50 dark:bg-green-950">
+                <Check className="h-3 w-3 mr-1" /> Connected
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="text-muted-foreground">
+                Not configured
+              </Badge>
+            )}
+          </div>
+        </div>
+
+        <p className="text-xs text-muted-foreground">
+          To import candidates, go to the <strong>Candidates</strong> page and click the <strong>Import</strong> button in the toolbar.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Settings() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteName, setInviteName] = useState("");
@@ -435,7 +533,10 @@ export default function Settings() {
       {/* Team Leaders */}
       <TeamLeadersSection />
 
-      {/* Security Info */}
+       {/* Integrations */}
+      <IntegrationsSection />
+
+      {/* Security */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Security</CardTitle>

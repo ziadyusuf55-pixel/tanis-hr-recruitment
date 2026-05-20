@@ -160,6 +160,82 @@ async function startServer() {
     }
   });
 
+  // Google OAuth initiate route
+  app.get("/api/oauth/google", (req, res) => {
+    // Get frontend origin from query param (passed by frontend)
+    const origin = (req.query.origin as string) || "";
+    const redirectUri = `${origin}/api/oauth/google/callback`;
+    const scopes = [
+      "https://www.googleapis.com/auth/calendar.readonly",
+      "https://www.googleapis.com/auth/userinfo.email",
+    ].join(" ");
+    const state = Buffer.from(JSON.stringify({ origin })).toString("base64");
+    const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+    authUrl.searchParams.set("client_id", process.env.GOOGLE_CLIENT_ID ?? "");
+    authUrl.searchParams.set("redirect_uri", redirectUri);
+    authUrl.searchParams.set("response_type", "code");
+    authUrl.searchParams.set("scope", scopes);
+    authUrl.searchParams.set("access_type", "offline");
+    authUrl.searchParams.set("prompt", "consent");
+    authUrl.searchParams.set("state", state);
+    res.redirect(authUrl.toString());
+  });
+
+  // Google OAuth callback route
+  app.get("/api/oauth/google/callback", async (req, res) => {
+    try {
+      const code = req.query.code as string;
+      const stateRaw = req.query.state as string;
+      if (!code) { res.status(400).send("Missing code"); return; }
+      let origin = "";
+      try { origin = JSON.parse(Buffer.from(stateRaw, "base64").toString()).origin; } catch {}
+      const redirectUri = `${origin}/api/oauth/google/callback`;
+
+      // Exchange code for tokens
+      const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          client_id: process.env.GOOGLE_CLIENT_ID ?? "",
+          client_secret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+          redirect_uri: redirectUri,
+          grant_type: "authorization_code",
+        }),
+      });
+      const tokenData = await tokenRes.json() as { access_token?: string; refresh_token?: string; expires_in?: number; scope?: string; error?: string };
+      if (!tokenData.access_token) {
+        res.status(400).send(`Google OAuth error: ${tokenData.error || "no access_token"}`);
+        return;
+      }
+
+      // Store tokens in DB
+      const { getDb } = await import("../db");
+      const db = await getDb();
+      if (db) {
+        const { integrationsTokens } = await import("../../drizzle/schema");
+        const { sql } = await import("drizzle-orm");
+        const now = Date.now();
+        await db.execute(sql`
+          INSERT INTO integrations_tokens (provider, access_token, refresh_token, expires_at, scope, created_at, updated_at)
+          VALUES ('google', ${tokenData.access_token}, ${tokenData.refresh_token ?? null}, ${now + (tokenData.expires_in ?? 3600) * 1000}, ${tokenData.scope ?? null}, ${now}, ${now})
+          ON DUPLICATE KEY UPDATE
+            access_token = VALUES(access_token),
+            refresh_token = COALESCE(VALUES(refresh_token), refresh_token),
+            expires_at = VALUES(expires_at),
+            scope = VALUES(scope),
+            updated_at = VALUES(updated_at)
+        `);
+      }
+
+      // Redirect back to the integrations settings page
+      res.redirect(`${origin}/settings?tab=integrations&google=connected`);
+    } catch (err) {
+      console.error("Google OAuth callback error:", err);
+      res.status(500).send(`OAuth error: ${String(err)}`);
+    }
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",
