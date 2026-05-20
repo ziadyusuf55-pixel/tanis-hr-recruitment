@@ -3111,6 +3111,51 @@ const integrationsRouter = router({
     return { ok: true };
   }),
 
+  // Debug: inspect raw Google Calendar data
+  debugCalendar: protectedProcedure.mutation(async () => {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+    const { integrationsTokens } = await import("../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+    const [tokenRow] = await db.select().from(integrationsTokens).where(eq(integrationsTokens.provider, "google")).limit(1);
+    if (!tokenRow) return { error: "No Google token stored. Please connect in Settings > Integrations.", calendars: [], sampleEvents: [] };
+    let accessToken = tokenRow.accessToken;
+    // Refresh if needed
+    if (tokenRow.expiresAt && tokenRow.expiresAt < Date.now() + 60_000) {
+      const { ENV } = await import("./_core/env");
+      const refreshRes = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: ENV.googleClientId, client_secret: ENV.googleClientSecret, refresh_token: tokenRow.refreshToken || "", grant_type: "refresh_token" }),
+      });
+      const rd = await refreshRes.json() as { access_token?: string; error?: string };
+      if (rd.access_token) accessToken = rd.access_token;
+      else return { error: `Token refresh failed: ${rd.error}`, calendars: [], sampleEvents: [] };
+    }
+    // List calendars
+    const listRes = await fetch("https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=50", { headers: { Authorization: `Bearer ${accessToken}` } });
+    const listText = await listRes.text();
+    if (!listRes.ok) return { error: `calendarList failed (${listRes.status}): ${listText}`, calendars: [], sampleEvents: [] };
+    const listData = JSON.parse(listText) as { items: Array<{ id: string; summary: string; accessRole: string }> };
+    const calendars = (listData.items || []).map(c => ({ id: c.id, summary: c.summary, accessRole: c.accessRole }));
+    // Fetch today's events from each calendar
+    const today = new Date();
+    const timeMin = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 0, 0, 0).toISOString();
+    const timeMax = new Date(today.getFullYear(), today.getMonth(), today.getDate(), 23, 59, 59).toISOString();
+    const sampleEvents: Array<{ calendarId: string; calendarName: string; eventId: string; summary: string; start: string; attendeeCount: number; hasPhone: boolean }> = [];
+    for (const cal of calendars) {
+      try {
+        const evRes = await fetch(`https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cal.id)}/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&maxResults=50&singleEvents=true`, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (!evRes.ok) continue;
+        const evData = await evRes.json() as { items: Array<{ id: string; summary?: string; start?: { dateTime?: string }; attendees?: unknown[]; description?: string }> };
+        for (const ev of (evData.items || [])) {
+          sampleEvents.push({ calendarId: cal.id, calendarName: cal.summary, eventId: ev.id, summary: ev.summary || "(no title)", start: ev.start?.dateTime || "", attendeeCount: (ev.attendees || []).length, hasPhone: !!(ev.description && /[Pp]hone|\d{10,}/.test(ev.description)) });
+        }
+      } catch { /* skip */ }
+    }
+    return { error: null, tokenExpiresAt: tokenRow.expiresAt, calendars, sampleEvents, timeMin, timeMax };
+  }),
+
   // Preview Google Calendar events as candidate imports
   previewCalendarEvents: protectedProcedure
     .input(z.object({
@@ -3223,11 +3268,7 @@ const integrationsRouter = router({
     }> = [];
 
     for (const ev of calData.items) {
-      if (!ev.attendees || ev.attendees.length < 2) continue; // skip events with no guests
-      const candidate = ev.attendees.find(a => !a.self);
-      if (!candidate) continue;
-
-      // Extract phone from description (look for "Phone number: XXXX" or standalone number patterns)
+      // Extract phone from description first (HubSpot-created events may have phone but no attendees)
       let phone = "";
       if (ev.description) {
         // Match "Phone number: 00201026616750" or "Phone: +201026616750" or standalone long numbers
@@ -3236,7 +3277,13 @@ const integrationsRouter = router({
         if (phoneMatch) phone = phoneMatch[1].trim();
       }
 
-      const email = candidate.email?.toLowerCase() || "";
+      // Find candidate from attendees (non-self) — may be absent for HubSpot events
+      const candidate = ev.attendees?.find(a => !a.self);
+
+      // Skip events with no useful data: need either a candidate attendee OR a phone in description
+      if (!candidate && !phone) continue;
+
+      const email = candidate?.email?.toLowerCase() || "";
       const cleanPhone = phone.replace(/\D/g, "");
       let status: "new" | "duplicate" = "new";
       let matchedId: number | undefined;
@@ -3244,10 +3291,13 @@ const integrationsRouter = router({
       if (email && emailSet.has(email)) { status = "duplicate"; matchedId = emailSet.get(email); }
       else if (cleanPhone && phoneSet.has(cleanPhone)) { status = "duplicate"; matchedId = phoneSet.get(cleanPhone); }
 
+      // Build candidate name: prefer attendee display name, then event title, then email prefix
+      const candidateName = candidate?.displayName || ev.summary || email.split("@")[0] || "Unknown";
+
       events.push({
         eventId: ev.id,
-        candidateName: candidate.displayName || email.split("@")[0] || "Unknown",
-        candidateEmail: candidate.email || "",
+        candidateName,
+        candidateEmail: candidate?.email || "",
         candidatePhone: phone,
         interviewDate: ev.start?.dateTime || ev.start?.date || "",
         meetLink: ev.hangoutLink || "",

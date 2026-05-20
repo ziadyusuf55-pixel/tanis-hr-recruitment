@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -235,7 +235,13 @@ function TeamLeadersSection() {
 // ─── Integrations Section ────────────────────────────────────────────────────
 function IntegrationsSection() {
   const utils = trpc.useUtils();
+  const [debugResult, setDebugResult] = useState<null | Record<string, unknown>>(null);
+  const [debugOpen, setDebugOpen] = useState(false);
   const { data: status, isLoading, refetch } = trpc.integrations.getStatus.useQuery();
+  const debugCalendar = trpc.integrations.debugCalendar.useMutation({
+    onSuccess: (data) => { setDebugResult(data as Record<string, unknown>); setDebugOpen(true); },
+    onError: (err) => toast.error(getErrorMessage(err)),
+  });
   const disconnectGoogle = trpc.integrations.disconnectGoogle.useMutation({
     onSuccess: () => { refetch(); toast.success("Google Calendar disconnected"); },
     onError: (err) => toast.error(getErrorMessage(err)),
@@ -261,6 +267,7 @@ function IntegrationsSection() {
   };
 
   return (
+    <>
     <Card>
       <CardHeader>
         <CardTitle className="text-base">Integrations</CardTitle>
@@ -286,6 +293,9 @@ function IntegrationsSection() {
                 <Badge variant="outline" className="text-green-600 border-green-300 bg-green-50 dark:bg-green-950">
                   <Check className="h-3 w-3 mr-1" /> Connected
                 </Badge>
+                <Button variant="outline" size="sm" onClick={() => debugCalendar.mutate()} disabled={debugCalendar.isPending}>
+                  {debugCalendar.isPending ? <RefreshCw className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />} Debug
+                </Button>
                 <Button variant="ghost" size="sm" onClick={() => disconnectGoogle.mutate()} disabled={disconnectGoogle.isPending}>
                   <Link2Off className="h-4 w-4 mr-1" /> Disconnect
                 </Button>
@@ -327,6 +337,63 @@ function IntegrationsSection() {
         </p>
       </CardContent>
     </Card>
+
+    {/* Debug Dialog */}
+    <Dialog open={debugOpen} onOpenChange={setDebugOpen}>
+      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Google Calendar Debug Info</DialogTitle>
+        </DialogHeader>
+        {debugResult && (
+          <div className="space-y-4 text-sm">
+            {debugResult.error ? (
+              <div className="p-3 rounded bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300">{String(debugResult.error)}</div>
+            ) : (
+              <>
+                <div className="p-3 rounded bg-muted">
+                  <p className="font-medium mb-1">Time Range (Today)</p>
+                  <p className="font-mono text-xs">{String(debugResult.timeMin)} → {String(debugResult.timeMax)}</p>
+                </div>
+                <div>
+                  <p className="font-medium mb-2">Calendars Found ({(debugResult.calendars as unknown[]).length})</p>
+                  <div className="space-y-1">
+                    {(debugResult.calendars as Array<{id: string; summary: string; accessRole: string}>).map(c => (
+                      <div key={c.id} className="flex items-center justify-between p-2 rounded border text-xs">
+                        <span className="font-medium">{c.summary}</span>
+                        <Badge variant="outline" className="text-xs">{c.accessRole}</Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="font-medium mb-2">Events Today ({(debugResult.sampleEvents as unknown[]).length})</p>
+                  {(debugResult.sampleEvents as unknown[]).length === 0 ? (
+                    <p className="text-muted-foreground text-xs">No events found today across all calendars.</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {(debugResult.sampleEvents as Array<{calendarName: string; summary: string; start: string; attendeeCount: number; hasPhone: boolean}>).map((ev, i) => (
+                        <div key={i} className="p-2 rounded border text-xs space-y-0.5">
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium">{ev.summary}</span>
+                            <span className="text-muted-foreground">{ev.calendarName}</span>
+                          </div>
+                          <div className="flex gap-3 text-muted-foreground">
+                            <span>Start: {ev.start ? new Date(ev.start).toLocaleTimeString() : "—"}</span>
+                            <span>Attendees: {ev.attendeeCount}</span>
+                            <span>Phone in desc: {ev.hasPhone ? "✓ Yes" : "✗ No"}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 
