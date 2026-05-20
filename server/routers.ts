@@ -3153,19 +3153,32 @@ const integrationsRouter = router({
     }
 
     // Fetch calendar events — use provided date range or default to last 90 days + next 30 days
+    // Use explicit +03:00 offset (Cairo/GMT+3) so date boundaries are correct for the user's timezone
+    const TZ_OFFSET = "+03:00";
     const timeMin = input?.dateFrom
-      ? new Date(input.dateFrom + "T00:00:00").toISOString()
+      ? new Date(input.dateFrom + "T00:00:00" + TZ_OFFSET).toISOString()
       : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
     const timeMax = input?.dateTo
-      ? new Date(input.dateTo + "T23:59:59").toISOString()
+      ? new Date(input.dateTo + "T23:59:59" + TZ_OFFSET).toISOString()
       : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
-    const calUrl = `https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&maxResults=250&singleEvents=true&orderBy=startTime`;
-    const calRes = await fetch(calUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
-    if (!calRes.ok) {
-      const err = await calRes.text();
-      throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: `Google Calendar API error: ${err}` });
+    // Step 1: List all calendars the user has access to
+    const calListRes = await fetch("https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=50", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (!calListRes.ok) {
+      const errText = await calListRes.text();
+      let errMsg = `Google Calendar API error (${calListRes.status}): ${errText}`;
+      if (calListRes.status === 401) errMsg = "Google token expired or revoked. Please disconnect and reconnect Google Calendar in Settings > Integrations.";
+      if (calListRes.status === 403) errMsg = "Google Calendar access denied. Make sure the app has calendar read permission.";
+      throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: errMsg });
     }
-    const calData = await calRes.json() as { items: Array<{
+    const calListData = await calListRes.json() as { items: Array<{ id: string; summary: string; accessRole: string }> };
+    // Use all calendars where user has at least reader access
+    const calendarIds = (calListData.items || []).map(c => c.id);
+    if (calendarIds.length === 0) calendarIds.push("primary"); // fallback
+
+    // Step 2: Fetch events from all calendars in parallel
+    type CalEvent = {
       id: string;
       summary?: string;
       description?: string;
@@ -3173,7 +3186,24 @@ const integrationsRouter = router({
       end?: { dateTime?: string; date?: string };
       attendees?: Array<{ email: string; displayName?: string; self?: boolean; responseStatus?: string }>;
       hangoutLink?: string;
-    }> };
+    };
+    const allItems: CalEvent[] = [];
+    const seenEventIds = new Set<string>();
+    await Promise.all(calendarIds.map(async (calId) => {
+      try {
+        const calUrl = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}/events?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}&maxResults=250&singleEvents=true&orderBy=startTime`;
+        const calRes = await fetch(calUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+        if (!calRes.ok) return; // skip calendars we can't read
+        const calData = await calRes.json() as { items: CalEvent[] };
+        for (const ev of (calData.items || [])) {
+          if (!seenEventIds.has(ev.id)) {
+            seenEventIds.add(ev.id);
+            allItems.push(ev);
+          }
+        }
+      } catch { /* skip individual calendar errors */ }
+    }));
+    const calData = { items: allItems };
 
     // Load existing candidates for dedup
     const existing = await db.select({ id: candidatesTable.id, email: candidatesTable.email, phone: candidatesTable.phone }).from(candidatesTable);
@@ -3197,10 +3227,12 @@ const integrationsRouter = router({
       const candidate = ev.attendees.find(a => !a.self);
       if (!candidate) continue;
 
-      // Extract phone from description (look for "Phone number: XXXX" pattern)
+      // Extract phone from description (look for "Phone number: XXXX" or standalone number patterns)
       let phone = "";
       if (ev.description) {
-        const phoneMatch = ev.description.match(/[Pp]hone\s*(?:number)?\s*[:\-]?\s*([+\d\s\-]{7,20})/);
+        // Match "Phone number: 00201026616750" or "Phone: +201026616750" or standalone long numbers
+        const phoneMatch = ev.description.match(/[Pp]hone\s*(?:number)?\s*[:\-]?\s*([+\d][\d\s\-]{8,20})/)
+          || ev.description.match(/(00\d{11,13}|\+\d{10,14}|0\d{10})/);
         if (phoneMatch) phone = phoneMatch[1].trim();
       }
 
