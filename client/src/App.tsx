@@ -87,6 +87,7 @@ function Router() {
       <Route path="/admin-invite" component={AdminInviteAccept} />
       <Route path="/agent/change-password" component={ChangePasswordPage} />
       <Route path="/agent" component={AgentPortal} />
+      <Route path="/agent/login" component={AgentPortal} />
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
