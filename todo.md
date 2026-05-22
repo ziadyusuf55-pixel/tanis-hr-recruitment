@@ -893,25 +893,25 @@
 
 ## Round 61 — Major Feature Batch
 
-- [ ] Training Hub: Add "All Agents in Training" tab beside the Batches list showing all agents across all batches
-- [ ] Operations: Add Team Leader filter/dropdown to the agents tab
-- [ ] Performance Reports: Add Team Leader filter/dropdown to filter by TL
-- [ ] Cycle Tracker: Add +/- indicators (green up arrow for OT/commission, red down arrow for deductions)
-- [ ] Dashboard: Redesign to combine most important data from all modules sorted by date
-- [ ] Candidates: Add Blacklist button in the Resigned/Terminated view with reason input
-- [ ] Candidates: Block blacklisted agents from re-entering pipeline (phone number match guard)
-- [ ] Resignation approval: Add last working day date picker for admin when approving resignation request
-- [ ] Dashboard: Add pending deletion badge for terminated/resigned agents who haven't been manually deleted
-- [ ] Payment Preferences: Redesign as grouped-by-agent view (one row per agent, dropdown showing their methods)
-- [ ] Payment Preferences: Add status filters (no payment preference submitted, pending, etc.)
-- [ ] Payroll preferences: Add Egyptian phone number validation (01XXXXXXXXX, 11 digits) for wallet fields
-- [ ] DB: Add blacklistReason field to candidates table
-- [ ] DB: Add adminLastWorkingDay field to agent_requests table for resignation approval
-- [ ] Backend: Add listAllAgentsInTraining query to batches router
-- [ ] Backend: Update workforce.list to accept teamLeader filter param
-- [ ] Backend: Update getTeamStats to return teamLeader per agent
-- [ ] Backend: Add blacklist mutation to candidates router
-- [ ] Backend: Add blacklist guard to candidate creation (block if blacklisted phone)
-- [ ] Backend: Update approveResignation to accept adminLastWorkingDay param
-- [ ] Backend: Add listPaymentMethodsGrouped query (grouped by agent)
-- [ ] Backend: Add dashboard.overview query combining recruitment + ops + cycle + separation data
+- [x] Training Hub: Add "All Agents in Training" tab beside the Batches list showing all agents across all batches
+- [x] Operations: Add Team Leader filter/dropdown to the agents tab
+- [x] Performance Reports: Add Team Leader filter/dropdown to filter by TL
+- [x] Cycle Tracker: Add +/- indicators (green up arrow for OT/commission, red down arrow for deductions)
+- [x] Dashboard: Redesign to combine most important data from all modules sorted by date
+- [x] Candidates: Add Blacklist button in the Resigned/Terminated view with reason input
+- [x] Candidates: Block blacklisted agents from re-entering pipeline (phone number match guard)
+- [x] Resignation approval: Add last working day date picker for admin when approving resignation request
+- [x] Dashboard: Add pending deletion badge for terminated/resigned agents who haven't been manually deleted
+- [x] Payment Preferences: Redesign as grouped-by-agent view (one row per agent, dropdown showing their methods)
+- [x] Payment Preferences: Add status filters (no payment preference submitted, pending, etc.)
+- [x] Payroll preferences: Add Egyptian phone number validation (01XXXXXXXXX, 11 digits) for wallet fields
+- [x] DB: Add blacklistReason field to candidates table
+- [x] DB: Add adminLastWorkingDay field to agent_requests table for resignation approval
+- [x] Backend: Add listAllAgentsInTraining query to batches router
+- [x] Backend: Update workforce.list to accept teamLeader filter param
+- [x] Backend: Update getTeamStats to return teamLeader per agent
+- [x] Backend: Add blacklist mutation to candidates router
+- [x] Backend: Add blacklist guard to candidate creation (block if blacklisted phone)
+- [x] Backend: Update approveResignation to accept adminLastWorkingDay param
+- [x] Backend: Add listPaymentMethodsGrouped query (grouped by agent)
+- [x] Backend: Add dashboard.overview query combining recruitment + ops + cycle + separation data
