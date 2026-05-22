@@ -1138,7 +1138,7 @@ export async function deleteCampaign(id: number) {
 
 // ─── Workforce Agents ─────────────────────────────────────────────────────────
 
-export async function listWorkforceAgents(campaignId?: number) {
+export async function listWorkforceAgents(campaignId?: number, teamLeader?: string) {
   const db = await getDb();
   if (!db) return [];
   const { workforceAgents, campaigns } = await import("../drizzle/schema");
@@ -1166,10 +1166,99 @@ export async function listWorkforceAgents(campaignId?: number) {
   }).from(workforceAgents)
     .leftJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
     .orderBy(workforceAgents.fullName);
-  if (campaignId) {
-    return base.where(eq(workforceAgents.campaignId, campaignId));
+  if (campaignId && teamLeader) {
+    return base.where(and(eq(workforceAgents.campaignId, campaignId), eq(workforceAgents.teamLeader, teamLeader)));
   }
+  if (campaignId) return base.where(eq(workforceAgents.campaignId, campaignId));
+  if (teamLeader) return base.where(eq(workforceAgents.teamLeader, teamLeader));
   return base;
+}
+
+/**
+ * Returns all candidates currently in any training batch with their batch info.
+ */
+export async function listAllAgentsInTraining() {
+  const db = await getDb();
+  if (!db) return [];
+  const { batchCandidates: bc, trainingBatches, candidates: cands } = await import("../drizzle/schema");
+  return db
+    .select({
+      candidateId: bc.candidateId,
+      traineeCode: bc.traineeCode,
+      slackJoined: bc.slackJoined,
+      assignedAt: bc.assignedAt,
+      batchId: trainingBatches.id,
+      batchName: trainingBatches.name,
+      trainerName: trainingBatches.trainerName,
+      batchStartDate: trainingBatches.startDate,
+      candidateName: cands.name,
+      candidatePhone: cands.phone,
+      candidateStatus: cands.status,
+    })
+    .from(bc)
+    .innerJoin(trainingBatches, eq(bc.batchId, trainingBatches.id))
+    .innerJoin(cands, eq(bc.candidateId, cands.id))
+    .orderBy(trainingBatches.name, cands.name);
+}
+
+/**
+ * Blacklist a candidate — sets status to 'blacklisted' and stores the reason.
+ */
+export async function blacklistCandidate(id: number, reason: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  await db.update(candidates).set({ status: "blacklisted", blacklistReason: reason, updatedAt: new Date() }).where(eq(candidates.id, id));
+}
+
+/**
+ * Returns payment methods grouped by agent (traineeCode).
+ * Each group includes the agent's name (from workforce_agents if available) and all their methods.
+ */
+export async function listPaymentMethodsGrouped() {
+  const db = await getDb();
+  if (!db) return [];
+  const { agentPaymentMethods, workforceAgents } = await import("../drizzle/schema");
+  const rows = await db
+    .select({
+      id: agentPaymentMethods.id,
+      traineeCode: agentPaymentMethods.traineeCode,
+      type: agentPaymentMethods.type,
+      walletProvider: agentPaymentMethods.walletProvider,
+      walletPhone: agentPaymentMethods.walletPhone,
+      walletName: agentPaymentMethods.walletName,
+      bankName: agentPaymentMethods.bankName,
+      bankAccountOrPhone: agentPaymentMethods.bankAccountOrPhone,
+      bankFullName: agentPaymentMethods.bankFullName,
+      isPreferred: agentPaymentMethods.isPreferred,
+      adminComment: agentPaymentMethods.adminComment,
+      createdAt: agentPaymentMethods.createdAt,
+      agentFullName: workforceAgents.fullName,
+      agentAlias: workforceAgents.alias,
+    })
+    .from(agentPaymentMethods)
+    .leftJoin(workforceAgents, eq(agentPaymentMethods.traineeCode, workforceAgents.traineeCode))
+    .orderBy(agentPaymentMethods.traineeCode, agentPaymentMethods.isPreferred);
+  // Group by traineeCode
+  const grouped = new Map<string, {
+    traineeCode: string;
+    agentFullName: string | null;
+    agentAlias: string | null;
+    methods: typeof rows;
+  }>();
+  for (const row of rows) {
+    const existing = grouped.get(row.traineeCode);
+    if (existing) {
+      existing.methods.push(row);
+    } else {
+      grouped.set(row.traineeCode, {
+        traineeCode: row.traineeCode,
+        agentFullName: row.agentFullName ?? null,
+        agentAlias: row.agentAlias ?? null,
+        methods: [row],
+      });
+    }
+  }
+  return Array.from(grouped.values());
 }
 
 /**

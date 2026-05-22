@@ -92,6 +92,7 @@ export const candidates = mysqlTable("candidates", {
   cvUrl: varchar("cvUrl", { length: 1024 }),
   cvFileName: varchar("cvFileName", { length: 255 }),
   wave: int("wave"),                         // recruitment wave number (1, 2, 3...)
+  blacklistReason: text("blacklistReason"),   // reason for blacklisting (set when status → blacklisted from resigned/terminated)
   // Track when candidate reached each key stage (UTC ms) for time-to-hire KPI
   appliedAt: bigint("appliedAt", { mode: "number" }),
   acceptedAt: bigint("acceptedAt", { mode: "number" }),
@@ -318,12 +319,12 @@ export const agentRequests = mysqlTable("agent_requests", {
   hrLetterPurpose: varchar("hrLetterPurpose", { length: 500 }), // purpose for hr_letter requests
   hrLetterLanguage: mysqlEnum("hrLetterLanguage", ["arabic", "english"]), // language for hr_letter requests
   status: mysqlEnum("status", ["pending", "in_progress", "resolved", "rejected"]).default("pending").notNull(),
-  isAdminRead: boolean("isAdminRead").default(false).notNull(), // true once admin has viewed this request
+   isAdminRead: boolean("isAdminRead").default(false).notNull(), // true once admin has viewed this request
   adminReply: text("adminReply"),
+  adminLastWorkingDay: varchar("adminLastWorkingDay", { length: 10 }), // YYYY-MM-DD — admin sets this when approving resignation
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
-
 export type AgentRequest = typeof agentRequests.$inferSelect;
 export type InsertAgentRequest = typeof agentRequests.$inferInsert;
 

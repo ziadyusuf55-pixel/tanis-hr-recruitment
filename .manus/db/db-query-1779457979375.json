@@ -1,0 +1,9 @@
+{
+  "query": "\nALTER TABLE candidates ADD COLUMN blacklistReason TEXT NULL;\nALTER TABLE agent_requests ADD COLUMN adminLastWorkingDay VARCHAR(10) NULL;\n",
+  "command": "mysql --batch --raw --column-names --default-character-set=utf8mb4 --host gateway04.us-east-1.prod.aws.tidbcloud.com --port 4000 --user 2mcroMLez2dD7B1.d41ce960f4ad --database GKQCuajYkpcdyw75NP8gmu --execute \nALTER TABLE candidates ADD COLUMN blacklistReason TEXT NULL;\nALTER TABLE agent_requests ADD COLUMN adminLastWorkingDay VARCHAR(10) NULL;\n",
+  "rows": [],
+  "messages": [],
+  "stdout": "",
+  "stderr": "",
+  "execution_time_ms": 2478
+}

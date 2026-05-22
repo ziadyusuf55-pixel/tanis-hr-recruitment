@@ -4,7 +4,8 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Search, Download, Wallet, Building2, Star } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Search, Download, Wallet, Building2, Star, ChevronDown, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
 
 type PaymentMethod = {
@@ -21,177 +22,246 @@ type PaymentMethod = {
   adminComment?: string | null;
 };
 
-function methodLabel(m: PaymentMethod): string {
+type AgentGroup = {
+  traineeCode: string;
+  agentFullName: string | null;
+  agentAlias: string | null;
+  methods: PaymentMethod[];
+};
+
+function providerLabel(m: PaymentMethod): string {
   if (m.type === "wallet") {
-    const prov = m.walletProvider === "vodafone_cash" ? "Vodafone Cash" : m.walletProvider === "orange_cash" ? "Orange Cash" : "Wallet";
-    return `${prov} · ${m.walletPhone ?? "—"}`;
+    return m.walletProvider === "vodafone_cash" ? "Vodafone Cash" : m.walletProvider === "orange_cash" ? "Orange Cash" : "Wallet";
   }
-  return `${m.bankName ?? "Bank"} · ${m.bankAccountOrPhone ?? "—"}`;
+  return m.bankName ?? "Bank Account";
 }
 
-function accountName(m: PaymentMethod): string {
-  return m.type === "wallet" ? (m.walletName ?? "—") : (m.bankFullName ?? "—");
+function accountValue(m: PaymentMethod): string {
+  if (m.type === "wallet") return m.walletPhone ?? "—";
+  return m.bankAccountOrPhone ?? "—";
+}
+
+function holderName(m: PaymentMethod): string {
+  return (m.type === "wallet" ? m.walletName : m.bankFullName) ?? "—";
 }
 
 export default function PaymentPreferences() {
-  const { data: allMethods = [], isLoading } = trpc.paymentMethods.listAll.useQuery();
+  const { data: grouped = [], isLoading } = trpc.paymentMethods.listGrouped.useQuery();
   const { data: agents = [] } = trpc.workforce.list.useQuery({});
-
   const [search, setSearch] = useState("");
-  const [typeFilter, setTypeFilter] = useState<"all" | "wallet" | "bank">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "submitted" | "not_submitted" | "preferred_only">("all");
+  const [expandedCodes, setExpandedCodes] = useState<Set<string>>(new Set());
 
-  // Build a map of traineeCode → agent name/alias
-  const agentMap = useMemo(() => {
-    const m: Record<string, { fullName: string; alias?: string | null }> = {};
-    (agents as Array<{ traineeCode: string; fullName: string; alias?: string | null }>).forEach(a => {
-      m[a.traineeCode] = { fullName: a.fullName, alias: a.alias };
-    });
-    return m;
-  }, [agents]);
+  const submittedCodes = useMemo(() => new Set((grouped as AgentGroup[]).map(g => g.traineeCode)), [grouped]);
+  const allAgents = useMemo(() => (agents as Array<{ traineeCode: string; fullName: string; alias?: string | null }>), [agents]);
 
-  const filtered = useMemo(() => {
-    return (allMethods as PaymentMethod[]).filter(m => {
-      if (typeFilter !== "all" && m.type !== typeFilter) return false;
-      if (search) {
-        const q = search.toLowerCase();
-        const agent = agentMap[m.traineeCode];
-        const name = agent?.fullName?.toLowerCase() ?? "";
-        const alias = agent?.alias?.toLowerCase() ?? "";
-        const code = m.traineeCode.toLowerCase();
-        if (!name.includes(q) && !alias.includes(q) && !code.includes(q)) return false;
-      }
-      return true;
+  const filteredGroups = useMemo(() => {
+    const groups = grouped as AgentGroup[];
+    let result: AgentGroup[];
+
+    if (statusFilter === "not_submitted") {
+      result = allAgents
+        .filter(a => !submittedCodes.has(a.traineeCode))
+        .map(a => ({
+          traineeCode: a.traineeCode,
+          agentFullName: a.fullName,
+          agentAlias: a.alias ?? null,
+          methods: [] as PaymentMethod[],
+        }));
+    } else if (statusFilter === "submitted") {
+      result = groups;
+    } else if (statusFilter === "preferred_only") {
+      result = groups.map(g => ({ ...g, methods: g.methods.filter(m => m.isPreferred) })).filter(g => g.methods.length > 0);
+    } else {
+      result = groups;
+    }
+
+    if (search) {
+      const q = search.toLowerCase();
+      result = result.filter(g => {
+        const name = (g.agentFullName ?? "").toLowerCase();
+        const alias = (g.agentAlias ?? "").toLowerCase();
+        const code = g.traineeCode.toLowerCase();
+        return name.includes(q) || alias.includes(q) || code.includes(q);
+      });
+    }
+
+    return result;
+  }, [grouped, allAgents, submittedCodes, statusFilter, search]);
+
+  function toggleExpand(code: string) {
+    setExpandedCodes(prev => {
+      const next = new Set(prev);
+      if (next.has(code)) next.delete(code); else next.add(code);
+      return next;
     });
-  }, [allMethods, typeFilter, search, agentMap]);
+  }
 
   function exportCSV() {
-    if (filtered.length === 0) { toast.error("Nothing to export"); return; }
-    const headers = ["Agent Code", "Full Name", "Alias", "Type", "Provider / Bank", "Account / Phone", "Name on Account", "Preferred", "Admin Comment"];
-    const rows = filtered.map(m => {
-      const agent = agentMap[m.traineeCode];
-      return [
-        m.traineeCode,
-        agent?.fullName ?? "",
-        agent?.alias ?? "",
-        m.type === "wallet" ? "Wallet" : "Bank",
-        m.type === "wallet"
-          ? (m.walletProvider === "vodafone_cash" ? "Vodafone Cash" : m.walletProvider === "orange_cash" ? "Orange Cash" : "")
-          : (m.bankName ?? ""),
-        m.type === "wallet" ? (m.walletPhone ?? "") : (m.bankAccountOrPhone ?? ""),
-        accountName(m),
-        m.isPreferred ? "Yes" : "No",
-        m.adminComment ?? "",
-      ];
-    });
-    const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
+    const groups = grouped as AgentGroup[];
+    const rows: string[][] = [["Trainee Code", "Agent Name", "Alias", "Type", "Provider/Bank", "Account/Phone", "Holder Name", "Preferred", "Admin Note"]];
+    for (const g of groups) {
+      if (g.methods.length === 0) {
+        rows.push([g.traineeCode, g.agentFullName ?? "", g.agentAlias ?? "", "—", "—", "—", "—", "—", "—"]);
+      } else {
+        for (const m of g.methods) {
+          rows.push([
+            g.traineeCode,
+            g.agentFullName ?? "",
+            g.agentAlias ?? "",
+            m.type,
+            providerLabel(m),
+            accountValue(m),
+            holderName(m),
+            m.isPreferred ? "Yes" : "No",
+            m.adminComment ?? "",
+          ]);
+        }
+      }
+    }
+    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `payment-preferences-${new Date().toISOString().slice(0, 10)}.csv`; a.click();
+    a.href = url; a.download = "payment_preferences.csv"; a.click();
     URL.revokeObjectURL(url);
-    toast.success(`Exported ${filtered.length} records`);
+    toast.success("Exported");
   }
+
+  const STATUS_FILTERS: { key: typeof statusFilter; label: string }[] = [
+    { key: "all", label: "All" },
+    { key: "submitted", label: "Submitted" },
+    { key: "not_submitted", label: "Not Submitted" },
+    { key: "preferred_only", label: "Preferred Only" },
+  ];
 
   return (
     <DashboardLayout>
-      <div className="p-6 space-y-5">
+      <div className="p-6 space-y-5 max-w-4xl mx-auto">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
           <div>
-            <h1 className="text-2xl font-bold">Payment Preferences</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">All agent payment methods in one view</p>
+            <h1 className="text-xl font-bold">Payment Preferences</h1>
+            <p className="text-sm text-muted-foreground mt-0.5">Agent payment methods grouped by agent</p>
           </div>
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={exportCSV}>
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={exportCSV}>
             <Download className="h-3.5 w-3.5" /> Export CSV
           </Button>
         </div>
 
         {/* Filters */}
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="relative flex-1 min-w-[200px] max-w-sm">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="Search by name, alias, or code..." className="pl-9" value={search} onChange={e => setSearch(e.target.value)} />
+        <div className="flex flex-wrap gap-3 items-center">
+          <div className="relative flex-1 min-w-[200px] max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <Input
+              placeholder="Search by name, alias, or code..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="pl-9 h-9 text-sm"
+            />
           </div>
-          <div className="flex gap-1.5">
-            {(["all", "wallet", "bank"] as const).map(t => (
-              <Button
-                key={t}
-                size="sm"
-                variant={typeFilter === t ? "default" : "outline"}
-                onClick={() => setTypeFilter(t)}
-                className="capitalize"
+          <div className="flex gap-1 flex-wrap">
+            {STATUS_FILTERS.map(f => (
+              <button
+                key={f.key}
+                onClick={() => setStatusFilter(f.key)}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
+                  statusFilter === f.key
+                    ? "bg-foreground text-background"
+                    : "bg-muted text-muted-foreground hover:bg-muted/80"
+                }`}
               >
-                {t === "all" ? "All Types" : t === "wallet" ? "Wallets" : "Bank Accounts"}
-              </Button>
+                {f.label}
+              </button>
             ))}
           </div>
-          <span className="text-sm text-muted-foreground ml-auto">{filtered.length} record{filtered.length !== 1 ? "s" : ""}</span>
+          <span className="text-xs text-muted-foreground ml-auto">{filteredGroups.length} agent{filteredGroups.length !== 1 ? "s" : ""}</span>
         </div>
 
-        {/* Table */}
+        {/* Grouped list */}
         {isLoading ? (
           <div className="space-y-2">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="h-12 rounded-lg animate-pulse bg-muted" />
-            ))}
+            {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-14 rounded-xl" />)}
           </div>
-        ) : filtered.length === 0 ? (
-          <div className="text-center py-16 text-muted-foreground">
-            <Wallet className="h-10 w-10 mx-auto mb-3 opacity-30" />
-            <p className="font-medium">No payment methods found</p>
-            <p className="text-sm mt-1">Agents add their payment preferences from their portal.</p>
+        ) : filteredGroups.length === 0 ? (
+          <div className="py-20 text-center text-sm text-muted-foreground">
+            <Wallet className="h-10 w-10 mx-auto mb-3 opacity-20" />
+            <p>No agents match the current filter.</p>
           </div>
         ) : (
-          <div className="rounded-xl border overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b bg-muted/40">
-                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Agent</th>
-                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Type</th>
-                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Provider / Bank</th>
-                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Account / Phone</th>
-                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Name on Account</th>
-                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Preferred</th>
-                  <th className="text-left px-4 py-3 font-medium text-muted-foreground">Admin Note</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y">
-                {filtered.map(m => {
-                  const agent = agentMap[m.traineeCode];
-                  return (
-                    <tr key={m.id} className="hover:bg-muted/20 transition-colors">
-                      <td className="px-4 py-3">
-                        <p className="font-medium">{agent?.fullName ?? m.traineeCode}</p>
-                        <p className="text-xs text-muted-foreground">{m.traineeCode}{agent?.alias ? ` · ${agent.alias}` : ""}</p>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Badge variant="outline" className="gap-1">
-                          {m.type === "wallet" ? <Wallet className="h-3 w-3" /> : <Building2 className="h-3 w-3" />}
-                          {m.type === "wallet" ? "Wallet" : "Bank"}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3">
-                        {m.type === "wallet"
-                          ? (m.walletProvider === "vodafone_cash" ? "Vodafone Cash" : m.walletProvider === "orange_cash" ? "Orange Cash" : "—")
-                          : (m.bankName ?? "—")}
-                      </td>
-                      <td className="px-4 py-3 font-mono text-xs">{m.type === "wallet" ? (m.walletPhone ?? "—") : (m.bankAccountOrPhone ?? "—")}</td>
-                      <td className="px-4 py-3">{accountName(m)}</td>
-                      <td className="px-4 py-3">
-                        {m.isPreferred && (
-                          <span className="flex items-center gap-1 text-amber-500 text-xs font-medium">
-                            <Star className="h-3 w-3 fill-current" /> Preferred
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3 max-w-[200px]">
-                        <p className="text-xs text-muted-foreground truncate">{m.adminComment ?? "—"}</p>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
+          <div className="rounded-xl border overflow-hidden divide-y">
+            {filteredGroups.map(g => {
+              const isExpanded = expandedCodes.has(g.traineeCode);
+              const hasPreferred = g.methods.some(m => m.isPreferred);
+              const methodCount = g.methods.length;
+
+              return (
+                <div key={g.traineeCode}>
+                  {/* Agent row */}
+                  <button
+                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors text-left"
+                    onClick={() => { if (methodCount > 0) toggleExpand(g.traineeCode); }}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium text-sm">{g.agentFullName ?? g.traineeCode}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {g.traineeCode}{g.agentAlias ? ` · ${g.agentAlias}` : ""}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {methodCount === 0 ? (
+                        <Badge variant="outline" className="text-[10px] text-muted-foreground border-dashed">No methods</Badge>
+                      ) : (
+                        <>
+                          <Badge variant="secondary" className="text-[10px]">
+                            {methodCount} method{methodCount !== 1 ? "s" : ""}
+                          </Badge>
+                          {hasPreferred && <Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />}
+                        </>
+                      )}
+                      {methodCount > 0 && (
+                        isExpanded
+                          ? <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                          : <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </div>
+                  </button>
+
+                  {/* Expanded methods */}
+                  {isExpanded && methodCount > 0 && (
+                    <div className="bg-muted/20 border-t divide-y">
+                      {g.methods.map(m => (
+                        <div key={m.id} className="px-6 py-3 flex items-center gap-3 flex-wrap">
+                          <div className="w-7 h-7 rounded-md bg-background border flex items-center justify-center shrink-0">
+                            {m.type === "wallet"
+                              ? <Wallet className="h-3.5 w-3.5 text-muted-foreground" />
+                              : <Building2 className="h-3.5 w-3.5 text-muted-foreground" />}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium">{providerLabel(m)}</span>
+                              {m.isPreferred && (
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium flex items-center gap-0.5">
+                                  <Star className="h-2.5 w-2.5 fill-amber-500 text-amber-500" /> Preferred
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-0.5">
+                              {accountValue(m)} · {holderName(m)}
+                            </p>
+                            {m.adminComment && (
+                              <p className="text-xs text-muted-foreground mt-0.5 italic">Note: {m.adminComment}</p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

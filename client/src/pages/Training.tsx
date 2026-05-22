@@ -67,9 +67,14 @@ const EMPTY_FORM = { name: "", trainerName: "", startDate: "", notes: "" };
 
 export default function Training() {
   const utils = trpc.useUtils();
+  const [activeTab, setActiveTab] = useState<"batches" | "agents">("batches");
+  const [agentSearch, setAgentSearch] = useState("");
 
   // Batch list
   const { data: batches = [], isLoading } = trpc.batches.list.useQuery();
+
+  // All agents in training (across all batches)
+  const { data: allInTraining = [], isLoading: trainingLoading } = trpc.workforce.allInTraining.useQuery();
 
   // Selected batch detail
   const [selectedBatchId, setSelectedBatchId] = useState<number | null>(null);
@@ -615,16 +620,27 @@ export default function Training() {
     );
   }
   // Batch list view
+  const filteredTrainingAgents = allInTraining.filter((a) => {
+    if (!agentSearch) return true;
+    const q = agentSearch.toLowerCase();
+    return (
+      (a.candidateName ?? "").toLowerCase().includes(q) ||
+      (a.traineeCode ?? "").toLowerCase().includes(q) ||
+      (a.batchName ?? "").toLowerCase().includes(q) ||
+      (a.candidatePhone ?? "").includes(q)
+    );
+  });
+
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
             <GraduationCap className="h-6 w-6 text-primary" />
-            Training Batches
+            Training Hub
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Organise agents (WhatsApp Group Added) into training cohorts and assign trainee codes
+            Manage training batches and view all agents currently in training
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -649,13 +665,117 @@ export default function Training() {
               List
             </button>
           </div>
-          <Button onClick={() => setCreateOpen(true)} className="gap-1.5">
-            <Plus className="h-4 w-4" /> New Batch
-          </Button>
+          {activeTab === "batches" && (
+            <Button onClick={() => setCreateOpen(true)} className="gap-1.5">
+              <Plus className="h-4 w-4" /> New Batch
+            </Button>
+          )}
         </div>
       </div>
 
-      {isLoading ? (
+      {/* Tab navigation */}
+      <div className="flex gap-1 mb-6 border-b">
+        <button
+          onClick={() => setActiveTab("batches")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px ${
+            activeTab === "batches"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <span className="flex items-center gap-1.5">
+            <GraduationCap className="h-4 w-4" />
+            Batches
+            <span className="ml-1 bg-muted text-muted-foreground text-xs rounded-full px-1.5 py-0.5">{batches.length}</span>
+          </span>
+        </button>
+        <button
+          onClick={() => setActiveTab("agents")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px ${
+            activeTab === "agents"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <span className="flex items-center gap-1.5">
+            <Users className="h-4 w-4" />
+            All Agents in Training
+            <span className="ml-1 bg-muted text-muted-foreground text-xs rounded-full px-1.5 py-0.5">{allInTraining.length}</span>
+          </span>
+        </button>
+      </div>
+
+      {/* Agents in Training tab */}
+      {activeTab === "agents" && (
+        <div>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="relative flex-1 max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <input
+                className="pl-9 pr-3 py-2 text-sm border rounded-lg w-full bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+                placeholder="Search by name, code, batch, phone..."
+                value={agentSearch}
+                onChange={(e) => setAgentSearch(e.target.value)}
+              />
+            </div>
+            <span className="text-sm text-muted-foreground">{filteredTrainingAgents.length} agent{filteredTrainingAgents.length !== 1 ? "s" : ""}</span>
+          </div>
+          {trainingLoading ? (
+            <div className="space-y-2">{[1,2,3,4,5].map(i => <div key={i} className="h-12 rounded-lg bg-muted/40 animate-pulse" />)}</div>
+          ) : filteredTrainingAgents.length === 0 ? (
+            <div className="text-center py-16 text-muted-foreground">
+              <Users className="h-10 w-10 mx-auto mb-3 opacity-25" />
+              <p className="font-medium">No agents in training</p>
+              <p className="text-sm mt-1">Assign candidates to batches to see them here</p>
+            </div>
+          ) : (
+            <div className="rounded-xl border overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/40">
+                  <tr>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Agent</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell">Trainee Code</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden md:table-cell">Batch</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden lg:table-cell">Trainer</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell">Phone</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground">Slack</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {filteredTrainingAgents.map((a) => (
+                    <tr key={`${a.batchId}-${a.candidateId}`} className="hover:bg-muted/20 transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-foreground">{a.candidateName ?? "—"}</div>
+                        <div className="text-xs text-muted-foreground md:hidden">{a.batchName}</div>
+                      </td>
+                      <td className="px-4 py-3 hidden sm:table-cell">
+                        {a.traineeCode ? (
+                          <span className="font-mono text-xs bg-muted px-2 py-0.5 rounded">{a.traineeCode}</span>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">Not assigned</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 hidden md:table-cell text-muted-foreground">{a.batchName}</td>
+                      <td className="px-4 py-3 hidden lg:table-cell text-muted-foreground">{a.trainerName ?? "—"}</td>
+                      <td className="px-4 py-3 hidden sm:table-cell text-muted-foreground">{a.candidatePhone ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        {a.slackJoined ? (
+                          <Badge variant="outline" className="text-green-600 border-green-200 bg-green-50 text-xs">Joined</Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-muted-foreground text-xs">Pending</Badge>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Batches tab */}
+      {activeTab === "batches" && (<div>{ isLoading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => (
             <div key={i} className="h-36 rounded-xl bg-muted/40 animate-pulse" />
@@ -761,7 +881,7 @@ export default function Training() {
             </tbody>
           </table>
         </div>
-      )}
+      )}</div>)}
 
       {/* Create batch dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>

@@ -170,6 +170,10 @@ import {
   upsertCycleDeductions,
   upsertCycleOT,
   getCycleTrackerForAgent,
+  // New Round 61
+  listAllAgentsInTraining,
+  blacklistCandidate,
+  listPaymentMethodsGrouped,
 } from "./db";
 import { notifyOwner } from "./_core/notification";
 import { sendInterviewNotification } from "./email";
@@ -386,6 +390,19 @@ const candidatesRouter = router({
     delete: protectedProcedure
       .input(z.object({ id: z.number() }))
       .mutation(({ input }) => deleteCandidate(input.id)),
+    blacklist: protectedProcedure
+      .input(z.object({ id: z.number(), reason: z.string().min(1) }))
+      .mutation(async ({ input, ctx }) => {
+        await blacklistCandidate(input.id, input.reason);
+        await logActivity({
+          candidateId: input.id,
+          action: "stage_change",
+          toStage: "blacklisted",
+          detail: input.reason,
+          performedBy: ctx.user?.name ?? undefined,
+        });
+        return { success: true };
+      }),
 
     bulkImport: protectedProcedure
       .input(
@@ -1392,8 +1409,10 @@ const campaignsRouter = router({
 // ─── Workforce Router ─────────────────────────────────────────────────────────
 const workforceRouter = router({
   list: protectedProcedure
-    .input(z.object({ campaignId: z.number().optional() }))
-    .query(({ input }) => listWorkforceAgents(input.campaignId)),
+    .input(z.object({ campaignId: z.number().optional(), teamLeader: z.string().optional() }))
+    .query(({ input }) => listWorkforceAgents(input.campaignId, input.teamLeader)),
+  allInTraining: protectedProcedure
+    .query(() => listAllAgentsInTraining()),
 
   create: protectedProcedure
     .input(z.object({
@@ -1646,6 +1665,7 @@ const paymentMethodsRouter = router({
   }),
 
   listAll: protectedProcedure.query(() => listAllPaymentMethods()),
+  listGrouped: protectedProcedure.query(() => listPaymentMethodsGrouped()),
 
   upsert: publicProcedure
     .input(z.object({
@@ -1972,16 +1992,25 @@ const separationRouter = router({
       agentCode: z.string(),
       requestId: z.number(),
       adminReply: z.string().optional(),
+      adminLastWorkingDay: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), // YYYY-MM-DD set by admin
     }))
     .mutation(async ({ input, ctx }) => {
       const adminName = ctx.user?.name ?? "Admin";
-      // Look up the request to get the last working day and reason
+      // Look up the request to get the reason
       const req = await getAgentRequestById(input.requestId);
       if (!req) throw new TRPCError({ code: "NOT_FOUND", message: "Request not found" });
-      const lastWorkingDay = req.requestedDate
-        ? new Date(req.requestedDate).toISOString().slice(0, 10)
-        : new Date().toISOString().slice(0, 10);
+      // Admin-set last working day takes priority; fallback to agent's requested date
+      const lastWorkingDay = input.adminLastWorkingDay
+        ?? (req.requestedDate ? new Date(req.requestedDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10));
       const reason = req.message ?? "Resignation request approved";
+      // Save admin's chosen last working day on the request record
+      const { getDb } = await import("./db");
+      const { agentRequests: arTable } = await import("../drizzle/schema");
+      const { eq: eqOp } = await import("drizzle-orm");
+      const dbConn = await getDb();
+      if (dbConn && input.adminLastWorkingDay) {
+        await dbConn.update(arTable).set({ adminLastWorkingDay: input.adminLastWorkingDay }).where(eqOp(arTable.id, input.requestId));
+      }
       await approveResignationRequest(input.agentCode, lastWorkingDay, reason, adminName, req.requestedDate ?? Date.now());
       // Also update the request status to resolved
       await updateAgentRequestStatus(input.requestId, "resolved", input.adminReply ?? "Your resignation has been approved.");
@@ -2429,9 +2458,13 @@ const cycleTrackerRouter = router({
       const db = await getDb();
       if (!db) return [];
       const rows = await db.select().from(cycleStats).where(eq(cycleStats.cycleKey, input.cycleKey));
+      // Pull teamLeader from workforce_agents for TL filter
+      const { workforceAgents } = await import("../drizzle/schema");
+      const agentRows = await db.select({ crdts: workforceAgents.crdts, teamLeader: workforceAgents.teamLeader }).from(workforceAgents);
+      const tlByCrdts = new Map(agentRows.map(a => [a.crdts, a.teamLeader ?? null]));
       // Aggregate by CRDTS
       const byAgent = new Map<string, {
-        crdts: string; agentCode: string | null; alias: string | null;
+        crdts: string; agentCode: string | null; alias: string | null; teamLeader: string | null;
         totalRevenue: number; totalCalls: number; totalLoginHours: number;
         totalProfit: number; totalRevPerHr: number; days: number;
       }>();
@@ -2451,6 +2484,7 @@ const cycleTrackerRouter = router({
             crdts: row.crdts,
             agentCode: row.agentCode ?? null,
             alias: row.alias ?? null,
+            teamLeader: tlByCrdts.get(row.crdts) ?? null,
             totalRevenue: Number(row.revenue ?? 0),
             totalCalls: Number(row.totalCalls ?? 0),
             totalLoginHours: Number(row.loginHours ?? 0),

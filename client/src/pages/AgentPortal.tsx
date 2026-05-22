@@ -1591,7 +1591,19 @@ function PaymentMethodsTab({ theme }: { theme: Theme }) {
     setFormType("wallet"); setProvider("Vodafone Cash"); setPhone(""); setBankName(EGYPT_BANKS[0]);
     setAccountNumber(""); setAccountPhone(""); setHolderName("");
   }
+  function validateEgyptianPhone(val: string): boolean {
+    const digits = val.replace(/\D/g, "");
+    return /^01[0125]\d{8}$/.test(digits);
+  }
   async function handleAdd() {
+    if (formType === "wallet") {
+      if (!phone.trim()) { toast.error("Phone number is required"); return; }
+      if (!validateEgyptianPhone(phone)) { toast.error("Enter a valid Egyptian mobile number (e.g. 01012345678)"); return; }
+      if (!holderName.trim()) { toast.error("Full name is required"); return; }
+    } else {
+      if (!holderName.trim()) { toast.error("Full name is required"); return; }
+      if (accountPhone && !validateEgyptianPhone(accountPhone)) { toast.error("Enter a valid Egyptian mobile number for the phone field (e.g. 01012345678)"); return; }
+    }
     await addMutation.mutateAsync({
       type: formType,
       walletProvider: formType === "wallet" ? (provider === "Vodafone Cash" ? "vodafone_cash" : "orange_cash") : undefined,

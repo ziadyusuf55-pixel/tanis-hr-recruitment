@@ -19,6 +19,7 @@ type AgentStat = {
   crdts: string;
   agentCode: string | null;
   alias: string | null;
+  teamLeader: string | null;
   totalRevenue: number;
   totalCalls: number;
   totalLoginHours: number;
@@ -35,6 +36,7 @@ export default function PerformanceReports() {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"revenue" | "calls" | "revPerHr" | "profit">("revenue");
   const [cycleKey, setCycleKey] = useState<string>("");
+  const [tlFilter, setTlFilter] = useState<string>("all");
 
   const { data: cycleInfo } = trpc.cycleTracker.getCurrentCycle.useQuery();
   const currentCycle = cycleInfo?.cycleKey ?? "";
@@ -58,16 +60,15 @@ export default function PerformanceReports() {
   }
 
   const stats = rawStats as AgentStat[];
+  const uniqueTLs = Array.from(new Set(stats.map(s => s.teamLeader).filter(Boolean) as string[])).sort();
 
   const filtered = stats
     .filter(s => {
-      if (!search) return true;
-      const q = search.toLowerCase();
-      return (
-        s.crdts.toLowerCase().includes(q) ||
-        (s.alias ?? "").toLowerCase().includes(q) ||
-        (s.agentCode ?? "").toLowerCase().includes(q)
-      );
+      const matchesSearch = !search || [
+        s.crdts, s.alias ?? "", s.agentCode ?? ""
+      ].some(v => v.toLowerCase().includes(search.toLowerCase()));
+      const matchesTL = tlFilter === "all" || s.teamLeader === tlFilter;
+      return matchesSearch && matchesTL;
     })
     .sort((a, b) => {
       if (sortBy === "revenue") return b.totalRevenue - a.totalRevenue;
@@ -178,6 +179,17 @@ export default function PerformanceReports() {
             className="pl-9 h-9 text-sm"
           />
         </div>
+        {uniqueTLs.length > 0 && (
+          <Select value={tlFilter} onValueChange={setTlFilter}>
+            <SelectTrigger className="h-9 w-44 text-xs">
+              <SelectValue placeholder="All Team Leaders" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all" className="text-xs">All Team Leaders</SelectItem>
+              {uniqueTLs.map(tl => <SelectItem key={tl} value={tl} className="text-xs">{tl}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
         <Select value={sortBy} onValueChange={v => setSortBy(v as typeof sortBy)}>
           <SelectTrigger className="h-9 w-40 text-xs">
             <SelectValue />

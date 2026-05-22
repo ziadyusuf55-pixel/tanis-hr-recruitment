@@ -100,11 +100,13 @@ export default function Requests() {
   const [newStatus, setNewStatus] = useState("");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [filterType, setFilterType] = useState<string>("all");
+  const [lastWorkingDay, setLastWorkingDay] = useState("");
 
   function openRequest(req: AgentRequest) {
     setSelected(req);
     setReplyText(req.adminReply ?? "");
     setNewStatus(req.status);
+    setLastWorkingDay("");
   }
 
   function handleUpdate() {
@@ -423,15 +425,26 @@ export default function Requests() {
           <DialogFooter className="flex-col sm:flex-row gap-2">
             <Button variant="outline" onClick={() => setSelected(null)}>Cancel</Button>
             {selected?.type === "resignation" && selected.status !== "resolved" && selected.status !== "rejected" && (
-              <Button
-                className="bg-red-600 hover:bg-red-700 text-white gap-1.5"
-                disabled={approveResignation.isPending}
-                onClick={() => {
-                  if (selected) approveResignation.mutate({ requestId: selected.id, agentCode: selected.traineeCode, adminReply: replyText.trim() || undefined });
-                }}
-              >
-                {approveResignation.isPending ? "Processing..." : "✓ Approve Resignation"}
-              </Button>
+              <>
+                <div className="flex flex-col gap-1 w-full sm:w-auto">
+                  <label className="text-xs text-muted-foreground font-medium">Last Working Day</label>
+                  <input
+                    type="date"
+                    value={lastWorkingDay}
+                    onChange={(e) => setLastWorkingDay(e.target.value)}
+                    className="h-9 px-3 rounded-md border text-sm bg-background"
+                  />
+                </div>
+                <Button
+                  className="bg-red-600 hover:bg-red-700 text-white gap-1.5"
+                  disabled={approveResignation.isPending || !lastWorkingDay}
+                  onClick={() => {
+                    if (selected) approveResignation.mutate({ requestId: selected.id, agentCode: selected.traineeCode, adminReply: replyText.trim() || undefined, adminLastWorkingDay: lastWorkingDay || undefined });
+                  }}
+                >
+                  {approveResignation.isPending ? "Processing..." : "✓ Approve Resignation"}
+                </Button>
+              </>
             )}
             <Button
               onClick={handleUpdate}

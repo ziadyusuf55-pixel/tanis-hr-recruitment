@@ -182,6 +182,20 @@ export default function Candidates() {
 
   const addNote = trpc.notes.add.useMutation();
 
+  // Blacklist from separated view
+  const blacklistMutation = trpc.candidates.blacklist.useMutation({
+    onSuccess: () => {
+      utils.candidates.list.invalidate();
+      toast.success("Candidate blacklisted");
+      setBlacklistId(null);
+      setBlacklistReason("");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const [blacklistId, setBlacklistId] = useState<number | null>(null);
+  const [blacklistReason, setBlacklistReason] = useState("");
+  const [separatedStatusFilter, setSeparatedStatusFilter] = useState<"all" | "resigned" | "terminated">("all");
+
   // Bulk stage move state
   const [bulkStageOpen, setBulkStageOpen] = useState(false);
   const [bulkTargetStage, setBulkTargetStage] = useState<PipelineStage>("whatsapp_sent");
@@ -321,6 +335,7 @@ export default function Candidates() {
     // If showSeparated is active, show resigned + terminated only
     if (showSeparated) {
       if (c.status !== "resigned" && c.status !== "terminated") return false;
+      if (separatedStatusFilter !== "all" && c.status !== separatedStatusFilter) return false;
       const q = search.toLowerCase();
       if (!q) return true;
       if (c.name.toLowerCase().includes(q)) return true;
@@ -641,6 +656,63 @@ export default function Candidates() {
         <div className="grid grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => <Skeleton key={i} className="h-64 rounded-xl" />)}
         </div>
+      ) : showSeparated ? (
+        <div className="space-y-3">
+          {/* Separated filter bar */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex gap-1">
+              {(["all", "resigned", "terminated"] as const).map(f => (
+                <button key={f} onClick={() => setSeparatedStatusFilter(f)}
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
+                    separatedStatusFilter === f
+                      ? "bg-gray-800 text-white"
+                      : "bg-muted text-muted-foreground hover:bg-muted/80"
+                  }`}>
+                  {f === "all" ? "All" : f.charAt(0).toUpperCase() + f.slice(1)}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-muted-foreground ml-auto">{filtered.length} record{filtered.length !== 1 ? "s" : ""}</span>
+          </div>
+          {filtered.length === 0 ? (
+            <div className="py-16 text-center text-sm text-muted-foreground">No {separatedStatusFilter === "all" ? "resigned or terminated" : separatedStatusFilter} candidates.</div>
+          ) : (
+            <div className="rounded-xl border overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/40">
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Name</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground hidden sm:table-cell">Phone</th>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground">Status</th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map(c => (
+                    <tr key={c.id} className="border-b last:border-0 hover:bg-muted/20 transition-colors">
+                      <td className="px-4 py-3">
+                        <button className="font-medium text-xs hover:underline text-left" onClick={() => navigate(`/candidates/${c.id}`)}>{c.name}</button>
+                        {c.email && <p className="text-[10px] text-muted-foreground">{c.email}</p>}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-muted-foreground hidden sm:table-cell">{c.phone ?? "—"}</td>
+                      <td className="px-4 py-3">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                          c.status === "resigned" ? "bg-orange-100 text-orange-700" : "bg-red-100 text-red-700"
+                        }`}>{c.status}</span>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        <Button variant="outline" size="sm" className="h-7 text-xs gap-1 border-red-200 text-red-700 hover:bg-red-50"
+                          onClick={() => { setBlacklistId(c.id); setBlacklistReason(""); }}>
+                          <UserX className="h-3 w-3" /> Blacklist
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       ) : showRejected ? (
         <CandidateList
           candidates={filtered}
@@ -690,6 +762,34 @@ export default function Candidates() {
           batchAssignments={batchAssignments as Record<number, string>}
         />
       ) : null}
+
+      {/* Blacklist Dialog */}
+      <Dialog open={blacklistId !== null} onOpenChange={(v) => { if (!v) { setBlacklistId(null); setBlacklistReason(""); } }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Blacklist Candidate</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-muted-foreground">This will permanently mark the candidate as blacklisted and block them from re-entering the pipeline.</p>
+            <div className="space-y-1.5">
+              <Label>Reason for blacklisting <span className="text-destructive">*</span></Label>
+              <Textarea
+                placeholder="e.g. Misconduct, policy violation..."
+                value={blacklistReason}
+                onChange={(e) => setBlacklistReason(e.target.value)}
+                rows={3}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setBlacklistId(null); setBlacklistReason(""); }}>Cancel</Button>
+            <Button variant="destructive" disabled={!blacklistReason.trim() || blacklistMutation.isPending}
+              onClick={() => { if (blacklistId !== null) blacklistMutation.mutate({ id: blacklistId, reason: blacklistReason.trim() }); }}>
+              {blacklistMutation.isPending ? "Blacklisting..." : "Confirm Blacklist"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Add Candidate Dialog */}
       <Dialog open={addOpen} onOpenChange={(v) => { setAddOpen(v); if (!v) setForm(EMPTY_FORM); }}>

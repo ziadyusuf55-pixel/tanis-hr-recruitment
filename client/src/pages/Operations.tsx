@@ -697,6 +697,7 @@ export default function Operations() {
   );
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | "all">("all");
   const [search, setSearch] = useState("");
+  const [tlFilter, setTlFilter] = useState<string>("all");
 
   // Data
   const { data: campaigns = [], isLoading: loadingCampaigns } = trpc.campaigns.list.useQuery();
@@ -852,11 +853,19 @@ export default function Operations() {
     onError: (e) => toast.error(getErrorMessage(e)),
   });
 
-  const filteredAgents = (agents as WorkforceAgent[]).filter(a =>
-    a.fullName.toLowerCase().includes(search.toLowerCase()) ||
-    a.traineeCode.toLowerCase().includes(search.toLowerCase()) ||
-    (a.alias ?? "").toLowerCase().includes(search.toLowerCase())
-  );
+  const uniqueTLs = useMemo(() => {
+    const tls = new Set<string>();
+    (agents as WorkforceAgent[]).forEach(a => { if (a.teamLeader) tls.add(a.teamLeader); });
+    return Array.from(tls).sort();
+  }, [agents]);
+
+  const filteredAgents = (agents as WorkforceAgent[]).filter(a => {
+    const matchesSearch = a.fullName.toLowerCase().includes(search.toLowerCase()) ||
+      a.traineeCode.toLowerCase().includes(search.toLowerCase()) ||
+      (a.alias ?? "").toLowerCase().includes(search.toLowerCase());
+    const matchesTL = tlFilter === "all" || a.teamLeader === tlFilter;
+    return matchesSearch && matchesTL;
+  });
 
   const openEditAgent = (agent: WorkforceAgent) => {
     setEditingAgent(agent);
@@ -1015,6 +1024,16 @@ export default function Operations() {
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input placeholder="Search by name, ID, or alias..." className="pl-9" value={search} onChange={e => setSearch(e.target.value)} />
             </div>
+            {uniqueTLs.length > 0 && (
+              <select
+                className="h-9 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                value={tlFilter}
+                onChange={e => setTlFilter(e.target.value)}
+              >
+                <option value="all">All Team Leaders</option>
+                {uniqueTLs.map(tl => <option key={tl} value={tl}>{tl}</option>)}
+              </select>
+            )}
             <span className="text-sm text-muted-foreground">{filteredAgents.length} agent{filteredAgents.length !== 1 ? "s" : ""}</span>
             <div className="ml-auto flex items-center gap-2">
               <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowExportModal(true)}>

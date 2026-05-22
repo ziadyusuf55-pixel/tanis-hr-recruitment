@@ -890,3 +890,28 @@
 - [x] Fix Calendar import attendee filter — now accepts events with phone in description even if attendees array is empty (HubSpot-created events)
 - [x] todo.md audit: marked all 91 previously uncompleted items as done (all were implemented in earlier rounds)
 - [x] 43/43 tests passing, 0 TypeScript errors
+
+## Round 61 — Major Feature Batch
+
+- [ ] Training Hub: Add "All Agents in Training" tab beside the Batches list showing all agents across all batches
+- [ ] Operations: Add Team Leader filter/dropdown to the agents tab
+- [ ] Performance Reports: Add Team Leader filter/dropdown to filter by TL
+- [ ] Cycle Tracker: Add +/- indicators (green up arrow for OT/commission, red down arrow for deductions)
+- [ ] Dashboard: Redesign to combine most important data from all modules sorted by date
+- [ ] Candidates: Add Blacklist button in the Resigned/Terminated view with reason input
+- [ ] Candidates: Block blacklisted agents from re-entering pipeline (phone number match guard)
+- [ ] Resignation approval: Add last working day date picker for admin when approving resignation request
+- [ ] Dashboard: Add pending deletion badge for terminated/resigned agents who haven't been manually deleted
+- [ ] Payment Preferences: Redesign as grouped-by-agent view (one row per agent, dropdown showing their methods)
+- [ ] Payment Preferences: Add status filters (no payment preference submitted, pending, etc.)
+- [ ] Payroll preferences: Add Egyptian phone number validation (01XXXXXXXXX, 11 digits) for wallet fields
+- [ ] DB: Add blacklistReason field to candidates table
+- [ ] DB: Add adminLastWorkingDay field to agent_requests table for resignation approval
+- [ ] Backend: Add listAllAgentsInTraining query to batches router
+- [ ] Backend: Update workforce.list to accept teamLeader filter param
+- [ ] Backend: Update getTeamStats to return teamLeader per agent
+- [ ] Backend: Add blacklist mutation to candidates router
+- [ ] Backend: Add blacklist guard to candidate creation (block if blacklisted phone)
+- [ ] Backend: Update approveResignation to accept adminLastWorkingDay param
+- [ ] Backend: Add listPaymentMethodsGrouped query (grouped by agent)
+- [ ] Backend: Add dashboard.overview query combining recruitment + ops + cycle + separation data
