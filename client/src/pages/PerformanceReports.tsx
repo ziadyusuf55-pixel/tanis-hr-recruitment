@@ -119,6 +119,28 @@ export default function PerformanceReports() {
     }
   }
 
+  // Previous cycle key for comparison
+  const prevCycleKey = (() => {
+    if (!activeCycle) return "";
+    const [y, m] = activeCycle.split("-").map(Number);
+    const d = new Date(y, m - 2, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  })();
+  const { data: rawPrevStats = [] } = trpc.cycleTracker.getTeamStats.useQuery(
+    { cycleKey: prevCycleKey },
+    { enabled: !!prevCycleKey }
+  );
+  const prevStats = rawPrevStats as AgentStat[];
+  const prevTeamRevenue = prevStats.reduce((acc, s) => acc + s.totalRevenue, 0);
+  // Client logouts for current cycle
+  const { data: rawLogouts = [] } = trpc.cycleTracker.getClientLogoutsByCycle.useQuery(
+    { cycleKey: activeCycle },
+    { enabled: !!activeCycle }
+  );
+  type LogoutRow = { crdts: string; alias: string | null; agentCode: string | null; };
+  const logouts = rawLogouts as LogoutRow[];
+  const logoutCountByCrdts = logouts.reduce((acc, l) => { acc[l.crdts] = (acc[l.crdts] ?? 0) + 1; return acc; }, {} as Record<string, number>);
+
   const stats = rawStats as AgentStat[];
   const uniqueTLs = Array.from(new Set(stats.map(s => s.teamLeader).filter(Boolean) as string[])).sort();
 
@@ -170,26 +192,88 @@ export default function PerformanceReports() {
       </div>
 
       {stats.length > 0 && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          {[
-            { label: "Team Revenue", value: fmt$(teamTotals.revenue), icon: DollarSign, color: "text-emerald-600" },
-            { label: "Total Calls", value: teamTotals.calls.toLocaleString(), icon: Phone, color: "text-blue-600" },
-            { label: "Login Hours", value: fmtHr(teamTotals.loginHours), icon: Clock, color: "text-purple-600" },
-            { label: "Agents", value: stats.length.toString(), icon: Users, color: "text-amber-600" },
-          ].map(card => (
-            <Card key={card.label} className="border-0 shadow-sm">
-              <CardContent className="p-4 flex items-center gap-3">
-                <div className={`p-2 rounded-lg bg-muted ${card.color}`}>
-                  <card.icon className="h-4 w-4" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">{card.label}</p>
-                  <p className="text-base font-bold">{card.value}</p>
+        <>
+          {/* KPI Cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {(() => {
+              const revChange = prevTeamRevenue > 0 ? ((teamTotals.revenue - prevTeamRevenue) / prevTeamRevenue) * 100 : null;
+              return [
+                { label: "Team Revenue", value: fmt$(teamTotals.revenue), icon: DollarSign, color: "text-emerald-600", sub: revChange !== null ? `${revChange >= 0 ? "+" : ""}${revChange.toFixed(1)}% vs ${prevCycleKey}` : undefined, subColor: revChange !== null ? (revChange >= 0 ? "text-emerald-600" : "text-red-500") : undefined },
+                { label: "Total Calls", value: teamTotals.calls.toLocaleString(), icon: Phone, color: "text-blue-600" },
+                { label: "Login Hours", value: fmtHr(teamTotals.loginHours), icon: Clock, color: "text-purple-600" },
+                { label: "Agents", value: stats.length.toString(), icon: Users, color: "text-amber-600" },
+              ];
+            })().map(card => (
+              <Card key={card.label} className="border-0 shadow-sm">
+                <CardContent className="p-4 flex items-center gap-3">
+                  <div className={`p-2 rounded-lg bg-muted ${card.color}`}>
+                    <card.icon className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">{card.label}</p>
+                    <p className="text-base font-bold">{card.value}</p>
+                    {card.sub && <p className={`text-[10px] font-medium ${card.subColor}`}>{card.sub}</p>}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+
+          {/* Team Summary: Top Performers + Most Logouts */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {/* Top 3 Performers */}
+            <Card className="border-0 shadow-sm">
+              <CardContent className="p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Top Performers — {activeCycle}</p>
+                <div className="space-y-2">
+                  {[...stats].sort((a, b) => b.totalRevenue - a.totalRevenue).slice(0, 3).map((s, i) => (
+                    <div key={s.crdts} className="flex items-center gap-3">
+                      {rankBadge(i)}
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs font-medium font-mono truncate">{s.alias || s.crdts}</p>
+                        {s.teamLeader && <p className="text-[10px] text-muted-foreground">TL: {s.teamLeader}</p>}
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs font-bold text-emerald-600">{fmt$(s.totalRevenue)}</p>
+                        <p className="text-[10px] text-muted-foreground">{fmt$(s.avgRevPerHr)}/hr</p>
+                      </div>
+                    </div>
+                  ))}
+                  {stats.length === 0 && <p className="text-xs text-muted-foreground text-center py-2">No data</p>}
                 </div>
               </CardContent>
             </Card>
-          ))}
-        </div>
+
+            {/* Most Logouts + Most Deductions */}
+            <Card className="border-0 shadow-sm">
+              <CardContent className="p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Client Logouts — {activeCycle}</p>
+                {Object.keys(logoutCountByCrdts).length === 0 ? (
+                  <p className="text-xs text-muted-foreground text-center py-4">No client logouts this cycle ✓</p>
+                ) : (
+                  <div className="space-y-2">
+                    {Object.entries(logoutCountByCrdts)
+                      .sort((a, b) => b[1] - a[1])
+                      .slice(0, 5)
+                      .map(([crdts, count]) => {
+                        const agent = stats.find(s => s.crdts === crdts);
+                        return (
+                          <div key={crdts} className="flex items-center gap-3">
+                            <AlertTriangle className="h-3.5 w-3.5 text-red-500 flex-shrink-0" />
+                            <div className="flex-1 min-w-0">
+                              <p className="text-xs font-medium font-mono truncate">{agent?.alias || crdts}</p>
+                              {agent?.teamLeader && <p className="text-[10px] text-muted-foreground">TL: {agent.teamLeader}</p>}
+                            </div>
+                            <span className="text-xs font-bold text-red-600">{count} logout{count !== 1 ? "s" : ""}</span>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </>
       )}
 
       <div className="flex flex-wrap gap-2 items-center">

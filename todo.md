@@ -942,7 +942,7 @@
 - [x] Frontend: Performance tab (admin) — red markers on logout dates in hours chart, logout count per agent
 - [x] Frontend: Performance tab (agent) — total logouts this cycle + each logout date (shown in CommissionTrackerTab)
 - [x] Frontend: Performance dashboard — per-agent line charts (hours + revenue + logout markers)
-- [ ] Frontend: Performance dashboard — team summary (revenue vs prev cycle, top performers, most logouts, most deductions) [deferred]
+- [x] Frontend: Performance dashboard — team summary (revenue vs prev cycle, top performers, most logouts, most deductions)
 - [x] Frontend: Agent portal — add Commission Tracker tab (calendar month grouping, month selector)
 - [x] Frontend: Agent portal — add Performance History tab (cycle selector, per-cycle summary)
 - [x] Frontend: Agent payslip — add Ranking section (own rank, profit, rev/hr, top 3 anonymized)
