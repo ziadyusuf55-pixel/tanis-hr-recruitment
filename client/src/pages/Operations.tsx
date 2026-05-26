@@ -1127,13 +1127,12 @@ export default function Operations() {
                           ) : (
                             <Badge className="text-xs bg-muted text-muted-foreground" variant="outline">Inactive</Badge>
                           )}
-                          {agent.nestingStatus && agent.agentStatus !== "resigned" && agent.agentStatus !== "terminated" && (
+                          {agent.nestingStatus && agent.nestingStatus !== "nesting" && agent.agentStatus !== "resigned" && agent.agentStatus !== "terminated" && (
                             <Badge variant="outline" className={`text-[10px] ${
-                              agent.nestingStatus === "nesting" ? "bg-amber-50 text-amber-700 border-amber-200" :
                               agent.nestingStatus === "senior" ? "bg-purple-50 text-purple-700 border-purple-200" :
                               "bg-sky-50 text-sky-700 border-sky-200"
                             }`}>
-                              {agent.nestingStatus === "nesting" ? "Nesting" : agent.nestingStatus === "senior" ? "Senior" : "Active"}
+                              {agent.nestingStatus === "senior" ? "Senior" : "Active"}
                             </Badge>
                           )}
                         </div>

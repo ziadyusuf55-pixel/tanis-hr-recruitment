@@ -1376,7 +1376,7 @@ export async function getSeparationsByAgent(agentCode: string) {
 export async function markAgentResignedOnSpot(agentCode: string, reason: string, adminName: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const { workforceAgents, agentSeparations, agentCredentials, breakSchedules, scheduleChangeRequests, overtimeAvailability, batchCandidates } = await import("../drizzle/schema");
+  const { workforceAgents, agentSeparations, agentCredentials } = await import("../drizzle/schema");
   // Get agent to find candidateId
   const agent = await db.select({ candidateId: workforceAgents.candidateId })
     .from(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode)).limit(1);
@@ -1387,14 +1387,11 @@ export async function markAgentResignedOnSpot(agentCode: string, reason: string,
     agentCode, type: "on_spot", reason,
     effectiveAt: now, approvedBy: adminName, approvedAt: now,
   });
-  // Remove from workforce (retire ID — keep candidate record with 'resigned' status)
+  // Mark agent as resigned — keep in workforceAgents for historical records
+  await db.update(workforceAgents).set({ agentStatus: "resigned", isActive: false, updatedAt: new Date() })
+    .where(eq(workforceAgents.traineeCode, agentCode));
+  // Remove only portal credentials — agent stays in DB indefinitely
   await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
-  await db.delete(breakSchedules).where(eq(breakSchedules.agentCode, agentCode));
-  await db.delete(scheduleChangeRequests).where(eq(scheduleChangeRequests.requesterCode, agentCode));
-  await db.delete(overtimeAvailability).where(eq(overtimeAvailability.traineeCode, agentCode));
-  await db.delete(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode));
-  // Remove from batch assignments
-  await db.delete(batchCandidates).where(eq(batchCandidates.candidateId, agent[0].candidateId));
   // Mark candidate as resigned — ID permanently retired, never reusable
   await db.update(candidates).set({ status: "resigned", updatedAt: new Date() }).where(eq(candidates.id, agent[0].candidateId));
 }
@@ -1407,9 +1404,9 @@ export async function markAgentResignedOnSpot(agentCode: string, reason: string,
 export async function terminateAgent(agentCode: string, reason: string, adminName: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const { workforceAgents, agentSeparations, agentCredentials, breakSchedules, scheduleChangeRequests, overtimeAvailability, batchCandidates } = await import("../drizzle/schema");
+  const { workforceAgents, agentSeparations, agentCredentials } = await import("../drizzle/schema");
   const now = Date.now();
-  // Fetch candidateId before removing the workforce row
+  // Fetch candidateId
   const agent = await db.select({ candidateId: workforceAgents.candidateId })
     .from(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode)).limit(1);
   if (!agent[0]) throw new Error("Agent not found");
@@ -1418,14 +1415,11 @@ export async function terminateAgent(agentCode: string, reason: string, adminNam
     agentCode, type: "termination", reason,
     effectiveAt: now, approvedBy: adminName, approvedAt: now,
   });
-  // Remove from workforce (retire ID — keep candidate record with 'terminated' status)
+  // Mark agent as terminated — keep in workforceAgents for historical records
+  await db.update(workforceAgents).set({ agentStatus: "terminated", isActive: false, updatedAt: new Date() })
+    .where(eq(workforceAgents.traineeCode, agentCode));
+  // Remove only portal credentials — agent stays in DB indefinitely
   await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
-  await db.delete(breakSchedules).where(eq(breakSchedules.agentCode, agentCode));
-  await db.delete(scheduleChangeRequests).where(eq(scheduleChangeRequests.requesterCode, agentCode));
-  await db.delete(overtimeAvailability).where(eq(overtimeAvailability.traineeCode, agentCode));
-  await db.delete(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode));
-  // Remove from batch assignments
-  await db.delete(batchCandidates).where(eq(batchCandidates.candidateId, agent[0].candidateId));
   // Mark candidate as terminated — ID permanently retired, never reusable
   await db.update(candidates).set({ status: "terminated", updatedAt: new Date() }).where(eq(candidates.id, agent[0].candidateId));
 }
@@ -1438,9 +1432,9 @@ export async function terminateAgent(agentCode: string, reason: string, adminNam
 export async function approveResignationRequest(agentCode: string, lastWorkingDay: string, reason: string, adminName: string, requestedAt: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const { workforceAgents, agentSeparations, agentCredentials, breakSchedules, scheduleChangeRequests, overtimeAvailability, batchCandidates } = await import("../drizzle/schema");
+  const { workforceAgents, agentSeparations, agentCredentials } = await import("../drizzle/schema");
   const now = Date.now();
-  // Fetch candidateId before removing the workforce row
+  // Fetch candidateId
   const agent = await db.select({ candidateId: workforceAgents.candidateId })
     .from(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode)).limit(1);
   if (!agent[0]) throw new Error("Agent not found");
@@ -1449,14 +1443,11 @@ export async function approveResignationRequest(agentCode: string, lastWorkingDa
     agentCode, type: "resignation_request", reason, lastWorkingDay,
     requestedAt, effectiveAt: now, approvedBy: adminName, approvedAt: now,
   });
-  // Remove from workforce (retire ID — keep candidate record with 'resigned' status)
+  // Mark agent as resigned — keep in workforceAgents for historical records
+  await db.update(workforceAgents).set({ agentStatus: "resigned", isActive: false, updatedAt: new Date() })
+    .where(eq(workforceAgents.traineeCode, agentCode));
+  // Remove only portal credentials — agent stays in DB indefinitely
   await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
-  await db.delete(breakSchedules).where(eq(breakSchedules.agentCode, agentCode));
-  await db.delete(scheduleChangeRequests).where(eq(scheduleChangeRequests.requesterCode, agentCode));
-  await db.delete(overtimeAvailability).where(eq(overtimeAvailability.traineeCode, agentCode));
-  await db.delete(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode));
-  // Remove from batch assignments
-  await db.delete(batchCandidates).where(eq(batchCandidates.candidateId, agent[0].candidateId));
   // Mark candidate as resigned — ID permanently retired, never reusable
   await db.update(candidates).set({ status: "resigned", updatedAt: new Date() }).where(eq(candidates.id, agent[0].candidateId));
 }
@@ -1870,7 +1861,10 @@ export async function getAgentRequestById(id: number) {
 export async function upsertPayrollRecordV2(data: {
   crdts: string; alias?: string; agentCode?: string; month: string;
   baseSalary?: number; workingHours?: number;
-  ot1x5Hours?: number; ot2xHours?: number; ot3xHours?: number;
+  ot1x5Hours?: number; ot1x5Pay?: number;
+  ot2xHours?: number; ot2xPay?: number;
+  ot3xHours?: number; ot3xPay?: number;
+  coachingBonus?: number;
   commissionEgp?: number; qualityDeductions?: number; attendanceDeductions?: number;
   totalDeductions?: number; netPay?: number;
   qualityDetail?: string; attendanceDetail?: string;
@@ -1893,8 +1887,12 @@ export async function upsertPayrollRecordV2(data: {
     baseSalary: toStr(data.baseSalary),
     workingHours: toStr(data.workingHours),
     ot1x5Hours: toStr(data.ot1x5Hours),
+    ot1x5Pay: toStr(data.ot1x5Pay),
     ot2xHours: toStr(data.ot2xHours),
+    ot2xPay: toStr(data.ot2xPay),
     ot3xHours: toStr(data.ot3xHours),
+    ot3xPay: toStr(data.ot3xPay),
+    coachingBonus: toStr(data.coachingBonus),
     commissionEgp: toStr(data.commissionEgp),
     qualityDeductions: toStr(data.qualityDeductions),
     attendanceDeductions: toStr(data.attendanceDeductions),
@@ -2401,4 +2399,151 @@ export async function getTurnoverRate(): Promise<{ rate: number; separationsThis
   const rate = avgHeadcount > 0 ? Math.round((separationsThisMonth / avgHeadcount) * 100 * 10) / 10 : 0;
 
   return { rate, separationsThisMonth, currentHeadcount };
+}
+
+// ─── Client Logouts ───────────────────────────────────────────────────────────
+export async function bulkUpsertClientLogouts(rows: Array<{ crdts: string; agentCode?: string; alias?: string; date: string; cycleKey: string }>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { clientLogouts } = await import("../drizzle/schema");
+  const now = Date.now();
+  let inserted = 0; let updated = 0;
+  for (const row of rows) {
+    const existing = await db.select({ id: clientLogouts.id }).from(clientLogouts)
+      .where(and(eq(clientLogouts.crdts, row.crdts), eq(clientLogouts.date, row.date))).limit(1);
+    if (existing[0]) {
+      await db.update(clientLogouts).set({ ...row, uploadedAt: now }).where(eq(clientLogouts.id, existing[0].id));
+      updated++;
+    } else {
+      await db.insert(clientLogouts).values({ ...row, uploadedAt: now });
+      inserted++;
+    }
+  }
+  return { inserted, updated };
+}
+
+export async function getClientLogoutsByCycle(cycleKey: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { clientLogouts } = await import("../drizzle/schema");
+  return db.select().from(clientLogouts).where(eq(clientLogouts.cycleKey, cycleKey)).orderBy(clientLogouts.date);
+}
+
+export async function getClientLogoutsByAgent(crdts: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { clientLogouts } = await import("../drizzle/schema");
+  return db.select().from(clientLogouts).where(eq(clientLogouts.crdts, crdts)).orderBy(desc(clientLogouts.date));
+}
+
+// ─── Commission Month (calendar-month grouping of cycle_stats) ────────────────
+export async function getCommissionMonthData(crdts: string, month: string) {
+  const db = await getDb();
+  if (!db) return { rows: [] as Array<Record<string, unknown>>, totals: { loginHours: 0, totalCalls: 0, revenue: 0, cost: 0, profit: 0 } };
+  const { cycleStats } = await import("../drizzle/schema");
+  const rows = await db.select().from(cycleStats)
+    .where(and(eq(cycleStats.crdts, crdts), sql`LEFT(${cycleStats.date}, 7) = ${month}`))
+    .orderBy(cycleStats.date);
+  const totals = rows.reduce((acc, r) => ({
+    loginHours: acc.loginHours + Number(r.loginHours ?? 0),
+    totalCalls: acc.totalCalls + Number(r.totalCalls ?? 0),
+    revenue: acc.revenue + Number(r.revenue ?? 0),
+    cost: acc.cost + Number(r.cost ?? 0),
+    profit: acc.profit + Number(r.profit ?? 0),
+  }), { loginHours: 0, totalCalls: 0, revenue: 0, cost: 0, profit: 0 });
+  return { rows, totals };
+}
+
+export async function getAvailableCommissionMonths(crdts: string): Promise<string[]> {
+  const db = await getDb();
+  if (!db) return [];
+  const { cycleStats } = await import("../drizzle/schema");
+  const result = await db.selectDistinct({ month: sql<string>`LEFT(${cycleStats.date}, 7)` })
+    .from(cycleStats).where(eq(cycleStats.crdts, crdts)).orderBy(sql`LEFT(${cycleStats.date}, 7) DESC`);
+  return result.map(r => r.month);
+}
+
+// ─── Performance History (per-cycle summary for an agent) ────────────────────
+export async function getAgentPerformanceHistory(crdts: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { cycleStats } = await import("../drizzle/schema");
+  const rows = await db.select({
+    cycleKey: cycleStats.cycleKey,
+    loginHours: sql<number>`SUM(${cycleStats.loginHours})`.mapWith(Number),
+    totalCalls: sql<number>`SUM(${cycleStats.totalCalls})`.mapWith(Number),
+    revenue: sql<number>`SUM(${cycleStats.revenue})`.mapWith(Number),
+    cost: sql<number>`SUM(${cycleStats.cost})`.mapWith(Number),
+    profit: sql<number>`SUM(${cycleStats.profit})`.mapWith(Number),
+    days: sql<number>`COUNT(DISTINCT ${cycleStats.date})`.mapWith(Number),
+  }).from(cycleStats).where(eq(cycleStats.crdts, crdts))
+    .groupBy(cycleStats.cycleKey).orderBy(sql`${cycleStats.cycleKey} DESC`);
+  return rows.map(r => ({
+    ...r,
+    revPerHr: r.loginHours > 0 ? Math.round((r.revenue / r.loginHours) * 100) / 100 : 0,
+  }));
+}
+
+// ─── Campaign Ranking ─────────────────────────────────────────────────────────
+export async function getCampaignRanking(crdts: string, cycleKey: string) {
+  const db = await getDb();
+  if (!db) return { rank: null as number | null, total: 0, profit: 0, revPerHr: 0, top3: [] as Array<{ rank: number; profit: number; revPerHr: number }> };
+  const { cycleStats, workforceAgents } = await import("../drizzle/schema");
+  const agentRow = await db.select({ campaignId: workforceAgents.campaignId, crdts: workforceAgents.crdts })
+    .from(workforceAgents).where(eq(workforceAgents.crdts, crdts)).limit(1);
+  if (!agentRow[0]) return { rank: null, total: 0, profit: 0, revPerHr: 0, top3: [] };
+  const campaignId = agentRow[0].campaignId;
+  const campaignAgents = await db.select({ crdts: workforceAgents.crdts })
+    .from(workforceAgents).where(campaignId ? eq(workforceAgents.campaignId, campaignId) : sql`1=1`);
+  const campaignCrdts = campaignAgents.map(a => a.crdts).filter(Boolean) as string[];
+  if (campaignCrdts.length === 0) return { rank: null, total: 0, profit: 0, revPerHr: 0, top3: [] };
+  const stats = await db.select({
+    crdts: cycleStats.crdts,
+    profit: sql<number>`SUM(${cycleStats.profit})`.mapWith(Number),
+    loginHours: sql<number>`SUM(${cycleStats.loginHours})`.mapWith(Number),
+    revenue: sql<number>`SUM(${cycleStats.revenue})`.mapWith(Number),
+  }).from(cycleStats)
+    .where(and(eq(cycleStats.cycleKey, cycleKey), inArray(cycleStats.crdts, campaignCrdts)))
+    .groupBy(cycleStats.crdts);
+  const sorted = stats.map(s => ({
+    crdts: s.crdts,
+    profit: s.profit,
+    revPerHr: s.loginHours > 0 ? Math.round((s.revenue / s.loginHours) * 100) / 100 : 0,
+  })).sort((a, b) => b.profit - a.profit);
+  const myIdx = sorted.findIndex(s => s.crdts === crdts);
+  const myStats = sorted[myIdx] ?? { profit: 0, revPerHr: 0 };
+  const top3 = sorted.slice(0, 3).map((s, i) => ({ rank: i + 1, profit: s.profit, revPerHr: s.revPerHr }));
+  return {
+    rank: myIdx >= 0 ? myIdx + 1 : null,
+    total: sorted.length,
+    profit: myStats.profit,
+    revPerHr: myStats.revPerHr,
+    top3,
+  };
+}
+
+// ─── Admin Hard Delete Agent (only after final pay confirmed) ─────────────────
+export async function adminDeleteAgent(agentCode: string) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { workforceAgents, agentCredentials, breakSchedules, scheduleChangeRequests, overtimeAvailability } = await import("../drizzle/schema");
+  await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
+  await db.delete(breakSchedules).where(eq(breakSchedules.agentCode, agentCode));
+  await db.delete(scheduleChangeRequests).where(eq(scheduleChangeRequests.requesterCode, agentCode));
+  await db.delete(overtimeAvailability).where(eq(overtimeAvailability.traineeCode, agentCode));
+  await db.delete(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode));
+}
+
+export async function getPendingDeletionAgents() {
+  const db = await getDb();
+  if (!db) return [];
+  const { workforceAgents } = await import("../drizzle/schema");
+  return db.select({
+    traineeCode: workforceAgents.traineeCode,
+    fullName: workforceAgents.fullName,
+    alias: workforceAgents.alias,
+    agentStatus: workforceAgents.agentStatus,
+    updatedAt: workforceAgents.updatedAt,
+  }).from(workforceAgents)
+    .where(sql`${workforceAgents.agentStatus} IN ('resigned', 'terminated')`);
 }

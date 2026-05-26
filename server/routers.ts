@@ -174,6 +174,16 @@ import {
   listAllAgentsInTraining,
   blacklistCandidate,
   listPaymentMethodsGrouped,
+  // New Round 62
+  bulkUpsertClientLogouts,
+  getClientLogoutsByCycle,
+  getClientLogoutsByAgent,
+  getCommissionMonthData,
+  getAvailableCommissionMonths,
+  getAgentPerformanceHistory,
+  getCampaignRanking,
+  adminDeleteAgent,
+  getPendingDeletionAgents,
 } from "./db";
 import { notifyOwner } from "./_core/notification";
 import { sendInterviewNotification } from "./email";
@@ -627,6 +637,15 @@ const dashboardRouter = router({
           turnoverHeadcount: turnoverData.currentHeadcount,
         };
       }),
+  // Overview: pending deletion count + recent separations
+  overview: protectedProcedure
+    .query(async () => {
+      const pending = await getPendingDeletionAgents();
+      return {
+        pendingDeletionCount: pending.length,
+        pendingDeletionAgents: pending,
+      };
+    }),
 });
 
 /// ─── Agent Portal Router ─────────────────────────────────────────────────────
@@ -2021,6 +2040,16 @@ const separationRouter = router({
   getByAgent: protectedProcedure
     .input(z.object({ agentCode: z.string() }))
     .query(({ input }) => getSeparationsByAgent(input.agentCode)),
+  // Admin: hard delete agent after final pay confirmed
+  adminDelete: protectedProcedure
+    .input(z.object({ agentCode: z.string() }))
+    .mutation(async ({ input }) => {
+      await adminDeleteAgent(input.agentCode);
+      return { success: true };
+    }),
+  // Admin: get all terminated/resigned agents pending deletion
+  pendingDeletion: protectedProcedure
+    .query(() => getPendingDeletionAgents()),
 });
 
 // ─── Payroll v2 Router ───────────────────────────────────────────────────────
@@ -2035,8 +2064,12 @@ const payrollV2Router = router({
         baseSalary: z.number().optional(),
         workingHours: z.number().optional(),
         ot1x5Hours: z.number().optional(),
+        ot1x5Pay: z.number().optional(),
         ot2xHours: z.number().optional(),
+        ot2xPay: z.number().optional(),
         ot3xHours: z.number().optional(),
+        ot3xPay: z.number().optional(),
+        coachingBonus: z.number().optional(),
         commissionEgp: z.number().optional(),
         qualityDeductions: z.number().optional(),
         attendanceDeductions: z.number().optional(),
@@ -2626,10 +2659,192 @@ const cycleTrackerRouter = router({
         ((otRes as { rowsAffected?: number }).rowsAffected ?? 0) +
         ((coachRes as { rowsAffected?: number }).rowsAffected ?? 0)
       );
-      return { deleted: total };
+            return { deleted: total };
+    }),
+  // ─── Client Logouts ───────────────────────────────────────────────────────
+  uploadClientLogouts: protectedProcedure
+    .input(z.object({
+      rows: z.array(z.object({
+        crdts: z.string(),
+        agentCode: z.string().optional(),
+        alias: z.string().optional(),
+        date: z.string(), // YYYY-MM-DD
+        cycleKey: z.string(),
+      }))
+    }))
+    .mutation(({ input }) => bulkUpsertClientLogouts(input.rows)),
+  getClientLogoutsByCycle: protectedProcedure
+    .input(z.object({ cycleKey: z.string() }))
+    .query(({ input }) => getClientLogoutsByCycle(input.cycleKey)),
+  getMyClientLogouts: protectedProcedure
+    .query(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+      const { getDb } = await import('./db');
+      const { workforceAgents } = await import('../drizzle/schema');
+      const { eq } = await import('drizzle-orm');
+      const db = await getDb();
+      if (!db) return [];
+      const traineeCode = ctx.user.openId; // agent uses their code
+      const agent = await db.select({ crdts: workforceAgents.crdts })
+        .from(workforceAgents).where(eq(workforceAgents.traineeCode, traineeCode)).limit(1);
+      const crdts = agent[0]?.crdts;
+      if (!crdts) return [];
+      return getClientLogoutsByAgent(crdts);
+    }),
+  // ─── Commission Month ──────────────────────────────────────────────────────
+  getCommissionMonth: protectedProcedure
+    .input(z.object({ crdts: z.string(), month: z.string() }))
+    .query(({ input }) => getCommissionMonthData(input.crdts, input.month)),
+  getAvailableCommissionMonths: protectedProcedure
+    .input(z.object({ crdts: z.string() }))
+    .query(({ input }) => getAvailableCommissionMonths(input.crdts)),
+  getMyCommissionMonths: protectedProcedure
+    .query(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+      const { getDb } = await import('./db');
+      const { workforceAgents } = await import('../drizzle/schema');
+      const { eq } = await import('drizzle-orm');
+      const db = await getDb();
+      if (!db) return [];
+      const agent = await db.select({ crdts: workforceAgents.crdts })
+        .from(workforceAgents).where(eq(workforceAgents.traineeCode, ctx.user.openId)).limit(1);
+      const crdts = agent[0]?.crdts;
+      if (!crdts) return [];
+      return getAvailableCommissionMonths(crdts);
+    }),
+  getMyCommissionMonth: protectedProcedure
+    .input(z.object({ month: z.string() }))
+    .query(async ({ input, ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+      const { getDb } = await import('./db');
+      const { workforceAgents } = await import('../drizzle/schema');
+      const { eq } = await import('drizzle-orm');
+      const db = await getDb();
+      if (!db) return null;
+      const agent = await db.select({ crdts: workforceAgents.crdts })
+        .from(workforceAgents).where(eq(workforceAgents.traineeCode, ctx.user.openId)).limit(1);
+      const crdts = agent[0]?.crdts;
+      if (!crdts) return null;
+      return getCommissionMonthData(crdts, input.month);
+    }),
+  // ─── Performance History ──────────────────────────────────────────────────
+  getMyPerformanceHistory: protectedProcedure
+    .query(async ({ ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+      const { getDb } = await import('./db');
+      const { workforceAgents } = await import('../drizzle/schema');
+      const { eq } = await import('drizzle-orm');
+      const db = await getDb();
+      if (!db) return [];
+      const agent = await db.select({ crdts: workforceAgents.crdts })
+        .from(workforceAgents).where(eq(workforceAgents.traineeCode, ctx.user.openId)).limit(1);
+      const crdts = agent[0]?.crdts;
+      if (!crdts) return [];
+      return getAgentPerformanceHistory(crdts);
+    }),
+  getAgentPerformanceHistory: protectedProcedure
+    .input(z.object({ crdts: z.string() }))
+    .query(({ input }) => getAgentPerformanceHistory(input.crdts)),
+  // ─── Campaign Ranking ─────────────────────────────────────────────────────
+  getMyCampaignRanking: protectedProcedure
+    .input(z.object({ cycleKey: z.string() }))
+    .query(async ({ input, ctx }) => {
+      if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
+      const { getDb } = await import('./db');
+      const { workforceAgents } = await import('../drizzle/schema');
+      const { eq } = await import('drizzle-orm');
+      const db = await getDb();
+      if (!db) return null;
+      const agent = await db.select({ crdts: workforceAgents.crdts })
+        .from(workforceAgents).where(eq(workforceAgents.traineeCode, ctx.user.openId)).limit(1);
+      const crdts = agent[0]?.crdts;
+      if (!crdts) return null;
+      return getCampaignRanking(crdts, input.cycleKey);
+    }),
+  // ─── Agent (cookie-based) versions ─────────────────────────────────────────
+  getMyClientLogoutsAgent: publicProcedure
+    .query(async ({ ctx }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) return [];
+      let traineeCode: string;
+      try {
+        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
+        traineeCode = decoded.traineeCode;
+      } catch { return []; }
+      const { workforceAgents } = await import('../drizzle/schema');
+      const { getDb } = await import('./db');
+      const dbConn = await getDb();
+      if (!dbConn) return [];
+      const { eq } = await import('drizzle-orm');
+      const agent = await dbConn.select({ crdts: workforceAgents.crdts })
+        .from(workforceAgents).where(eq(workforceAgents.traineeCode, traineeCode)).limit(1);
+      const crdts = agent[0]?.crdts;
+      if (!crdts) return [];
+      return getClientLogoutsByAgent(crdts);
+    }),
+  getMyCommissionMonthsAgent: publicProcedure
+    .query(async ({ ctx }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) return [] as string[];
+      let traineeCode: string;
+      try {
+        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
+        traineeCode = decoded.traineeCode;
+      } catch { return [] as string[]; }
+      const { workforceAgents } = await import('../drizzle/schema');
+      const { getDb } = await import('./db');
+      const dbConn = await getDb();
+      if (!dbConn) return [] as string[];
+      const { eq } = await import('drizzle-orm');
+      const agent = await dbConn.select({ crdts: workforceAgents.crdts })
+        .from(workforceAgents).where(eq(workforceAgents.traineeCode, traineeCode)).limit(1);
+      const crdts = agent[0]?.crdts;
+      if (!crdts) return [] as string[];
+      return getAvailableCommissionMonths(crdts);
+    }),
+  getMyCommissionMonthAgent: publicProcedure
+    .input(z.object({ month: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) return null;
+      let traineeCode: string;
+      try {
+        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
+        traineeCode = decoded.traineeCode;
+      } catch { return null; }
+      const { workforceAgents } = await import('../drizzle/schema');
+      const { getDb } = await import('./db');
+      const dbConn = await getDb();
+      if (!dbConn) return null;
+      const { eq } = await import('drizzle-orm');
+      const agent = await dbConn.select({ crdts: workforceAgents.crdts })
+        .from(workforceAgents).where(eq(workforceAgents.traineeCode, traineeCode)).limit(1);
+      const crdts = agent[0]?.crdts;
+      if (!crdts) return null;
+      return getCommissionMonthData(crdts, input.month);
+    }),
+  getMyCampaignRankingAgent: publicProcedure
+    .input(z.object({ cycleKey: z.string() }))
+    .query(async ({ ctx, input }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) return null;
+      let traineeCode: string;
+      try {
+        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
+        traineeCode = decoded.traineeCode;
+      } catch { return null; }
+      const { workforceAgents } = await import('../drizzle/schema');
+      const { getDb } = await import('./db');
+      const dbConn = await getDb();
+      if (!dbConn) return null;
+      const { eq } = await import('drizzle-orm');
+      const agent = await dbConn.select({ crdts: workforceAgents.crdts })
+        .from(workforceAgents).where(eq(workforceAgents.traineeCode, traineeCode)).limit(1);
+      const crdts = agent[0]?.crdts;
+      if (!crdts) return null;
+      return getCampaignRanking(crdts, input.cycleKey);
     }),
 });
-
 // ─── Coaching Router ────────────────────────────────────────────────────────
 const coachingRouter = router({
   // Upload coaching sessions from sheet

@@ -42,6 +42,9 @@ import {
   AlertCircle,
   BarChart2,
   Zap,
+  PhoneOff,
+  Trophy,
+  DollarSign,
 } from "lucide-react";
 
 const TANIS_LOGO_WHITE =
@@ -148,7 +151,7 @@ function formatCurrency(amount: string | number | null | undefined) {
   return `EGP ${num.toLocaleString()}`;
 }
 
-type Tab = "profile" | "opplan" | "cycle" | "payroll" | "requests" | "referrals" | "documents" | "payment" | "comments";
+type Tab = "profile" | "opplan" | "cycle" | "payroll" | "commission" | "requests" | "referrals" | "documents" | "payment" | "comments";
 
 export default function AgentPortal() {
   const [, navigate] = useLocation();
@@ -215,6 +218,7 @@ export default function AgentPortal() {
     { id: "opplan", label: "Op Plan", icon: <LayoutGrid className="w-4 h-4" /> },
     { id: "cycle", label: "Cycle", icon: <Activity className="w-4 h-4" /> },
     { id: "payroll", label: "Payroll", icon: <CreditCard className="w-4 h-4" /> },
+    { id: "commission", label: "Commission", icon: <BarChart2 className="w-4 h-4" /> },
     { id: "requests", label: "Requests", icon: <MessageSquare className="w-4 h-4" /> },
     { id: "documents", label: "Documents", icon: <FileText className="w-4 h-4" /> },
     { id: "payment", label: "Payment", icon: <Wallet className="w-4 h-4" /> },
@@ -342,6 +346,7 @@ export default function AgentPortal() {
         {activeTab === "opplan" && <OperationPlanTab theme={theme} />}
         {activeTab === "cycle" && <CycleTrackerTab theme={theme} />}
         {activeTab === "payroll" && <PayrollTab theme={theme} />}
+        {activeTab === "commission" && <CommissionTrackerTab theme={theme} />}
         {activeTab === "requests" && <RequestCenterTab candidateId={agent.candidateId} theme={theme} />}
         {activeTab === "documents" && <DocumentsTab theme={theme} />}
         {activeTab === "payment" && <PaymentMethodsTab theme={theme} />}
@@ -627,8 +632,12 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
     baseSalary: string | null;
     workingHours: string | null;
     ot1x5Hours: string | null;
+    ot1x5Pay: string | null;
     ot2xHours: string | null;
+    ot2xPay: string | null;
     ot3xHours: string | null;
+    ot3xPay: string | null;
+    coachingBonus: string | null;
     commissionEgp: string | null;
     qualityDeductions: string | null;
     attendanceDeductions: string | null;
@@ -638,7 +647,6 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
     attendanceDetail: string | null;
     paymentStatus: string | null;
     paymentDate: number | null;
-    coachingBonus?: string | null;
   } | null | undefined;
 
   return (
@@ -686,17 +694,25 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
               <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.textFaint }}>Earnings</p>
             </div>
             <div className="divide-y" style={{ borderColor: theme.cardBorder }}>
-              {[
+              {([
                 { label: "Base Salary", value: fmtEGP(r.baseSalary) },
                 { label: "Working Hours", value: fmtNum(r.workingHours, " hrs") },
-                { label: "OT 1.5×", value: fmtNum(r.ot1x5Hours, " hrs") },
-                { label: "OT 2×", value: fmtNum(r.ot2xHours, " hrs") },
-                { label: "OT 3×", value: fmtNum(r.ot3xHours, " hrs") },
-                { label: "Commission", value: fmtEGP(r.commissionEgp) },
+                ...(r.ot1x5Hours && parseFloat(String(r.ot1x5Hours)) > 0 ? [
+                  { label: "OT 1.5× Hours", value: fmtNum(r.ot1x5Hours, " hrs") },
+                  { label: "OT 1.5× Pay", value: fmtEGP(r.ot1x5Pay) },
+                ] : []),
+                ...(r.ot2xHours && parseFloat(String(r.ot2xHours)) > 0 ? [
+                  { label: "OT 2× Hours", value: fmtNum(r.ot2xHours, " hrs") },
+                  { label: "OT 2× Pay", value: fmtEGP(r.ot2xPay) },
+                ] : []),
+                ...(r.ot3xHours && parseFloat(String(r.ot3xHours)) > 0 ? [
+                  { label: "OT 3× Hours", value: fmtNum(r.ot3xHours, " hrs") },
+                  { label: "OT 3× Pay", value: fmtEGP(r.ot3xPay) },
+                ] : []),
                 ...(r.coachingBonus && parseFloat(String(r.coachingBonus)) > 0
-                  ? [{ label: "Coaching Bonus", value: fmtEGP(r.coachingBonus) }]
-                  : []),
-              ].map(({ label, value }) => (
+                  ? [{ label: "Coaching Bonus", value: fmtEGP(r.coachingBonus) }] : []),
+                { label: "Commission", value: fmtEGP(r.commissionEgp) },
+              ] as Array<{ label: string; value: string }>).map(({ label, value }) => (
                 <div key={label} className="flex items-center justify-between px-4 py-3">
                   <p className="text-sm" style={{ color: theme.textMuted }}>{label}</p>
                   <p className="text-sm font-medium" style={{ color: theme.text }}>{value}</p>
@@ -1434,6 +1450,9 @@ const DOC_LABELS: Record<string, string> = {
   military_status: "موقف التجنيد (للذكور)",
   insurance_status: "موقف التأمينات",
   criminal_record: "فيش جنائي",
+  work_record: "كعب عمل",
+  insurance_print: "برنت تاميني",
+  form_111: "استماره 111",
 };
 const REQUIRED_DOCS = Object.keys(DOC_LABELS);
 function DocumentsTab({ theme }: { theme: Theme }) {
@@ -2182,6 +2201,259 @@ function AgentCommentsTab({ theme }: { theme: Theme }) {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ─── Commission Tracker Tab ───────────────────────────────────────────────────
+function CommissionTrackerTab({ theme }: { theme: Theme }) {
+  const currentCycleKey = (() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`; })();
+  const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+  const [selectedCycle, setSelectedCycle] = useState<string>(currentCycleKey);
+
+  // Available months for commission data
+  const { data: availableMonths = [], isLoading: loadingMonths } =
+    trpc.cycleTracker.getMyCommissionMonthsAgent.useQuery();
+
+  const activeMonth = selectedMonth ?? availableMonths[0] ?? (() => {
+    const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`;
+  })();
+
+  const monthIdx = availableMonths.indexOf(activeMonth);
+  const prevMonth = availableMonths[monthIdx + 1] ?? null;
+  const nextMonth = availableMonths[monthIdx - 1] ?? null;
+
+  // Commission data for selected month
+  const { data: commData, isLoading: loadingComm } =
+    trpc.cycleTracker.getMyCommissionMonthAgent.useQuery(
+      { month: activeMonth },
+      { enabled: !!activeMonth }
+    );
+
+  // Client logouts
+  const { data: logouts = [], isLoading: loadingLogouts } =
+    trpc.cycleTracker.getMyClientLogoutsAgent.useQuery();
+
+  // Campaign ranking for selected cycle
+  const { data: ranking, isLoading: loadingRanking } =
+    trpc.cycleTracker.getMyCampaignRankingAgent.useQuery(
+      { cycleKey: selectedCycle },
+      { enabled: !!selectedCycle }
+    );
+
+  function formatMonthLabel(m: string) {
+    const [y, mo] = m.split("-");
+    return new Date(parseInt(y), parseInt(mo) - 1).toLocaleString("en-US", { month: "long", year: "numeric" });
+  }
+
+  function fmtNum(v: unknown, suffix = "") {
+    if (v == null) return "—";
+    const n = typeof v === "number" ? v : parseFloat(String(v));
+    if (isNaN(n)) return "—";
+    return n.toLocaleString("en-EG", { minimumFractionDigits: 0, maximumFractionDigits: 2 }) + suffix;
+  }
+
+  const rows = (commData?.rows ?? []) as Array<{
+    date: string; loginHours: string | null; totalCalls: number | null;
+    revenue: string | null; cost: string | null; profit: string | null; revPerHr: string | null;
+  }>;
+  const totals = commData?.totals ?? { loginHours: 0, totalCalls: 0, revenue: 0, cost: 0, profit: 0 };
+
+  // Group logouts by cycle
+  const logoutsByCycle = logouts.reduce((acc, l) => {
+    const key = l.cycleKey ?? "unknown";
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(l);
+    return acc;
+  }, {} as Record<string, typeof logouts>);
+  const logoutCycles = Object.keys(logoutsByCycle).sort().reverse();
+
+  const rankColor = ranking?.rank === 1 ? "oklch(0.75 0.18 55)" : ranking?.rank && ranking.rank <= 3 ? "oklch(0.65 0.15 142)" : theme.text;
+
+  return (
+    <div className="space-y-4">
+      {/* Help banner */}
+      <div className="rounded-xl p-4 flex gap-3" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <BarChart2 className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: BRAND }} />
+        <div>
+          <p className="text-sm font-semibold mb-0.5" style={{ color: theme.text }}>Commission Tracker</p>
+          <p className="text-xs leading-relaxed" style={{ color: theme.textFaint }}>View your daily performance stats by month, campaign ranking, and client logout history.</p>
+        </div>
+      </div>
+
+      {/* ── Section 1: Monthly Performance ── */}
+      <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+          <div className="flex items-center gap-2">
+            <DollarSign className="w-4 h-4" style={{ color: BRAND }} />
+            <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.textFaint }}>Monthly Performance</p>
+          </div>
+          {/* Month navigation */}
+          <div className="flex items-center gap-2">
+            <button disabled={!prevMonth} onClick={() => setSelectedMonth(prevMonth!)}
+              className="h-7 w-7 rounded-lg flex items-center justify-center disabled:opacity-30"
+              style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}`, color: theme.text }}>&#8249;</button>
+            <span className="text-xs font-medium min-w-[110px] text-center" style={{ color: theme.text }}>
+              {loadingMonths ? "…" : formatMonthLabel(activeMonth)}
+            </span>
+            <button disabled={!nextMonth} onClick={() => setSelectedMonth(nextMonth!)}
+              className="h-7 w-7 rounded-lg flex items-center justify-center disabled:opacity-30"
+              style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}`, color: theme.text }}>&#8250;</button>
+          </div>
+        </div>
+
+        {loadingComm ? (
+          <div className="h-32 animate-pulse" style={{ background: theme.surface }} />
+        ) : rows.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm" style={{ color: theme.textFaint }}>No data for this month.</div>
+        ) : (
+          <>
+            {/* Totals row */}
+            <div className="grid grid-cols-4 gap-3 px-4 py-3" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+              {[
+                { label: "Login Hours", value: fmtNum(totals.loginHours, " h") },
+                { label: "Total Calls", value: fmtNum(totals.totalCalls) },
+                { label: "Revenue", value: `$${fmtNum(totals.revenue)}` },
+                { label: "Profit", value: `$${fmtNum(totals.profit)}` },
+              ].map(({ label, value }) => (
+                <div key={label} className="text-center">
+                  <p className="text-xs" style={{ color: theme.textFaint }}>{label}</p>
+                  <p className="text-sm font-semibold mt-0.5" style={{ color: theme.text }}>{value}</p>
+                </div>
+              ))}
+            </div>
+            {/* Daily rows */}
+            <div className="overflow-x-auto max-h-56">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0" style={{ background: theme.surface }}>
+                  <tr style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+                    {["Date", "Login Hrs", "Calls", "Revenue", "Cost", "Profit", "Rev/Hr"].map(h => (
+                      <th key={h} className="text-left px-3 py-2 font-medium" style={{ color: theme.textFaint }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={i} style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+                      <td className="px-3 py-2 font-mono" style={{ color: theme.textMuted }}>{r.date}</td>
+                      <td className="px-3 py-2" style={{ color: theme.text }}>{fmtNum(r.loginHours, " h")}</td>
+                      <td className="px-3 py-2" style={{ color: theme.text }}>{fmtNum(r.totalCalls)}</td>
+                      <td className="px-3 py-2" style={{ color: theme.text }}>${fmtNum(r.revenue)}</td>
+                      <td className="px-3 py-2" style={{ color: theme.text }}>${fmtNum(r.cost)}</td>
+                      <td className="px-3 py-2 font-medium" style={{ color: parseFloat(String(r.profit ?? 0)) >= 0 ? "oklch(0.55 0.18 145)" : "#ef4444" }}>
+                        ${fmtNum(r.profit)}
+                      </td>
+                      <td className="px-3 py-2" style={{ color: theme.textMuted }}>${fmtNum(r.revPerHr)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── Section 2: Campaign Ranking ── */}
+      <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+          <div className="flex items-center gap-2">
+            <Trophy className="w-4 h-4" style={{ color: "oklch(0.75 0.18 55)" }} />
+            <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.textFaint }}>Campaign Ranking</p>
+          </div>
+          <select
+            value={selectedCycle}
+            onChange={e => setSelectedCycle(e.target.value)}
+            className="text-xs rounded-lg px-2 py-1 border"
+            style={{ background: theme.surface, borderColor: theme.surfaceBorder, color: theme.text }}
+          >
+            {/* Show last 6 months */}
+            {Array.from({ length: 6 }, (_, i) => {
+              const d = new Date(); d.setMonth(d.getMonth() - i);
+              const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+              return <option key={k} value={k}>{formatMonthLabel(k)}</option>;
+            })}
+          </select>
+        </div>
+        {loadingRanking ? (
+          <div className="h-24 animate-pulse" style={{ background: theme.surface }} />
+        ) : !ranking ? (
+          <div className="px-4 py-6 text-center text-sm" style={{ color: theme.textFaint }}>No ranking data.</div>
+        ) : (
+          <div className="px-4 py-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs" style={{ color: theme.textFaint }}>Your Rank</p>
+                <p className="text-2xl font-bold mt-0.5" style={{ color: rankColor }}>
+                  {ranking.rank != null ? `#${ranking.rank}` : "—"}
+                  {ranking.total > 0 && <span className="text-sm font-normal ml-1" style={{ color: theme.textFaint }}>/ {ranking.total}</span>}
+                </p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs" style={{ color: theme.textFaint }}>Your Profit</p>
+                <p className="text-lg font-semibold" style={{ color: theme.text }}>${fmtNum(ranking.profit)}</p>
+              </div>
+              <div className="text-right">
+                <p className="text-xs" style={{ color: theme.textFaint }}>Rev/Hr</p>
+                <p className="text-lg font-semibold" style={{ color: theme.text }}>${fmtNum(ranking.revPerHr)}</p>
+              </div>
+            </div>
+            {ranking.top3.length > 0 && (
+              <div>
+                <p className="text-xs font-medium mb-2" style={{ color: theme.textFaint }}>Top 3</p>
+                <div className="space-y-1.5">
+                  {ranking.top3.map((t) => (
+                    <div key={t.rank} className="flex items-center justify-between rounded-lg px-3 py-2"
+                      style={{ background: t.rank === 1 ? "oklch(0.75 0.18 55 / 0.12)" : theme.surface, border: `1px solid ${t.rank === 1 ? "oklch(0.75 0.18 55 / 0.3)" : theme.surfaceBorder}` }}>
+                      <span className="text-xs font-bold" style={{ color: t.rank === 1 ? "oklch(0.75 0.18 55)" : theme.textMuted }}>#{t.rank}</span>
+                      <span className="text-xs" style={{ color: theme.text }}>${fmtNum(t.profit)} profit</span>
+                      <span className="text-xs" style={{ color: theme.textFaint }}>${fmtNum(t.revPerHr)}/hr</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Section 3: Client Logouts ── */}
+      <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <div className="px-4 py-3 flex items-center gap-2" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+          <PhoneOff className="w-4 h-4" style={{ color: "#ef4444" }} />
+          <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.textFaint }}>Client Logouts</p>
+          {logouts.length > 0 && (
+            <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: "oklch(0.55 0.22 25 / 0.15)", color: "#ef4444" }}>
+              {logouts.length} total
+            </span>
+          )}
+        </div>
+        {loadingLogouts ? (
+          <div className="h-24 animate-pulse" style={{ background: theme.surface }} />
+        ) : logouts.length === 0 ? (
+          <div className="px-4 py-8 text-center">
+            <p className="text-sm font-medium" style={{ color: "oklch(0.55 0.18 145)" }}>No client logouts on record.</p>
+            <p className="text-xs mt-1" style={{ color: theme.textFaint }}>Keep up the great work!</p>
+          </div>
+        ) : (
+          <div className="divide-y" style={{ borderColor: theme.cardBorder }}>
+            {logoutCycles.map(cycle => (
+              <div key={cycle} className="px-4 py-3">
+                <p className="text-xs font-semibold mb-2" style={{ color: theme.textMuted }}>{formatMonthLabel(cycle)}</p>
+                <div className="space-y-1">
+                  {logoutsByCycle[cycle].map((l, i) => (
+                    <div key={i} className="flex items-center gap-3 text-xs rounded-lg px-3 py-2"
+                      style={{ background: "oklch(0.55 0.22 25 / 0.08)", border: "1px solid oklch(0.55 0.22 25 / 0.2)" }}>
+                      <PhoneOff className="w-3 h-3 flex-shrink-0" style={{ color: "#ef4444" }} />
+                      <span className="font-mono" style={{ color: theme.textMuted }}>{l.date}</span>
+                      <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "oklch(0.55 0.22 25 / 0.15)", color: "#ef4444" }}>Logged Out</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

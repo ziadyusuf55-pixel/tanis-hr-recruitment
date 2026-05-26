@@ -1732,7 +1732,7 @@ function CalendarImportPanel({
 }) {
   // Date range state
   const today = new Date().toISOString().slice(0, 10);
-  const [datePreset, setDatePreset] = useState<"today" | "yesterday" | "2days" | "7days" | "30days" | "custom">("2days");
+  const [datePreset, setDatePreset] = useState<"tomorrow" | "today" | "yesterday" | "2days" | "7days" | "30days" | "custom">("2days");
   const [customFrom, setCustomFrom] = useState(today);
   const [customTo, setCustomTo] = useState(today);
 
@@ -1756,6 +1756,7 @@ function CalendarImportPanel({
   const getDateRange = () => {
     const d = new Date();
     const fmt = (dt: Date) => dt.toISOString().slice(0, 10);
+    if (datePreset === "tomorrow") { const t = new Date(d); t.setDate(t.getDate() + 1); return { dateFrom: fmt(t), dateTo: fmt(t) }; }
     if (datePreset === "today") return { dateFrom: fmt(d), dateTo: fmt(d) };
     if (datePreset === "yesterday") { const y = new Date(d); y.setDate(y.getDate() - 1); return { dateFrom: fmt(y), dateTo: fmt(y) }; }
     if (datePreset === "2days") { const f = new Date(d); f.setDate(f.getDate() - 2); return { dateFrom: fmt(f), dateTo: fmt(d) }; }
@@ -1812,6 +1813,7 @@ function CalendarImportPanel({
   };
 
   const PRESETS = [
+    { key: "tomorrow", label: "Tomorrow" },
     { key: "today", label: "Today" },
     { key: "yesterday", label: "Yesterday" },
     { key: "2days", label: "Last 2 days" },

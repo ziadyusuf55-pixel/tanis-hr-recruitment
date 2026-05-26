@@ -3,12 +3,14 @@ import { trpc } from "@/lib/trpc";
 import { STAGE_LABELS, STAGE_DOT, STAGE_BADGE, type PipelineStage, ACTIVE_STAGES } from "@/lib/pipeline";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
 import {
   Users, UserCheck, CalendarClock, TrendingUp, TrendingDown,
-  MessageCircle, Mic, Video, Send, UserX, Timer, ArrowRight,
+  MessageCircle, Mic, Video, Send, UserX, Timer, ArrowRight, AlertTriangle,
+  Briefcase, Activity,
 } from "lucide-react";
 import { useLocation } from "wouter";
 
@@ -38,7 +40,9 @@ export default function Dashboard() {
   const periodInput = useMemo(() => ({ period }), [period]);
 
   const { data: kpis, isLoading } = trpc.dashboard.kpis.useQuery(periodInput);
+  const { data: overview } = trpc.dashboard.overview.useQuery();
   const { data: candidates, isLoading: candidatesLoading } = trpc.candidates.list.useQuery();
+  const pendingDeletion = overview?.pendingDeletionCount ?? 0;
 
   const funnelData = kpis
     ? ACTIVE_STAGES.map((stage) => ({
@@ -47,6 +51,10 @@ export default function Dashboard() {
         count: kpis.stageCounts[stage] ?? 0,
       }))
     : [];
+
+  const turnoverColor =
+    (kpis?.turnoverRate ?? 0) === 0 ? "text-emerald-600" :
+    (kpis?.turnoverRate ?? 0) <= 5 ? "text-yellow-600" : "text-red-600";
 
   return (
     <div className="space-y-6 max-w-6xl">
@@ -73,8 +81,46 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Top KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Pending Deletion Alert */}
+      {pendingDeletion > 0 && (
+        <div
+          className="flex items-center gap-3 p-4 rounded-lg border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
+          onClick={() => navigate("/operations")}
+        >
+          <AlertTriangle className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+              {pendingDeletion} agent{pendingDeletion !== 1 ? "s" : ""} pending deletion
+            </p>
+            <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
+              Terminated/resigned agents awaiting final pay confirmation. Delete after 1st of following month.
+            </p>
+          </div>
+          <div className="flex items-center gap-1 shrink-0 flex-wrap">
+            {overview?.pendingDeletionAgents?.slice(0, 3).map((a: { traineeCode: string; alias?: string | null }) => (
+              <Badge key={a.traineeCode} variant="outline" className="text-amber-700 border-amber-300 dark:text-amber-300 dark:border-amber-700 text-xs">
+                {a.alias ?? a.traineeCode}
+              </Badge>
+            ))}
+            {pendingDeletion > 3 && (
+              <Badge variant="outline" className="text-amber-700 border-amber-300 dark:text-amber-300 dark:border-amber-700 text-xs">
+                +{pendingDeletion - 3} more
+              </Badge>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Top KPI Cards — Workforce + Recruitment */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <KPICard
+          title="Active Workforce"
+          value={kpis?.turnoverHeadcount}
+          icon={<Briefcase className="h-4 w-4" />}
+          isLoading={isLoading}
+          color="text-emerald-700"
+          bgColor="bg-emerald-100"
+        />
         <KPICard title="Total in Pipeline" value={kpis?.totalInPipeline} icon={<Users className="h-4 w-4" />} isLoading={isLoading} color="text-slate-600" bgColor="bg-slate-100" />
         <KPICard title="New Candidates" value={kpis?.newCandidates} icon={<UserCheck className="h-4 w-4" />} isLoading={isLoading} color="text-blue-600" bgColor="bg-blue-100" />
         <KPICard title="WhatsApp Group Added" value={kpis?.whatsappGroupAdded} icon={<Send className="h-4 w-4" />} isLoading={isLoading} color="text-indigo-600" bgColor="bg-indigo-100" />
@@ -88,39 +134,39 @@ export default function Dashboard() {
         />
       </div>
 
-      {/* Rate Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Rate Cards + Turnover Row */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         <RateCard title="Pipeline Conversion" value={kpis?.conversionRate} icon={<TrendingUp className="h-4 w-4" />} isLoading={isLoading} description="Applied → Accepted" color="text-emerald-600" bgColor="bg-emerald-100" />
         <RateCard title="WhatsApp Response" value={kpis?.whatsappResponseRate} icon={<MessageCircle className="h-4 w-4" />} isLoading={isLoading} description="Replied to intro message" color="text-green-600" bgColor="bg-green-100" />
-        <RateCard title="Voice Note Pass Rate" value={kpis?.voiceNotePassRate} icon={<Mic className="h-4 w-4" />} isLoading={isLoading} description="Passed initial screening" color="text-blue-600" bgColor="bg-blue-100" />
-        <RateCard title="Interview Show Rate" value={kpis?.interviewShowRate} icon={<Video className="h-4 w-4" />} isLoading={isLoading} description="Attended Google Meet" color="text-violet-600" bgColor="bg-violet-100" />
-      </div>
-
-      {/* Turnover Rate — always this calendar month */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <RateCard title="Voice Note Pass" value={kpis?.voiceNotePassRate} icon={<Mic className="h-4 w-4" />} isLoading={isLoading} description="Passed initial screening" color="text-blue-600" bgColor="bg-blue-100" />
+        <RateCard title="Interview Show" value={kpis?.interviewShowRate} icon={<Video className="h-4 w-4" />} isLoading={isLoading} description="Attended Google Meet" color="text-violet-600" bgColor="bg-violet-100" />
+        {/* Turnover Rate — inline with rate cards */}
         <div className="bg-card border border-border rounded-xl p-5 flex flex-col gap-1">
           <div className="flex items-center justify-between mb-2">
-            <p className="text-xs font-medium text-muted-foreground">Monthly Turnover Rate</p>
+            <p className="text-xs font-medium text-muted-foreground">Monthly Turnover</p>
             <div className="h-6 w-6 rounded-md bg-red-100 flex items-center justify-center text-red-600">
-              <TrendingDown className="h-4 w-4" />
+              <Activity className="h-4 w-4" />
             </div>
           </div>
           {isLoading ? (
-            <Skeleton className="h-9 w-16" />
+            <Skeleton className="h-8 w-14" />
           ) : (
-            <p className={`text-3xl font-bold ${
-              (kpis?.turnoverRate ?? 0) === 0 ? "text-emerald-600" :
-              (kpis?.turnoverRate ?? 0) <= 5 ? "text-yellow-600" : "text-red-600"
-            }`}>
+            <p className={`text-2xl font-bold ${turnoverColor}`}>
               {kpis?.turnoverRate ?? 0}%
             </p>
           )}
           <p className="text-xs text-muted-foreground mt-1">
-            {kpis?.turnoverSeparations ?? 0} separation{(kpis?.turnoverSeparations ?? 0) !== 1 ? "s" : ""} ÷ {kpis?.turnoverHeadcount ?? 0} active agents
+            {kpis?.turnoverSeparations ?? 0} sep. ÷ {kpis?.turnoverHeadcount ?? 0} agents
           </p>
-          <p className="text-xs text-muted-foreground">
-            Formula: (separations ÷ headcount) × 100 — current month
-          </p>
+          <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
+            <div
+              className={`h-full rounded-full ${
+                (kpis?.turnoverRate ?? 0) === 0 ? "bg-emerald-400" :
+                (kpis?.turnoverRate ?? 0) <= 5 ? "bg-yellow-400" : "bg-red-400"
+              }`}
+              style={{ width: `${Math.min(kpis?.turnoverRate ?? 0, 100)}%` }}
+            />
+          </div>
         </div>
       </div>
 

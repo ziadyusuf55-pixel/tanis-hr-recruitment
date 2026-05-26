@@ -234,8 +234,12 @@ export const payrollRecords = mysqlTable("payroll_records", {
   baseSalary: decimal("baseSalary", { precision: 10, scale: 2 }),
   workingHours: decimal("workingHours", { precision: 8, scale: 2 }),
   ot1x5Hours: decimal("ot1x5Hours", { precision: 8, scale: 2 }).default("0"),  // OT 1.5x hours
+  ot1x5Pay: decimal("ot1x5Pay", { precision: 10, scale: 2 }).default("0"),     // OT 1.5x pay (EGP)
   ot2xHours: decimal("ot2xHours", { precision: 8, scale: 2 }).default("0"),    // OT 2x hours
+  ot2xPay: decimal("ot2xPay", { precision: 10, scale: 2 }).default("0"),       // OT 2x pay (EGP)
   ot3xHours: decimal("ot3xHours", { precision: 8, scale: 2 }).default("0"),    // OT 3x hours
+  ot3xPay: decimal("ot3xPay", { precision: 10, scale: 2 }).default("0"),       // OT 3x pay (EGP)
+  coachingBonus: decimal("coachingBonus", { precision: 10, scale: 2 }).default("0"), // Coaching bonus (EGP)
   commissionEgp: decimal("commissionEgp", { precision: 10, scale: 2 }).default("0"),
   qualityDeductions: decimal("qualityDeductions", { precision: 10, scale: 2 }).default("0"),
   attendanceDeductions: decimal("attendanceDeductions", { precision: 10, scale: 2 }).default("0"),
@@ -797,6 +801,23 @@ export const coachingCases = mysqlTable("coaching_cases", {
 });
 export type CoachingCase = typeof coachingCases.$inferSelect;
 export type InsertCoachingCase = typeof coachingCases.$inferInsert;
+
+/**
+ * client_logouts — dates when a client logged out an agent due to poor performance.
+ * Uploaded by admin (CRDTS + Date). Upserted on (crdts, date).
+ */
+export const clientLogouts = mysqlTable("client_logouts", {
+  id: int("id").autoincrement().primaryKey(),
+  crdts: varchar("crdts", { length: 100 }).notNull(),
+  agentCode: varchar("agentCode", { length: 100 }),
+  alias: varchar("alias", { length: 100 }),
+  date: varchar("date", { length: 10 }).notNull(),              // YYYY-MM-DD
+  cycleKey: varchar("cycleKey", { length: 7 }).notNull(),       // YYYY-MM
+  uploadedAt: bigint("uploadedAt", { mode: "number" }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type ClientLogout = typeof clientLogouts.$inferSelect;
+export type InsertClientLogout = typeof clientLogouts.$inferInsert;
 
 /**
  * coaching_case_status_log — audit trail of status changes on a coaching case.

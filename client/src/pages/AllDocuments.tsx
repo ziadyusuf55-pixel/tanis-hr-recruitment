@@ -4,7 +4,15 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Search, Download, FileText, ExternalLink, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Search, Download, FileText, ExternalLink, CheckCircle2, XCircle, Clock, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 
 type AgentDocument = {
@@ -20,7 +28,15 @@ type AgentDocument = {
 
 const DOC_TYPE_LABELS: Record<string, string> = {
   national_id: "National ID",
+  qualification: "Qualification / Certificate",
   cv: "CV / Resume",
+  personal_photos: "Personal Photos",
+  military_status: "Military Status",
+  insurance_status: "Insurance Status",
+  criminal_record: "Criminal Record",
+  work_record: "كعب عمل",
+  insurance_print: "برنت تاميني",
+  form_111: "استماره 111",
   certificate: "Certificate",
   contract: "Contract",
   other: "Other",
@@ -49,12 +65,27 @@ function StatusBadge({ status }: { status: AgentDocument["status"] }) {
 }
 
 export default function AllDocuments() {
+  const utils = trpc.useUtils();
   const { data: allDocs = [], isLoading } = trpc.documents.listAll.useQuery();
   const { data: agents = [] } = trpc.workforce.list.useQuery({});
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "pending" | "approved" | "rejected">("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
+
+  // Comment / review dialog state
+  const [commentDoc, setCommentDoc] = useState<AgentDocument | null>(null);
+  const [commentText, setCommentText] = useState("");
+  const [commentStatus, setCommentStatus] = useState<"approved" | "rejected">("approved");
+
+  const reviewMutation = trpc.documents.review.useMutation({
+    onSuccess: () => {
+      utils.documents.listAll.invalidate();
+      setCommentDoc(null);
+      toast.success("Document updated");
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   // Build agent map
   const agentMap = useMemo(() => {
@@ -90,7 +121,7 @@ export default function AllDocuments() {
 
   function exportCSV() {
     if (filtered.length === 0) { toast.error("Nothing to export"); return; }
-    const headers = ["Agent Code", "Full Name", "Alias", "Document Type", "File Name", "Status", "Upload Date", "Admin Comment"];
+    const headers = ["Agent Code", "Full Name", "Alias", "Document Type", "File Name", "Status", "Upload Date", "Admin Note"];
     const rows = filtered.map(d => {
       const agent = agentMap[d.traineeCode];
       return [
@@ -210,8 +241,21 @@ export default function AllDocuments() {
                       <td className="px-4 py-3 text-xs text-muted-foreground">
                         {d.uploadedAt ? new Date(d.uploadedAt).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" }) : "—"}
                       </td>
-                      <td className="px-4 py-3 max-w-[200px]">
-                        <p className="text-xs text-muted-foreground truncate">{d.adminComment ?? "—"}</p>
+                      <td className="px-4 py-3 max-w-[220px]">
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-xs text-muted-foreground truncate flex-1">{d.adminComment ?? "—"}</p>
+                          <button
+                            className="shrink-0 p-1 rounded hover:bg-muted transition-colors"
+                            title="Review / add note"
+                            onClick={() => {
+                              setCommentDoc(d);
+                              setCommentText(d.adminComment ?? "");
+                              setCommentStatus(d.status === "pending" ? "approved" : d.status);
+                            }}
+                          >
+                            <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -221,6 +265,67 @@ export default function AllDocuments() {
           </div>
         )}
       </div>
+
+      {/* Review / Comment Dialog */}
+      <Dialog open={!!commentDoc} onOpenChange={(o) => { if (!o) setCommentDoc(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Review Document</DialogTitle>
+          </DialogHeader>
+          {commentDoc && (
+            <div className="space-y-4 py-2">
+              <div className="text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">{agentMap[commentDoc.traineeCode]?.fullName ?? commentDoc.traineeCode}</span>
+                {" · "}
+                {docTypeLabel(commentDoc.docType)}
+              </div>
+              <div>
+                <p className="text-sm font-medium mb-2">Status</p>
+                <div className="flex gap-2">
+                  {(["approved", "rejected"] as const).map(s => (
+                    <button
+                      key={s}
+                      onClick={() => setCommentStatus(s)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                        commentStatus === s
+                          ? s === "approved"
+                            ? "bg-green-500/20 text-green-700 border-green-500/40 dark:text-green-400"
+                            : s === "rejected"
+                            ? "bg-red-500/20 text-red-700 border-red-500/40 dark:text-red-400"
+                            : "bg-amber-500/20 text-amber-700 border-amber-500/40 dark:text-amber-400"
+                          : "bg-transparent text-muted-foreground border-border hover:bg-muted"
+                      }`}
+                    >
+                      {s.charAt(0).toUpperCase() + s.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-sm font-medium mb-1">Admin Note</p>
+                <Textarea
+                  placeholder="Add a note for this document (e.g., 'Rejected — signature missing')..."
+                  value={commentText}
+                  onChange={e => setCommentText(e.target.value)}
+                  rows={3}
+                />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCommentDoc(null)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                if (!commentDoc) return;
+                reviewMutation.mutate({ id: commentDoc.id, status: commentStatus, adminComment: commentText });
+              }}
+              disabled={reviewMutation.isPending}
+            >
+              {reviewMutation.isPending ? "Saving..." : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }

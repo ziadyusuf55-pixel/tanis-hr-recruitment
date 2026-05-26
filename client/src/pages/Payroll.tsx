@@ -16,14 +16,17 @@ type ParsedRow = {
   crdts: string;
   alias?: string;
   agentCode?: string;
-  baseSalary?: number;
   workingHours?: number;
+  baseSalary?: number;
   ot1x5Hours?: number;
+  ot1x5Pay?: number;
   ot2xHours?: number;
+  ot2xPay?: number;
   ot3xHours?: number;
+  ot3xPay?: number;
+  coachingBonus?: number;
   commissionEgp?: number;
   qualityDeductions?: number;
-  attendanceDeductions?: number;
   totalDeductions?: number;
   netPay?: number;
   qualityDetail?: string;
@@ -135,16 +138,20 @@ export default function PayrollPage() {
             crdts: String(get("CRDTS") ?? "").trim(),
             alias: String(get("Alias") ?? "").trim(),
             agentCode: String(get("Agent Code") ?? "").trim(),
-            baseSalary: num(get("Base Salary (EGP)")),
             workingHours: num(get("Working Hours")),
+            baseSalary: num(get("Base Salary (EGP)")),
             ot1x5Hours: num(get("OT 1.5x Hours")),
+            ot1x5Pay: num(get("OT 1.5x Pay (EGP)")),
             ot2xHours: num(get("OT 2x Hours")),
+            ot2xPay: num(get("OT 2x Pay (EGP)")),
             ot3xHours: num(get("OT 3x Hours")),
+            ot3xPay: num(get("OT 3x Pay (EGP)")),
+            coachingBonus: num(get("Coaching Bonus (EGP)")),
             commissionEgp: num(get("Commission (EGP)")),
-            qualityDeductions: num(get("Quality Deductions (EGP)")),
-            attendanceDeductions: num(get("Attendance Deductions (EGP)")),
+            // 'Quality/Attendance Deductions' is the combined column in the new format
+            qualityDeductions: num(get("Quality/Attendance Deductions (EGP)")) ?? num(get("Quality Deductions (EGP)")),
             totalDeductions: num(get("Total Deductions (EGP)")),
-            netPay: num(get("Net Pay (EGP)")),
+            netPay: num(get("NET PAY (EGP)")) ?? num(get("Net Pay (EGP)")),
             qualityDetail: String(get("Quality Detail") ?? "").trim(),
             attendanceDetail: String(get("Attendance Detail") ?? "").trim(),
           };
@@ -164,19 +171,21 @@ export default function PayrollPage() {
 
   function downloadTemplate() {
     const headers = [
-      "CRDTS", "Alias", "Agent Code",
-      "Base Salary (EGP)", "Working Hours",
-      "OT 1.5x Hours", "OT 2x Hours", "OT 3x Hours",
-      "Commission (EGP)", "Quality Deductions (EGP)", "Attendance Deductions (EGP)",
-      "Total Deductions (EGP)", "Net Pay (EGP)",
+      "CRDTS", "Alias", "Working Hours", "Base Salary (EGP)",
+      "OT 1.5x Hours", "OT 1.5x Pay (EGP)",
+      "OT 2x Hours", "OT 2x Pay (EGP)",
+      "OT 3x Hours", "OT 3x Pay (EGP)",
+      "Coaching Bonus (EGP)", "Commission (EGP)",
+      "Quality/Attendance Deductions (EGP)", "Total Deductions (EGP)", "NET PAY (EGP)",
       "Quality Detail", "Attendance Detail",
     ];
     const example = [
-      "1001", "Harry", "TN-001",
-      4500, 176,
-      8, 4, 0,
-      800, 100, 50,
-      150, 5150,
+      "1001", "Harry", 176, 4500,
+      8, 480,
+      4, 320,
+      0, 0,
+      200, 800,
+      150, 150, 6050,
       "Late 2x", "Absent 1 day",
     ];
     const ws = XLSX.utils.aoa_to_sheet([headers, example]);
@@ -425,9 +434,13 @@ export default function PayrollPage() {
                         <th className="text-left px-3 py-2 font-medium">Alias</th>
                         <th className="text-right px-3 py-2 font-medium">Base Salary</th>
                         <th className="text-right px-3 py-2 font-medium">Hrs</th>
-                        <th className="text-right px-3 py-2 font-medium">OT 1.5x</th>
-                        <th className="text-right px-3 py-2 font-medium">OT 2x</th>
-                        <th className="text-right px-3 py-2 font-medium">OT 3x</th>
+                        <th className="text-right px-3 py-2 font-medium">OT 1.5x h</th>
+                        <th className="text-right px-3 py-2 font-medium">OT 1.5x EGP</th>
+                        <th className="text-right px-3 py-2 font-medium">OT 2x h</th>
+                        <th className="text-right px-3 py-2 font-medium">OT 2x EGP</th>
+                        <th className="text-right px-3 py-2 font-medium">OT 3x h</th>
+                        <th className="text-right px-3 py-2 font-medium">OT 3x EGP</th>
+                        <th className="text-right px-3 py-2 font-medium">Coaching</th>
                         <th className="text-right px-3 py-2 font-medium">Commission</th>
                         <th className="text-right px-3 py-2 font-medium">Deductions</th>
                         <th className="text-right px-3 py-2 font-medium text-emerald-600">Net Pay</th>
@@ -441,8 +454,12 @@ export default function PayrollPage() {
                           <td className="px-3 py-1.5 text-right">{fmtEGP(r.baseSalary)}</td>
                           <td className="px-3 py-1.5 text-right">{fmt(r.workingHours)}</td>
                           <td className="px-3 py-1.5 text-right">{fmt(r.ot1x5Hours)}</td>
+                          <td className="px-3 py-1.5 text-right">{fmtEGP(r.ot1x5Pay)}</td>
                           <td className="px-3 py-1.5 text-right">{fmt(r.ot2xHours)}</td>
+                          <td className="px-3 py-1.5 text-right">{fmtEGP(r.ot2xPay)}</td>
                           <td className="px-3 py-1.5 text-right">{fmt(r.ot3xHours)}</td>
+                          <td className="px-3 py-1.5 text-right">{fmtEGP(r.ot3xPay)}</td>
+                          <td className="px-3 py-1.5 text-right">{fmtEGP(r.coachingBonus)}</td>
                           <td className="px-3 py-1.5 text-right">{fmtEGP(r.commissionEgp)}</td>
                           <td className="px-3 py-1.5 text-right text-red-500">{fmtEGP(r.totalDeductions)}</td>
                           <td className="px-3 py-1.5 text-right font-semibold text-emerald-600">{fmtEGP(r.netPay)}</td>
@@ -470,7 +487,7 @@ export default function PayrollPage() {
             {parsedRows.length === 0 && !parseError && (
               <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground space-y-1">
                 <p>Choose an Excel file to preview the parsed rows before uploading.</p>
-                <p className="text-xs">Expected columns: CRDTS, Alias, Base Salary (EGP), Working Hours, OT 1.5x/2x/3x Hours, Commission (EGP), Quality/Attendance Deductions (EGP), Total Deductions (EGP), Net Pay (EGP), Quality Detail, Attendance Detail</p>
+                <p className="text-xs">Expected columns: CRDTS | Alias | Working Hours | Base Salary (EGP) | OT 1.5x Hours | OT 1.5x Pay (EGP) | OT 2x Hours | OT 2x Pay (EGP) | OT 3x Hours | OT 3x Pay (EGP) | Coaching Bonus (EGP) | Commission (EGP) | Quality/Attendance Deductions (EGP) | Total Deductions (EGP) | NET PAY (EGP) | Quality Detail | Attendance Detail</p>
               </div>
             )}
           </div>

@@ -25,6 +25,7 @@ import CycleTrackerAdmin from "./pages/CycleTrackerAdmin";
 import AgentProfilePage from "./pages/AgentProfilePage";
 import PerformanceReports from "./pages/PerformanceReports";
 import CoachingAdmin from "./pages/CoachingAdmin";
+import ClientLogoutsAdmin from "./pages/ClientLogoutsAdmin";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import { useAuth } from "./_core/hooks/useAuth";
 import { getLoginUrl } from "./const";
@@ -82,6 +83,7 @@ function Router() {
       <Route path="/cycle-tracker" component={() => <ProtectedRoute component={CycleTrackerAdmin} />} />
       <Route path="/performance-reports" component={() => <ProtectedRoute component={PerformanceReports} />} />
       <Route path="/coaching-admin" component={() => <ProtectedRoute component={CoachingAdmin} />} />
+      <Route path="/client-logouts" component={() => <ProtectedRoute component={ClientLogoutsAdmin} />} />
       <Route path="/requests" component={() => <ProtectedRoute component={Requests} />} />
       <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
       <Route path="/admin-invite" component={AdminInviteAccept} />

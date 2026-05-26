@@ -915,3 +915,41 @@
 - [x] Backend: Update approveResignation to accept adminLastWorkingDay param
 - [x] Backend: Add listPaymentMethodsGrouped query (grouped by agent)
 - [x] Backend: Add dashboard.overview query combining recruitment + ops + cycle + separation data
+
+## Round 62 — Feature Batch
+
+- [ ] DB: Add client_logouts table (id, crdts, agentCode, alias, date, cycleKey, uploadedAt)
+- [ ] DB: agentDocuments already has adminComment — verify it's exposed in API
+- [ ] DB: agentPaymentMethods already has adminComment — verify it's exposed in API
+- [ ] DB: Remove nestingStatus from workforceAgents (keep column but hide from UI)
+- [ ] Backend: clientLogout.upload mutation — parse Excel (CRDTS, Date, Alias), upsert on (crdts, date)
+- [ ] Backend: clientLogout.getByCycle query — returns all logouts for a cycleKey
+- [ ] Backend: clientLogout.getByAgent query — returns logouts for a specific agent
+- [ ] Backend: documents.setAdminComment mutation — admin sets comment per document
+- [ ] Backend: paymentMethods.setAdminComment mutation — admin sets comment per payment method
+- [ ] Backend: cycleTracker.getCommissionMonth query — groups cycle_stats by calendar month for agent
+- [ ] Backend: performance.getAgentHistory query — returns per-cycle summary for an agent (all cycles)
+- [ ] Backend: performance.getRanking query — returns agent rank in campaign for a given cycle
+- [x] Backend: Remove all cascade deletes from markAgentResignedOnSpot, terminateAgent, approveResignationRequest
+- [x] Frontend: Dashboard — full redesign with KPIs from all modules + pending deletion badge
+- [ ] Frontend: Documents admin page — redesign grouped-by-agent (match Payment Preferences layout)
+- [ ] Frontend: Documents — add 3 new types: كعب عمل, برنت تاميني, استماره 111
+- [ ] Frontend: Documents — admin comment input per document row
+- [ ] Frontend: Payment Preferences — admin comment input per payment method row
+- [ ] Frontend: Calendar import — add "Tomorrow" preset to date range selector
+- [ ] Frontend: Operations — remove Nesting label/tab from agent profile view
+- [x] Frontend: Cycle Tracker admin upload — add Client Logouts upload section (new page /client-logouts)
+- [ ] Frontend: Performance tab (admin) — red markers on logout dates in hours chart, logout count per agent
+- [ ] Frontend: Performance tab (agent) — total logouts this cycle + each logout date
+- [ ] Frontend: Performance dashboard — per-agent line charts (hours + revenue + logout markers)
+- [ ] Frontend: Performance dashboard — team summary (revenue vs prev cycle, top performers, most logouts, most deductions)
+- [x] Frontend: Agent portal — add Commission Tracker tab (calendar month grouping, month selector)
+- [ ] Frontend: Agent portal — add Performance History tab (cycle selector, per-cycle summary)
+- [x] Frontend: Agent payslip — add Ranking section (own rank, profit, rev/hr, top 3 anonymized)
+
+## Round 62b — Payroll OT Split
+- [x] DB: Add ot1x5Pay, ot2xPay, ot3xPay, coachingBonus columns to payroll_records table
+- [x] Backend: Update upsertPayrollRecordV2 to include new OT pay and coachingBonus fields
+- [x] Backend: Update uploadPayrollV2 router input schema for new OT pay columns
+- [x] Frontend: Update Payroll.tsx ParsedRow type, Excel parser, preview table for new column structure
+- [x] Frontend: Update AgentPortal.tsx PayrollTab to display OT by type (1.5x, 2x, 3x) with hours and pay
