@@ -151,7 +151,7 @@ function formatCurrency(amount: string | number | null | undefined) {
   return `EGP ${num.toLocaleString()}`;
 }
 
-type Tab = "profile" | "opplan" | "cycle" | "payroll" | "commission" | "requests" | "referrals" | "documents" | "payment" | "comments";
+type Tab = "profile" | "opplan" | "cycle" | "payroll" | "commission" | "perfhistory" | "requests" | "referrals" | "documents" | "payment" | "comments";
 
 export default function AgentPortal() {
   const [, navigate] = useLocation();
@@ -219,6 +219,7 @@ export default function AgentPortal() {
     { id: "cycle", label: "Cycle", icon: <Activity className="w-4 h-4" /> },
     { id: "payroll", label: "Payroll", icon: <CreditCard className="w-4 h-4" /> },
     { id: "commission", label: "Commission", icon: <BarChart2 className="w-4 h-4" /> },
+    { id: "perfhistory", label: "History", icon: <TrendingUp className="w-4 h-4" /> },
     { id: "requests", label: "Requests", icon: <MessageSquare className="w-4 h-4" /> },
     { id: "documents", label: "Documents", icon: <FileText className="w-4 h-4" /> },
     { id: "payment", label: "Payment", icon: <Wallet className="w-4 h-4" /> },
@@ -347,6 +348,7 @@ export default function AgentPortal() {
         {activeTab === "cycle" && <CycleTrackerTab theme={theme} />}
         {activeTab === "payroll" && <PayrollTab theme={theme} />}
         {activeTab === "commission" && <CommissionTrackerTab theme={theme} />}
+        {activeTab === "perfhistory" && <PerformanceHistoryTab theme={theme} />}
         {activeTab === "requests" && <RequestCenterTab candidateId={agent.candidateId} theme={theme} />}
         {activeTab === "documents" && <DocumentsTab theme={theme} />}
         {activeTab === "payment" && <PaymentMethodsTab theme={theme} />}
@@ -2454,6 +2456,143 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ─── Performance History Tab ──────────────────────────────────────────────────
+type PerfHistoryCycle = { cycleKey: string; loginHours: number; totalCalls: number; revenue: number; profit: number; days: number; revPerHr: number; };
+function PerformanceHistoryTab({ theme }: { theme: Theme }) {
+  const { data: rawCycles = [], isLoading } = trpc.cycleTracker.getMyPerformanceHistoryAgent.useQuery();
+  const cycles = rawCycles as PerfHistoryCycle[];
+  const [selectedCycle, setSelectedCycle] = useState<string | null>(null);
+  const activeCycle = selectedCycle ?? (cycles[0]?.cycleKey ?? null);
+
+  const { data: dailyData, isLoading: loadingDaily } = trpc.cycleTracker.getMyDailyStats.useQuery(
+    { cycleKey: activeCycle! },
+    { enabled: !!activeCycle }
+  );
+
+  function fmtEGP(v: number | null | undefined) {
+    if (v == null) return "—";
+    return `$${Number(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  }
+  function fmtHr(v: number | null | undefined) {
+    if (v == null) return "—";
+    return `${Number(v).toFixed(1)}h`;
+  }
+
+  return (
+    <div className="space-y-4">
+      {/* Help banner */}
+      <div className="rounded-xl p-4 flex gap-3" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <TrendingUp className="w-5 h-5 mt-0.5 flex-shrink-0" style={{ color: BRAND }} />
+        <div>
+          <p className="text-sm font-semibold mb-0.5" style={{ color: theme.text }}>Performance History</p>
+          <p className="text-xs leading-relaxed" style={{ color: theme.textFaint }}>
+            Your per-cycle performance summary — revenue, calls, login hours, and daily breakdown.
+          </p>
+        </div>
+      </div>
+
+      {/* Cycle selector */}
+      <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+          <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.textFaint }}>All Cycles</p>
+        </div>
+        {isLoading ? (
+          <div className="h-24 animate-pulse" style={{ background: theme.surface }} />
+        ) : cycles.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm" style={{ color: theme.textFaint }}>No performance data yet.</div>
+        ) : (
+          <div className="divide-y" style={{ borderColor: theme.cardBorder }}>
+            {(cycles as Array<{ cycleKey: string; loginHours: number; totalCalls: number; revenue: number; profit: number; days: number; revPerHr: number }>).map(c => (
+              <button
+                key={c.cycleKey}
+                onClick={() => setSelectedCycle(c.cycleKey === activeCycle ? null : c.cycleKey)}
+                className="w-full px-4 py-3 flex items-center justify-between text-left transition-all"
+                style={{
+                  background: c.cycleKey === activeCycle ? "oklch(0.32 0.18 28 / 0.08)" : "transparent",
+                  borderLeft: c.cycleKey === activeCycle ? `3px solid ${BRAND}` : "3px solid transparent",
+                }}
+              >
+                <div>
+                  <p className="text-sm font-semibold" style={{ color: theme.text }}>{c.cycleKey}</p>
+                  <p className="text-xs mt-0.5" style={{ color: theme.textFaint }}>{c.days} days · {fmtHr(c.loginHours)} login</p>
+                </div>
+                <div className="text-right">
+                  <p className="text-sm font-bold" style={{ color: "oklch(0.55 0.18 145)" }}>{fmtEGP(c.revenue)}</p>
+                  <p className="text-xs" style={{ color: theme.textFaint }}>{fmtEGP(c.revPerHr)}/hr</p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Daily breakdown for selected cycle */}
+      {activeCycle && (
+        <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+          <div className="px-4 py-3 flex items-center gap-2" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+            <Activity className="w-4 h-4" style={{ color: BRAND }} />
+            <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.textFaint }}>
+              Daily Breakdown — {activeCycle}
+            </p>
+          </div>
+          {loadingDaily ? (
+            <div className="h-24 animate-pulse" style={{ background: theme.surface }} />
+          ) : !dailyData || dailyData.daily.length === 0 ? (
+            <div className="px-4 py-8 text-center text-sm" style={{ color: theme.textFaint }}>No daily data for this cycle.</div>
+          ) : (
+            <>
+              {/* Logout warning */}
+              {dailyData.logoutDates.length > 0 && (
+                <div className="px-4 py-2 flex items-center gap-2 text-xs"
+                  style={{ background: "oklch(0.55 0.22 25 / 0.08)", borderBottom: `1px solid ${theme.cardBorder}` }}>
+                  <PhoneOff className="w-3.5 h-3.5 flex-shrink-0" style={{ color: "#ef4444" }} />
+                  <span style={{ color: "#ef4444" }}>
+                    {dailyData.logoutDates.length} client logout{dailyData.logoutDates.length !== 1 ? "s" : ""} this cycle:&nbsp;
+                    {dailyData.logoutDates.join(", ")}
+                  </span>
+                </div>
+              )}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr style={{ borderBottom: `1px solid ${theme.cardBorder}`, background: theme.surface }}>
+                      <th className="px-4 py-2 text-left font-medium" style={{ color: theme.textFaint }}>Date</th>
+                      <th className="px-4 py-2 text-right font-medium" style={{ color: theme.textFaint }}>Login Hrs</th>
+                      <th className="px-4 py-2 text-right font-medium" style={{ color: theme.textFaint }}>Revenue</th>
+                      <th className="px-4 py-2 text-right font-medium" style={{ color: theme.textFaint }}>Calls</th>
+                      <th className="px-4 py-2 text-right font-medium" style={{ color: theme.textFaint }}>Profit</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(dailyData.daily as Array<{ date: string; loginHours: number; revenue: number; totalCalls: number; profit: number }>).map(d => {
+                      const isLogout = dailyData.logoutDates.includes(d.date);
+                      return (
+                        <tr key={d.date} style={{
+                          borderBottom: `1px solid ${theme.cardBorder}`,
+                          background: isLogout ? "oklch(0.55 0.22 25 / 0.06)" : "transparent",
+                        }}>
+                          <td className="px-4 py-2 font-mono flex items-center gap-1.5" style={{ color: theme.text }}>
+                            {d.date}
+                            {isLogout && <span className="text-[10px] px-1.5 py-0.5 rounded font-medium" style={{ background: "oklch(0.55 0.22 25 / 0.15)", color: "#ef4444" }}>Logout</span>}
+                          </td>
+                          <td className="px-4 py-2 text-right" style={{ color: theme.textMuted }}>{fmtHr(d.loginHours)}</td>
+                          <td className="px-4 py-2 text-right font-semibold" style={{ color: "oklch(0.55 0.18 145)" }}>{fmtEGP(d.revenue)}</td>
+                          <td className="px-4 py-2 text-right" style={{ color: theme.textMuted }}>{d.totalCalls.toLocaleString()}</td>
+                          <td className="px-4 py-2 text-right" style={{ color: theme.textMuted }}>{fmtEGP(d.profit)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      )}
     </div>
   );
 }

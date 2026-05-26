@@ -5,7 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Search, Download, Wallet, Building2, Star, ChevronDown, ChevronRight } from "lucide-react";
+import { Search, Download, Wallet, Building2, Star, ChevronDown, ChevronRight, MessageSquare } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 
 type PaymentMethod = {
@@ -46,11 +48,23 @@ function holderName(m: PaymentMethod): string {
 }
 
 export default function PaymentPreferences() {
+  const utils = trpc.useUtils();
   const { data: grouped = [], isLoading } = trpc.paymentMethods.listGrouped.useQuery();
   const { data: agents = [] } = trpc.workforce.list.useQuery({});
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "submitted" | "not_submitted" | "preferred_only">("all");
   const [expandedCodes, setExpandedCodes] = useState<Set<string>>(new Set());
+  const [commentMethod, setCommentMethod] = useState<PaymentMethod | null>(null);
+  const [commentText, setCommentText] = useState("");
+
+  const addCommentMutation = trpc.paymentMethods.addComment.useMutation({
+    onSuccess: () => {
+      utils.paymentMethods.listGrouped.invalidate();
+      setCommentMethod(null);
+      toast.success("Note saved");
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   const submittedCodes = useMemo(() => new Set((grouped as AgentGroup[]).map(g => g.traineeCode)), [grouped]);
   const allAgents = useMemo(() => (agents as Array<{ traineeCode: string; fullName: string; alias?: string | null }>), [agents]);
@@ -252,9 +266,19 @@ export default function PaymentPreferences() {
                               {accountValue(m)} · {holderName(m)}
                             </p>
                             {m.adminComment && (
-                              <p className="text-xs text-muted-foreground mt-0.5 italic">Note: {m.adminComment}</p>
+                              <p className="text-xs text-muted-foreground mt-0.5 italic">"{m.adminComment}"</p>
                             )}
                           </div>
+                          <button
+                            className="shrink-0 p-1.5 rounded-md hover:bg-muted transition-colors"
+                            title="Add / edit note"
+                            onClick={() => {
+                              setCommentMethod(m);
+                              setCommentText(m.adminComment ?? "");
+                            }}
+                          >
+                            <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
+                          </button>
                         </div>
                       ))}
                     </div>
@@ -265,6 +289,39 @@ export default function PaymentPreferences() {
           </div>
         )}
       </div>
+      <Dialog open={!!commentMethod} onOpenChange={(o) => { if (!o) setCommentMethod(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Admin Note</DialogTitle>
+          </DialogHeader>
+          {commentMethod && (
+            <div className="space-y-3 py-2">
+              <p className="text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">{providerLabel(commentMethod)}</span>
+                {" · "}{accountValue(commentMethod)}
+              </p>
+              <Textarea
+                placeholder="Add a note for this payment method..."
+                value={commentText}
+                onChange={e => setCommentText(e.target.value)}
+                rows={3}
+              />
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCommentMethod(null)}>Cancel</Button>
+            <Button
+              onClick={() => {
+                if (!commentMethod) return;
+                addCommentMutation.mutate({ id: commentMethod.id, comment: commentText });
+              }}
+              disabled={addCommentMutation.isPending}
+            >
+              {addCommentMutation.isPending ? "Saving..." : "Save Note"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </DashboardLayout>
   );
 }

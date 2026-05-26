@@ -236,9 +236,6 @@ export default function AgentProfilePage() {
                 ) : (
                   <Badge variant="secondary">Inactive</Badge>
                 )}
-                {nestingStatus === "nesting" && (
-                  <Badge className="bg-blue-100 text-blue-700 border-blue-200" variant="outline">Nesting</Badge>
-                )}
                 {nestingStatus === "senior" && (
                   <Badge className="bg-purple-100 text-purple-700 border-purple-200" variant="outline">Senior</Badge>
                 )}
@@ -523,17 +520,7 @@ export default function AgentProfilePage() {
                 </SelectContent>
               </Select>
             </div>
-            <div>
-              <Label className="text-xs font-medium text-muted-foreground mb-1.5 block">Nesting Status</Label>
-              <Select value={editForm.nestingStatus} onValueChange={v => setEditForm(f => ({ ...f, nestingStatus: v as "nesting" | "active" | "senior" }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="nesting">Nesting</SelectItem>
-                  <SelectItem value="active">Active</SelectItem>
-                  <SelectItem value="senior">Senior</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+
             <div>
               <Label className="text-xs font-medium text-muted-foreground mb-1.5 block">Shift Hours</Label>
               <Input placeholder="e.g. 9:00 AM - 5:00 PM" value={editForm.shiftHours} onChange={e => setEditForm(f => ({ ...f, shiftHours: e.target.value }))} />

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,11 +9,13 @@ import {
 } from "@/components/ui/select";
 import {
   TrendingUp, Search, DollarSign, Phone, Clock, Users, Download,
-  ArrowUpRight, ArrowDownRight, Minus,
+  ArrowUpRight, ArrowDownRight, Minus, ChevronDown, ChevronRight, AlertTriangle,
 } from "lucide-react";
 import { useLocation } from "wouter";
-
-const BRAND = "#8B1A1A";
+import {
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip,
+  ReferenceLine, CartesianGrid,
+} from "recharts";
 
 type AgentStat = {
   crdts: string;
@@ -31,17 +33,76 @@ type AgentStat = {
 function fmt$(n: number) { return `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`; }
 function fmtHr(n: number) { return `${n.toFixed(1)}h`; }
 
+function rankBadge(i: number) {
+  if (i === 0) return <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-100 text-amber-700 text-[10px] font-bold">1</span>;
+  if (i === 1) return <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 text-slate-600 text-[10px] font-bold">2</span>;
+  if (i === 2) return <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-orange-100 text-orange-700 text-[10px] font-bold">3</span>;
+  return <span className="text-xs text-muted-foreground">{i + 1}</span>;
+}
+
+type DailyPoint = { date: string; loginHours: number; revenue: number; totalCalls: number; profit: number; };
+
+function AgentDetailChart({ crdts, cycleKey }: { crdts: string; cycleKey: string }) {
+  const { data, isLoading } = trpc.cycleTracker.getAgentDailyStats.useQuery(
+    { crdts, cycleKey },
+    { enabled: !!crdts && !!cycleKey }
+  );
+  if (isLoading) return <div className="h-32 flex items-center justify-center text-xs text-muted-foreground">Loading chart…</div>;
+  if (!data || data.daily.length === 0) return <div className="h-20 flex items-center justify-center text-xs text-muted-foreground">No daily data available</div>;
+
+  const chartData = (data.daily as DailyPoint[]).map(d => ({ ...d, label: d.date.slice(5) }));
+  return (
+    <div className="px-4 pb-4 space-y-3">
+      {data.logoutDates.length > 0 && (
+        <div className="flex items-center gap-1.5 text-xs text-red-600">
+          <AlertTriangle className="h-3.5 w-3.5" />
+          <span className="font-medium">{data.logoutDates.length} client logout{data.logoutDates.length !== 1 ? "s" : ""} this cycle</span>
+          <span className="text-muted-foreground">({data.logoutDates.join(", ")})</span>
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <p className="text-[10px] text-muted-foreground mb-1 font-medium uppercase tracking-wide">Login Hours / Day</p>
+          <ResponsiveContainer width="100%" height={100}>
+            <LineChart data={chartData} margin={{ top: 4, right: 4, bottom: 4, left: -20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.5} />
+              <XAxis dataKey="label" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
+              <YAxis tick={{ fontSize: 9 }} />
+              <Tooltip contentStyle={{ fontSize: 11, padding: "4px 8px" }} formatter={(v: number) => [`${v.toFixed(1)}h`, "Hours"]} />
+              {data.logoutDates.map((d: string) => <ReferenceLine key={d} x={d.slice(5)} stroke="#ef4444" strokeWidth={1.5} strokeDasharray="3 3" />)}
+              <Line type="monotone" dataKey="loginHours" stroke="#3b82f6" strokeWidth={1.5} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+        <div>
+          <p className="text-[10px] text-muted-foreground mb-1 font-medium uppercase tracking-wide">Revenue / Day</p>
+          <ResponsiveContainer width="100%" height={100}>
+            <LineChart data={chartData} margin={{ top: 4, right: 4, bottom: 4, left: -20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.5} />
+              <XAxis dataKey="label" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
+              <YAxis tick={{ fontSize: 9 }} />
+              <Tooltip contentStyle={{ fontSize: 11, padding: "4px 8px" }} formatter={(v: number) => [`$${v.toFixed(2)}`, "Revenue"]} />
+              {data.logoutDates.map((d: string) => <ReferenceLine key={d} x={d.slice(5)} stroke="#ef4444" strokeWidth={1.5} strokeDasharray="3 3" />)}
+              <Line type="monotone" dataKey="revenue" stroke="#10b981" strokeWidth={1.5} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+      {data.logoutDates.length > 0 && <p className="text-[10px] text-muted-foreground">Red dashed lines = client logout dates.</p>}
+    </div>
+  );
+}
+
 export default function PerformanceReports() {
   const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"revenue" | "calls" | "revPerHr" | "profit">("revenue");
   const [cycleKey, setCycleKey] = useState<string>("");
   const [tlFilter, setTlFilter] = useState<string>("all");
+  const [expandedCrdts, setExpandedCrdts] = useState<Set<string>>(new Set());
 
   const { data: cycleInfo } = trpc.cycleTracker.getCurrentCycle.useQuery();
   const currentCycle = cycleInfo?.cycleKey ?? "";
-
-  // Use current cycle if none selected
   const activeCycle = cycleKey || currentCycle;
 
   const { data: rawStats = [], isLoading } = trpc.cycleTracker.getTeamStats.useQuery(
@@ -49,7 +110,6 @@ export default function PerformanceReports() {
     { enabled: !!activeCycle }
   );
 
-  // Build past 6 cycles for selector
   const pastCycles: string[] = [];
   if (currentCycle) {
     const [y, m] = currentCycle.split("-").map(Number);
@@ -64,9 +124,7 @@ export default function PerformanceReports() {
 
   const filtered = stats
     .filter(s => {
-      const matchesSearch = !search || [
-        s.crdts, s.alias ?? "", s.agentCode ?? ""
-      ].some(v => v.toLowerCase().includes(search.toLowerCase()));
+      const matchesSearch = !search || [s.crdts, s.alias ?? "", s.agentCode ?? ""].some(v => v.toLowerCase().includes(search.toLowerCase()));
       const matchesTL = tlFilter === "all" || s.teamLeader === tlFilter;
       return matchesSearch && matchesTL;
     })
@@ -79,121 +137,83 @@ export default function PerformanceReports() {
     });
 
   const teamTotals = stats.reduce(
-    (acc, s) => ({
-      revenue: acc.revenue + s.totalRevenue,
-      calls: acc.calls + s.totalCalls,
-      loginHours: acc.loginHours + s.totalLoginHours,
-      profit: acc.profit + s.totalProfit,
-    }),
+    (acc, s) => ({ revenue: acc.revenue + s.totalRevenue, calls: acc.calls + s.totalCalls, loginHours: acc.loginHours + s.totalLoginHours, profit: acc.profit + s.totalProfit }),
     { revenue: 0, calls: 0, loginHours: 0, profit: 0 }
   );
+  const teamAvgRevPerHr = teamTotals.loginHours > 0 ? teamTotals.revenue / teamTotals.loginHours : 0;
 
-  const teamAvgRevPerHr = teamTotals.loginHours > 0
-    ? teamTotals.revenue / teamTotals.loginHours
-    : 0;
+  function toggleExpand(crdts: string) {
+    setExpandedCrdts(prev => { const next = new Set(prev); if (next.has(crdts)) next.delete(crdts); else next.add(crdts); return next; });
+  }
 
   function exportCSV() {
     const header = ["CRDTS", "Agent Code", "Alias", "Revenue ($)", "Calls", "Login Hours", "Profit ($)", "Rev/Hr ($)"];
-    const rows = filtered.map(s => [
-      s.crdts, s.agentCode ?? "", s.alias ?? "",
-      s.totalRevenue.toFixed(2), s.totalCalls, s.totalLoginHours.toFixed(1),
-      s.totalProfit.toFixed(2), s.avgRevPerHr.toFixed(2),
-    ]);
-    const csv = [header, ...rows].map(r => r.join(",")).join("\n");
+    const rows = filtered.map(s => [s.crdts, s.agentCode ?? "", s.alias ?? "", s.totalRevenue.toFixed(2), s.totalCalls, s.totalLoginHours.toFixed(1), s.totalProfit.toFixed(2), s.avgRevPerHr.toFixed(2)]);
+    const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url;
-    a.download = `performance-${activeCycle}.csv`;
-    a.click();
+    a.href = url; a.download = `performance-${activeCycle}.csv`; a.click();
     URL.revokeObjectURL(url);
   }
 
-  function rankBadge(i: number) {
-    if (i === 0) return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700">#1</span>;
-    if (i === 1) return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">#2</span>;
-    if (i === 2) return <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">#3</span>;
-    return <span className="text-[10px] text-muted-foreground">#{i + 1}</span>;
-  }
-
   return (
-    <div className="p-6 max-w-6xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4 flex-wrap">
+    <div className="p-6 space-y-5">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-            <TrendingUp className="h-6 w-6" style={{ color: BRAND }} />
-            Performance Reports
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">Cycle-level performance summary per agent</p>
+          <h1 className="text-2xl font-bold">Performance Reports</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">Agent performance by cycle — click a row to expand daily charts</p>
         </div>
-        <div className="flex items-center gap-2">
-          {/* Cycle selector */}
-          <Select value={activeCycle} onValueChange={setCycleKey}>
-            <SelectTrigger className="h-9 w-36 text-xs">
-              <SelectValue placeholder="Select cycle" />
-            </SelectTrigger>
-            <SelectContent>
-              {pastCycles.map(c => (
-                <SelectItem key={c} value={c} className="text-xs">
-                  {c} {c === currentCycle ? "(Current)" : ""}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button variant="outline" size="sm" className="gap-1.5 h-9" onClick={exportCSV} disabled={filtered.length === 0}>
-            <Download className="h-3.5 w-3.5" /> Export CSV
-          </Button>
-        </div>
+        <Button variant="outline" size="sm" className="gap-1.5" onClick={exportCSV} disabled={filtered.length === 0}>
+          <Download className="h-3.5 w-3.5" /> Export CSV
+        </Button>
       </div>
 
-      {/* Team Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        {[
-          { label: "Total Revenue", value: fmt$(teamTotals.revenue), icon: DollarSign, color: "text-emerald-600" },
-          { label: "Total Calls",   value: teamTotals.calls.toLocaleString(), icon: Phone, color: "text-blue-600" },
-          { label: "Login Hours",   value: fmtHr(teamTotals.loginHours), icon: Clock, color: "text-purple-600" },
-          { label: "Avg Rev/Hr",    value: fmt$(teamAvgRevPerHr), icon: TrendingUp, color: "text-amber-600" },
-        ].map(kpi => (
-          <Card key={kpi.label} className="border-0 shadow-sm">
-            <CardContent className="p-4">
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs text-muted-foreground">{kpi.label}</p>
-                <kpi.icon className={`h-4 w-4 ${kpi.color}`} />
-              </div>
-              <p className="text-xl font-bold">{isLoading ? "—" : kpi.value}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">{stats.length} agents · Cycle {activeCycle}</p>
-            </CardContent>
-          </Card>
-        ))}
-      </div>
+      {stats.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { label: "Team Revenue", value: fmt$(teamTotals.revenue), icon: DollarSign, color: "text-emerald-600" },
+            { label: "Total Calls", value: teamTotals.calls.toLocaleString(), icon: Phone, color: "text-blue-600" },
+            { label: "Login Hours", value: fmtHr(teamTotals.loginHours), icon: Clock, color: "text-purple-600" },
+            { label: "Agents", value: stats.length.toString(), icon: Users, color: "text-amber-600" },
+          ].map(card => (
+            <Card key={card.label} className="border-0 shadow-sm">
+              <CardContent className="p-4 flex items-center gap-3">
+                <div className={`p-2 rounded-lg bg-muted ${card.color}`}>
+                  <card.icon className="h-4 w-4" />
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">{card.label}</p>
+                  <p className="text-base font-bold">{card.value}</p>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
 
-      {/* Filters */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 min-w-[200px] max-w-sm">
+      <div className="flex flex-wrap gap-2 items-center">
+        <div className="relative flex-1 min-w-[180px] max-w-xs">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-          <Input
-            placeholder="Search by CRDTS, alias, or code..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="pl-9 h-9 text-sm"
-          />
+          <Input placeholder="Search CRDTS, alias…" value={search} onChange={e => setSearch(e.target.value)} className="pl-9 h-9 text-sm" />
         </div>
+        <Select value={cycleKey || currentCycle} onValueChange={v => setCycleKey(v === currentCycle ? "" : v)}>
+          <SelectTrigger className="w-36 h-9 text-xs"><SelectValue placeholder="Select cycle" /></SelectTrigger>
+          <SelectContent>
+            {pastCycles.map(c => <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}
+          </SelectContent>
+        </Select>
         {uniqueTLs.length > 0 && (
           <Select value={tlFilter} onValueChange={setTlFilter}>
-            <SelectTrigger className="h-9 w-44 text-xs">
-              <SelectValue placeholder="All Team Leaders" />
-            </SelectTrigger>
+            <SelectTrigger className="w-36 h-9 text-xs"><SelectValue placeholder="All TLs" /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="all" className="text-xs">All Team Leaders</SelectItem>
+              <SelectItem value="all" className="text-xs">All TLs</SelectItem>
               {uniqueTLs.map(tl => <SelectItem key={tl} value={tl} className="text-xs">{tl}</SelectItem>)}
             </SelectContent>
           </Select>
         )}
         <Select value={sortBy} onValueChange={v => setSortBy(v as typeof sortBy)}>
-          <SelectTrigger className="h-9 w-40 text-xs">
-            <SelectValue />
-          </SelectTrigger>
+          <SelectTrigger className="w-36 h-9 text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="revenue" className="text-xs">Sort: Revenue</SelectItem>
             <SelectItem value="calls" className="text-xs">Sort: Calls</SelectItem>
@@ -201,26 +221,18 @@ export default function PerformanceReports() {
             <SelectItem value="profit" className="text-xs">Sort: Profit</SelectItem>
           </SelectContent>
         </Select>
-        <Badge variant="outline" className="text-xs">
-          <Users className="h-3 w-3 mr-1" />
-          {filtered.length} agents
-        </Badge>
+        <Badge variant="outline" className="text-xs"><Users className="h-3 w-3 mr-1" />{filtered.length} agents</Badge>
       </div>
 
-      {/* Agent Table */}
       {isLoading ? (
-        <div className="space-y-2">
-          {[1,2,3,4,5].map(i => <div key={i} className="h-14 rounded-xl bg-muted/40 animate-pulse" />)}
-        </div>
+        <div className="space-y-2">{[1,2,3,4,5].map(i => <div key={i} className="h-14 rounded-xl bg-muted/40 animate-pulse" />)}</div>
       ) : filtered.length === 0 ? (
         <Card className="border-0 shadow-sm">
           <CardContent className="py-16 text-center">
             <TrendingUp className="h-10 w-10 mx-auto mb-3 text-muted-foreground/30" />
             <p className="text-sm font-medium">No performance data for cycle {activeCycle}</p>
             <p className="text-xs text-muted-foreground mt-1">Upload stats in the Cycle Tracker to see data here.</p>
-            <Button variant="outline" size="sm" className="mt-4" onClick={() => navigate("/cycle-tracker")}>
-              Go to Cycle Tracker
-            </Button>
+            <Button variant="outline" size="sm" className="mt-4" onClick={() => navigate("/cycle-tracker")}>Go to Cycle Tracker</Button>
           </CardContent>
         </Card>
       ) : (
@@ -236,6 +248,7 @@ export default function PerformanceReports() {
                 <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide hidden md:table-cell">Rev/Hr</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide hidden lg:table-cell">Profit</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide hidden lg:table-cell">Days</th>
+                <th className="px-4 py-3 w-8"></th>
               </tr>
             </thead>
             <tbody>
@@ -243,29 +256,39 @@ export default function PerformanceReports() {
                 const vsAvg = teamAvgRevPerHr > 0 ? ((s.avgRevPerHr - teamAvgRevPerHr) / teamAvgRevPerHr) * 100 : 0;
                 const TrendIcon = vsAvg > 5 ? ArrowUpRight : vsAvg < -5 ? ArrowDownRight : Minus;
                 const trendColor = vsAvg > 5 ? "text-emerald-600" : vsAvg < -5 ? "text-red-600" : "text-muted-foreground";
+                const isExpanded = expandedCrdts.has(s.crdts);
                 return (
-                  <tr key={s.crdts} className="border-b last:border-0 hover:bg-muted/20 transition-colors">
-                    <td className="px-4 py-3">{rankBadge(i)}</td>
-                    <td className="px-4 py-3">
-                      <div>
+                  <>
+                    <tr key={s.crdts} className="border-b hover:bg-muted/20 transition-colors cursor-pointer" onClick={() => toggleExpand(s.crdts)}>
+                      <td className="px-4 py-3">{rankBadge(i)}</td>
+                      <td className="px-4 py-3">
                         <p className="font-medium text-xs font-mono">{s.crdts}</p>
-                        {(s.alias || s.agentCode) && (
-                          <p className="text-[10px] text-muted-foreground">{s.alias || s.agentCode}</p>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right font-semibold text-xs text-emerald-700">{fmt$(s.totalRevenue)}</td>
-                    <td className="px-4 py-3 text-right text-xs text-muted-foreground hidden sm:table-cell">{s.totalCalls.toLocaleString()}</td>
-                    <td className="px-4 py-3 text-right text-xs text-muted-foreground hidden md:table-cell">{fmtHr(s.totalLoginHours)}</td>
-                    <td className="px-4 py-3 text-right hidden md:table-cell">
-                      <div className="flex items-center justify-end gap-1">
-                        <span className="text-xs font-medium">{fmt$(s.avgRevPerHr)}</span>
-                        <TrendIcon className={`h-3 w-3 ${trendColor}`} />
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-right text-xs text-muted-foreground hidden lg:table-cell">{fmt$(s.totalProfit)}</td>
-                    <td className="px-4 py-3 text-right text-xs text-muted-foreground hidden lg:table-cell">{s.days}</td>
-                  </tr>
+                        {(s.alias || s.agentCode) && <p className="text-[10px] text-muted-foreground">{s.alias || s.agentCode}</p>}
+                        {s.teamLeader && <p className="text-[10px] text-muted-foreground">TL: {s.teamLeader}</p>}
+                      </td>
+                      <td className="px-4 py-3 text-right font-semibold text-xs text-emerald-700">{fmt$(s.totalRevenue)}</td>
+                      <td className="px-4 py-3 text-right text-xs text-muted-foreground hidden sm:table-cell">{s.totalCalls.toLocaleString()}</td>
+                      <td className="px-4 py-3 text-right text-xs text-muted-foreground hidden md:table-cell">{fmtHr(s.totalLoginHours)}</td>
+                      <td className="px-4 py-3 text-right hidden md:table-cell">
+                        <div className="flex items-center justify-end gap-1">
+                          <span className="text-xs font-medium">{fmt$(s.avgRevPerHr)}</span>
+                          <TrendIcon className={`h-3 w-3 ${trendColor}`} />
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right text-xs text-muted-foreground hidden lg:table-cell">{fmt$(s.totalProfit)}</td>
+                      <td className="px-4 py-3 text-right text-xs text-muted-foreground hidden lg:table-cell">{s.days}</td>
+                      <td className="px-4 py-3 text-right">
+                        {isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr key={`${s.crdts}-detail`} className="border-b bg-muted/10">
+                        <td colSpan={9} className="p-0">
+                          <AgentDetailChart crdts={s.crdts} cycleKey={activeCycle} />
+                        </td>
+                      </tr>
+                    )}
+                  </>
                 );
               })}
             </tbody>

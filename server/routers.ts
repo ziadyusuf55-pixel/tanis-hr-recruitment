@@ -2844,6 +2844,106 @@ const cycleTrackerRouter = router({
       if (!crdts) return null;
       return getCampaignRanking(crdts, input.cycleKey);
     }),
+
+  // Admin: per-day stats for a specific agent + cycle (for line charts with logout markers)
+  getAgentDailyStats: protectedProcedure
+    .input(z.object({ crdts: z.string(), cycleKey: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .query(async ({ input }) => {
+      const { getDb } = await import('./db');
+      const { cycleStats, clientLogouts } = await import('../drizzle/schema');
+      const { eq, and } = await import('drizzle-orm');
+      const db = await getDb();
+      if (!db) return { daily: [], logoutDates: [] };
+      const daily = await db.select({
+        date: cycleStats.date,
+        loginHours: cycleStats.loginHours,
+        revenue: cycleStats.revenue,
+        totalCalls: cycleStats.totalCalls,
+        profit: cycleStats.profit,
+      }).from(cycleStats)
+        .where(and(eq(cycleStats.crdts, input.crdts), eq(cycleStats.cycleKey, input.cycleKey)))
+        .orderBy(cycleStats.date);
+      const logouts = await db.select({ date: clientLogouts.date })
+        .from(clientLogouts)
+        .where(and(eq(clientLogouts.crdts, input.crdts), eq(clientLogouts.cycleKey, input.cycleKey)));
+      return {
+        daily: daily.map(r => ({
+          date: r.date,
+          loginHours: Number(r.loginHours ?? 0),
+          revenue: Number(r.revenue ?? 0),
+          totalCalls: Number(r.totalCalls ?? 0),
+          profit: Number(r.profit ?? 0),
+        })),
+        logoutDates: logouts.map(l => l.date),
+      };
+    }),
+
+  // Agent: full performance history per cycle (uses JWT cookie)
+  getMyPerformanceHistoryAgent: publicProcedure
+    .query(async ({ ctx }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) return [];
+      let traineeCode: string;
+      try {
+        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
+        traineeCode = decoded.traineeCode;
+      } catch { return []; }
+      const { workforceAgents } = await import('../drizzle/schema');
+      const { getDb } = await import('./db');
+      const { eq } = await import('drizzle-orm');
+      const dbConn = await getDb();
+      if (!dbConn) return [];
+      const agentRow = await dbConn.select({ crdts: workforceAgents.crdts })
+        .from(workforceAgents).where(eq(workforceAgents.traineeCode, traineeCode)).limit(1);
+      const crdts = agentRow[0]?.crdts;
+      if (!crdts) return [];
+      return getAgentPerformanceHistory(crdts);
+    }),
+
+  // Agent: per-day stats for own data (uses JWT cookie)
+  getMyDailyStats: publicProcedure
+    .input(z.object({ cycleKey: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .query(async ({ ctx, input }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) return { daily: [], logoutDates: [] };
+      let traineeCode: string;
+      try {
+        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
+        traineeCode = decoded.traineeCode;
+      } catch { return { daily: [], logoutDates: [] }; }
+      const { workforceAgents } = await import('../drizzle/schema');
+      const { getDb } = await import('./db');
+      const { eq, and } = await import('drizzle-orm');
+      const dbConn = await getDb();
+      if (!dbConn) return { daily: [], logoutDates: [] };
+      const agentRow = await dbConn.select({ crdts: workforceAgents.crdts })
+        .from(workforceAgents).where(eq(workforceAgents.traineeCode, traineeCode)).limit(1);
+      const crdts = agentRow[0]?.crdts;
+      if (!crdts) return { daily: [], logoutDates: [] };
+      const { cycleStats, clientLogouts } = await import('../drizzle/schema');
+      const daily = await dbConn.select({
+        date: cycleStats.date,
+        loginHours: cycleStats.loginHours,
+        revenue: cycleStats.revenue,
+        totalCalls: cycleStats.totalCalls,
+        profit: cycleStats.profit,
+      }).from(cycleStats)
+        .where(and(eq(cycleStats.crdts, crdts), eq(cycleStats.cycleKey, input.cycleKey)))
+        .orderBy(cycleStats.date);
+      const logouts = await dbConn.select({ date: clientLogouts.date })
+        .from(clientLogouts)
+        .where(and(eq(clientLogouts.crdts, crdts), eq(clientLogouts.cycleKey, input.cycleKey)));
+      return {
+        daily: daily.map(r => ({
+          date: r.date,
+          loginHours: Number(r.loginHours ?? 0),
+          revenue: Number(r.revenue ?? 0),
+          totalCalls: Number(r.totalCalls ?? 0),
+          profit: Number(r.profit ?? 0),
+        })),
+        logoutDates: logouts.map(l => l.date),
+      };
+    }),
 });
 // ─── Coaching Router ────────────────────────────────────────────────────────
 const coachingRouter = router({
