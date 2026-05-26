@@ -745,11 +745,17 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
             </div>
           </div>
 
-          {/* Net Pay */}
-          <div className="rounded-xl px-5 py-4 flex items-center justify-between" style={{ background: "oklch(0.32 0.18 28 / 0.12)", border: "1px solid oklch(0.32 0.18 28 / 0.25)" }}>
-            <p className="font-semibold" style={{ color: theme.text }}>Net Pay</p>
-            <p className="text-xl font-bold" style={{ color: BRAND_LIGHT }}>{fmtEGP(r.netPay)}</p>
-          </div>
+          {/* Net Pay — recalculated from components to ensure commission is always included */}
+          {(() => {
+            const n = (v: string | null | undefined) => v != null ? parseFloat(String(v)) || 0 : 0;
+            const calcNet = n(r.baseSalary) + n(r.ot1x5Pay) + n(r.ot2xPay) + n(r.ot3xPay) + n(r.coachingBonus) + n(r.commissionEgp) - n(r.totalDeductions);
+            return (
+              <div className="rounded-xl px-5 py-4 flex items-center justify-between" style={{ background: "oklch(0.32 0.18 28 / 0.12)", border: "1px solid oklch(0.32 0.18 28 / 0.25)" }}>
+                <p className="font-semibold" style={{ color: theme.text }}>Net Pay</p>
+                <p className="text-xl font-bold" style={{ color: BRAND_LIGHT }}>{fmtEGP(String(calcNet.toFixed(2)))}</p>
+              </div>
+            );
+          })()}
 
           {r.paymentDate && (
             <p className="text-xs text-center" style={{ color: theme.textFaint }}>
