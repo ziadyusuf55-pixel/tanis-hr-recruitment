@@ -225,6 +225,7 @@ export type InsertAgentCredential = typeof agentCredentials.$inferInsert;
  * Admin fills these in; agents can view their own records in the portal.
  */
 export const payrollRecords = mysqlTable("payroll_records", {
+  // Unique constraint: uq_payroll_crdts_month on (crdts, month)
   id: int("id").autoincrement().primaryKey(),
   candidateId: int("candidateId"),                              // optional legacy link — nullable
   agentCode: varchar("agentCode", { length: 100 }),             // traineeCode (company ID)
