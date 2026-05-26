@@ -1907,7 +1907,7 @@ export async function upsertPayrollRecordV2(data: {
     await db.update(payrollRecords).set(vals)
       .where(and(eq(payrollRecords.crdts, data.crdts), eq(payrollRecords.month, data.month)));
   } else {
-    await db.insert(payrollRecords).values({ ...vals, candidateId: 0 });
+    await db.insert(payrollRecords).values({ ...vals, candidateId: null });
   }
 }
 

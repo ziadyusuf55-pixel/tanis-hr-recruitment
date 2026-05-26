@@ -226,7 +226,7 @@ export type InsertAgentCredential = typeof agentCredentials.$inferInsert;
  */
 export const payrollRecords = mysqlTable("payroll_records", {
   id: int("id").autoincrement().primaryKey(),
-  candidateId: int("candidateId"),                              // optional legacy link
+  candidateId: int("candidateId"),                              // optional legacy link — nullable
   agentCode: varchar("agentCode", { length: 100 }),             // traineeCode (company ID)
   crdts: varchar("crdts", { length: 100 }),                     // dialer ID — primary matching key
   alias: varchar("alias", { length: 100 }),
