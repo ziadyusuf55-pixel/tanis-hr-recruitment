@@ -953,3 +953,11 @@
 - [x] Backend: Update uploadPayrollV2 router input schema for new OT pay columns
 - [x] Frontend: Update Payroll.tsx ParsedRow type, Excel parser, preview table for new column structure
 - [x] Frontend: Update AgentPortal.tsx PayrollTab to display OT by type (1.5x, 2x, 3x) with hours and pay
+
+## GitHub Sync — Developer Changes (Round 63)
+- [x] DB: commissions table (crdts, alias, commissionEgp, performanceMonth, paymentCycle, paymentStatus, uploadedBy, uploadedAt)
+- [x] Backend: commission.getForMonth procedure (protectedProcedure, returns records by paymentCycle)
+- [x] Backend: commission.upload procedure (protectedProcedure, upsert rows by crdts+paymentCycle)
+- [x] Frontend: CommissionAdmin.tsx page (developer-built, fixed payCycle→paymentCycle and performanceMonth input schema mismatch)
+- [x] Frontend: DashboardLayout.tsx — added DollarSign icon import for Commission nav item
+- [x] Frontend: AgentPortal.tsx — added notes field to PayrollRecord type

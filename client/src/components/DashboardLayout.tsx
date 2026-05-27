@@ -26,7 +26,7 @@ import { trpc } from "@/lib/trpc";
 import {
   LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings,
   Briefcase, Banknote, CreditCard, BarChart2, AlertCircle, Star, Wallet,
-  FileText, Activity, ChevronDown, ChevronRight, TrendingUp, BookOpen, PhoneOff,
+  FileText, Activity, ChevronDown, ChevronRight, TrendingUp, BookOpen, PhoneOff, DollarSign,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";

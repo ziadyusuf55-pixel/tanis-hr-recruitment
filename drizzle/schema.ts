@@ -849,3 +849,26 @@ export const integrationsTokens = mysqlTable("integrations_tokens", {
   updatedAt:    bigint("updated_at", { mode: "number" }).notNull(),
 });
 export type IntegrationsToken = typeof integrationsTokens.$inferSelect;
+
+/**
+ * commissions — standalone commission records uploaded by admin, separate from payroll.
+ * paymentCycle: YYYY-MM of the pay cycle (when it's paid)
+ * performanceMonth: human-readable label of the performance period (e.g. "March 2026")
+ */
+export const commissions = mysqlTable("commissions", {
+  id:               int("id").autoincrement().primaryKey(),
+  crdts:            varchar("crdts", { length: 50 }).notNull(),
+  alias:            varchar("alias", { length: 255 }),
+  commissionEgp:    decimal("commissionEgp", { precision: 10, scale: 2 }).notNull().default("0"),
+  performanceMonth: varchar("performanceMonth", { length: 100 }),
+  paymentCycle:     varchar("paymentCycle", { length: 7 }).notNull(),   // YYYY-MM
+  paymentStatus:    varchar("paymentStatus", { length: 50 }).default("pending"),
+  uploadedBy:       varchar("uploadedBy", { length: 255 }),
+  uploadedAt:       bigint("uploadedAt", { mode: "number" }).notNull(),
+  createdAt:        timestamp("createdAt").defaultNow().notNull(),
+  updatedAt:        timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+}, (t) => ({
+  uqCrdtsCycle: uniqueIndex("uq_commissions_crdts_cycle").on(t.crdts, t.paymentCycle),
+}));
+export type Commission = typeof commissions.$inferSelect;
+export type InsertCommission = typeof commissions.$inferInsert;

@@ -649,6 +649,7 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
     attendanceDetail: string | null;
     paymentStatus: string | null;
     paymentDate: number | null;
+    notes?: string | null;
   } | null | undefined;
 
   return (
@@ -751,7 +752,7 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
             const netPay = nv(r.baseSalary) + nv(r.ot1x5Pay) + nv(r.ot2xPay) + nv(r.ot3xPay) + nv(r.coachingBonus) - nv(r.totalDeductions);
             const commission = nv(r.commissionEgp);
             const finalTotal = netPay + commission;
-            const commLabel = r.notes?.includes("Commission (") ? r.notes.replace("Commission (", "").replace(" performance)", "") : null;
+            const commLabel = (r as { notes?: string | null }).notes?.includes("Commission (") ? (r as { notes?: string | null }).notes!.replace("Commission (", "").replace(" performance)", "") : null;
             return (
               <div className="space-y-2">
                 <div className="rounded-xl px-5 py-3 flex items-center justify-between" style={{ background: "oklch(0.32 0.18 28 / 0.08)", border: "1px solid oklch(0.32 0.18 28 / 0.18)" }}>

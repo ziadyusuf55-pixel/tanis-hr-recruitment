@@ -3723,6 +3723,72 @@ const integrationsRouter = router({
     }),
 });
 
+// ─── Commission Router ────────────────────────────────────────────────────────
+const commissionRouter = router({
+  // Get all commission records for a given payment cycle (YYYY-MM)
+  getForMonth: protectedProcedure
+    .input(z.object({ month: z.string() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { commissions } = await import("../drizzle/schema");
+      return db.select().from(commissions).where(eq(commissions.paymentCycle, input.month)).orderBy(commissions.crdts);
+    }),
+
+  // Upload commission records from parsed Excel rows
+  upload: protectedProcedure
+    .input(z.object({
+      paymentCycle: z.string(),
+      rows: z.array(z.object({
+        crdts: z.string(),
+        alias: z.string().optional(),
+        commissionEgp: z.number(),
+        performanceMonth: z.string().optional(),
+      })),
+      uploadedBy: z.string().optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { commissions } = await import("../drizzle/schema");
+      const { sql } = await import("drizzle-orm");
+      const now = Date.now();
+      const uploader = input.uploadedBy || (ctx as { user?: { name?: string } }).user?.name || "admin";
+      const warnings: { crdts: string; type: string; message: string }[] = [];
+      let count = 0;
+      for (const row of input.rows) {
+        if (!row.crdts || row.commissionEgp <= 0) continue;
+        try {
+          await db.insert(commissions).values({
+            crdts: row.crdts,
+            alias: row.alias ?? null,
+            commissionEgp: String(row.commissionEgp),
+            performanceMonth: row.performanceMonth ?? null,
+            paymentCycle: input.paymentCycle,
+            paymentStatus: "pending",
+            uploadedBy: uploader,
+            uploadedAt: now,
+          }).onDuplicateKeyUpdate({
+            set: {
+              alias: sql`VALUES(alias)`,
+              commissionEgp: sql`VALUES(commissionEgp)`,
+              performanceMonth: sql`VALUES(performanceMonth)`,
+              uploadedBy: sql`VALUES(uploadedBy)`,
+              uploadedAt: sql`VALUES(uploadedAt)`,
+            },
+          });
+          count++;
+        } catch (err) {
+          warnings.push({ crdts: row.crdts, type: "insert_error", message: String(err) });
+        }
+      }
+      return { count, warnings };
+    }),
+});
+
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -3758,6 +3824,7 @@ export const appRouter = router({
   settings: settingsRouter,
   hubspot: hubspotRouter,
   integrations: integrationsRouter,
+  commission: commissionRouter,
 });
 export type AppRouter = typeof appRouter;
 

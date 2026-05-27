@@ -497,8 +497,7 @@ export default function CommissionAdmin() {
                       if (!payCycle) { toast.error("Select a pay cycle"); return; }
                       if (!performanceMonth) { toast.error("Enter the performance month (e.g. March 2026)"); return; }
                       uploadMutation.mutate({
-                        payCycle,
-                        performanceMonth,
+                        paymentCycle: payCycle,
                         rows: parsedRows.map(r => ({
                           crdts: r.crdts,
                           alias: r.alias,
