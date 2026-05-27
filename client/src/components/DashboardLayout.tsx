@@ -58,6 +58,7 @@ const NAV: NavItem[] = [
     children: [
       { icon: Banknote,    label: "Payroll",              path: "/payroll" },
       { icon: CreditCard,  label: "Payment Status",       path: "/payroll-status" },
+      { icon: DollarSign,  label: "Commission",            path: "/commission" },
       { icon: Wallet,      label: "Payment Preferences",  path: "/payment-preferences" },
       { icon: FileText,    label: "All Documents",        path: "/all-documents" },
     ],
