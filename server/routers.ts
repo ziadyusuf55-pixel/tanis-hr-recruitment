@@ -759,14 +759,30 @@ const agentRouter = router({
 
   // Reset agent password — admin only, generates a new random password
   resetPassword: protectedProcedure
-    .input(z.object({ candidateId: z.number() }))
+    .input(z.object({ candidateId: z.number().optional(), traineeCode: z.string().optional() }))
     .mutation(async ({ input }) => {
-      const cred = await getAgentCredentialByCandidateId(input.candidateId);
-      if (!cred) throw new TRPCError({ code: "NOT_FOUND", message: "No credentials found for this agent" });
-      const newPassword = generatePassword(cred.traineeCode);
+      // Look up credentials by traineeCode first (more reliable for Operations agents),
+      // fall back to candidateId for legacy Training-flow agents
+      let cred = input.traineeCode
+        ? await getAgentCredentialByTraineeCode(input.traineeCode)
+        : input.candidateId
+          ? await getAgentCredentialByCandidateId(input.candidateId)
+          : null;
+
+      const resolvedTraineeCode = input.traineeCode ?? cred?.traineeCode;
+      const resolvedCandidateId = input.candidateId ?? cred?.candidateId ?? 0;
+
+      if (!resolvedTraineeCode) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "traineeCode is required" });
+      }
+
+      const newPassword = generatePassword(resolvedTraineeCode);
       const passwordHash = await bcrypt.hash(newPassword, 10);
-      await upsertAgentCredential(input.candidateId, cred.traineeCode, passwordHash);
-      // Track when password was reset by admin
+
+      // Upsert — creates credentials if they don't exist yet
+      await upsertAgentCredential(resolvedCandidateId, resolvedTraineeCode, passwordHash);
+
+      // Track reset timestamp
       {
         const { getDb } = await import("./db");
         const { eq: eqOp } = await import("drizzle-orm");
@@ -775,10 +791,10 @@ const agentRouter = router({
           const { agentCredentials } = await import("../drizzle/schema");
           await db.update(agentCredentials)
             .set({ passwordResetAt: Date.now() })
-            .where(eqOp(agentCredentials.candidateId, input.candidateId));
+            .where(eqOp(agentCredentials.traineeCode, resolvedTraineeCode));
         }
       }
-      return { traineeCode: cred.traineeCode, password: newPassword };
+      return { traineeCode: resolvedTraineeCode, password: newPassword };
     }),
   // Agent logout
   logout: publicProcedure.mutation(async ({ ctx }) => {

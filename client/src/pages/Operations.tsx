@@ -324,7 +324,7 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
             <div className="flex gap-2 justify-end">
               <Button variant="outline" onClick={() => setResetPwDialog(false)}>Cancel</Button>
               <Button
-                onClick={() => resetPassword.mutate({ candidateId: agent.candidateId })}
+                onClick={() => resetPassword.mutate({ candidateId: agent.candidateId, traineeCode: agent.traineeCode })}
                 disabled={resetPassword.isPending}
                 className="bg-blue-600 hover:bg-blue-700 text-white"
               >
