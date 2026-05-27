@@ -745,14 +745,31 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
             </div>
           </div>
 
-          {/* Net Pay — recalculated from components to ensure commission is always included */}
+          {/* Net Pay (excludes commission) + Commission + Final Total */}
           {(() => {
-            const n = (v: string | null | undefined) => v != null ? parseFloat(String(v)) || 0 : 0;
-            const calcNet = n(r.baseSalary) + n(r.ot1x5Pay) + n(r.ot2xPay) + n(r.ot3xPay) + n(r.coachingBonus) + n(r.commissionEgp) - n(r.totalDeductions);
+            const nv = (v: string | null | undefined) => v != null ? parseFloat(String(v)) || 0 : 0;
+            const netPay = nv(r.baseSalary) + nv(r.ot1x5Pay) + nv(r.ot2xPay) + nv(r.ot3xPay) + nv(r.coachingBonus) - nv(r.totalDeductions);
+            const commission = nv(r.commissionEgp);
+            const finalTotal = netPay + commission;
+            const commLabel = r.notes?.includes("Commission (") ? r.notes.replace("Commission (", "").replace(" performance)", "") : null;
             return (
-              <div className="rounded-xl px-5 py-4 flex items-center justify-between" style={{ background: "oklch(0.32 0.18 28 / 0.12)", border: "1px solid oklch(0.32 0.18 28 / 0.25)" }}>
-                <p className="font-semibold" style={{ color: theme.text }}>Net Pay</p>
-                <p className="text-xl font-bold" style={{ color: BRAND_LIGHT }}>{fmtEGP(String(calcNet.toFixed(2)))}</p>
+              <div className="space-y-2">
+                <div className="rounded-xl px-5 py-3 flex items-center justify-between" style={{ background: "oklch(0.32 0.18 28 / 0.08)", border: "1px solid oklch(0.32 0.18 28 / 0.18)" }}>
+                  <p className="text-sm font-medium" style={{ color: theme.textMuted }}>Net Pay</p>
+                  <p className="text-lg font-bold" style={{ color: theme.text }}>{fmtEGP(String(netPay.toFixed(2)))}</p>
+                </div>
+                {commission > 0 && (
+                  <div className="rounded-xl px-5 py-3 flex items-center justify-between" style={{ background: "oklch(0.55 0.18 145 / 0.08)", border: "1px solid oklch(0.55 0.18 145 / 0.25)" }}>
+                    <p className="text-sm font-medium" style={{ color: theme.textMuted }}>
+                      Commission{commLabel ? ` (${commLabel} performance)` : ""}
+                    </p>
+                    <p className="text-lg font-bold" style={{ color: "oklch(0.55 0.18 145)" }}>{fmtEGP(String(commission.toFixed(2)))}</p>
+                  </div>
+                )}
+                <div className="rounded-xl px-5 py-4 flex items-center justify-between" style={{ background: "oklch(0.32 0.18 28 / 0.12)", border: "1px solid oklch(0.32 0.18 28 / 0.25)" }}>
+                  <p className="font-semibold" style={{ color: theme.text }}>{commission > 0 ? "Final Total" : "Net Pay"}</p>
+                  <p className="text-xl font-bold" style={{ color: BRAND_LIGHT }}>{fmtEGP(String(finalTotal.toFixed(2)))}</p>
+                </div>
               </div>
             );
           })()}
