@@ -1127,14 +1127,26 @@ export default function Operations() {
                           ) : (
                             <Badge className="text-xs bg-muted text-muted-foreground" variant="outline">Inactive</Badge>
                           )}
-                          {agent.nestingStatus && agent.nestingStatus !== "nesting" && agent.agentStatus !== "resigned" && agent.agentStatus !== "terminated" && (
-                            <Badge variant="outline" className={`text-[10px] ${
-                              agent.nestingStatus === "senior" ? "bg-purple-50 text-purple-700 border-purple-200" :
-                              "bg-sky-50 text-sky-700 border-sky-200"
-                            }`}>
-                              {agent.nestingStatus === "senior" ? "Senior" : "Active"}
-                            </Badge>
-                          )}
+                          {(() => {
+                            if (agent.agentStatus === "resigned" || agent.agentStatus === "terminated") return null;
+                            if (agent.joinDate) {
+                              const daysSince = Math.floor((Date.now() - agent.joinDate) / 86400000);
+                              if (daysSince <= 14) {
+                                const daysLeft = 14 - daysSince;
+                                return (
+                                  <Badge variant="outline" className="text-[10px] bg-yellow-50 text-yellow-700 border-yellow-300">
+                                    🐣 Nesting ({daysLeft}d)
+                                  </Badge>
+                                );
+                              }
+                            }
+                            if (agent.nestingStatus === "senior") {
+                              return (
+                                <Badge variant="outline" className="text-[10px] bg-purple-50 text-purple-700 border-purple-200">Senior</Badge>
+                              );
+                            }
+                            return null;
+                          })()}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-right">

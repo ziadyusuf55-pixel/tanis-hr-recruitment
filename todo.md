@@ -961,3 +961,14 @@
 - [x] Frontend: CommissionAdmin.tsx page (developer-built, fixed payCycle→paymentCycle and performanceMonth input schema mismatch)
 - [x] Frontend: DashboardLayout.tsx — added DollarSign icon import for Commission nav item
 - [x] Frontend: AgentPortal.tsx — added notes field to PayrollRecord type
+
+## Batch 2-5 (Round 64)
+- [x] Batch 5: getCampaignRanking in db.ts — add campaignName to return value
+- [x] Batch 2: Agent payslip — Net Pay = Base + OT + Coaching - Deductions (no commission)
+- [x] Batch 2: Agent payslip — Commission shown separately below Net Pay as "Commission (Month performance)"
+- [x] Batch 2: Agent payslip — Final Total = Net Pay + Commission shown at bottom (only if commission uploaded)
+- [x] Batch 3: Admin Payroll page — totals summary bar (Total to Disburse, Paid, Pending)
+- [x] Batch 3: Admin Payroll page — inline payment preferences in expanded agent row
+- [x] Batch 3: Admin Payroll page — Upload History tab step-by-step admin guide
+- [x] Batch 4: Operations page — Nesting badge for agents joined within last 14 days (shows days remaining, auto-hides after 14d)
+- [x] Batch 4: Operations page — per-agent credential reset from agent detail panel

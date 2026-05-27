@@ -1914,17 +1914,23 @@ export async function upsertPayrollRecordV2(data: {
 export async function getPayrollStatusPage(month: string) {
   const db = await getDb();
   if (!db) return [];
-  const { payrollRecords } = await import("../drizzle/schema");
-  return db.select({
+  const { payrollRecords, workforceAgents } = await import("../drizzle/schema");
+  const rows = await db.select({
     id: payrollRecords.id,
     crdts: payrollRecords.crdts,
     alias: payrollRecords.alias,
     agentCode: payrollRecords.agentCode,
     netPay: payrollRecords.netPay,
+    commissionEgp: payrollRecords.commissionEgp,
     paymentStatus: payrollRecords.paymentStatus,
     paidAt: payrollRecords.paidAt,
     month: payrollRecords.month,
-  }).from(payrollRecords).where(eq(payrollRecords.month, month));
+    traineeCode: workforceAgents.traineeCode,
+  })
+  .from(payrollRecords)
+  .leftJoin(workforceAgents, eq(payrollRecords.crdts, workforceAgents.crdts))
+  .where(eq(payrollRecords.month, month));
+  return rows;
 }
 
 export async function setPayrollStatus(id: number, status: "pending" | "paid") {
@@ -2488,11 +2494,16 @@ export async function getAgentPerformanceHistory(crdts: string) {
 export async function getCampaignRanking(crdts: string, cycleKey: string) {
   const db = await getDb();
   if (!db) return { rank: null as number | null, total: 0, profit: 0, revPerHr: 0, top3: [] as Array<{ rank: number; profit: number; revPerHr: number }> };
-  const { cycleStats, workforceAgents } = await import("../drizzle/schema");
+  const { cycleStats, workforceAgents, campaigns } = await import("../drizzle/schema");
   const agentRow = await db.select({ campaignId: workforceAgents.campaignId, crdts: workforceAgents.crdts })
     .from(workforceAgents).where(eq(workforceAgents.crdts, crdts)).limit(1);
-  if (!agentRow[0]) return { rank: null, total: 0, profit: 0, revPerHr: 0, top3: [] };
+  if (!agentRow[0]) return { rank: null, total: 0, profit: 0, revPerHr: 0, top3: [], campaignName: null as string | null };
   const campaignId = agentRow[0].campaignId;
+  let campaignName: string | null = null;
+  if (campaignId) {
+    const campRow = await db.select({ name: campaigns.name }).from(campaigns).where(eq(campaigns.id, campaignId)).limit(1);
+    campaignName = campRow[0]?.name ?? null;
+  }
   const campaignAgents = await db.select({ crdts: workforceAgents.crdts })
     .from(workforceAgents).where(campaignId ? eq(workforceAgents.campaignId, campaignId) : sql`1=1`);
   const campaignCrdts = campaignAgents.map(a => a.crdts).filter(Boolean) as string[];
@@ -2519,6 +2530,7 @@ export async function getCampaignRanking(crdts: string, cycleKey: string) {
     profit: myStats.profit,
     revPerHr: myStats.revPerHr,
     top3,
+    campaignName,
   };
 }
 
