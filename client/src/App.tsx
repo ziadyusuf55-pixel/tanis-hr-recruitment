@@ -25,6 +25,7 @@ import CycleTrackerAdmin from "./pages/CycleTrackerAdmin";
 import AgentProfilePage from "./pages/AgentProfilePage";
 import PerformanceReports from "./pages/PerformanceReports";
 import CoachingAdmin from "./pages/CoachingAdmin";
+import CommissionAdmin from "./pages/CommissionAdmin";
 import ClientLogoutsAdmin from "./pages/ClientLogoutsAdmin";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import { useAuth } from "./_core/hooks/useAuth";
@@ -74,6 +75,7 @@ function Router() {
       <Route path="/operations" component={() => <ProtectedRoute component={Operations} />} />
       <Route path="/operations/agents/:code" component={() => <ProtectedRoute component={AgentProfilePage} />} />
       <Route path="/payroll" component={() => <ProtectedRoute component={Payroll} />} />
+      <Route path="/commission" component={() => <ProtectedRoute component={CommissionAdmin} />} />
       <Route path="/payroll-status" component={() => <ProtectedRoute component={PayrollStatus} />} />
       <Route path="/performance" component={() => <ProtectedRoute component={PerformanceDashboard} />} />
       <Route path="/adherence" component={() => <ProtectedRoute component={AdherenceLog} />} />
