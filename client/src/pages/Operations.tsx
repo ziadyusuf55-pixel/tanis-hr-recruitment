@@ -76,7 +76,7 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
   const [resignDialog, setResignDialog] = useState(false);
   const [terminateDialog, setTerminateDialog] = useState(false);
   const [separationReason, setSeparationReason] = useState("");
-  // Reset password state
+  // Reset password / regenerate credentials state
   const [resetPwDialog, setResetPwDialog] = useState(false);
   const [newPwResult, setNewPwResult] = useState<{ traineeCode: string; password: string } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -84,11 +84,18 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
     onSuccess: (data) => { setNewPwResult(data); },
     onError: (e: { message: string }) => toast.error(getErrorMessage(e)),
   });
+  const [copiedCode, setCopiedCode] = useState(false);
   function copyPassword() {
     if (!newPwResult) return;
     navigator.clipboard.writeText(newPwResult.password);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  }
+  function copyCode() {
+    if (!newPwResult) return;
+    navigator.clipboard.writeText(newPwResult.traineeCode);
+    setCopiedCode(true);
+    setTimeout(() => setCopiedCode(false), 2000);
   }
 
   const resignOnSpot = trpc.separation.resignOnSpot.useMutation({
@@ -130,6 +137,34 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
             {agent.fullName} {agent.alias ? `(${agent.alias})` : ""} — {agent.traineeCode}
           </DialogTitle>
         </DialogHeader>
+        {/* Contact info bar */}
+        <div className="flex flex-wrap gap-4 text-sm text-muted-foreground mb-3 px-1">
+          {agent.phone && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-foreground">Phone:</span>
+              <a href={`tel:${agent.phone}`} className="text-primary hover:underline">{agent.phone}</a>
+            </div>
+          )}
+          {agent.email && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-foreground">Email:</span>
+              <a href={`mailto:${agent.email}`} className="text-primary hover:underline">{agent.email}</a>
+            </div>
+          )}
+          {agent.crdts && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-foreground">CRDTS:</span>
+              <span className="font-mono">{agent.crdts}</span>
+            </div>
+          )}
+          {agent.campaignName && (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-foreground">Campaign:</span>
+              <span>{agent.campaignName}</span>
+            </div>
+          )}
+        </div>
+
         {/* Separation action buttons — only show if agent is still active/inactive */}
         {agent.agentStatus !== "resigned" && agent.agentStatus !== "terminated" && (
           <div className="flex gap-2 mb-3">
@@ -324,7 +359,7 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
             <div className="flex gap-2 justify-end">
               <Button variant="outline" onClick={() => setResetPwDialog(false)}>Cancel</Button>
               <Button
-                onClick={() => resetPassword.mutate({ candidateId: agent.candidateId, traineeCode: agent.traineeCode })}
+                onClick={() => resetPassword.mutate({ candidateId: agent.candidateId })}
                 disabled={resetPassword.isPending}
                 className="bg-blue-600 hover:bg-blue-700 text-white"
               >
@@ -1127,26 +1162,14 @@ export default function Operations() {
                           ) : (
                             <Badge className="text-xs bg-muted text-muted-foreground" variant="outline">Inactive</Badge>
                           )}
-                          {(() => {
-                            if (agent.agentStatus === "resigned" || agent.agentStatus === "terminated") return null;
-                            if (agent.joinDate) {
-                              const daysSince = Math.floor((Date.now() - agent.joinDate) / 86400000);
-                              if (daysSince <= 14) {
-                                const daysLeft = 14 - daysSince;
-                                return (
-                                  <Badge variant="outline" className="text-[10px] bg-yellow-50 text-yellow-700 border-yellow-300">
-                                    🐣 Nesting ({daysLeft}d)
-                                  </Badge>
-                                );
-                              }
-                            }
-                            if (agent.nestingStatus === "senior") {
-                              return (
-                                <Badge variant="outline" className="text-[10px] bg-purple-50 text-purple-700 border-purple-200">Senior</Badge>
-                              );
-                            }
-                            return null;
-                          })()}
+                          {agent.nestingStatus && agent.nestingStatus !== "nesting" && agent.agentStatus !== "resigned" && agent.agentStatus !== "terminated" && (
+                            <Badge variant="outline" className={`text-[10px] ${
+                              agent.nestingStatus === "senior" ? "bg-purple-50 text-purple-700 border-purple-200" :
+                              "bg-sky-50 text-sky-700 border-sky-200"
+                            }`}>
+                              {agent.nestingStatus === "senior" ? "Senior" : "Active"}
+                            </Badge>
+                          )}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-right">
