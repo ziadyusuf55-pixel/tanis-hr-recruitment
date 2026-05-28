@@ -2,15 +2,10 @@ import { useState, useRef } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import {
-  Upload, Download, FileSpreadsheet, CheckCircle2, Clock, Trash2,
-  ChevronDown, ChevronRight, CreditCard, Smartphone, Building2,
-  DollarSign, TrendingUp, AlertCircle, BookOpen,
-} from "lucide-react";
+import { Upload, Download, ChevronDown, ChevronUp, FileSpreadsheet, CheckCircle2, Clock, Trash2, Pencil, AlertTriangle, Info } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 
@@ -29,8 +24,8 @@ type ParsedRow = {
   ot3xHours?: number;
   ot3xPay?: number;
   coachingBonus?: number;
-  commissionEgp?: number;
   qualityDeductions?: number;
+  attendanceDeductions?: number;
   totalDeductions?: number;
   netPay?: number;
   qualityDetail?: string;
@@ -42,27 +37,27 @@ type StatusRecord = {
   crdts: string | null;
   alias: string | null;
   agentCode: string | null;
-  traineeCode: string | null;
+  baseSalary: string | null;
+  workingHours: string | null;
+  ot1x5Hours: string | null;
+  ot1x5Pay: string | null;
+  ot2xHours: string | null;
+  ot2xPay: string | null;
+  ot3xHours: string | null;
+  ot3xPay: string | null;
+  coachingBonus: string | null;
+  qualityDeductions: string | null;
+  attendanceDeductions: string | null;
+  totalDeductions: string | null;
   netPay: string | null;
-  commissionEgp: string | null;
+  qualityDetail: string | null;
+  attendanceDetail: string | null;
   paymentStatus: string | null;
   paidAt: number | null;
   month: string;
 };
 
-type PaymentMethod = {
-  id: number;
-  traineeCode: string;
-  type: "wallet" | "bank";
-  walletProvider?: string | null;
-  walletPhone?: string | null;
-  walletName?: string | null;
-  bankName?: string | null;
-  bankAccountOrPhone?: string | null;
-  bankFullName?: string | null;
-  isPreferred?: boolean | null;
-  adminComment?: string | null;
-};
+type Warning = { crdts: string; alias?: string; type: string; message: string };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -72,47 +67,53 @@ function fmt(val: string | number | null | undefined, prefix = ""): string {
   if (isNaN(n)) return "—";
   return `${prefix}${n.toLocaleString("en-EG", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 }
-
-function fmtEGP(val: string | number | null | undefined): string {
-  return fmt(val, "EGP ");
-}
+function fmtEGP(val: string | number | null | undefined): string { return fmt(val, "EGP "); }
+function fmtHrs(val: string | number | null | undefined): string { return fmt(val, "") + (val != null && val !== "" ? " hrs" : ""); }
 
 function formatMonthLabel(m: string) {
   const [y, mo] = m.split("-");
   return new Date(parseInt(y), parseInt(mo) - 1).toLocaleString("en-US", { month: "long", year: "numeric" });
 }
 
-function calcFinalPay(r: StatusRecord): number {
-  const net = r.netPay ? parseFloat(r.netPay) || 0 : 0;
-  const comm = r.commissionEgp ? parseFloat(r.commissionEgp) || 0 : 0;
-  return net + comm;
+function n(v: string | null | undefined) {
+  const parsed = parseFloat(v ?? "0");
+  return isNaN(parsed) ? 0 : parsed;
 }
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function PayrollPage() {
   const utils = trpc.useUtils();
+  const [activeTab, setActiveTab] = useState<"status" | "upload">("status");
 
-  const [activeTab, setActiveTab] = useState<"status" | "guide">("status");
-  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
-
-  // ── Status tab state ──
+  // Status tab
   const [statusMonth, setStatusMonth] = useState<string>(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   });
+  const [expandedRow, setExpandedRow] = useState<number | null>(null);
+  const [editingRow, setEditingRow] = useState<number | null>(null);
+  const [editValues, setEditValues] = useState<Partial<StatusRecord>>({});
 
   const { data: statusRecords = [], isLoading: loadingStatus, refetch: refetchStatus } =
     trpc.payrollV2.getStatusPage.useQuery({ month: statusMonth });
-
-  const { data: allPaymentMethods = [] } = trpc.paymentMethods.listAll.useQuery();
 
   const setStatusMutation = trpc.payrollV2.setStatus.useMutation({
     onSuccess: () => { refetchStatus(); toast.success("Status updated"); },
     onError: (e) => toast.error(e.message),
   });
 
-  // ── Upload tab state ──
+  const updateRecordMutation = trpc.payrollV2.updateRecord.useMutation({
+    onSuccess: () => {
+      refetchStatus();
+      setEditingRow(null);
+      setEditValues({});
+      toast.success("Record updated");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // Upload tab
   const [uploadDialog, setUploadDialog] = useState(false);
   const [uploadMonth, setUploadMonth] = useState<string>(() => {
     const now = new Date();
@@ -120,13 +121,20 @@ export default function PayrollPage() {
   });
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [parseError, setParseError] = useState<string | null>(null);
+  const [uploadWarnings, setUploadWarnings] = useState<Warning[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const uploadMutation = trpc.payrollV2.uploadPayrollV2.useMutation({
     onSuccess: (data) => {
-      toast.success(`Uploaded ${data.count} payroll records for ${formatMonthLabel(uploadMonth)}`);
-      setUploadDialog(false);
-      setParsedRows([]);
+      const warns = (data as { count: number; warnings: Warning[] }).warnings ?? [];
+      if (warns.length > 0) {
+        setUploadWarnings(warns);
+        toast.success(`Uploaded ${(data as { count: number }).count} records — ${warns.length} warnings`);
+      } else {
+        toast.success(`Uploaded ${(data as { count: number }).count} payroll records for ${formatMonthLabel(uploadMonth)}`);
+        setUploadDialog(false);
+        setParsedRows([]);
+      }
       setStatusMonth(uploadMonth);
       setActiveTab("status");
       utils.payrollV2.getStatusPage.invalidate({ month: uploadMonth });
@@ -134,27 +142,22 @@ export default function PayrollPage() {
     onError: (e) => toast.error(e.message),
   });
 
-  // ── Computed totals ──
-  const records = statusRecords as StatusRecord[];
-  const paidRecords = records.filter(r => r.paymentStatus === "paid");
-  const pendingRecords = records.filter(r => r.paymentStatus !== "paid");
-  const totalDisburse = records.reduce((s, r) => s + calcFinalPay(r), 0);
-  const totalPaid = paidRecords.reduce((s, r) => s + calcFinalPay(r), 0);
-  const totalPending = pendingRecords.reduce((s, r) => s + calcFinalPay(r), 0);
-
   // ── Excel parsing ──
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setParseError(null);
     setParsedRows([]);
+    setUploadWarnings([]);
 
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
         const data = new Uint8Array(ev.target!.result as ArrayBuffer);
         const wb = XLSX.read(data, { type: "array" });
-        const ws = wb.Sheets[wb.SheetNames[0]];
+        // Find "Payroll" tab or fall back to first sheet
+        const sheetName = wb.SheetNames.find(n => n.toLowerCase() === "payroll") ?? wb.SheetNames[0];
+        const ws = wb.Sheets[sheetName];
         const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null });
 
         if (raw.length === 0) { setParseError("The file appears to be empty."); return; }
@@ -183,8 +186,8 @@ export default function PayrollPage() {
             ot3xHours: num(get("OT 3x Hours")),
             ot3xPay: num(get("OT 3x Pay (EGP)")),
             coachingBonus: num(get("Coaching Bonus (EGP)")),
-            commissionEgp: num(get("Commission (EGP)")),
             qualityDeductions: num(get("Quality/Attendance Deductions (EGP)")) ?? num(get("Quality Deductions (EGP)")),
+            attendanceDeductions: num(get("Attendance Deductions (EGP)")),
             totalDeductions: num(get("Total Deductions (EGP)")),
             netPay: num(get("NET PAY (EGP)")) ?? num(get("Net Pay (EGP)")),
             qualityDetail: String(get("Quality Detail") ?? "").trim(),
@@ -193,12 +196,12 @@ export default function PayrollPage() {
         }).filter(r => r.crdts !== "");
 
         if (rows.length === 0) {
-          setParseError("No valid rows found. Make sure the 'CRDTS' column is present and filled.");
+          setParseError("No valid rows found. Make sure the 'CRDTS' column is present.");
           return;
         }
         setParsedRows(rows);
       } catch {
-        setParseError("Failed to parse the file. Please use the provided template.");
+        setParseError("Failed to parse the file. Please use the Python-generated payroll file.");
       }
     };
     reader.readAsArrayBuffer(file);
@@ -210,54 +213,48 @@ export default function PayrollPage() {
       "OT 1.5x Hours", "OT 1.5x Pay (EGP)",
       "OT 2x Hours", "OT 2x Pay (EGP)",
       "OT 3x Hours", "OT 3x Pay (EGP)",
-      "Coaching Bonus (EGP)", "Commission (EGP)",
+      "Coaching Bonus (EGP)",
       "Quality/Attendance Deductions (EGP)", "Total Deductions (EGP)", "NET PAY (EGP)",
       "Quality Detail", "Attendance Detail",
     ];
-    const example = [
-      "1001", "Harry", 176, 4500,
-      8, 480, 4, 320, 0, 0,
-      200, 800, 150, 150, 6050,
-      "Late 2x", "Absent 1 day",
-    ];
+    const example = ["67164", "Alex", 166, 12450, 12, 1350, 8, 1200, 0, 0, 75, 150, 150, 14925, "Lateness: 75 EGP", ""];
     const ws = XLSX.utils.aoa_to_sheet([headers, example]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Payroll");
-    XLSX.writeFile(wb, "payroll_template_v2.xlsx");
+    XLSX.writeFile(wb, "payroll_template.xlsx");
   }
 
   function exportStatusCSV() {
-    const rows = records.map(r => ({
+    const rows = (statusRecords as StatusRecord[]).map(r => ({
       CRDTS: r.crdts ?? "",
       Alias: r.alias ?? "",
       "Agent Code": r.agentCode ?? "",
-      "Net Pay (EGP)": r.netPay ? parseFloat(r.netPay) : "",
-      "Commission (EGP)": r.commissionEgp ? parseFloat(r.commissionEgp) : "",
-      "Final Total (EGP)": calcFinalPay(r),
+      "Working Hours": r.workingHours ?? "",
+      "Base Salary (EGP)": r.baseSalary ?? "",
+      "OT 1.5x Hours": r.ot1x5Hours ?? "",
+      "OT 1.5x Pay (EGP)": r.ot1x5Pay ?? "",
+      "OT 2x Hours": r.ot2xHours ?? "",
+      "OT 2x Pay (EGP)": r.ot2xPay ?? "",
+      "OT 3x Hours": r.ot3xHours ?? "",
+      "OT 3x Pay (EGP)": r.ot3xPay ?? "",
+      "Coaching Bonus (EGP)": r.coachingBonus ?? "",
+      "Total Deductions (EGP)": r.totalDeductions ?? "",
+      "Net Pay (EGP)": r.netPay ?? "",
       Status: r.paymentStatus ?? "pending",
       "Paid At": r.paidAt ? new Date(r.paidAt).toLocaleDateString("en-EG") : "",
-      Month: r.month,
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Payroll Status");
-    XLSX.writeFile(wb, `payroll_status_${statusMonth}.xlsx`);
+    const wb2 = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb2, ws, "Payroll Status");
+    XLSX.writeFile(wb2, `payroll_status_${statusMonth}.xlsx`);
   }
 
-  function toggleRow(id: number) {
-    setExpandedRows(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  }
-
-  function getPaymentMethods(r: StatusRecord): PaymentMethod[] {
-    const tc = r.traineeCode || r.agentCode;
-    if (!tc) return [];
-    return (allPaymentMethods as PaymentMethod[]).filter(m => m.traineeCode === tc);
-  }
+  const records = statusRecords as StatusRecord[];
+  const paidCount = records.filter(r => r.paymentStatus === "paid").length;
+  const pendingCount = records.length - paidCount;
+  const totalNetPay = records.reduce((sum, r) => sum + n(r.netPay), 0);
+  const totalPaidNetPay = records.filter(r => r.paymentStatus === "paid").reduce((sum, r) => sum + n(r.netPay), 0);
+  const totalPendingNetPay = records.filter(r => r.paymentStatus !== "paid").reduce((sum, r) => sum + n(r.netPay), 0);
 
   return (
     <div className="space-y-6">
@@ -271,15 +268,26 @@ export default function PayrollPage() {
           <Button variant="outline" size="sm" className="gap-1.5" onClick={downloadTemplate}>
             <Download className="h-3.5 w-3.5" /> Download Template
           </Button>
-          <Button size="sm" className="gap-1.5" onClick={() => { setParsedRows([]); setParseError(null); setUploadDialog(true); }}>
+          <Button size="sm" className="gap-1.5" onClick={() => { setParsedRows([]); setParseError(null); setUploadWarnings([]); setUploadDialog(true); }}>
             <Upload className="h-3.5 w-3.5" /> Upload Payroll Sheet
           </Button>
         </div>
       </div>
 
+      {/* Commission reminder banner */}
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 flex gap-3">
+        <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 flex-shrink-0" />
+        <p className="text-xs text-amber-800">
+          <strong>Don't forget commission:</strong> After uploading this payroll, go to the{" "}
+          <strong>Commission</strong> tab and upload commission for 2 months ago
+          (e.g. if this is May payroll → upload March commission).
+          Commission is separate from salary and must be uploaded independently.
+        </p>
+      </div>
+
       {/* Tab bar */}
       <div className="flex gap-1 border-b">
-        {(["status", "guide"] as const).map(tab => (
+        {(["status", "upload"] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -289,7 +297,7 @@ export default function PayrollPage() {
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            {tab === "status" ? "Payment Status" : "Monthly Guide"}
+            {tab === "status" ? "Payment Status" : "Upload History"}
           </button>
         ))}
       </div>
@@ -308,44 +316,44 @@ export default function PayrollPage() {
                 className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
               />
             </div>
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={exportStatusCSV} disabled={records.length === 0}>
-              <Download className="h-3.5 w-3.5" /> Export
-            </Button>
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-muted-foreground">
+                <span className="font-medium text-emerald-600">{paidCount} Paid</span>
+                {" · "}
+                <span className="font-medium text-amber-500">{pendingCount} Pending</span>
+                {" · "}
+                {records.length} total
+              </span>
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={exportStatusCSV} disabled={records.length === 0}>
+                <Download className="h-3.5 w-3.5" /> Export
+              </Button>
+            </div>
           </div>
 
-          {/* Totals summary bar */}
+          {/* ── Totals Summary Bar ── */}
           {records.length > 0 && (
             <div className="grid grid-cols-3 gap-3">
-              <div className="rounded-xl border bg-card p-4 flex items-center gap-3">
-                <div className="h-9 w-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0">
-                  <DollarSign className="h-4.5 w-4.5 text-primary" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Total to Disburse</p>
-                  <p className="text-base font-bold">{fmtEGP(totalDisburse)}</p>
-                  <p className="text-xs text-muted-foreground">{records.length} agents</p>
-                </div>
-              </div>
-              <div className="rounded-xl border bg-card p-4 flex items-center gap-3">
-                <div className="h-9 w-9 rounded-lg bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
-                  <CheckCircle2 className="h-4.5 w-4.5 text-emerald-600" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Paid</p>
-                  <p className="text-base font-bold text-emerald-600">{fmtEGP(totalPaid)}</p>
-                  <p className="text-xs text-muted-foreground">{paidRecords.length} agents</p>
-                </div>
-              </div>
-              <div className="rounded-xl border bg-card p-4 flex items-center gap-3">
-                <div className="h-9 w-9 rounded-lg bg-amber-500/10 flex items-center justify-center flex-shrink-0">
-                  <AlertCircle className="h-4.5 w-4.5 text-amber-500" />
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground">Pending</p>
-                  <p className="text-base font-bold text-amber-600">{fmtEGP(totalPending)}</p>
-                  <p className="text-xs text-muted-foreground">{pendingRecords.length} agents</p>
-                </div>
-              </div>
+              <Card>
+                <CardContent className="p-4">
+                  <p className="text-xs text-muted-foreground mb-1">Total to Disburse</p>
+                  <p className="text-xl font-bold text-foreground">{fmtEGP(totalNetPay)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{records.length} agents</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4">
+                  <p className="text-xs text-muted-foreground mb-1">Paid</p>
+                  <p className="text-xl font-bold text-emerald-600">{fmtEGP(totalPaidNetPay)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{paidCount} agents</p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-4">
+                  <p className="text-xs text-muted-foreground mb-1">Pending</p>
+                  <p className="text-xl font-bold text-amber-500">{fmtEGP(totalPendingNetPay)}</p>
+                  <p className="text-xs text-muted-foreground mt-1">{pendingCount} agents</p>
+                </CardContent>
+              </Card>
             </div>
           )}
 
@@ -372,125 +380,140 @@ export default function PayrollPage() {
                         <th className="text-left px-4 py-3 font-medium w-8"></th>
                         <th className="text-left px-4 py-3 font-medium">CRDTS</th>
                         <th className="text-left px-4 py-3 font-medium">Alias</th>
-                        <th className="text-right px-4 py-3 font-medium">Net Pay</th>
-                        <th className="text-right px-4 py-3 font-medium text-emerald-600">Commission</th>
-                        <th className="text-right px-4 py-3 font-medium font-semibold">Final Total</th>
+                        <th className="text-right px-4 py-3 font-medium">Base Salary</th>
+                        <th className="text-right px-4 py-3 font-medium">Total Ded.</th>
+                        <th className="text-right px-4 py-3 font-medium text-emerald-600">Net Pay</th>
                         <th className="text-center px-4 py-3 font-medium">Status</th>
-                        <th className="text-center px-4 py-3 font-medium">Paid At</th>
-                        <th className="text-center px-4 py-3 font-medium">Action</th>
+                        <th className="text-center px-4 py-3 font-medium">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {records.map((r) => {
-                        const isExpanded = expandedRows.has(r.id);
-                        const methods = getPaymentMethods(r);
-                        const finalTotal = calcFinalPay(r);
-                        const commission = r.commissionEgp ? parseFloat(r.commissionEgp) || 0 : 0;
-                        return (
-                          <>
-                            <tr
-                              key={r.id}
-                              className="hover:bg-muted/20 transition-colors cursor-pointer"
-                              onClick={() => toggleRow(r.id)}
-                            >
-                              <td className="px-4 py-3 text-muted-foreground">
-                                {isExpanded
-                                  ? <ChevronDown className="h-4 w-4" />
-                                  : <ChevronRight className="h-4 w-4" />}
-                              </td>
-                              <td className="px-4 py-3 font-mono font-medium">{r.crdts ?? "—"}</td>
-                              <td className="px-4 py-3">{r.alias ?? "—"}</td>
-                              <td className="px-4 py-3 text-right text-muted-foreground">{fmtEGP(r.netPay)}</td>
-                              <td className="px-4 py-3 text-right text-emerald-600 font-medium">
-                                {commission > 0 ? fmtEGP(commission) : "—"}
-                              </td>
-                              <td className="px-4 py-3 text-right font-bold">{fmtEGP(finalTotal)}</td>
-                              <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
+                      {records.map((r) => (
+                        <>
+                          <tr key={r.id} className="hover:bg-muted/20 transition-colors">
+                            {/* Expand toggle */}
+                            <td className="px-2 py-3">
+                              <button
+                                onClick={() => setExpandedRow(expandedRow === r.id ? null : r.id)}
+                                className="text-muted-foreground hover:text-foreground"
+                              >
+                                {expandedRow === r.id ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                              </button>
+                            </td>
+                            <td className="px-4 py-3 font-mono font-medium">{r.crdts ?? "—"}</td>
+                            <td className="px-4 py-3">{r.alias ?? "—"}</td>
+                            <td className="px-4 py-3 text-right text-muted-foreground">{fmtEGP(r.baseSalary)}</td>
+                            <td className="px-4 py-3 text-right text-red-500">{fmtEGP(r.totalDeductions)}</td>
+                            <td className="px-4 py-3 text-right font-semibold text-emerald-600">{fmtEGP(r.netPay)}</td>
+                            <td className="px-4 py-3 text-center">
+                              {r.paymentStatus === "paid" ? (
+                                <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 gap-1">
+                                  <CheckCircle2 className="h-3 w-3" /> Paid
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-amber-600 border-amber-300 gap-1">
+                                  <Clock className="h-3 w-3" /> Pending
+                                </Badge>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                <Button
+                                  variant="ghost" size="sm"
+                                  className="text-xs h-7 text-blue-600 hover:text-blue-700"
+                                  onClick={() => { setEditingRow(r.id); setEditValues({ ...r }); }}
+                                >
+                                  <Pencil className="h-3 w-3" />
+                                </Button>
                                 {r.paymentStatus === "paid" ? (
-                                  <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 gap-1">
-                                    <CheckCircle2 className="h-3 w-3" /> Paid
-                                  </Badge>
-                                ) : (
-                                  <Badge variant="outline" className="text-amber-600 border-amber-300 gap-1">
-                                    <Clock className="h-3 w-3" /> Pending
-                                  </Badge>
-                                )}
-                              </td>
-                              <td className="px-4 py-3 text-center text-xs text-muted-foreground">
-                                {r.paidAt ? new Date(r.paidAt).toLocaleDateString("en-EG") : "—"}
-                              </td>
-                              <td className="px-4 py-3 text-center" onClick={e => e.stopPropagation()}>
-                                {r.paymentStatus === "paid" ? (
-                                  <Button
-                                    variant="ghost" size="sm"
-                                    className="text-xs h-7 text-amber-600 hover:text-amber-700"
+                                  <Button variant="ghost" size="sm" className="text-xs h-7 text-amber-600 hover:text-amber-700"
                                     onClick={() => setStatusMutation.mutate({ id: r.id, status: "pending" })}
-                                    disabled={setStatusMutation.isPending}
-                                  >
-                                    Mark Pending
+                                    disabled={setStatusMutation.isPending}>
+                                    Unmark
                                   </Button>
                                 ) : (
-                                  <Button
-                                    variant="ghost" size="sm"
-                                    className="text-xs h-7 text-emerald-600 hover:text-emerald-700"
+                                  <Button variant="ghost" size="sm" className="text-xs h-7 text-emerald-600 hover:text-emerald-700"
                                     onClick={() => setStatusMutation.mutate({ id: r.id, status: "paid" })}
-                                    disabled={setStatusMutation.isPending}
-                                  >
+                                    disabled={setStatusMutation.isPending}>
                                     Mark Paid
                                   </Button>
                                 )}
+                              </div>
+                            </td>
+                          </tr>
+                          {/* Expanded breakdown row */}
+                          {expandedRow === r.id && (
+                            <tr key={`${r.id}-expand`} className="bg-muted/10">
+                              <td colSpan={8} className="px-8 py-4">
+                                <div className="grid grid-cols-3 gap-6">
+                                  {/* Col 1: Earnings */}
+                                  <div>
+                                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Earnings Breakdown</p>
+                                    <div className="space-y-1 text-xs">
+                                      <div className="flex justify-between"><span>Base Salary</span><span className="font-medium">{fmtEGP(r.baseSalary)}</span></div>
+                                      <div className="flex justify-between text-muted-foreground"><span>Working Hours</span><span>{fmtHrs(r.workingHours)}</span></div>
+                                      {n(r.ot1x5Hours) > 0 && <>
+                                        <div className="flex justify-between text-blue-600"><span>OT 1.5× ({fmtHrs(r.ot1x5Hours)})</span><span className="font-medium">{fmtEGP(r.ot1x5Pay)}</span></div>
+                                      </>}
+                                      {n(r.ot2xHours) > 0 && <>
+                                        <div className="flex justify-between text-blue-600"><span>OT 2× ({fmtHrs(r.ot2xHours)})</span><span className="font-medium">{fmtEGP(r.ot2xPay)}</span></div>
+                                      </>}
+                                      {n(r.ot3xHours) > 0 && <>
+                                        <div className="flex justify-between text-blue-600"><span>OT 3× ({fmtHrs(r.ot3xHours)})</span><span className="font-medium">{fmtEGP(r.ot3xPay)}</span></div>
+                                      </>}
+                                      {n(r.coachingBonus) > 0 && (
+                                        <div className="flex justify-between text-green-600"><span>Coaching Bonus</span><span className="font-medium">{fmtEGP(r.coachingBonus)}</span></div>
+                                      )}
+                                      <div className="flex justify-between text-red-500 border-t pt-1 mt-1">
+                                        <span>Deductions</span><span>-{fmtEGP(r.totalDeductions)}</span>
+                                      </div>
+                                      <div className="flex justify-between text-emerald-600 font-semibold border-t pt-1 mt-1">
+                                        <span>Net Pay</span><span>{fmtEGP(r.netPay)}</span>
+                                      </div>
+                                      {r.paidAt && (
+                                        <div className="flex justify-between text-muted-foreground mt-1">
+                                          <span>Paid</span><span>{new Date(r.paidAt).toLocaleDateString("en-EG")}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {/* Col 2: Deduction detail */}
+                                  <div>
+                                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Deduction Detail</p>
+                                    <div className="space-y-1 text-xs">
+                                      {r.qualityDetail && r.qualityDetail !== "" ? (
+                                        <div>
+                                          <p className="text-muted-foreground font-medium mb-0.5">Quality:</p>
+                                          <p className="text-red-500">{r.qualityDetail}</p>
+                                        </div>
+                                      ) : <p className="text-muted-foreground/50">No quality deductions</p>}
+                                      {r.attendanceDetail && r.attendanceDetail !== "" && (
+                                        <div className="mt-2">
+                                          <p className="text-muted-foreground font-medium mb-0.5">Attendance:</p>
+                                          <p className="text-red-500">{r.attendanceDetail}</p>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                  {/* Col 3: Payment preferences */}
+                                  <PaymentPreferencesInline agentCode={r.agentCode} />
+                                </div>
                               </td>
                             </tr>
-                            {isExpanded && (
-                              <tr key={`${r.id}-expanded`} className="bg-muted/10">
-                                <td colSpan={9} className="px-6 py-4">
-                                  <div className="space-y-2">
-                                    <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide flex items-center gap-1.5">
-                                      <CreditCard className="h-3.5 w-3.5" /> Payment Preferences
-                                    </p>
-                                    {methods.length === 0 ? (
-                                      <p className="text-sm text-muted-foreground italic">No payment preferences submitted by this agent.</p>
-                                    ) : (
-                                      <div className="flex flex-wrap gap-3">
-                                        {methods.map(m => (
-                                          <div key={m.id} className={`rounded-lg border px-4 py-3 text-sm min-w-[220px] ${m.isPreferred ? "border-primary bg-primary/5" : "bg-background"}`}>
-                                            <div className="flex items-center gap-2 mb-1.5">
-                                              {m.type === "wallet"
-                                                ? <Smartphone className="h-4 w-4 text-primary" />
-                                                : <Building2 className="h-4 w-4 text-blue-500" />}
-                                              <span className="font-semibold capitalize">
-                                                {m.type === "wallet"
-                                                  ? (m.walletProvider === "vodafone_cash" ? "Vodafone Cash" : m.walletProvider === "orange_cash" ? "Orange Cash" : "Wallet")
-                                                  : (m.bankName || "Bank Transfer")}
-                                              </span>
-                                              {m.isPreferred && <Badge className="text-[10px] h-4 px-1.5 bg-primary/10 text-primary border-primary/20">Preferred</Badge>}
-                                            </div>
-                                            {m.type === "wallet" ? (
-                                              <>
-                                                <p className="text-muted-foreground">{m.walletPhone || "—"}</p>
-                                                {m.walletName && <p className="text-xs text-muted-foreground">{m.walletName}</p>}
-                                              </>
-                                            ) : (
-                                              <>
-                                                <p className="text-muted-foreground">{m.bankAccountOrPhone || "—"}</p>
-                                                {m.bankFullName && <p className="text-xs text-muted-foreground">{m.bankFullName}</p>}
-                                              </>
-                                            )}
-                                            {m.adminComment && (
-                                              <p className="text-xs text-amber-600 mt-1 border-t border-amber-200 pt-1">{m.adminComment}</p>
-                                            )}
-                                          </div>
-                                        ))}
-                                      </div>
-                                    )}
-                                  </div>
-                                </td>
-                              </tr>
-                            )}
-                          </>
-                        );
-                      })}
+                          )}
+                        </>
+                      ))}
                     </tbody>
+                    {/* Totals footer */}
+                    <tfoot>
+                      <tr className="border-t bg-muted/30 font-semibold">
+                        <td colSpan={3} className="px-4 py-3 text-right text-sm">Totals:</td>
+                        <td className="px-4 py-3 text-right text-sm">{fmtEGP(records.reduce((s, r) => s + n(r.baseSalary), 0))}</td>
+                        <td className="px-4 py-3 text-right text-sm text-red-500">{fmtEGP(records.reduce((s, r) => s + n(r.totalDeductions), 0))}</td>
+                        <td className="px-4 py-3 text-right text-sm text-emerald-600">{fmtEGP(totalNetPay)}</td>
+                        <td colSpan={2} />
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               </CardContent>
@@ -499,92 +522,154 @@ export default function PayrollPage() {
         </div>
       )}
 
-      {/* ── Monthly Guide Tab ── */}
-      {activeTab === "guide" && (
-        <div className="space-y-4 max-w-3xl">
-          <div className="flex items-center gap-2 mb-2">
-            <BookOpen className="h-5 w-5 text-primary" />
-            <h2 className="text-lg font-semibold">Monthly Payroll Process</h2>
-          </div>
-          <p className="text-sm text-muted-foreground">Follow these steps every month to complete payroll accurately and on time.</p>
-
-          {[
-            {
-              step: 1,
-              title: "Generate the payroll data",
-              icon: <TrendingUp className="h-4 w-4" />,
-              color: "bg-blue-500/10 text-blue-600",
-              description: "Use the Python payroll script to calculate base salary, OT (1.5×, 2×, 3×), coaching bonuses, and deductions for all active agents. The script outputs an Excel file matching the upload template.",
-              notes: ["Run the script after the last working day of the month", "Verify the CRDTS column matches the active roster", "Check OT hours against the scheduling system"],
-            },
-            {
-              step: 2,
-              title: "Upload the payroll sheet",
-              icon: <Upload className="h-4 w-4" />,
-              color: "bg-primary/10 text-primary",
-              description: "Click 'Upload Payroll Sheet' above, select the month, and choose the Excel file. Preview the parsed rows to verify the data before confirming.",
-              notes: ["The system matches records by CRDTS — ensure no CRDTS is missing", "Re-uploading the same month overwrites existing records", "Use 'Delete Payroll Sheet' at the bottom to clear a bad import"],
-            },
-            {
-              step: 3,
-              title: "Add commission (if applicable)",
-              icon: <DollarSign className="h-4 w-4" />,
-              color: "bg-emerald-500/10 text-emerald-600",
-              description: "Commission is based on monthly performance stats. If agents earned commission this month, either include it in the Commission (EGP) column of the payroll sheet, or upload it separately via the Commission Admin page.",
-              notes: ["Commission is shown separately on the agent payslip as 'Commission (Month performance)'", "Final Total = Net Pay + Commission", "If no commission was uploaded, agents see Net Pay only — no Final Total line"],
-            },
-            {
-              step: 4,
-              title: "Verify payment preferences",
-              icon: <CreditCard className="h-4 w-4" />,
-              color: "bg-violet-500/10 text-violet-600",
-              description: "Click any agent row in the Payment Status tab to expand their payment preferences inline. Verify their preferred bank account or wallet before sending payments.",
-              notes: ["Agents with no payment preferences submitted will show an empty panel", "The 'Preferred' badge marks the agent's primary payment method", "Admin comments on payment methods are shown in amber"],
-            },
-            {
-              step: 5,
-              title: "Process payments",
-              icon: <Building2 className="h-4 w-4" />,
-              color: "bg-orange-500/10 text-orange-600",
-              description: "Send payments to each agent using their preferred payment method. Use the Export button to download a CSV of all records with final totals for your accounting records.",
-              notes: ["Process preferred methods first", "Export the CSV before marking as paid for your records", "The totals bar at the top shows total disbursed vs pending at a glance"],
-            },
-            {
-              step: 6,
-              title: "Mark as paid",
-              icon: <CheckCircle2 className="h-4 w-4" />,
-              color: "bg-emerald-500/10 text-emerald-600",
-              description: "After confirming each payment, click 'Mark Paid' on the agent row. The system records the payment timestamp automatically. You can revert to Pending if needed.",
-              notes: ["Mark paid immediately after the transfer is confirmed", "Agents can see their payment status in the portal", "The totals bar updates in real time as you mark agents paid"],
-            },
-          ].map(({ step, title, icon, color, description, notes }) => (
-            <div key={step} className="rounded-xl border bg-card p-5 flex gap-4">
-              <div className={`h-9 w-9 rounded-lg flex items-center justify-center flex-shrink-0 ${color}`}>
-                {icon}
-              </div>
-              <div className="space-y-2 flex-1">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold text-muted-foreground uppercase tracking-wide">Step {step}</span>
-                  <h3 className="font-semibold">{title}</h3>
+      {/* ── Upload History Tab ── */}
+      {activeTab === "upload" && (
+        <div className="space-y-4">
+          {/* Admin instructions */}
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 flex gap-3">
+            <Info className="h-5 w-5 text-blue-500 mt-0.5 flex-shrink-0" />
+            <div className="text-sm text-blue-800">
+              <p className="font-semibold mb-2">Admin Payroll Guide</p>
+              <div className="grid grid-cols-2 gap-4 text-xs">
+                <div>
+                  <p className="font-semibold mb-1 text-blue-700">Monthly Process (25th)</p>
+                  <ol className="space-y-1 list-decimal pl-4">
+                    <li>Download fresh Adherence, Quality and OT logs from SharePoint</li>
+                    <li>Export Vicidial: full cycle range (26th → 25th)</li>
+                    <li>Put all files + v10 script in same folder</li>
+                    <li>Run <code className="bg-blue-100 px-1 rounded">python tanis_vicidial_processor_v10.py</code></li>
+                    <li>Review Flags tab and Error Log</li>
+                    <li>Upload Payroll tab here on 26th</li>
+                    <li>Agents see Net Pay — commission not yet included</li>
+                  </ol>
                 </div>
-                <p className="text-sm text-muted-foreground">{description}</p>
-                <ul className="space-y-1">
-                  {notes.map((n, i) => (
-                    <li key={i} className="text-xs text-muted-foreground flex items-start gap-1.5">
-                      <span className="mt-0.5 h-1.5 w-1.5 rounded-full bg-muted-foreground/50 flex-shrink-0" />
-                      {n}
-                    </li>
-                  ))}
+                <div>
+                  <p className="font-semibold mb-1 text-blue-700">Commission (after 31st)</p>
+                  <ol className="space-y-1 list-decimal pl-4">
+                    <li>Export Vicidial: full calendar month (1st → 31st)</li>
+                    <li>Run <code className="bg-blue-100 px-1 rounded">python tanis_commission.py</code></li>
+                    <li>Fill yellow Commission column for top performers</li>
+                    <li>Fill training bonus for ALL agents (same column)</li>
+                    <li>Go to <strong>Commission tab</strong> and upload</li>
+                    <li>Agents see Final Total = Net Pay + Commission</li>
+                  </ol>
+                  <p className="font-semibold mt-2 mb-1 text-blue-700">Payment (1st)</p>
+                  <ol className="space-y-1 list-decimal pl-4">
+                    <li>Check payment preferences in each agent row (expand ↓)</li>
+                    <li>Transfer salary to each agent</li>
+                    <li>Click "Mark Paid" per agent</li>
+                    <li>Agents see ✓ Paid status on their payslip</li>
+                  </ol>
+                </div>
+              </div>
+              <div className="mt-3 pt-3 border-t border-blue-200">
+                <p className="text-xs font-semibold text-blue-700 mb-1">Key Rules</p>
+                <ul className="text-xs space-y-0.5 list-disc pl-4">
+                  <li>Commission is based on performance 2 months prior — upload separately in Commission tab</li>
+                  <li>Cycle: 26th → 25th | Paid: 1st | Commission period: full calendar month</li>
+                  <li>Agents have until 1st to raise concerns about their payslip</li>
+                  <li>Use the edit (pencil) button to manually override any record</li>
+                  <li>Re-uploading the same file is safe — upsert updates existing records</li>
                 </ul>
               </div>
             </div>
-          ))}
+          </div>
+
+          {/* Records history for selected month */}
+          {records.length > 0 && (
+            <Card>
+              <CardContent className="p-4">
+                <p className="text-sm font-medium mb-3">Upload Details — {formatMonthLabel(statusMonth)}</p>
+                <div className="grid grid-cols-3 gap-4 text-xs">
+                  <div>
+                    <p className="text-muted-foreground">Records</p>
+                    <p className="font-semibold text-lg">{records.length} agents</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Uploaded By</p>
+                    <p className="font-semibold">{(records[0] as StatusRecord & { uploadedBy?: string | null }).uploadedBy ?? "—"}</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Uploaded At</p>
+                    <p className="font-semibold">
+                      {(records[0] as StatusRecord & { uploadedAt?: number | null }).uploadedAt
+                        ? new Date((records[0] as StatusRecord & { uploadedAt?: number | null }).uploadedAt!).toLocaleString("en-EG")
+                        : "—"}
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" className="gap-1.5" onClick={downloadTemplate}>
+              <Download className="h-3.5 w-3.5" /> Download Template
+            </Button>
+            <Button size="sm" className="gap-1.5" onClick={() => setUploadDialog(true)}>
+              <Upload className="h-3.5 w-3.5" /> Upload Payroll Sheet
+            </Button>
+          </div>
         </div>
       )}
 
+      {/* ── Edit Record Dialog ── */}
+      <Dialog open={editingRow !== null} onOpenChange={(o) => { if (!o) { setEditingRow(null); setEditValues({}); } }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-4 w-4" /> Edit Payroll Record
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2 text-sm">
+            <p className="text-xs text-muted-foreground">CRDTS: <strong>{editValues.crdts}</strong> — {editValues.alias}</p>
+            <div className="grid grid-cols-2 gap-3">
+              {([
+                ["baseSalary", "Base Salary (EGP)"],
+                ["workingHours", "Working Hours"],
+                ["ot1x5Hours", "OT 1.5x Hours"],
+                ["ot1x5Pay", "OT 1.5x Pay (EGP)"],
+                ["ot2xHours", "OT 2x Hours"],
+                ["ot2xPay", "OT 2x Pay (EGP)"],
+                ["ot3xHours", "OT 3x Hours"],
+                ["ot3xPay", "OT 3x Pay (EGP)"],
+                ["coachingBonus", "Coaching Bonus (EGP)"],
+                ["totalDeductions", "Total Deductions (EGP)"],
+                ["netPay", "Net Pay (EGP)"],
+              ] as [keyof StatusRecord, string][]).map(([field, label]) => (
+                <div key={field} className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-muted-foreground">{label}</label>
+                  <Input
+                    type="number"
+                    value={editValues[field] as string ?? ""}
+                    onChange={e => setEditValues(prev => ({ ...prev, [field]: e.target.value }))}
+                    className="h-8 text-sm"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setEditingRow(null); setEditValues({}); }}>Cancel</Button>
+            <Button
+              onClick={() => {
+                if (editingRow === null) return;
+                updateRecordMutation.mutate({ id: editingRow, data: editValues });
+              }}
+              disabled={updateRecordMutation.isPending}
+            >
+              {updateRecordMutation.isPending ? "Saving…" : "Save Changes"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* ── Upload Dialog ── */}
-      <Dialog open={uploadDialog} onOpenChange={(o) => { setUploadDialog(o); if (!o) { setParsedRows([]); setParseError(null); if (fileInputRef.current) fileInputRef.current.value = ""; } }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+      <Dialog open={uploadDialog} onOpenChange={(o) => {
+        setUploadDialog(o);
+        if (!o) { setParsedRows([]); setParseError(null); setUploadWarnings([]); if (fileInputRef.current) fileInputRef.current.value = ""; }
+      }}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><Upload className="h-5 w-5" /> Upload Payroll Sheet</DialogTitle>
           </DialogHeader>
@@ -600,28 +685,49 @@ export default function PayrollPage() {
                 />
               </div>
               <div className="flex flex-col gap-1 flex-1">
-                <label className="text-sm font-medium">Excel File</label>
+                <label className="text-sm font-medium">Excel File (Python v10 output)</label>
                 <div className="flex items-center gap-2">
                   <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFileChange} />
                   <Button variant="outline" size="sm" className="gap-1.5" onClick={() => fileInputRef.current?.click()}>
                     <FileSpreadsheet className="h-3.5 w-3.5" /> Choose File
                   </Button>
-                  <span className="text-xs text-muted-foreground">Matched by CRDTS column</span>
+                  <span className="text-xs text-muted-foreground">Matched by CRDTS — commission is NOT included here</span>
                 </div>
               </div>
             </div>
 
             {parseError && (
               <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 rounded-md px-3 py-2">
-                <span>{parseError}</span>
+                <AlertTriangle className="h-4 w-4" /><span>{parseError}</span>
               </div>
             )}
 
-            {parsedRows.length > 0 && (
+            {/* Upload warnings */}
+            {uploadWarnings.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium text-amber-600 bg-amber-50 rounded-md px-3 py-2">
+                  <AlertTriangle className="h-4 w-4" />
+                  Upload succeeded with {uploadWarnings.length} warning{uploadWarnings.length > 1 ? "s" : ""}:
+                </div>
+                <ul className="text-xs text-muted-foreground space-y-1 pl-4 max-h-32 overflow-y-auto">
+                  {uploadWarnings.map((w, i) => (
+                    <li key={i} className="flex gap-2">
+                      <span className="text-amber-500">•</span>
+                      <span><strong>{w.alias || w.crdts}</strong>: {w.message}</span>
+                    </li>
+                  ))}
+                </ul>
+                <Button size="sm" className="mt-2" onClick={() => { setUploadDialog(false); setUploadWarnings([]); setParsedRows([]); }}>
+                  Close
+                </Button>
+              </div>
+            )}
+
+            {parsedRows.length > 0 && uploadWarnings.length === 0 && (
               <div className="space-y-3">
                 <div className="flex items-center gap-2 text-sm text-emerald-600 bg-emerald-50 rounded-md px-3 py-2">
                   <CheckCircle2 className="h-4 w-4" />
-                  <span>{parsedRows.length} rows parsed successfully — ready to upload for <strong>{formatMonthLabel(uploadMonth)}</strong></span>
+                  <span>{parsedRows.length} rows parsed — ready to upload for <strong>{formatMonthLabel(uploadMonth)}</strong></span>
                 </div>
                 <div className="overflow-x-auto max-h-64 border rounded-md">
                   <table className="w-full text-xs">
@@ -629,14 +735,13 @@ export default function PayrollPage() {
                       <tr className="border-b">
                         <th className="text-left px-3 py-2 font-medium">CRDTS</th>
                         <th className="text-left px-3 py-2 font-medium">Alias</th>
-                        <th className="text-right px-3 py-2 font-medium">Base Salary</th>
+                        <th className="text-right px-3 py-2 font-medium">Base</th>
                         <th className="text-right px-3 py-2 font-medium">Hrs</th>
-                        <th className="text-right px-3 py-2 font-medium">OT 1.5×</th>
-                        <th className="text-right px-3 py-2 font-medium">OT 2×</th>
-                        <th className="text-right px-3 py-2 font-medium">OT 3×</th>
+                        <th className="text-right px-3 py-2 font-medium">OT 1.5x h</th>
+                        <th className="text-right px-3 py-2 font-medium">OT 2x h</th>
+                        <th className="text-right px-3 py-2 font-medium">OT 3x h</th>
                         <th className="text-right px-3 py-2 font-medium">Coaching</th>
-                        <th className="text-right px-3 py-2 font-medium">Commission</th>
-                        <th className="text-right px-3 py-2 font-medium">Deductions</th>
+                        <th className="text-right px-3 py-2 font-medium">Ded.</th>
                         <th className="text-right px-3 py-2 font-medium text-emerald-600">Net Pay</th>
                       </tr>
                     </thead>
@@ -647,11 +752,10 @@ export default function PayrollPage() {
                           <td className="px-3 py-1.5">{r.alias || "—"}</td>
                           <td className="px-3 py-1.5 text-right">{fmtEGP(r.baseSalary)}</td>
                           <td className="px-3 py-1.5 text-right">{fmt(r.workingHours)}</td>
-                          <td className="px-3 py-1.5 text-right">{fmtEGP(r.ot1x5Pay)}</td>
-                          <td className="px-3 py-1.5 text-right">{fmtEGP(r.ot2xPay)}</td>
-                          <td className="px-3 py-1.5 text-right">{fmtEGP(r.ot3xPay)}</td>
+                          <td className="px-3 py-1.5 text-right">{fmt(r.ot1x5Hours)}</td>
+                          <td className="px-3 py-1.5 text-right">{fmt(r.ot2xHours)}</td>
+                          <td className="px-3 py-1.5 text-right">{fmt(r.ot3xHours)}</td>
                           <td className="px-3 py-1.5 text-right">{fmtEGP(r.coachingBonus)}</td>
-                          <td className="px-3 py-1.5 text-right">{fmtEGP(r.commissionEgp)}</td>
                           <td className="px-3 py-1.5 text-right text-red-500">{fmtEGP(r.totalDeductions)}</td>
                           <td className="px-3 py-1.5 text-right font-semibold text-emerald-600">{fmtEGP(r.netPay)}</td>
                         </tr>
@@ -675,10 +779,10 @@ export default function PayrollPage() {
               </div>
             )}
 
-            {parsedRows.length === 0 && !parseError && (
+            {parsedRows.length === 0 && !parseError && uploadWarnings.length === 0 && (
               <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground space-y-1">
-                <p>Choose an Excel file to preview the parsed rows before uploading.</p>
-                <p className="text-xs">Expected columns: CRDTS | Alias | Working Hours | Base Salary (EGP) | OT 1.5x Hours | OT 1.5x Pay (EGP) | OT 2x Hours | OT 2x Pay (EGP) | OT 3x Hours | OT 3x Pay (EGP) | Coaching Bonus (EGP) | Commission (EGP) | Quality/Attendance Deductions (EGP) | Total Deductions (EGP) | NET PAY (EGP) | Quality Detail | Attendance Detail</p>
+                <p>Choose the Python v10 generated payroll file.</p>
+                <p className="text-xs">Required: CRDTS column | Commission is NOT included — upload separately in Commission tab</p>
               </div>
             )}
           </div>
@@ -691,6 +795,43 @@ export default function PayrollPage() {
   );
 }
 
+
+// ─── Payment Preferences Inline ────────────────────────────────────────────────
+function PaymentPreferencesInline({ agentCode }: { agentCode: string | null }) {
+  const { data: methods = [] } = trpc.paymentMethods.listAll.useQuery(undefined, {
+    enabled: !!agentCode,
+  });
+  const agentMethods = (methods as Array<{ traineeCode?: string; type: string; walletProvider?: string | null; walletPhone?: string | null; walletName?: string | null; bankName?: string | null; bankAccountOrPhone?: string | null; bankFullName?: string | null; isPreferred: boolean }>)
+    .filter(m => m.traineeCode === agentCode);
+
+  return (
+    <div>
+      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Payment Preferences</p>
+      {agentMethods.length === 0 ? (
+        <p className="text-xs text-muted-foreground/50">No payment method on file</p>
+      ) : (
+        <div className="space-y-2">
+          {agentMethods.map((m, i) => (
+            <div key={i} className={`text-xs rounded-md p-2 border ${m.isPreferred ? "border-emerald-300 bg-emerald-50" : "border-muted bg-muted/20"}`}>
+              {m.isPreferred && <p className="text-emerald-600 font-medium text-[10px] mb-0.5">✓ Preferred</p>}
+              <p className="font-medium capitalize">{m.type === "wallet" ? `${m.walletProvider?.replace("_", " ")} Wallet` : "Bank Transfer"}</p>
+              {m.type === "wallet" && <>
+                <p className="text-muted-foreground">{m.walletPhone}</p>
+                <p className="text-muted-foreground">{m.walletName}</p>
+              </>}
+              {m.type === "bank" && <>
+                <p className="text-muted-foreground">{m.bankName}</p>
+                <p className="text-muted-foreground">{m.bankAccountOrPhone}</p>
+                <p className="text-muted-foreground">{m.bankFullName}</p>
+              </>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Delete Payroll Section ────────────────────────────────────────────────────
 function DeletePayrollSection() {
   const [deleteMonth, setDeleteMonth] = useState("");
@@ -699,7 +840,7 @@ function DeletePayrollSection() {
 
   const deleteForMonthMutation = trpc.payrollV2.deleteForMonth.useMutation({
     onSuccess: (data) => {
-      toast.success(`Deleted ${data.deleted} payroll rows for ${deleteMonth}`);
+      toast.success(`Deleted ${(data as { deleted: number }).deleted} payroll rows for ${deleteMonth}`);
       setDeleteMonth("");
       setConfirmOpen(false);
       utils.payrollV2.getStatusPage.invalidate();
@@ -722,9 +863,7 @@ function DeletePayrollSection() {
       </div>
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Confirm Delete Payroll</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Confirm Delete Payroll</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">
             This will permanently delete all payroll records for <strong>{deleteMonth}</strong>. This cannot be undone.
           </p>
