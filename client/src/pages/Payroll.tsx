@@ -38,6 +38,7 @@ type StatusRecord = {
   alias: string | null;
   agentCode: string | null;
   traineeCode: string | null;
+  agentStatus: string | null;
   baseSalary: string | null;
   workingHours: string | null;
   ot1x5Hours: string | null;
@@ -254,9 +255,9 @@ export default function PayrollPage() {
   const records = statusRecords as StatusRecord[];
   const paidCount = records.filter(r => r.paymentStatus === "paid").length;
   const pendingCount = records.length - paidCount;
-  const totalNetPay = records.reduce((sum, r) => sum + n(r.netPay), 0);
-  const totalPaidNetPay = records.filter(r => r.paymentStatus === "paid").reduce((sum, r) => sum + n(r.netPay), 0);
-  const totalPendingNetPay = records.filter(r => r.paymentStatus !== "paid").reduce((sum, r) => sum + n(r.netPay), 0);
+  const totalNetPay = records.reduce((sum, r) => sum + n(r.netPay) + n(r.commissionEgp), 0);
+  const totalPaidNetPay = records.filter(r => r.paymentStatus === "paid").reduce((sum, r) => sum + n(r.netPay) + n(r.commissionEgp), 0);
+  const totalPendingNetPay = records.filter(r => r.paymentStatus !== "paid").reduce((sum, r) => sum + n(r.netPay) + n(r.commissionEgp), 0);
 
   return (
     <div className="space-y-6">
@@ -404,7 +405,13 @@ export default function PayrollPage() {
                               </button>
                             </td>
                             <td className="px-4 py-3 font-mono font-medium">{r.crdts ?? "—"}</td>
-                            <td className="px-4 py-3">{r.alias ?? "—"}</td>
+                            <td className="px-4 py-3">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span>{r.alias ?? "—"}</span>
+                                {r.agentStatus === "resigned" && <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-orange-100 text-orange-700 border border-orange-200">Resigned</span>}
+                                {r.agentStatus === "terminated" && <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-red-100 text-red-700 border border-red-200">Terminated</span>}
+                              </div>
+                            </td>
                             <td className="px-4 py-3 text-right text-muted-foreground">{fmtEGP(r.baseSalary)}</td>
                             <td className="px-4 py-3 text-right text-red-500">{fmtEGP(r.totalDeductions)}</td>
                             <td className="px-4 py-3 text-right font-semibold text-emerald-600">{fmtEGP(r.netPay)}</td>

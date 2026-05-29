@@ -1942,6 +1942,7 @@ export async function getPayrollStatusPage(month: string) {
     uploadedBy: payrollRecords.uploadedBy,
     uploadedAt: payrollRecords.uploadedAt,
     traineeCode: workforceAgents.traineeCode,
+    agentStatus: workforceAgents.agentStatus,
   })
   .from(payrollRecords)
   .leftJoin(workforceAgents, eq(payrollRecords.crdts, workforceAgents.crdts))
