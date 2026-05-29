@@ -2141,6 +2141,37 @@ const payrollV2Router = router({
     .input(z.object({ id: z.number(), status: z.enum(["pending", "paid"]) }))
     .mutation(({ input }) => setPayrollStatus(input.id, input.status)),
 
+  updateRecord: protectedProcedure
+    .input(z.object({
+      id: z.number(),
+      data: z.object({
+        baseSalary: z.string().optional(),
+        workingHours: z.string().optional(),
+        ot1x5Hours: z.string().optional(),
+        ot1x5Pay: z.string().optional(),
+        ot2xHours: z.string().optional(),
+        ot2xPay: z.string().optional(),
+        ot3xHours: z.string().optional(),
+        ot3xPay: z.string().optional(),
+        coachingBonus: z.string().optional(),
+        totalDeductions: z.string().optional(),
+        netPay: z.string().optional(),
+      }),
+    }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { payrollRecords } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const updates: Record<string, string | null> = {};
+      for (const [k, v] of Object.entries(input.data)) {
+        if (v !== undefined) updates[k] = v === "" ? null : v;
+      }
+      await db.update(payrollRecords).set(updates).where(eq(payrollRecords.id, input.id));
+      return { success: true };
+    }),
+
   getMyMonths: publicProcedure
     .input(z.object({ crdts: z.string() }))
     .query(({ input }) => getMyPayrollMonthsByCrdts(input.crdts)),

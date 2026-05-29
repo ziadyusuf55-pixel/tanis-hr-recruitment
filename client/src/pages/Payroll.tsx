@@ -654,7 +654,7 @@ export default function PayrollPage() {
             <Button
               onClick={() => {
                 if (editingRow === null) return;
-                updateRecordMutation.mutate({ id: editingRow, data: editValues });
+                updateRecordMutation.mutate({ id: editingRow, data: editValues as { baseSalary?: string; workingHours?: string; ot1x5Hours?: string; ot1x5Pay?: string; ot2xHours?: string; ot2xPay?: string; ot3xHours?: string; ot3xPay?: string; coachingBonus?: string; totalDeductions?: string; netPay?: string; } });
               }}
               disabled={updateRecordMutation.isPending}
             >
