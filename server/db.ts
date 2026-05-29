@@ -1737,7 +1737,7 @@ export async function upsertPayrollFromExcel(rows: Array<{
     if (existing[0]) {
       await db.update(payrollRecords).set(values).where(eq(payrollRecords.id, existing[0].id));
     } else {
-      await db.insert(payrollRecords).values({ ...values, status: "pending" });
+      await db.insert(payrollRecords).values({ ...values });
     }
     results.push({ agentCode: row.agentCode, status: "ok" });
   }
