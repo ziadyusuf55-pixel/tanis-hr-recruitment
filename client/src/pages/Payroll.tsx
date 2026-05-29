@@ -37,6 +37,7 @@ type StatusRecord = {
   crdts: string | null;
   alias: string | null;
   agentCode: string | null;
+  traineeCode: string | null;
   baseSalary: string | null;
   workingHours: string | null;
   ot1x5Hours: string | null;
@@ -496,7 +497,7 @@ export default function PayrollPage() {
                                     </div>
                                   </div>
                                   {/* Col 3: Payment preferences */}
-                                  <PaymentPreferencesInline agentCode={r.agentCode} />
+                                  <PaymentPreferencesInline agentCode={r.traineeCode ?? r.agentCode} />
                                 </div>
                               </td>
                             </tr>
