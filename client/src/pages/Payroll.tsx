@@ -522,6 +522,7 @@ export default function PayrollPage() {
                         <td className="px-4 py-3 text-right text-sm">{fmtEGP(records.reduce((s, r) => s + n(r.baseSalary), 0))}</td>
                         <td className="px-4 py-3 text-right text-sm text-red-500">{fmtEGP(records.reduce((s, r) => s + n(r.totalDeductions), 0))}</td>
                         <td className="px-4 py-3 text-right text-sm text-emerald-600">{fmtEGP(totalNetPay)}</td>
+                        <td className="px-4 py-3 text-right text-sm text-blue-600">{fmtEGP(records.reduce((s, r) => s + n(r.commissionEgp), 0))}</td>
                         <td colSpan={2} />
                       </tr>
                     </tfoot>
