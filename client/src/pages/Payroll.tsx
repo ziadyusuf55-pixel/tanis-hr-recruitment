@@ -414,7 +414,7 @@ export default function PayrollPage() {
                             </td>
                             <td className="px-4 py-3 text-right text-muted-foreground">{fmtEGP(r.baseSalary)}</td>
                             <td className="px-4 py-3 text-right text-red-500">{fmtEGP(r.totalDeductions)}</td>
-                            <td className="px-4 py-3 text-right font-semibold text-emerald-600">{fmtEGP(r.netPay)}</td>
+                            <td className="px-4 py-3 text-right font-semibold text-emerald-600">{fmtEGP(n(r.netPay) + n(r.commissionEgp))}</td>
                             <td className="px-4 py-3 text-right font-medium text-blue-600">{r.commissionEgp && parseFloat(r.commissionEgp) > 0 ? fmtEGP(r.commissionEgp) : <span className="text-muted-foreground/40">—</span>}</td>
                             <td className="px-4 py-3 text-center">
                               {r.paymentStatus === "paid" ? (
