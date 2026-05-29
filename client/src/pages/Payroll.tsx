@@ -50,6 +50,7 @@ type StatusRecord = {
   qualityDeductions: string | null;
   attendanceDeductions: string | null;
   totalDeductions: string | null;
+  commissionEgp: string | null;
   netPay: string | null;
   qualityDetail: string | null;
   attendanceDetail: string | null;
@@ -384,6 +385,7 @@ export default function PayrollPage() {
                         <th className="text-right px-4 py-3 font-medium">Base Salary</th>
                         <th className="text-right px-4 py-3 font-medium">Total Ded.</th>
                         <th className="text-right px-4 py-3 font-medium text-emerald-600">Net Pay</th>
+                        <th className="text-right px-4 py-3 font-medium text-blue-600">Commission</th>
                         <th className="text-center px-4 py-3 font-medium">Status</th>
                         <th className="text-center px-4 py-3 font-medium">Actions</th>
                       </tr>
@@ -406,6 +408,7 @@ export default function PayrollPage() {
                             <td className="px-4 py-3 text-right text-muted-foreground">{fmtEGP(r.baseSalary)}</td>
                             <td className="px-4 py-3 text-right text-red-500">{fmtEGP(r.totalDeductions)}</td>
                             <td className="px-4 py-3 text-right font-semibold text-emerald-600">{fmtEGP(r.netPay)}</td>
+                            <td className="px-4 py-3 text-right font-medium text-blue-600">{r.commissionEgp && parseFloat(r.commissionEgp) > 0 ? fmtEGP(r.commissionEgp) : <span className="text-muted-foreground/40">—</span>}</td>
                             <td className="px-4 py-3 text-center">
                               {r.paymentStatus === "paid" ? (
                                 <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 gap-1">
