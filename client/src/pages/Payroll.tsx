@@ -383,10 +383,9 @@ export default function PayrollPage() {
                         <th className="text-left px-4 py-3 font-medium w-8"></th>
                         <th className="text-left px-4 py-3 font-medium">CRDTS</th>
                         <th className="text-left px-4 py-3 font-medium">Alias</th>
-                        <th className="text-right px-4 py-3 font-medium">Base Salary</th>
-                        <th className="text-right px-4 py-3 font-medium">Total Ded.</th>
-                        <th className="text-right px-4 py-3 font-medium text-emerald-600">Net Pay</th>
+                        <th className="text-right px-4 py-3 font-medium">Base + OT</th>
                         <th className="text-right px-4 py-3 font-medium text-blue-600">Commission</th>
+                        <th className="text-right px-4 py-3 font-medium text-emerald-600">Total Salary</th>
                         <th className="text-center px-4 py-3 font-medium">Status</th>
                         <th className="text-center px-4 py-3 font-medium">Actions</th>
                       </tr>
@@ -412,10 +411,9 @@ export default function PayrollPage() {
                                 {r.agentStatus === "terminated" && <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-red-100 text-red-700 border border-red-200">Terminated</span>}
                               </div>
                             </td>
-                            <td className="px-4 py-3 text-right text-muted-foreground">{fmtEGP(r.baseSalary)}</td>
-                            <td className="px-4 py-3 text-right text-red-500">{fmtEGP(r.totalDeductions)}</td>
+                            <td className="px-4 py-3 text-right text-muted-foreground">{fmtEGP(n(r.netPay))}</td>
+                            <td className="px-4 py-3 text-right font-medium text-blue-600">{n(r.commissionEgp) > 0 ? fmtEGP(n(r.commissionEgp)) : <span className="text-muted-foreground/40">—</span>}</td>
                             <td className="px-4 py-3 text-right font-semibold text-emerald-600">{fmtEGP(n(r.netPay) + n(r.commissionEgp))}</td>
-                            <td className="px-4 py-3 text-right font-medium text-blue-600">{r.commissionEgp && parseFloat(r.commissionEgp) > 0 ? fmtEGP(r.commissionEgp) : <span className="text-muted-foreground/40">—</span>}</td>
                             <td className="px-4 py-3 text-center">
                               {r.paymentStatus === "paid" ? (
                                 <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 gap-1">
@@ -519,10 +517,9 @@ export default function PayrollPage() {
                     <tfoot>
                       <tr className="border-t bg-muted/30 font-semibold">
                         <td colSpan={3} className="px-4 py-3 text-right text-sm">Totals:</td>
-                        <td className="px-4 py-3 text-right text-sm">{fmtEGP(records.reduce((s, r) => s + n(r.baseSalary), 0))}</td>
-                        <td className="px-4 py-3 text-right text-sm text-red-500">{fmtEGP(records.reduce((s, r) => s + n(r.totalDeductions), 0))}</td>
-                        <td className="px-4 py-3 text-right text-sm text-emerald-600">{fmtEGP(totalNetPay)}</td>
+                        <td className="px-4 py-3 text-right text-sm">{fmtEGP(records.reduce((s, r) => s + n(r.netPay), 0))}</td>
                         <td className="px-4 py-3 text-right text-sm text-blue-600">{fmtEGP(records.reduce((s, r) => s + n(r.commissionEgp), 0))}</td>
+                        <td className="px-4 py-3 text-right text-sm text-emerald-600">{fmtEGP(totalNetPay)}</td>
                         <td colSpan={2} />
                       </tr>
                     </tfoot>
