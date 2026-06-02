@@ -2309,9 +2309,16 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
   const leaderboardCampaigns = ["all", ...Array.from(new Set((fullLeaderboard as Array<{ campaignName: string }>).map(r => r.campaignName))).sort()];
 
   // Filtered leaderboard rows
+  type LeaderboardRow = { rank: number; crdts: string; alias: string; campaignName: string; profit: number; revenue: number; loginHours: number; revPerHr: number; commissionEgp: number };
+  const allLeaderboardRows = fullLeaderboard as LeaderboardRow[];
   const filteredLeaderboard = leaderboardCampaign === "all"
-    ? (fullLeaderboard as Array<{ rank: number; crdts: string; alias: string; campaignName: string; profit: number; revenue: number; loginHours: number; revPerHr: number }>)
-    : (fullLeaderboard as Array<{ rank: number; crdts: string; alias: string; campaignName: string; profit: number; revenue: number; loginHours: number; revPerHr: number }>).filter(r => r.campaignName === leaderboardCampaign);
+    ? allLeaderboardRows
+    : allLeaderboardRows.filter(r => r.campaignName === leaderboardCampaign);
+
+  // My own row in the leaderboard (for showing profit/rank from uploaded file)
+  const myLeaderboardRow = allLeaderboardRows.find(
+    r => (myCrdts && r.crdts === myCrdts) || (myTraineeCode && r.crdts === myTraineeCode)
+  ) ?? null;
 
   function formatMonthLabel(m: string) {
     const [y, mo] = m.split("-");
@@ -2483,41 +2490,44 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
           </select>
         </div>
 
-        {/* My stats summary */}
-        {ranking && (
-          <div className="px-4 py-3 flex items-center gap-6" style={{ borderBottom: `1px solid ${theme.cardBorder}`, background: theme.surface }}>
-            <div>
-              <p className="text-xs" style={{ color: theme.textFaint }}>Your Rank</p>
-              <p className="text-xl font-bold" style={{ color: rankColor }}>
-                {ranking.rank != null
-                  ? (ranking.rank === 1 ? "🥇" : ranking.rank === 2 ? "🥈" : ranking.rank === 3 ? "🥉" : `#${ranking.rank}`)
-                  : "—"}
-                {ranking.total > 0 && <span className="text-sm font-normal ml-1" style={{ color: theme.textFaint }}>/ {ranking.total}</span>}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs" style={{ color: theme.textFaint }}>Your Profit</p>
-              {(() => {
-                const v = Number(ranking.profit ?? 0);
-                const isNeg = v < 0;
-                return <p className="text-base font-semibold" style={{ color: isNeg ? "#ef4444" : theme.text }}>{isNeg ? `-$${fmtNum(Math.abs(v))}` : `$${fmtNum(v)}`}</p>;
-              })()}
-            </div>
-            <div>
-              <p className="text-xs" style={{ color: theme.textFaint }}>Rev/Hr</p>
-              {(() => {
-                const v = Number(ranking.revPerHr ?? 0);
-                const isNeg = v < 0;
-                return <p className="text-base font-semibold" style={{ color: isNeg ? "#ef4444" : theme.text }}>{isNeg ? `-$${fmtNum(Math.abs(v))}` : `$${fmtNum(v)}`}</p>;
-              })()}
-            </div>
-            {ranking.campaignName && (
-              <div className="ml-auto">
-                <span className="text-xs px-2 py-1 rounded-full font-medium" style={{ background: `${BRAND}22`, color: BRAND }}>{ranking.campaignName}</span>
+        {/* My stats summary — sourced from uploaded leaderboard data */}
+        {(myLeaderboardRow || ranking) && (() => {
+          // Prefer leaderboard row (from uploaded commission file) over cycleStats ranking
+          const myRank = myLeaderboardRow?.rank ?? ranking?.rank ?? null;
+          const myProfit = myLeaderboardRow != null ? Number(myLeaderboardRow.profit) : Number(ranking?.profit ?? 0);
+          const myCommission = myLeaderboardRow != null ? Number(myLeaderboardRow.commissionEgp) : 0;
+          const totalAgents = allLeaderboardRows.length > 0 ? allLeaderboardRows.length : (ranking?.total ?? 0);
+          const campaignLabel = myLeaderboardRow?.campaignName ?? ranking?.campaignName ?? null;
+          const rankMedal = myRank === 1 ? "🥇" : myRank === 2 ? "🥈" : myRank === 3 ? "🥉" : myRank != null ? `#${myRank}` : "—";
+          const rankDisplayColor = myRank != null && myRank <= 3 ? "oklch(0.75 0.18 55)" : rankColor;
+          const fmtMoneySummary = (v: number) => v < 0 ? `-$${fmtNum(Math.abs(v))}` : `$${fmtNum(v)}`;
+          return (
+            <div className="px-4 py-3 flex items-center gap-6 flex-wrap" style={{ borderBottom: `1px solid ${theme.cardBorder}`, background: theme.surface }}>
+              <div>
+                <p className="text-xs" style={{ color: theme.textFaint }}>Your Rank</p>
+                <p className="text-xl font-bold" style={{ color: rankDisplayColor }}>
+                  {rankMedal}
+                  {totalAgents > 0 && <span className="text-sm font-normal ml-1" style={{ color: theme.textFaint }}>/ {totalAgents}</span>}
+                </p>
               </div>
-            )}
-          </div>
-        )}
+              <div>
+                <p className="text-xs" style={{ color: theme.textFaint }}>Your Profit</p>
+                <p className="text-base font-semibold" style={{ color: myProfit < 0 ? "#ef4444" : theme.text }}>{fmtMoneySummary(myProfit)}</p>
+              </div>
+              {myCommission > 0 && (
+                <div>
+                  <p className="text-xs" style={{ color: theme.textFaint }}>Commission</p>
+                  <p className="text-base font-semibold" style={{ color: "oklch(0.55 0.18 145)" }}>EGP {fmtNum(myCommission)}</p>
+                </div>
+              )}
+              {campaignLabel && (
+                <div className="ml-auto">
+                  <span className="text-xs px-2 py-1 rounded-full font-medium" style={{ background: `${BRAND}22`, color: BRAND }}>{campaignLabel}</span>
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Campaign tabs */}
         {leaderboardCampaigns.length > 1 && (
@@ -2551,7 +2561,7 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
                   <th className="px-4 py-2 text-left font-semibold" style={{ color: theme.textFaint }}>Campaign</th>
                   <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Revenue ($)</th>
                   <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Profit ($)</th>
-                  <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Rev/Hr ($)</th>
+                  <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Commission (EGP)</th>
                 </tr>
               </thead>
               <tbody>
@@ -2559,12 +2569,9 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
                   const isMe = (myCrdts && row.crdts === myCrdts) ||
                     (myTraineeCode && row.crdts === myTraineeCode);
                   const medal = row.rank === 1 ? "🥇" : row.rank === 2 ? "🥈" : row.rank === 3 ? "🥉" : null;
-                  const fmtMoney = (v: number) => {
-                    const isNeg = v < 0;
-                    return isNeg ? `-$${fmtNum(Math.abs(v))}` : `$${fmtNum(v)}`;
-                  };
-                  const profitColor = (v: number) =>
-                    v < 0 ? "#ef4444" : "oklch(0.65 0.15 142)";
+                  const fmtMoney = (v: number) => v < 0 ? `-$${fmtNum(Math.abs(v))}` : `$${fmtNum(v)}`;
+                  const profitColor = (v: number) => v < 0 ? "#ef4444" : "oklch(0.65 0.15 142)";
+                  const commAmt = Number(row.commissionEgp ?? 0);
                   return (
                     <tr key={`${row.crdts}-${row.campaignName}`}
                       style={{
@@ -2581,7 +2588,9 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
                       <td className="px-4 py-2.5" style={{ color: theme.textMuted }}>{row.campaignName}</td>
                       <td className="px-4 py-2.5 text-right" style={{ color: Number(row.revenue) < 0 ? "#ef4444" : theme.text }}>{fmtMoney(Number(row.revenue))}</td>
                       <td className="px-4 py-2.5 text-right font-semibold" style={{ color: profitColor(Number(row.profit)) }}>{fmtMoney(Number(row.profit))}</td>
-                      <td className="px-4 py-2.5 text-right" style={{ color: Number(row.revPerHr) < 0 ? "#ef4444" : theme.textFaint }}>{fmtMoney(Number(row.revPerHr))}</td>
+                      <td className="px-4 py-2.5 text-right font-semibold" style={{ color: commAmt > 0 ? "oklch(0.55 0.18 145)" : theme.textFaint }}>
+                        {commAmt > 0 ? `EGP ${fmtNum(commAmt)}` : "—"}
+                      </td>
                     </tr>
                   );
                 })}

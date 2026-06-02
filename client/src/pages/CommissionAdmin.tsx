@@ -1,10 +1,10 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useCallback } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Upload, Download, FileSpreadsheet, CheckCircle2, Clock, AlertTriangle, Info, DollarSign, Pencil, Check, X, Trash2 } from "lucide-react";
+import { Upload, Download, FileSpreadsheet, CheckCircle2, Clock, AlertTriangle, Info, DollarSign, Pencil, Check, X, Trash2, Trophy, Copy, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 
@@ -64,7 +64,67 @@ function n(v: string | null | undefined) {
 // ─── Main Component ────────────────────────────────────────────────────────────
 export default function CommissionAdmin() {
   const utils = trpc.useUtils();
-  const [activeTab, setActiveTab] = useState<"records" | "upload">("records");
+  const [activeTab, setActiveTab] = useState<"records" | "leaderboard" | "upload">("records");
+
+  // Leaderboard tab state
+  const [lbCycle, setLbCycle] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
+  const [lbCampaign, setLbCampaign] = useState<string>("all");
+  const { data: lbData = [], isLoading: lbLoading } = trpc.commission.getFullLeaderboard.useQuery(
+    { cycleKey: lbCycle },
+    { enabled: activeTab === "leaderboard" }
+  );
+  type LbRow = { rank: number; crdts: string; alias: string; campaignName: string; profit: number; revenue: number; commissionEgp: number };
+  const lbRows = lbData as LbRow[];
+  const lbCampaigns = ["all", ...Array.from(new Set(lbRows.map(r => r.campaignName))).sort()];
+  const lbFiltered = lbCampaign === "all" ? lbRows : lbRows.filter(r => r.campaignName === lbCampaign);
+
+  // Slack message generator state
+  const [slackDialog, setSlackDialog] = useState(false);
+  const [slackCopied, setSlackCopied] = useState(false);
+  const [slackCycle, setSlackCycle] = useState<string>("");
+  const [slackPerfMonth, setSlackPerfMonth] = useState<string>("");
+  const [slackLeaderboard, setSlackLeaderboard] = useState<LbRow[]>([]);
+
+  const generateSlackMessage = useCallback((cycle: string, perfMonth: string, rows: LbRow[]) => {
+    const perfLabel = perfMonth || formatMonthLabel(cycle);
+    const cycleLabel = formatMonthLabel(cycle);
+    // First day of perf month, last day of perf month
+    const [py, pm] = (perfMonth ? (() => {
+      // perfMonth is a label like "March 2026" — derive YYYY-MM from cycle - 2 months
+      const d = new Date(cycle + "-01");
+      d.setMonth(d.getMonth() - 2);
+      return [`${d.getFullYear()}`, String(d.getMonth() + 1).padStart(2, "0")];
+    })() : cycle.split("-"));
+    const firstDay = `1 ${new Date(parseInt(py), parseInt(pm) - 1).toLocaleString("en-US", { month: "long", year: "numeric" })}`;
+    const lastDay = (() => {
+      const last = new Date(parseInt(py), parseInt(pm), 0);
+      return `${last.getDate()} ${last.toLocaleString("en-US", { month: "long", year: "numeric" })}`;
+    })();
+    const top3 = rows.filter(r => r.rank <= 3).sort((a, b) => a.rank - b.rank);
+    const medals = ["🥇", "🥈", "🥉"];
+    const top3Lines = top3.map((r, i) =>
+      `${medals[i]} *${r.alias || r.crdts}* — $${r.profit.toLocaleString()} profit${r.commissionEgp > 0 ? ` · EGP ${r.commissionEgp.toLocaleString()} commission` : ""}`
+    ).join("\n");
+    const totalAgents = rows.length;
+    return `🎉 *Commission Released — ${perfLabel}*
+
+Hey team! Your commission for *${firstDay} → ${lastDay}* has been calculated and added to your payslip for the *${cycleLabel}* pay cycle.
+
+📊 *Top Performers this cycle:*
+${top3Lines || "_(No leaderboard data yet)_"}
+
+💪 Great work everyone — ${totalAgents} agent${totalAgents !== 1 ? "s" : ""} on the board this cycle. Keep pushing!
+
+Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.com`;
+  }, []);
+
+  const slackMessage = useMemo(
+    () => slackCycle ? generateSlackMessage(slackCycle, slackPerfMonth, slackLeaderboard) : "",
+    [slackCycle, slackPerfMonth, slackLeaderboard, generateSlackMessage]
+  );
 
   // Records tab state
   const [viewMonth, setViewMonth] = useState<string>(() => {
@@ -149,6 +209,11 @@ export default function CommissionAdmin() {
         setParsedLeaderboard([]);
         setPerformanceMonth("");
         setPerformanceMonthKey("");
+        // Open Slack message generator
+        setSlackCycle(payCycle);
+        setSlackPerfMonth(performanceMonth);
+        setSlackLeaderboard(parsedLeaderboard as LbRow[]);
+        setSlackDialog(true);
       }
       setViewMonth(payCycle);
       setActiveTab("records");
@@ -390,7 +455,7 @@ export default function CommissionAdmin() {
 
       {/* Tab bar */}
       <div className="flex gap-1 border-b">
-        {(["records", "upload"] as const).map(tab => (
+        {(["records", "leaderboard", "upload"] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -400,7 +465,7 @@ export default function CommissionAdmin() {
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            {tab === "records" ? "Commission Records" : "Upload Guide"}
+            {tab === "records" ? "Commission Records" : tab === "leaderboard" ? "Leaderboard" : "Upload Guide"}
           </button>
         ))}
       </div>
@@ -566,6 +631,121 @@ export default function CommissionAdmin() {
                         <td colSpan={3} className="px-4 py-3 text-right text-sm">Total Commission:</td>
                         <td className="px-4 py-3 text-right text-sm text-emerald-600">{fmtEGP(totalCommission)}</td>
                         <td colSpan={3} />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
+
+      {/* ── Leaderboard Tab ── */}
+      {activeTab === "leaderboard" && (
+        <div className="space-y-4">
+          {/* Controls */}
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium">Pay Cycle:</label>
+              <input
+                type="month"
+                value={lbCycle}
+                onChange={e => { setLbCycle(e.target.value); setLbCampaign("all"); }}
+                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+              />
+            </div>
+            <Button
+              variant="outline" size="sm" className="gap-1.5"
+              onClick={() => {
+                setSlackCycle(lbCycle);
+                setSlackPerfMonth("");
+                setSlackLeaderboard(lbRows);
+                setSlackDialog(true);
+              }}
+            >
+              <MessageSquare className="h-3.5 w-3.5" /> Generate Slack Message
+            </Button>
+          </div>
+
+          {/* Campaign filter tabs */}
+          {lbCampaigns.length > 1 && (
+            <div className="flex gap-1 flex-wrap">
+              {lbCampaigns.map(c => (
+                <button key={c} onClick={() => setLbCampaign(c)}
+                  className={`text-xs px-3 py-1 rounded-full font-medium transition-colors border ${
+                    lbCampaign === c
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "bg-transparent text-muted-foreground border-border hover:text-foreground"
+                  }`}>
+                  {c === "all" ? "All Campaigns" : c}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Leaderboard table */}
+          {lbLoading ? (
+            <div className="h-32 animate-pulse rounded-xl bg-muted" />
+          ) : lbFiltered.length === 0 ? (
+            <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">No leaderboard data for this pay cycle.</CardContent></Card>
+          ) : (
+            <Card>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/40">
+                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Rank</th>
+                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Alias</th>
+                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">CRDTS</th>
+                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Campaign</th>
+                        <th className="px-4 py-3 text-right font-semibold text-muted-foreground">Revenue ($)</th>
+                        <th className="px-4 py-3 text-right font-semibold text-muted-foreground">Profit ($)</th>
+                        <th className="px-4 py-3 text-right font-semibold text-muted-foreground">Commission (EGP)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lbFiltered.map((row, idx) => {
+                        const medal = row.rank === 1 ? "🥇" : row.rank === 2 ? "🥈" : row.rank === 3 ? "🥉" : null;
+                        const fmtMoney = (v: number) => v < 0 ? `-$${Math.abs(v).toLocaleString()}` : `$${v.toLocaleString()}`;
+                        const commAmt = Number(row.commissionEgp ?? 0);
+                        return (
+                          <tr key={`${row.crdts}-${row.campaignName}`}
+                            className={`border-b last:border-0 ${
+                              idx % 2 === 0 ? "" : "bg-muted/20"
+                            } ${row.rank <= 3 ? "bg-amber-50/60" : ""}`}>
+                            <td className="px-4 py-3 font-bold" style={{ color: row.rank <= 3 ? "oklch(0.65 0.18 55)" : undefined }}>
+                              {medal ? <span>{medal} #{row.rank}</span> : `#${row.rank}`}
+                            </td>
+                            <td className="px-4 py-3 font-medium">{row.alias || "—"}</td>
+                            <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{row.crdts}</td>
+                            <td className="px-4 py-3 text-muted-foreground">{row.campaignName}</td>
+                            <td className={`px-4 py-3 text-right ${
+                              Number(row.revenue) < 0 ? "text-red-600" : ""
+                            }`}>{fmtMoney(Number(row.revenue))}</td>
+                            <td className={`px-4 py-3 text-right font-semibold ${
+                              Number(row.profit) < 0 ? "text-red-600" : "text-emerald-600"
+                            }`}>{fmtMoney(Number(row.profit))}</td>
+                            <td className={`px-4 py-3 text-right font-semibold ${
+                              commAmt > 0 ? "text-emerald-700" : "text-muted-foreground"
+                            }`}>{commAmt > 0 ? `EGP ${commAmt.toLocaleString()}` : "—"}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t bg-muted/30 font-semibold">
+                        <td colSpan={4} className="px-4 py-3 text-right text-sm text-muted-foreground">{lbFiltered.length} agents</td>
+                        <td className="px-4 py-3 text-right text-sm">
+                          {(() => { const t = lbFiltered.reduce((s, r) => s + Number(r.revenue), 0); return t < 0 ? `-$${Math.abs(t).toLocaleString()}` : `$${t.toLocaleString()}`; })()}
+                        </td>
+                        <td className="px-4 py-3 text-right text-sm text-emerald-600">
+                          {(() => { const t = lbFiltered.reduce((s, r) => s + Number(r.profit), 0); return t < 0 ? `-$${Math.abs(t).toLocaleString()}` : `$${t.toLocaleString()}`; })()}
+                        </td>
+                        <td className="px-4 py-3 text-right text-sm text-emerald-700">
+                          EGP {lbFiltered.reduce((s, r) => s + Number(r.commissionEgp ?? 0), 0).toLocaleString()}
+                        </td>
                       </tr>
                     </tfoot>
                   </table>
@@ -878,6 +1058,52 @@ export default function CommissionAdmin() {
               onClick={() => clearCycleMutation.mutate({ cycleKey: viewMonth })}
             >
               {clearCycleMutation.isPending ? "Clearing…" : `Clear ${formatMonthLabel(viewMonth)}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Slack Message Generator Dialog ── */}
+      <Dialog open={slackDialog} onOpenChange={open => { setSlackDialog(open); if (!open) setSlackCopied(false); }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MessageSquare className="h-5 w-5 text-violet-500" />
+              Slack Announcement Message
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <p className="text-sm text-muted-foreground">
+              Copy this message and paste it into your Slack channel to announce the commission release.
+            </p>
+            <div className="relative">
+              <textarea
+                className="w-full min-h-[280px] rounded-lg border border-input bg-muted/30 px-4 py-3 text-sm font-mono leading-relaxed resize-y focus:outline-none focus:ring-2 focus:ring-ring"
+                value={slackMessage}
+                onChange={() => {}} // read-only display; user can edit in Slack
+                readOnly
+              />
+            </div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground bg-muted/40 rounded-md px-3 py-2">
+              <Info className="h-3.5 w-3.5 flex-shrink-0" />
+              <span>This message uses Slack markdown formatting (*bold*, _italic_). Paste directly into Slack for best results.</span>
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setSlackDialog(false)}>Close</Button>
+            <Button
+              size="sm"
+              className="gap-1.5"
+              onClick={() => {
+                navigator.clipboard.writeText(slackMessage).then(() => {
+                  setSlackCopied(true);
+                  toast.success("Message copied to clipboard!");
+                  setTimeout(() => setSlackCopied(false), 3000);
+                }).catch(() => toast.error("Copy failed — please select and copy manually"));
+              }}
+            >
+              {slackCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              {slackCopied ? "Copied!" : "Copy to Clipboard"}
             </Button>
           </DialogFooter>
         </DialogContent>

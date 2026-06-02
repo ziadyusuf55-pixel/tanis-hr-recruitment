@@ -1004,3 +1004,13 @@
 - [x] Upload dialog: Pay Cycle auto-calculated as performanceMonth + 2 months (confirmed working)
 - [x] Upload → payroll sync: commissionEgp synced to payrollRecords on upload (confirmed working)
 - [x] Manual edit → payroll sync: updateCommission syncs to payrollRecords (confirmed working)
+
+## Round 36 — Leaderboard + Slack Message Generator
+- [x] AgentPortal leaderboard: Rev/Hr column removed, replaced with Commission (EGP)
+- [x] AgentPortal leaderboard summary: Your Rank shows medals 🥇🥈🥉, Your Profit from uploaded file, Commission shown when > 0
+- [x] AgentPortal leaderboard: myLeaderboardRow derived from uploaded file data (preferred over cycleStats)
+- [x] CommissionAdmin: new Leaderboard tab showing full leaderboard table (Rank, Alias, CRDTS, Campaign, Revenue, Profit, Commission) with campaign filter tabs and totals footer
+- [x] CommissionAdmin Leaderboard tab: "Generate Slack Message" button opens announcement dialog
+- [x] CommissionAdmin: Slack message generator dialog — auto-generates announcement with performance month, date range, top 3 agents with medals, total agent count, hub.tanis-eg.com link
+- [x] Slack message dialog: copy-to-clipboard button with confirmation feedback
+- [x] Slack message dialog auto-opens after successful commission upload
