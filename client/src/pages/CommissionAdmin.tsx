@@ -182,7 +182,10 @@ export default function CommissionAdmin() {
         const isValidCrdts = (s: string) =>
           s !== "" && /^\d+$/.test(s) && !(/\s/.test(s));
 
-        // ── 1. Parse Campaign tabs for leaderboard (rows start at row 5, i.e. index 4 in 0-based) ──
+        // ── 1. Parse Campaign tabs for leaderboard ──
+        // File structure: Rows 1-2 = title rows, Row 3 = column headers, Row 4 = sub-headers, Row 5+ = data
+        // Strategy: use range:2 so row 3 (0-based index 2) becomes the header row,
+        // then skip the first result row which is the sub-header row (row 4).
         const campaignSheets = wb.SheetNames.filter(name => {
           const low = name.toLowerCase();
           return low.includes("campaign") || low.includes("camp");
@@ -191,18 +194,17 @@ export default function CommissionAdmin() {
         const leaderboardRows: ParsedLeaderboardRow[] = [];
         for (const sheetName of campaignSheets) {
           const ws = wb.Sheets[sheetName];
-          // Use header: 4 to skip rows 1-4 (title/headers/sub-headers), data starts at row 5
-          // range: 3 means start from row index 3 (0-based) = Excel row 4
-          // sheet_to_json uses the first row in range as headers automatically
-          // So row 4 = headers, row 5+ = data rows (no need to slice)
+          // range:2 → 0-based row index 2 = Excel row 3 → used as header row
+          // First item in raw[] will be the sub-header row (row 4) — we skip it
           const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
             defval: null,
             rawNumbers: false,
-            range: 3, // 0-based row index 3 = Excel row 4 (header row)
+            range: 2, // Excel row 3 = headers
           });
-          const dataRows = raw; // row 4 is headers, raw already contains only data rows 5+
+          // Skip first row (sub-headers, row 4); actual data starts at index 1
+          const dataRows = raw.slice(1);
 
-          const norm = (k: string) => k.toLowerCase().replace(/[\s()%_-]/g, "");
+          const norm = (k: string) => k.toLowerCase().replace(/[\s()%_\-]/g, "");
           for (const r of dataRows) {
             const get = (key: string) => {
               const found = Object.keys(r).find(k => norm(k) === norm(key));
@@ -220,7 +222,7 @@ export default function CommissionAdmin() {
               loginHours: cleanNum(get("Hours") ?? get("Login Hours") ?? get("LoginHours")),
               revenue: cleanNum(get("Revenue")),
               profit: cleanNum(get("Profit")),
-              commissionEgp: cleanNum(get("Commission") ?? get("Commission (EGP)")),
+              commissionEgp: cleanNum(get("Commission (EGP)") ?? get("Commission")),
               performanceMonth: cleanStr(get("Performance Month")) || performanceMonth || undefined,
             });
           }
