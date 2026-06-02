@@ -2489,17 +2489,27 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
             <div>
               <p className="text-xs" style={{ color: theme.textFaint }}>Your Rank</p>
               <p className="text-xl font-bold" style={{ color: rankColor }}>
-                {ranking.rank != null ? `#${ranking.rank}` : "—"}
+                {ranking.rank != null
+                  ? (ranking.rank === 1 ? "🥇" : ranking.rank === 2 ? "🥈" : ranking.rank === 3 ? "🥉" : `#${ranking.rank}`)
+                  : "—"}
                 {ranking.total > 0 && <span className="text-sm font-normal ml-1" style={{ color: theme.textFaint }}>/ {ranking.total}</span>}
               </p>
             </div>
             <div>
               <p className="text-xs" style={{ color: theme.textFaint }}>Your Profit</p>
-              <p className="text-base font-semibold" style={{ color: theme.text }}>${fmtNum(ranking.profit)}</p>
+              {(() => {
+                const v = Number(ranking.profit ?? 0);
+                const isNeg = v < 0;
+                return <p className="text-base font-semibold" style={{ color: isNeg ? "#ef4444" : theme.text }}>{isNeg ? `-$${fmtNum(Math.abs(v))}` : `$${fmtNum(v)}`}</p>;
+              })()}
             </div>
             <div>
               <p className="text-xs" style={{ color: theme.textFaint }}>Rev/Hr</p>
-              <p className="text-base font-semibold" style={{ color: theme.text }}>${fmtNum(ranking.revPerHr)}</p>
+              {(() => {
+                const v = Number(ranking.revPerHr ?? 0);
+                const isNeg = v < 0;
+                return <p className="text-base font-semibold" style={{ color: isNeg ? "#ef4444" : theme.text }}>{isNeg ? `-$${fmtNum(Math.abs(v))}` : `$${fmtNum(v)}`}</p>;
+              })()}
             </div>
             {ranking.campaignName && (
               <div className="ml-auto">
@@ -2541,7 +2551,7 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
                   <th className="px-4 py-2 text-left font-semibold" style={{ color: theme.textFaint }}>Campaign</th>
                   <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Revenue ($)</th>
                   <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Profit ($)</th>
-                  <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Login Hrs</th>
+                  <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Rev/Hr ($)</th>
                 </tr>
               </thead>
               <tbody>
@@ -2549,11 +2559,12 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
                   const isMe = (myCrdts && row.crdts === myCrdts) ||
                     (myTraineeCode && row.crdts === myTraineeCode);
                   const medal = row.rank === 1 ? "🥇" : row.rank === 2 ? "🥈" : row.rank === 3 ? "🥉" : null;
-                  // loginHours comes from commissionLeaderboard table (uploaded from file);
-                  // if 0 or null it means hours were not stored — show dash
-                  const hoursDisplay = row.loginHours && row.loginHours > 0
-                    ? fmtNum(row.loginHours, "h")
-                    : "—";
+                  const fmtMoney = (v: number) => {
+                    const isNeg = v < 0;
+                    return isNeg ? `-$${fmtNum(Math.abs(v))}` : `$${fmtNum(v)}`;
+                  };
+                  const profitColor = (v: number) =>
+                    v < 0 ? "#ef4444" : "oklch(0.65 0.15 142)";
                   return (
                     <tr key={`${row.crdts}-${row.campaignName}`}
                       style={{
@@ -2568,9 +2579,9 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
                         {isMe && <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded-full font-semibold" style={{ background: `${BRAND}33`, color: BRAND }}>You</span>}
                       </td>
                       <td className="px-4 py-2.5" style={{ color: theme.textMuted }}>{row.campaignName}</td>
-                      <td className="px-4 py-2.5 text-right" style={{ color: theme.text }}>${fmtNum(row.revenue)}</td>
-                      <td className="px-4 py-2.5 text-right font-semibold" style={{ color: "oklch(0.65 0.15 142)" }}>${fmtNum(row.profit)}</td>
-                      <td className="px-4 py-2.5 text-right" style={{ color: theme.textFaint }}>{hoursDisplay}</td>
+                      <td className="px-4 py-2.5 text-right" style={{ color: Number(row.revenue) < 0 ? "#ef4444" : theme.text }}>{fmtMoney(Number(row.revenue))}</td>
+                      <td className="px-4 py-2.5 text-right font-semibold" style={{ color: profitColor(Number(row.profit)) }}>{fmtMoney(Number(row.profit))}</td>
+                      <td className="px-4 py-2.5 text-right" style={{ color: Number(row.revPerHr) < 0 ? "#ef4444" : theme.textFaint }}>{fmtMoney(Number(row.revPerHr))}</td>
                     </tr>
                   );
                 })}
