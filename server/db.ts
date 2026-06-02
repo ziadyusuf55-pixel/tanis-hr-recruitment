@@ -2576,3 +2576,85 @@ export async function getPendingDeletionAgents() {
   }).from(workforceAgents)
     .where(sql`${workforceAgents.agentStatus} IN ('resigned', 'terminated')`);
 }
+
+// ─── Full Leaderboard (all campaigns) ─────────────────────────────────────────
+export async function getFullLeaderboard(cycleKey: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { cycleStats, workforceAgents, campaigns } = await import("../drizzle/schema");
+  const { eq, and, inArray } = await import("drizzle-orm");
+
+  // Get all active agents with their campaign info
+  const agents = await db.select({
+    crdts: workforceAgents.crdts,
+    alias: workforceAgents.alias,
+    fullName: workforceAgents.fullName,
+    campaignId: workforceAgents.campaignId,
+  }).from(workforceAgents).where(sql`${workforceAgents.crdts} IS NOT NULL`);
+
+  const crdtsList = agents.map(a => a.crdts).filter(Boolean) as string[];
+  if (crdtsList.length === 0) return [];
+
+  // Get all campaign names
+  const allCampaigns = await db.select({ id: campaigns.id, name: campaigns.name }).from(campaigns);
+  const campaignMap = new Map(allCampaigns.map(c => [c.id, c.name]));
+
+  // Get cycle stats for all agents
+  const stats = await db.select({
+    crdts: cycleStats.crdts,
+    profit: sql<number>`SUM(${cycleStats.profit})`.mapWith(Number),
+    loginHours: sql<number>`SUM(${cycleStats.loginHours})`.mapWith(Number),
+    revenue: sql<number>`SUM(${cycleStats.revenue})`.mapWith(Number),
+    totalCalls: sql<number>`SUM(${cycleStats.totalCalls})`.mapWith(Number),
+  }).from(cycleStats)
+    .where(and(eq(cycleStats.cycleKey, cycleKey), inArray(cycleStats.crdts, crdtsList)))
+    .groupBy(cycleStats.crdts);
+
+  const statsMap = new Map(stats.map(s => [s.crdts, s]));
+
+  // Build ranked list
+  const rows = agents
+    .filter(a => a.crdts && statsMap.has(a.crdts!))
+    .map(a => {
+      const s = statsMap.get(a.crdts!)!;
+      return {
+        crdts: a.crdts!,
+        alias: a.alias ?? a.fullName ?? a.crdts!,
+        campaignId: a.campaignId ?? null,
+        campaignName: a.campaignId ? (campaignMap.get(a.campaignId) ?? `Campaign ${a.campaignId}`) : "Unassigned",
+        profit: s.profit,
+        revenue: s.revenue,
+        loginHours: s.loginHours,
+        totalCalls: s.totalCalls,
+        revPerHr: s.loginHours > 0 ? Math.round((s.revenue / s.loginHours) * 100) / 100 : 0,
+      };
+    })
+    .sort((a, b) => b.profit - a.profit)
+    .map((row, i) => ({ ...row, rank: i + 1 }));
+
+  return rows;
+}
+
+// ─── Generate unique trainee code (6-digit, not already in use) ───────────────
+export async function generateUniqueTraineeCode(): Promise<string> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { workforceAgents, agentCredentials } = await import("../drizzle/schema");
+
+  // Get all existing trainee codes from workforce and credentials tables
+  const existing = await db.select({ code: workforceAgents.traineeCode }).from(workforceAgents);
+  const existingCreds = await db.select({ code: agentCredentials.traineeCode }).from(agentCredentials);
+  const usedCodes = new Set([
+    ...existing.map(r => r.code as string),
+    ...existingCreds.map(r => r.code as string),
+  ].filter(Boolean) as string[]);
+
+  // Generate a random 6-digit code not in use (range 100000–999999)
+  let attempts = 0;
+  while (attempts < 1000) {
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    if (!usedCodes.has(code)) return code;
+    attempts++;
+  }
+  throw new Error("Could not generate a unique trainee code after 1000 attempts");
+}

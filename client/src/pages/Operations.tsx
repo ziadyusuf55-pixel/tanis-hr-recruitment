@@ -39,6 +39,7 @@ import {
   KeyRound,
   Copy,
   Check,
+  Shuffle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -359,7 +360,7 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
             <div className="flex gap-2 justify-end">
               <Button variant="outline" onClick={() => setResetPwDialog(false)}>Cancel</Button>
               <Button
-                onClick={() => resetPassword.mutate({ candidateId: agent.candidateId })}
+                onClick={() => resetPassword.mutate({ traineeCode: agent.traineeCode, candidateId: agent.candidateId })}
                 disabled={resetPassword.isPending}
                 className="bg-blue-600 hover:bg-blue-700 text-white"
               >
@@ -848,6 +849,14 @@ export default function Operations() {
   const EMPTY_ADD_FORM: AddAgentForm = { candidateId: '', traineeCode: '', fullName: '', alias: '', campaignId: '', shiftHours: '', teamLeader: '', offDay1: '', offDay2: '', dialerCredentials: '' };
   const [addAgentForm, setAddAgentForm] = useState<AddAgentForm>(EMPTY_ADD_FORM);
   const { data: eligibleCandidates = [] } = trpc.workforce.getEligibleCandidates.useQuery(undefined, { enabled: addAgentDialog });
+  const generateUniqueId = trpc.workforce.generateUniqueId.useMutation({
+    onSuccess: (data) => {
+      setAddAgentForm(f => ({ ...f, traineeCode: data.code }));
+      toast.success(`Generated unique ID: ${data.code}`);
+    },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+
   const createWorkforceAgent = trpc.workforce.create.useMutation({
     onSuccess: () => {
       utils.workforce.list.invalidate();
@@ -1627,7 +1636,22 @@ export default function Operations() {
             )}
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Trainee Code</label>
-              <Input placeholder="e.g. TN-001" value={addAgentForm.traineeCode} onChange={e => setAddAgentForm(f => ({ ...f, traineeCode: e.target.value }))} />
+              <div className="flex gap-2">
+                <Input placeholder="e.g. 114001" value={addAgentForm.traineeCode} onChange={e => setAddAgentForm(f => ({ ...f, traineeCode: e.target.value }))} />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0 gap-1.5"
+                  onClick={() => generateUniqueId.mutate()}
+                  disabled={generateUniqueId.isPending}
+                  title="Generate a unique 6-digit agent ID"
+                >
+                  <Shuffle className="h-3.5 w-3.5" />
+                  {generateUniqueId.isPending ? "..." : "Auto"}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">Click Auto to generate a unique ID that avoids retired codes.</p>
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Full Name</label>

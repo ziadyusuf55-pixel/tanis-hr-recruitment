@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Upload, Download, FileSpreadsheet, CheckCircle2, Clock, AlertTriangle, Info, DollarSign } from "lucide-react";
+import { Upload, Download, FileSpreadsheet, CheckCircle2, Clock, AlertTriangle, Info, DollarSign, Pencil, Check, X } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 
@@ -78,6 +78,19 @@ export default function CommissionAdmin() {
   const [parseError, setParseError] = useState<string | null>(null);
   const [uploadWarnings, setUploadWarnings] = useState<Warning[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Edit commission state
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editValue, setEditValue] = useState<string>("");
+
+  const updateCommissionMutation = trpc.commission.updateCommission.useMutation({
+    onSuccess: () => {
+      toast.success("Commission updated and synced to payroll");
+      setEditingId(null);
+      utils.commission.getForMonth.invalidate({ month: viewMonth });
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   const uploadMutation = trpc.commission.upload.useMutation({
     onSuccess: (data) => {
@@ -325,7 +338,35 @@ export default function CommissionAdmin() {
                           <td className="px-4 py-3 text-muted-foreground text-xs">
                             {r.performanceMonth?.replace("Commission (", "").replace(" performance)", "") ?? "—"}
                           </td>
-                          <td className="px-4 py-3 text-right font-semibold text-emerald-600">{fmtEGP(r.commissionEgp)}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-emerald-600">
+                            {editingId === r.id ? (
+                              <div className="flex items-center justify-end gap-1">
+                                <span className="text-xs text-muted-foreground">EGP</span>
+                                <input
+                                  type="number"
+                                  value={editValue}
+                                  onChange={e => setEditValue(e.target.value)}
+                                  className="w-24 text-right text-sm border rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                                  autoFocus
+                                  onKeyDown={e => {
+                                    if (e.key === "Enter") updateCommissionMutation.mutate({ id: r.id, commissionEgp: parseFloat(editValue) || 0 });
+                                    if (e.key === "Escape") setEditingId(null);
+                                  }}
+                                />
+                                <button onClick={() => updateCommissionMutation.mutate({ id: r.id, commissionEgp: parseFloat(editValue) || 0 })} className="text-emerald-600 hover:text-emerald-700"><Check className="h-3.5 w-3.5" /></button>
+                                <button onClick={() => setEditingId(null)} className="text-muted-foreground hover:text-foreground"><X className="h-3.5 w-3.5" /></button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center justify-end gap-2 group">
+                                {fmtEGP(r.commissionEgp)}
+                                <button
+                                  onClick={() => { setEditingId(r.id); setEditValue(String(n(r.commissionEgp))); }}
+                                  className="opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-foreground"
+                                  title="Edit commission amount"
+                                ><Pencil className="h-3 w-3" /></button>
+                              </div>
+                            )}
+                          </td>
                           <td className="px-4 py-3 text-center text-xs text-muted-foreground">{formatMonthLabel(r.paymentCycle)}</td>
                           <td className="px-4 py-3 text-center">
                             {r.paymentStatus === "paid" ? (

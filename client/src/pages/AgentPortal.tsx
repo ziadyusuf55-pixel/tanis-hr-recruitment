@@ -2262,12 +2262,34 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
   const { data: logouts = [], isLoading: loadingLogouts } =
     trpc.cycleTracker.getMyClientLogoutsAgent.useQuery();
 
-  // Campaign ranking for selected cycle
+  // Campaign ranking for selected cycle (own stats)
   const { data: ranking, isLoading: loadingRanking } =
     trpc.cycleTracker.getMyCampaignRankingAgent.useQuery(
       { cycleKey: selectedCycle },
       { enabled: !!selectedCycle }
     );
+
+  // Full leaderboard for selected cycle (all agents)
+  const { data: fullLeaderboard = [], isLoading: loadingLeaderboard } =
+    trpc.commission.getFullLeaderboardAgent.useQuery(
+      { cycleKey: selectedCycle },
+      { enabled: !!selectedCycle }
+    );
+
+  // My own crdts for highlighting
+  const { data: myProfile } = trpc.workforce.getMyProfile.useQuery();
+  const myCrdts = (myProfile as { crdts?: string } | null)?.crdts ?? null;
+
+  // Leaderboard campaign tab state
+  const [leaderboardCampaign, setLeaderboardCampaign] = useState<string>("all");
+
+  // Derive unique campaign names from leaderboard data
+  const leaderboardCampaigns = ["all", ...Array.from(new Set((fullLeaderboard as Array<{ campaignName: string }>).map(r => r.campaignName))).sort()];
+
+  // Filtered leaderboard rows
+  const filteredLeaderboard = leaderboardCampaign === "all"
+    ? (fullLeaderboard as Array<{ rank: number; crdts: string; alias: string; campaignName: string; profit: number; revenue: number; loginHours: number; revPerHr: number }>)
+    : (fullLeaderboard as Array<{ rank: number; crdts: string; alias: string; campaignName: string; profit: number; revenue: number; loginHours: number; revPerHr: number }>).filter(r => r.campaignName === leaderboardCampaign);
 
   function formatMonthLabel(m: string) {
     const [y, mo] = m.split("-");
@@ -2381,20 +2403,20 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
         )}
       </div>
 
-      {/* ── Section 2: Campaign Ranking ── */}
+      {/* Section 2: Campaign Leaderboard */}
       <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        {/* Header */}
         <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
           <div className="flex items-center gap-2">
             <Trophy className="w-4 h-4" style={{ color: "oklch(0.75 0.18 55)" }} />
-            <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.textFaint }}>Campaign Ranking</p>
+            <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.textFaint }}>Campaign Leaderboard</p>
           </div>
           <select
             value={selectedCycle}
-            onChange={e => setSelectedCycle(e.target.value)}
+            onChange={e => { setSelectedCycle(e.target.value); setLeaderboardCampaign("all"); }}
             className="text-xs rounded-lg px-2 py-1 border"
             style={{ background: theme.surface, borderColor: theme.surfaceBorder, color: theme.text }}
           >
-            {/* Show last 6 months */}
             {Array.from({ length: 6 }, (_, i) => {
               const d = new Date(); d.setMonth(d.getMonth() - i);
               const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
@@ -2402,44 +2424,94 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
             })}
           </select>
         </div>
-        {loadingRanking ? (
-          <div className="h-24 animate-pulse" style={{ background: theme.surface }} />
-        ) : !ranking ? (
-          <div className="px-4 py-6 text-center text-sm" style={{ color: theme.textFaint }}>No ranking data.</div>
-        ) : (
-          <div className="px-4 py-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-xs" style={{ color: theme.textFaint }}>Your Rank</p>
-                <p className="text-2xl font-bold mt-0.5" style={{ color: rankColor }}>
-                  {ranking.rank != null ? `#${ranking.rank}` : "—"}
-                  {ranking.total > 0 && <span className="text-sm font-normal ml-1" style={{ color: theme.textFaint }}>/ {ranking.total}</span>}
-                </p>
-              </div>
-              <div className="text-right">
-                <p className="text-xs" style={{ color: theme.textFaint }}>Your Profit</p>
-                <p className="text-lg font-semibold" style={{ color: theme.text }}>${fmtNum(ranking.profit)}</p>
-              </div>
-              <div className="text-right">
-                <p className="text-xs" style={{ color: theme.textFaint }}>Rev/Hr</p>
-                <p className="text-lg font-semibold" style={{ color: theme.text }}>${fmtNum(ranking.revPerHr)}</p>
-              </div>
+
+        {/* My stats summary */}
+        {ranking && (
+          <div className="px-4 py-3 flex items-center gap-6" style={{ borderBottom: `1px solid ${theme.cardBorder}`, background: theme.surface }}>
+            <div>
+              <p className="text-xs" style={{ color: theme.textFaint }}>Your Rank</p>
+              <p className="text-xl font-bold" style={{ color: rankColor }}>
+                {ranking.rank != null ? `#${ranking.rank}` : "—"}
+                {ranking.total > 0 && <span className="text-sm font-normal ml-1" style={{ color: theme.textFaint }}>/ {ranking.total}</span>}
+              </p>
             </div>
-            {ranking.top3.length > 0 && (
-              <div>
-                <p className="text-xs font-medium mb-2" style={{ color: theme.textFaint }}>Top 3</p>
-                <div className="space-y-1.5">
-                  {ranking.top3.map((t) => (
-                    <div key={t.rank} className="flex items-center justify-between rounded-lg px-3 py-2"
-                      style={{ background: t.rank === 1 ? "oklch(0.75 0.18 55 / 0.12)" : theme.surface, border: `1px solid ${t.rank === 1 ? "oklch(0.75 0.18 55 / 0.3)" : theme.surfaceBorder}` }}>
-                      <span className="text-xs font-bold" style={{ color: t.rank === 1 ? "oklch(0.75 0.18 55)" : theme.textMuted }}>#{t.rank}</span>
-                      <span className="text-xs" style={{ color: theme.text }}>${fmtNum(t.profit)} profit</span>
-                      <span className="text-xs" style={{ color: theme.textFaint }}>${fmtNum(t.revPerHr)}/hr</span>
-                    </div>
-                  ))}
-                </div>
+            <div>
+              <p className="text-xs" style={{ color: theme.textFaint }}>Your Profit</p>
+              <p className="text-base font-semibold" style={{ color: theme.text }}>${fmtNum(ranking.profit)}</p>
+            </div>
+            <div>
+              <p className="text-xs" style={{ color: theme.textFaint }}>Rev/Hr</p>
+              <p className="text-base font-semibold" style={{ color: theme.text }}>${fmtNum(ranking.revPerHr)}</p>
+            </div>
+            {ranking.campaignName && (
+              <div className="ml-auto">
+                <span className="text-xs px-2 py-1 rounded-full font-medium" style={{ background: `${BRAND}22`, color: BRAND }}>{ranking.campaignName}</span>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Campaign tabs */}
+        {leaderboardCampaigns.length > 1 && (
+          <div className="flex gap-1 px-4 pt-3 pb-1 flex-wrap">
+            {leaderboardCampaigns.map(c => (
+              <button key={c} onClick={() => setLeaderboardCampaign(c)}
+                className="text-xs px-3 py-1 rounded-full font-medium transition-colors"
+                style={{
+                  background: leaderboardCampaign === c ? BRAND : theme.surface,
+                  color: leaderboardCampaign === c ? "#fff" : theme.textMuted,
+                  border: `1px solid ${leaderboardCampaign === c ? BRAND : theme.surfaceBorder}`,
+                }}>
+                {c === "all" ? "All Campaigns" : c}
+              </button>
+            ))}
+          </div>
+        )}
+
+        {/* Leaderboard table */}
+        {loadingLeaderboard ? (
+          <div className="h-32 animate-pulse m-4 rounded-lg" style={{ background: theme.surface }} />
+        ) : filteredLeaderboard.length === 0 ? (
+          <div className="px-4 py-8 text-center text-sm" style={{ color: theme.textFaint }}>No data for this cycle yet.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+                  <th className="px-4 py-2 text-left font-semibold" style={{ color: theme.textFaint }}>Rank</th>
+                  <th className="px-4 py-2 text-left font-semibold" style={{ color: theme.textFaint }}>Alias</th>
+                  <th className="px-4 py-2 text-left font-semibold" style={{ color: theme.textFaint }}>Campaign</th>
+                  <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Profit ($)</th>
+                  <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Rev/Hr ($)</th>
+                  <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Login Hrs</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredLeaderboard.map((row, idx) => {
+                  const isMe = myCrdts && row.crdts === myCrdts;
+                  const medal = row.rank === 1 ? "🥇" : row.rank === 2 ? "🥈" : row.rank === 3 ? "🥉" : null;
+                  return (
+                    <tr key={row.crdts}
+                      style={{
+                        background: isMe ? `${BRAND}18` : idx % 2 === 0 ? "transparent" : `${theme.surface}88`,
+                        border: isMe ? `1px solid ${BRAND}44` : undefined,
+                      }}>
+                      <td className="px-4 py-2.5 font-bold" style={{ color: row.rank <= 3 ? "oklch(0.75 0.18 55)" : theme.textMuted }}>
+                        {medal ? <span>{medal} #{row.rank}</span> : `#${row.rank}`}
+                      </td>
+                      <td className="px-4 py-2.5 font-medium" style={{ color: theme.text }}>
+                        {row.alias}
+                        {isMe && <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded-full font-semibold" style={{ background: `${BRAND}33`, color: BRAND }}>You</span>}
+                      </td>
+                      <td className="px-4 py-2.5" style={{ color: theme.textMuted }}>{row.campaignName}</td>
+                      <td className="px-4 py-2.5 text-right font-semibold" style={{ color: "oklch(0.65 0.15 142)" }}>${fmtNum(row.profit)}</td>
+                      <td className="px-4 py-2.5 text-right" style={{ color: theme.text }}>${fmtNum(row.revPerHr)}</td>
+                      <td className="px-4 py-2.5 text-right" style={{ color: theme.textFaint }}>{fmtNum(row.loginHours, "h")}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </div>

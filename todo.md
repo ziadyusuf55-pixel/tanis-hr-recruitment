@@ -972,3 +972,12 @@
 - [x] Batch 3: Admin Payroll page — Upload History tab step-by-step admin guide
 - [x] Batch 4: Operations page — Nesting badge for agents joined within last 14 days (shows days remaining, auto-hides after 14d)
 - [x] Batch 4: Operations page — per-agent credential reset from agent detail panel
+
+## Round 65 — Commission Leaderboard + Manual Adjustment + ID Generator + Password Reset + Separation Fix
+- [x] Commission leaderboard with per-campaign tabs (All / per campaign) in agent portal Commission tab
+- [x] Manual commission adjustment inline edit in admin Commission Records table, synced to matching payroll record
+- [x] Commission auto-attach to correct payroll cycle: when payroll uploaded for month M, pull commissionRecords where paymentCycle = M and attach to agent
+- [x] Add "Manus Upload" to commission sheet auto-detection priority list (confirmed existing parser handles it)
+- [x] Random unique agent ID generator button in agent creation/edit form (6-digit, no duplicates)
+- [x] Reset agent portal password button per agent in admin Operations panel (already existed, improved to use traineeCode)
+- [x] Resigned/Terminated separation moves agent to Former Agents section in Candidates tab instead of deleting (already implemented, confirmed working)

@@ -1657,6 +1657,14 @@ const workforceRouter = router({
       await deleteCandidate(agent[0].candidateId);
       return { success: true };
     }),
+
+  // Generate a unique 6-digit trainee code not already in use
+  generateUniqueId: protectedProcedure
+    .mutation(async () => {
+      const { generateUniqueTraineeCode } = await import("./db");
+      const code = await generateUniqueTraineeCode();
+      return { code };
+    }),
 });
 // ─── Agent Comments Router ────────────────────────────────────────────────────
 const agentCommentsRouter = router({
@@ -3833,6 +3841,50 @@ const commissionRouter = router({
         }
       }
       return { count, warnings };
+    }),
+
+  // Update a single commission record amount (manual adjustment)
+  updateCommission: protectedProcedure
+    .input(z.object({
+      id: z.number(),
+      commissionEgp: z.number().min(0),
+    }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { commissions, payrollRecords } = await import("../drizzle/schema");
+      // Update commission record
+      await db.update(commissions).set({ commissionEgp: String(input.commissionEgp) }).where(eq(commissions.id, input.id));
+      // Sync to matching payroll record if exists (match by crdts + paymentCycle)
+      const comm = await db.select().from(commissions).where(eq(commissions.id, input.id)).limit(1);
+      if (comm[0]) {
+        const { crdts, paymentCycle } = comm[0];
+        if (crdts && paymentCycle) {
+          const { sql: sqlFn } = await import("drizzle-orm");
+          await db.update(payrollRecords)
+            .set({ commissionEgp: String(input.commissionEgp) })
+            .where(sqlFn`${payrollRecords.crdts} = ${crdts} AND ${payrollRecords.month} = ${paymentCycle}`);
+        }
+      }
+      return { ok: true };
+    }),
+
+  // Get full leaderboard for a cycle (all campaigns)
+  getFullLeaderboard: protectedProcedure
+    .input(z.object({ cycleKey: z.string() }))
+    .query(async ({ input }) => {
+      const { getFullLeaderboard } = await import("./db");
+      return getFullLeaderboard(input.cycleKey);
+    }),
+
+  // Agent-facing: get full leaderboard for a cycle
+  getFullLeaderboardAgent: publicProcedure
+    .input(z.object({ cycleKey: z.string() }))
+    .query(async ({ input }) => {
+      const { getFullLeaderboard } = await import("./db");
+      return getFullLeaderboard(input.cycleKey);
     }),
 });
 
