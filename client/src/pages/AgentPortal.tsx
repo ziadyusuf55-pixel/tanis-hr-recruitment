@@ -2292,6 +2292,15 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
   // My own crdts for highlighting
   const { data: myProfile } = trpc.workforce.getMyProfile.useQuery();
   const myCrdts = (myProfile as { crdts?: string } | null)?.crdts ?? null;
+  const myTraineeCode = (myProfile as { traineeCode?: string } | null)?.traineeCode ?? null;
+
+  // Upcoming commission records for this agent
+  const { data: upcomingCommissions = [] } = trpc.commission.getMyUpcomingCommission.useQuery(
+    { traineeCode: myTraineeCode! },
+    { enabled: !!myTraineeCode }
+  );
+  const pendingCommissions = (upcomingCommissions as Array<{ id: number; paymentCycle: string; commissionEgp: string | null; performanceMonth: string | null; paymentStatus: string | null }>)
+    .filter(c => c.paymentStatus !== "paid");
 
   // Leaderboard campaign tab state
   const [leaderboardCampaign, setLeaderboardCampaign] = useState<string>("all");
@@ -2343,6 +2352,37 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
           <p className="text-xs leading-relaxed" style={{ color: theme.textFaint }}>View your daily performance stats by month, campaign ranking, and client logout history.</p>
         </div>
       </div>
+
+      {/* ── Upcoming Commission Card ── */}
+      {pendingCommissions.length > 0 && (
+        <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${BRAND}44` }}>
+          <div className="px-4 py-3 flex items-center gap-2" style={{ borderBottom: `1px solid ${BRAND}22`, background: `${BRAND}0d` }}>
+            <DollarSign className="w-4 h-4" style={{ color: BRAND }} />
+            <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: BRAND }}>Upcoming Commission</p>
+          </div>
+          <div className="divide-y" style={{ borderColor: theme.cardBorder }}>
+            {pendingCommissions.map(c => {
+              const amount = parseFloat(c.commissionEgp ?? "0");
+              const [y, mo] = c.paymentCycle.split("-");
+              const payDate = new Date(parseInt(y), parseInt(mo) - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
+              return (
+                <div key={c.id} className="px-4 py-3 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold" style={{ color: theme.text }}>
+                      {c.performanceMonth ? `Commission — ${c.performanceMonth}` : "Commission"}
+                    </p>
+                    <p className="text-xs mt-0.5" style={{ color: theme.textFaint }}>Due on 1st {payDate} payslip</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-base font-bold" style={{ color: BRAND }}>EGP {amount.toLocaleString("en-EG", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</p>
+                    <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: "oklch(0.75 0.18 55 / 0.15)", color: "oklch(0.65 0.18 55)" }}>Pending</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ── Section 1: Monthly Performance ── */}
       <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>

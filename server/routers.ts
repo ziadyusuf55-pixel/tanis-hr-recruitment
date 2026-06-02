@@ -3917,6 +3917,20 @@ const commissionRouter = router({
       return { count };
     }),
 
+  // Agent-facing: get upcoming commission for the logged-in agent (by traineeCode)
+  getMyUpcomingCommission: publicProcedure
+    .input(z.object({ traineeCode: z.string() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { commissions } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      return db.select().from(commissions)
+        .where(eq(commissions.crdts, input.traineeCode))
+        .orderBy(commissions.paymentCycle);
+    }),
+
   // Get available cycle keys that have leaderboard data
   getLeaderboardCycles: publicProcedure
     .query(async () => {

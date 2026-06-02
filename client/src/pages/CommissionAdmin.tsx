@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useMemo } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -81,11 +81,15 @@ export default function CommissionAdmin() {
 
   // Upload dialog state
   const [uploadDialog, setUploadDialog] = useState(false);
-  const [payCycle, setPayCycle] = useState<string>(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  });
-  const [performanceMonth, setPerformanceMonth] = useState("");
+  const [performanceMonthKey, setPerformanceMonthKey] = useState<string>(""); // YYYY-MM
+  const [performanceMonth, setPerformanceMonth] = useState(""); // free text label
+  // Auto-calculate Pay Cycle = performanceMonthKey + 2 months
+  const payCycle = useMemo(() => {
+    if (!performanceMonthKey) return "";
+    const [y, m] = performanceMonthKey.split("-").map(Number);
+    const d = new Date(y, m - 1 + 2, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }, [performanceMonthKey]);
   const [parsedRows, setParsedRows] = useState<ParsedCommRow[]>([]);
   const [parsedLeaderboard, setParsedLeaderboard] = useState<ParsedLeaderboardRow[]>([]);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -122,6 +126,7 @@ export default function CommissionAdmin() {
         setParsedRows([]);
         setParsedLeaderboard([]);
         setPerformanceMonth("");
+        setPerformanceMonthKey("");
       }
       setViewMonth(payCycle);
       setActiveTab("records");
@@ -165,14 +170,15 @@ export default function CommissionAdmin() {
         for (const sheetName of campaignSheets) {
           const ws = wb.Sheets[sheetName];
           // Use header: 4 to skip rows 1-4 (title/headers/sub-headers), data starts at row 5
+          // range: 3 means start from row index 3 (0-based) = Excel row 4
+          // sheet_to_json uses the first row in range as headers automatically
+          // So row 4 = headers, row 5+ = data rows (no need to slice)
           const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
             defval: null,
             rawNumbers: false,
-            range: 3, // 0-based: skip first 3 rows (rows 1-3), row 4 = headers, row 5+ = data
+            range: 3, // 0-based row index 3 = Excel row 4 (header row)
           });
-          // The 4th row (index 3) is the actual header row
-          // With range:3, first parsed row is the header row itself, skip it
-          const dataRows = raw.slice(1); // skip the header row that becomes row 0
+          const dataRows = raw; // row 4 is headers, raw already contains only data rows 5+
 
           const norm = (k: string) => k.toLowerCase().replace(/[\s()%_-]/g, "");
           for (const r of dataRows) {
@@ -504,28 +510,34 @@ export default function CommissionAdmin() {
             <DialogTitle className="flex items-center gap-2"><Upload className="h-5 w-5" /> Upload Commission</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            {/* Pay cycle + performance month */}
+            {/* Performance month → auto Pay Cycle */}
             <div className="grid grid-cols-2 gap-4">
               <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium">Pay Cycle (which payslip)</label>
+                <label className="text-sm font-medium">Performance Month</label>
                 <input
                   type="month"
-                  value={payCycle}
-                  onChange={e => setPayCycle(e.target.value)}
+                  value={performanceMonthKey}
+                  onChange={e => {
+                    setPerformanceMonthKey(e.target.value);
+                    // Auto-fill label
+                    if (e.target.value) {
+                      const [y, mo] = e.target.value.split("-");
+                      const label = new Date(parseInt(y), parseInt(mo) - 1).toLocaleString("en-US", { month: "long", year: "numeric" });
+                      setPerformanceMonth(label);
+                    }
+                  }}
                   className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
                 />
-                <p className="text-xs text-muted-foreground">Which month's payslip this commission appears on</p>
+                <p className="text-xs text-muted-foreground">The month agents worked to earn this commission</p>
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium">Performance Month (label)</label>
-                <input
-                  type="text"
-                  placeholder="e.g. March 2026"
-                  value={performanceMonth}
-                  onChange={e => setPerformanceMonth(e.target.value)}
-                  className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
-                />
-                <p className="text-xs text-muted-foreground">Shown on payslip as "Commission (March 2026 performance)"</p>
+                <label className="text-sm font-medium">Pay Cycle (auto-calculated)</label>
+                <div className="h-9 rounded-md border border-input bg-muted px-3 py-1 text-sm flex items-center text-muted-foreground">
+                  {payCycle ? formatMonthLabel(payCycle) : "Select performance month first"}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {payCycle ? `Paid on 1st ${formatMonthLabel(payCycle)} (performance + 2 months)` : "Will be auto-set to performance month + 2 months"}
+                </p>
               </div>
             </div>
 
@@ -648,14 +660,14 @@ export default function CommissionAdmin() {
 
                 <div className="flex justify-end gap-2 pt-2">
                   <Button variant="outline" onClick={() => {
-                    setParsedRows([]); setParsedLeaderboard([]);
+                    setParsedRows([]); setParsedLeaderboard([]); setPerformanceMonthKey(""); setPerformanceMonth("");
                     if (fileInputRef.current) fileInputRef.current.value = "";
                   }}>
                     Clear
                   </Button>
                   <Button
                     onClick={async () => {
-                      if (!payCycle) { toast.error("Select a pay cycle"); return; }
+                      if (!performanceMonthKey) { toast.error("Select a performance month"); return; }
                       // Upload leaderboard rows first (if any)
                       if (parsedLeaderboard.length > 0) {
                         await uploadLeaderboardMutation.mutateAsync({
