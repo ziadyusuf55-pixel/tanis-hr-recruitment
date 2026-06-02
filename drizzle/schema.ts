@@ -872,3 +872,28 @@ export const commissions = mysqlTable("commissions", {
 }));
 export type Commission = typeof commissions.$inferSelect;
 export type InsertCommission = typeof commissions.$inferInsert;
+
+/**
+ * commissionLeaderboard — leaderboard rows parsed from Campaign tabs of the commission file.
+ * Stored separately from cycleStats (Vicidial data) so the official curated rankings
+ * from the commission file are the source of truth for the agent portal leaderboard.
+ * cycleKey: YYYY-MM matching the paymentCycle of the commission upload.
+ */
+export const commissionLeaderboard = mysqlTable("commission_leaderboard", {
+  id:              int("id").autoincrement().primaryKey(),
+  cycleKey:        varchar("cycleKey", { length: 7 }).notNull(),   // YYYY-MM
+  campaignName:    varchar("campaignName", { length: 100 }).notNull(),
+  crdts:           varchar("crdts", { length: 50 }).notNull(),
+  alias:           varchar("alias", { length: 255 }),
+  rank:            int("rank").notNull(),
+  loginHours:      decimal("loginHours", { precision: 10, scale: 2 }).default("0"),
+  revenue:         decimal("revenue", { precision: 14, scale: 2 }).default("0"),
+  profit:          decimal("profit", { precision: 14, scale: 2 }).default("0"),
+  commissionEgp:   decimal("commissionEgp", { precision: 10, scale: 2 }).default("0"),
+  performanceMonth: varchar("performanceMonth", { length: 100 }),
+  uploadedAt:      bigint("uploadedAt", { mode: "number" }).notNull(),
+}, (t) => ({
+  uqLeaderboard: uniqueIndex("uq_commission_leaderboard_cycle_crdts").on(t.cycleKey, t.crdts),
+}));
+export type CommissionLeaderboard = typeof commissionLeaderboard.$inferSelect;
+export type InsertCommissionLeaderboard = typeof commissionLeaderboard.$inferInsert;

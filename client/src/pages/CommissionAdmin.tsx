@@ -16,6 +16,18 @@ type ParsedCommRow = {
   performanceMonth?: string;
 };
 
+type ParsedLeaderboardRow = {
+  campaignName: string;
+  crdts: string;
+  alias?: string;
+  rank: number;
+  loginHours?: number;
+  revenue?: number;
+  profit?: number;
+  commissionEgp?: number;
+  performanceMonth?: string;
+};
+
 type CommRecord = {
   id: number;
   crdts: string | null;
@@ -75,6 +87,7 @@ export default function CommissionAdmin() {
   });
   const [performanceMonth, setPerformanceMonth] = useState("");
   const [parsedRows, setParsedRows] = useState<ParsedCommRow[]>([]);
+  const [parsedLeaderboard, setParsedLeaderboard] = useState<ParsedLeaderboardRow[]>([]);
   const [parseError, setParseError] = useState<string | null>(null);
   const [uploadWarnings, setUploadWarnings] = useState<Warning[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -92,6 +105,10 @@ export default function CommissionAdmin() {
     onError: (e) => toast.error(e.message),
   });
 
+  const uploadLeaderboardMutation = trpc.commission.uploadLeaderboard.useMutation({
+    onError: (e) => toast.error(`Leaderboard upload failed: ${e.message}`),
+  });
+
   const uploadMutation = trpc.commission.upload.useMutation({
     onSuccess: (data) => {
       const d = data as { count: number; warnings: Warning[] };
@@ -103,6 +120,7 @@ export default function CommissionAdmin() {
         toast.success(`Uploaded ${d.count} commission records for ${formatMonthLabel(payCycle)}`);
         setUploadDialog(false);
         setParsedRows([]);
+        setParsedLeaderboard([]);
         setPerformanceMonth("");
       }
       setViewMonth(payCycle);
@@ -112,69 +130,108 @@ export default function CommissionAdmin() {
     onError: (e) => toast.error(e.message),
   });
 
-  // ── Excel parsing ──
+  // ── Excel parsing (dual-purpose: Campaign tabs → leaderboard, Manus Upload → payments) ──
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setParseError(null);
     setParsedRows([]);
+    setParsedLeaderboard([]);
     setUploadWarnings([]);
 
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
         const data = new Uint8Array(ev.target!.result as ArrayBuffer);
-        const wb = XLSX.read(data, { type: "array" });
-        // Priority: "Manus Upload" > "Main" > "Commission" > first sheet
-        const sheetName = wb.SheetNames.find(n =>
-          n.toLowerCase().replace(/\s/g, "") === "manusupload"
-        ) ?? wb.SheetNames.find(n =>
-          n.toLowerCase().includes("main") || n.toLowerCase().includes("commission")
-        ) ?? wb.SheetNames[0];
-        const ws = wb.Sheets[sheetName];
-        // rawNumbers: false keeps text-prefixed numbers as strings (handles '114063 apostrophe trick)
-        const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null, rawNumbers: false });
+        const wb = XLSX.read(data, { type: "array", raw: false });
 
-        if (raw.length === 0) { setParseError("File appears empty."); return; }
+        const cleanNum = (v: unknown): number => {
+          if (v == null || v === "") return 0;
+          const s = String(v).replace(/^'/, "").replace(/,/g, "").trim();
+          const n = Number(s); return isNaN(n) ? 0 : n;
+        };
+        const cleanStr = (v: unknown): string =>
+          String(v ?? "").replace(/^'/, "").trim();
+        const isValidCrdts = (s: string) =>
+          s !== "" && /^\d+$/.test(s) && !(/\s/.test(s));
 
-        const norm = (k: string) => k.toLowerCase().replace(/[\s()%_-]/g, "");
-        const rows: ParsedCommRow[] = raw.map((r) => {
-          const get = (key: string) => {
-            const found = Object.keys(r).find(k => norm(k) === norm(key));
-            return found ? r[found] : null;
-          };
-          const num = (v: unknown): number => {
-            if (v == null || v === "") return 0;
-            // Strip any leading apostrophe Excel uses to force text
-            const s = String(v).replace(/^'/, "").trim();
-            const n = Number(s); return isNaN(n) ? 0 : n;
-          };
-          const cleanCrdts = (v: unknown): string => {
-            // Strip leading apostrophe if present (Excel text-format trick)
-            return String(v ?? "").replace(/^'/, "").trim();
-          };
-          return {
-            crdts: cleanCrdts(get("CRDTS")),
-            alias: String(get("Alias") ?? "").trim() || undefined,
-            commissionEgp: num(get("Commission (EGP)") ?? get("Commission")),
-            performanceMonth: String(get("Performance Month") ?? performanceMonth ?? "").trim() || undefined,
-          };
-        }).filter(r => {
-          // Skip rows where CRDTS is not a valid numeric-like code (catches text notes like row 9)
-          if (r.crdts === "") return false;
-          if (r.commissionEgp <= 0) return false;
-          // Skip rows where CRDTS looks like a sentence/note (contains spaces or is non-numeric)
-          if (/\s/.test(r.crdts) || !/^\d+$/.test(r.crdts)) return false;
-          return true;
+        // ── 1. Parse Campaign tabs for leaderboard (rows start at row 5, i.e. index 4 in 0-based) ──
+        const campaignSheets = wb.SheetNames.filter(name => {
+          const low = name.toLowerCase();
+          return low.includes("campaign") || low.includes("camp");
         });
 
-        if (rows.length === 0) {
-          setParseError("No valid rows found. Make sure CRDTS and Commission (EGP) columns are present and commission > 0.");
+        const leaderboardRows: ParsedLeaderboardRow[] = [];
+        for (const sheetName of campaignSheets) {
+          const ws = wb.Sheets[sheetName];
+          // Use header: 4 to skip rows 1-4 (title/headers/sub-headers), data starts at row 5
+          const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
+            defval: null,
+            rawNumbers: false,
+            range: 3, // 0-based: skip first 3 rows (rows 1-3), row 4 = headers, row 5+ = data
+          });
+          // The 4th row (index 3) is the actual header row
+          // With range:3, first parsed row is the header row itself, skip it
+          const dataRows = raw.slice(1); // skip the header row that becomes row 0
+
+          const norm = (k: string) => k.toLowerCase().replace(/[\s()%_-]/g, "");
+          for (const r of dataRows) {
+            const get = (key: string) => {
+              const found = Object.keys(r).find(k => norm(k) === norm(key));
+              return found ? r[found] : null;
+            };
+            const crdts = cleanStr(get("CRDTS"));
+            if (!isValidCrdts(crdts)) continue;
+            const rank = cleanNum(get("Rank"));
+            if (rank <= 0) continue;
+            leaderboardRows.push({
+              campaignName: sheetName,
+              crdts,
+              alias: cleanStr(get("Alias")) || undefined,
+              rank,
+              loginHours: cleanNum(get("Hours") ?? get("Login Hours") ?? get("LoginHours")),
+              revenue: cleanNum(get("Revenue")),
+              profit: cleanNum(get("Profit")),
+              commissionEgp: cleanNum(get("Commission") ?? get("Commission (EGP)")),
+              performanceMonth: cleanStr(get("Performance Month")) || performanceMonth || undefined,
+            });
+          }
+        }
+
+        // ── 2. Parse Manus Upload tab for commission payments (rows start at row 2) ──
+        const manusUploadSheet = wb.SheetNames.find(n =>
+          n.toLowerCase().replace(/\s/g, "") === "manusupload"
+        );
+
+        let paymentRows: ParsedCommRow[] = [];
+        if (manusUploadSheet) {
+          const ws = wb.Sheets[manusUploadSheet];
+          // Row 1 = headers, row 2+ = data (default sheet_to_json behaviour)
+          const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null, rawNumbers: false });
+          const norm = (k: string) => k.toLowerCase().replace(/[\s()%_-]/g, "");
+          paymentRows = raw.map((r) => {
+            const get = (key: string) => {
+              const found = Object.keys(r).find(k => norm(k) === norm(key));
+              return found ? r[found] : null;
+            };
+            return {
+              crdts: cleanStr(get("CRDTS")),
+              alias: cleanStr(get("Alias")) || undefined,
+              commissionEgp: cleanNum(get("Commission (EGP)") ?? get("Commission")),
+              performanceMonth: cleanStr(get("Performance Month")) || performanceMonth || undefined,
+            };
+          }).filter(r => isValidCrdts(r.crdts) && r.commissionEgp > 0);
+        }
+
+        if (paymentRows.length === 0 && leaderboardRows.length === 0) {
+          setParseError("No valid data found. Make sure the file has Campaign tabs (for leaderboard) and/or a 'Manus Upload' tab (for payments).");
           return;
         }
-        setParsedRows(rows);
-      } catch {
-        setParseError("Failed to parse file.");
+
+        setParsedRows(paymentRows);
+        setParsedLeaderboard(leaderboardRows);
+      } catch (err) {
+        setParseError(`Failed to parse file: ${String(err)}`);
       }
     };
     reader.readAsArrayBuffer(file);
@@ -512,71 +569,146 @@ export default function CommissionAdmin() {
             )}
 
             {/* Preview */}
-            {parsedRows.length > 0 && uploadWarnings.length === 0 && (
-              <div className="space-y-3">
+            {(parsedRows.length > 0 || parsedLeaderboard.length > 0) && uploadWarnings.length === 0 && (
+              <div className="space-y-4">
                 <div className="flex items-center gap-2 text-sm text-emerald-600 bg-emerald-50 rounded-md px-3 py-2">
                   <CheckCircle2 className="h-4 w-4" />
                   <span>
-                    {parsedRows.length} rows parsed — pay cycle: <strong>{formatMonthLabel(payCycle)}</strong>
-                    {performanceMonth && <> — performance: <strong>{performanceMonth}</strong></>}
+                    File parsed — pay cycle: <strong>{formatMonthLabel(payCycle)}</strong>
+                    {parsedRows.length > 0 && <> · <strong>{parsedRows.length} payment rows</strong></>}
+                    {parsedLeaderboard.length > 0 && <> · <strong>{parsedLeaderboard.length} leaderboard rows</strong></>}
                   </span>
                 </div>
-                <div className="overflow-x-auto max-h-56 border rounded-md">
-                  <table className="w-full text-xs">
-                    <thead className="sticky top-0 bg-muted/80">
-                      <tr className="border-b">
-                        <th className="text-left px-3 py-2 font-medium">CRDTS</th>
-                        <th className="text-left px-3 py-2 font-medium">Alias</th>
-                        <th className="text-right px-3 py-2 font-medium text-emerald-600">Commission (EGP)</th>
-                        <th className="text-left px-3 py-2 font-medium">Performance Month</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {parsedRows.map((r, i) => (
-                        <tr key={i} className="hover:bg-muted/20">
-                          <td className="px-3 py-1.5 font-mono">{r.crdts}</td>
-                          <td className="px-3 py-1.5">{r.alias || "—"}</td>
-                          <td className="px-3 py-1.5 text-right font-semibold text-emerald-600">
-                            {r.commissionEgp.toLocaleString("en-EG")} EGP
-                          </td>
-                          <td className="px-3 py-1.5 text-muted-foreground">{r.performanceMonth || performanceMonth || "—"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+
+                {/* Payment rows preview */}
+                {parsedRows.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">Commission Payments (Manus Upload tab)</p>
+                    <div className="overflow-x-auto max-h-48 border rounded-md">
+                      <table className="w-full text-xs">
+                        <thead className="sticky top-0 bg-muted/80">
+                          <tr className="border-b">
+                            <th className="text-left px-3 py-2 font-medium">CRDTS</th>
+                            <th className="text-left px-3 py-2 font-medium">Alias</th>
+                            <th className="text-right px-3 py-2 font-medium text-emerald-600">Commission (EGP)</th>
+                            <th className="text-left px-3 py-2 font-medium">Performance Month</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {parsedRows.map((r, i) => (
+                            <tr key={i} className="hover:bg-muted/20">
+                              <td className="px-3 py-1.5 font-mono">{r.crdts}</td>
+                              <td className="px-3 py-1.5">{r.alias || "—"}</td>
+                              <td className="px-3 py-1.5 text-right font-semibold text-emerald-600">
+                                {r.commissionEgp.toLocaleString("en-EG")} EGP
+                              </td>
+                              <td className="px-3 py-1.5 text-muted-foreground">{r.performanceMonth || performanceMonth || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Leaderboard rows preview */}
+                {parsedLeaderboard.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">Leaderboard Rankings (Campaign tabs)</p>
+                    <div className="overflow-x-auto max-h-48 border rounded-md">
+                      <table className="w-full text-xs">
+                        <thead className="sticky top-0 bg-muted/80">
+                          <tr className="border-b">
+                            <th className="text-left px-3 py-2 font-medium">Campaign</th>
+                            <th className="text-center px-3 py-2 font-medium">Rank</th>
+                            <th className="text-left px-3 py-2 font-medium">CRDTS</th>
+                            <th className="text-left px-3 py-2 font-medium">Alias</th>
+                            <th className="text-right px-3 py-2 font-medium">Hours</th>
+                            <th className="text-right px-3 py-2 font-medium">Revenue</th>
+                            <th className="text-right px-3 py-2 font-medium">Profit</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {parsedLeaderboard.map((r, i) => (
+                            <tr key={i} className="hover:bg-muted/20">
+                              <td className="px-3 py-1.5 text-muted-foreground">{r.campaignName}</td>
+                              <td className="px-3 py-1.5 text-center font-bold">{r.rank}</td>
+                              <td className="px-3 py-1.5 font-mono">{r.crdts}</td>
+                              <td className="px-3 py-1.5">{r.alias || "—"}</td>
+                              <td className="px-3 py-1.5 text-right">{r.loginHours?.toFixed(1) ?? "—"}</td>
+                              <td className="px-3 py-1.5 text-right">{r.revenue != null ? `$${r.revenue.toLocaleString()}` : "—"}</td>
+                              <td className="px-3 py-1.5 text-right">{r.profit != null ? `$${r.profit.toLocaleString()}` : "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex justify-end gap-2 pt-2">
-                  <Button variant="outline" onClick={() => { setParsedRows([]); if (fileInputRef.current) fileInputRef.current.value = ""; }}>
+                  <Button variant="outline" onClick={() => {
+                    setParsedRows([]); setParsedLeaderboard([]);
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                  }}>
                     Clear
                   </Button>
                   <Button
-                    onClick={() => {
+                    onClick={async () => {
                       if (!payCycle) { toast.error("Select a pay cycle"); return; }
-                      if (!performanceMonth) { toast.error("Enter the performance month (e.g. March 2026)"); return; }
-                      uploadMutation.mutate({
-                        paymentCycle: payCycle,
-                        rows: parsedRows.map(r => ({
-                          crdts: r.crdts,
-                          alias: r.alias,
-                          commissionEgp: r.commissionEgp,
-                          performanceMonth: r.performanceMonth || performanceMonth,
-                        })),
-                      });
+                      // Upload leaderboard rows first (if any)
+                      if (parsedLeaderboard.length > 0) {
+                        await uploadLeaderboardMutation.mutateAsync({
+                          cycleKey: payCycle,
+                          rows: parsedLeaderboard.map(r => ({
+                            campaignName: r.campaignName,
+                            crdts: r.crdts,
+                            alias: r.alias,
+                            rank: r.rank,
+                            loginHours: r.loginHours,
+                            revenue: r.revenue,
+                            profit: r.profit,
+                            commissionEgp: r.commissionEgp,
+                            performanceMonth: r.performanceMonth || performanceMonth || undefined,
+                          })),
+                        });
+                        toast.success(`Leaderboard updated: ${parsedLeaderboard.length} rows across ${Array.from(new Set(parsedLeaderboard.map(r => r.campaignName))).length} campaign(s)`);
+                      }
+                      // Upload payment rows (if any)
+                      if (parsedRows.length > 0) {
+                        uploadMutation.mutate({
+                          paymentCycle: payCycle,
+                          rows: parsedRows.map(r => ({
+                            crdts: r.crdts,
+                            alias: r.alias,
+                            commissionEgp: r.commissionEgp,
+                            performanceMonth: r.performanceMonth || performanceMonth,
+                          })),
+                        });
+                      } else {
+                        // Only leaderboard, no payment rows — close dialog
+                        setUploadDialog(false);
+                        setParsedLeaderboard([]);
+                        setPerformanceMonth("");
+                      }
                     }}
-                    disabled={uploadMutation.isPending}
+                    disabled={uploadMutation.isPending || uploadLeaderboardMutation.isPending}
                     className="gap-1.5"
                   >
                     <Upload className="h-3.5 w-3.5" />
-                    {uploadMutation.isPending ? "Uploading…" : `Upload ${parsedRows.length} Records`}
+                    {(uploadMutation.isPending || uploadLeaderboardMutation.isPending)
+                      ? "Uploading…"
+                      : `Upload${parsedRows.length > 0 ? ` ${parsedRows.length} Payments` : ""}${parsedLeaderboard.length > 0 ? ` + ${parsedLeaderboard.length} Leaderboard` : ""}`
+                    }
                   </Button>
                 </div>
               </div>
             )}
 
-            {parsedRows.length === 0 && !parseError && uploadWarnings.length === 0 && (
+            {parsedRows.length === 0 && parsedLeaderboard.length === 0 && !parseError && uploadWarnings.length === 0 && (
               <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground space-y-1">
-                <p>Upload the Python commission script output (Tanis_Commission_[Month].xlsx)</p>
-                <p className="text-xs">Required: CRDTS, Commission (EGP) | Optional: Performance Month (can be set above)</p>
+                <p>Upload the Tanis Commission file (Tanis_Commission_[Month].xlsx)</p>
+                <p className="text-xs">Campaign tabs (100/133/198) → leaderboard · "Manus Upload" tab → commission payments</p>
               </div>
             )}
           </div>

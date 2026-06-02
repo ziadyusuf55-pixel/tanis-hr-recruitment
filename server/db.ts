@@ -2581,58 +2581,83 @@ export async function getPendingDeletionAgents() {
 export async function getFullLeaderboard(cycleKey: string) {
   const db = await getDb();
   if (!db) return [];
-  const { cycleStats, workforceAgents, campaigns } = await import("../drizzle/schema");
-  const { eq, and, inArray } = await import("drizzle-orm");
+  const { commissionLeaderboard } = await import("../drizzle/schema");
+  const { eq, asc } = await import("drizzle-orm");
 
-  // Get all active agents with their campaign info
-  const agents = await db.select({
-    crdts: workforceAgents.crdts,
-    alias: workforceAgents.alias,
-    fullName: workforceAgents.fullName,
-    campaignId: workforceAgents.campaignId,
-  }).from(workforceAgents).where(sql`${workforceAgents.crdts} IS NOT NULL`);
+  // Read from the commission leaderboard table (uploaded from commission file Campaign tabs)
+  const rows = await db.select({
+    id: commissionLeaderboard.id,
+    cycleKey: commissionLeaderboard.cycleKey,
+    campaignName: commissionLeaderboard.campaignName,
+    crdts: commissionLeaderboard.crdts,
+    alias: commissionLeaderboard.alias,
+    rank: commissionLeaderboard.rank,
+    loginHours: commissionLeaderboard.loginHours,
+    revenue: commissionLeaderboard.revenue,
+    profit: commissionLeaderboard.profit,
+    commissionEgp: commissionLeaderboard.commissionEgp,
+    performanceMonth: commissionLeaderboard.performanceMonth,
+  }).from(commissionLeaderboard)
+    .where(eq(commissionLeaderboard.cycleKey, cycleKey))
+    .orderBy(asc(commissionLeaderboard.rank));
 
-  const crdtsList = agents.map(a => a.crdts).filter(Boolean) as string[];
-  if (crdtsList.length === 0) return [];
+  return rows.map(r => ({
+    crdts: r.crdts,
+    alias: r.alias ?? r.crdts,
+    campaignName: r.campaignName,
+    rank: r.rank,
+    loginHours: parseFloat(r.loginHours ?? "0"),
+    revenue: parseFloat(r.revenue ?? "0"),
+    profit: parseFloat(r.profit ?? "0"),
+    commissionEgp: parseFloat(r.commissionEgp ?? "0"),
+    performanceMonth: r.performanceMonth ?? "",
+    revPerHr: parseFloat(r.loginHours ?? "0") > 0
+      ? Math.round((parseFloat(r.revenue ?? "0") / parseFloat(r.loginHours ?? "0")) * 100) / 100
+      : 0,
+  }));
+}
 
-  // Get all campaign names
-  const allCampaigns = await db.select({ id: campaigns.id, name: campaigns.name }).from(campaigns);
-  const campaignMap = new Map(allCampaigns.map(c => [c.id, c.name]));
+export async function upsertCommissionLeaderboard(
+  cycleKey: string,
+  rows: Array<{
+    campaignName: string;
+    crdts: string;
+    alias?: string;
+    rank: number;
+    loginHours?: number;
+    revenue?: number;
+    profit?: number;
+    commissionEgp?: number;
+    performanceMonth?: string;
+  }>
+) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { commissionLeaderboard } = await import("../drizzle/schema");
+  const { eq } = await import("drizzle-orm");
 
-  // Get cycle stats for all agents
-  const stats = await db.select({
-    crdts: cycleStats.crdts,
-    profit: sql<number>`SUM(${cycleStats.profit})`.mapWith(Number),
-    loginHours: sql<number>`SUM(${cycleStats.loginHours})`.mapWith(Number),
-    revenue: sql<number>`SUM(${cycleStats.revenue})`.mapWith(Number),
-    totalCalls: sql<number>`SUM(${cycleStats.totalCalls})`.mapWith(Number),
-  }).from(cycleStats)
-    .where(and(eq(cycleStats.cycleKey, cycleKey), inArray(cycleStats.crdts, crdtsList)))
-    .groupBy(cycleStats.crdts);
+  // Delete existing rows for this cycle first, then insert fresh
+  await db.delete(commissionLeaderboard).where(eq(commissionLeaderboard.cycleKey, cycleKey));
 
-  const statsMap = new Map(stats.map(s => [s.crdts, s]));
+  if (rows.length === 0) return 0;
 
-  // Build ranked list
-  const rows = agents
-    .filter(a => a.crdts && statsMap.has(a.crdts!))
-    .map(a => {
-      const s = statsMap.get(a.crdts!)!;
-      return {
-        crdts: a.crdts!,
-        alias: a.alias ?? a.fullName ?? a.crdts!,
-        campaignId: a.campaignId ?? null,
-        campaignName: a.campaignId ? (campaignMap.get(a.campaignId) ?? `Campaign ${a.campaignId}`) : "Unassigned",
-        profit: s.profit,
-        revenue: s.revenue,
-        loginHours: s.loginHours,
-        totalCalls: s.totalCalls,
-        revPerHr: s.loginHours > 0 ? Math.round((s.revenue / s.loginHours) * 100) / 100 : 0,
-      };
-    })
-    .sort((a, b) => b.profit - a.profit)
-    .map((row, i) => ({ ...row, rank: i + 1 }));
-
-  return rows;
+  const now = Date.now();
+  await db.insert(commissionLeaderboard).values(
+    rows.map(r => ({
+      cycleKey,
+      campaignName: r.campaignName,
+      crdts: r.crdts,
+      alias: r.alias ?? null,
+      rank: r.rank,
+      loginHours: String(r.loginHours ?? 0),
+      revenue: String(r.revenue ?? 0),
+      profit: String(r.profit ?? 0),
+      commissionEgp: String(r.commissionEgp ?? 0),
+      performanceMonth: r.performanceMonth ?? null,
+      uploadedAt: now,
+    }))
+  );
+  return rows.length;
 }
 
 // ─── Generate unique trainee code (6-digit, not already in use) ───────────────

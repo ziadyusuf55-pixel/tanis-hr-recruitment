@@ -3886,6 +3886,42 @@ const commissionRouter = router({
       const { getFullLeaderboard } = await import("./db");
       return getFullLeaderboard(input.cycleKey);
     }),
+
+  // Upload leaderboard rows from Campaign tabs of the commission file
+  uploadLeaderboard: protectedProcedure
+    .input(z.object({
+      cycleKey: z.string(),
+      rows: z.array(z.object({
+        campaignName: z.string(),
+        crdts: z.string(),
+        alias: z.string().optional(),
+        rank: z.number(),
+        loginHours: z.number().optional(),
+        revenue: z.number().optional(),
+        profit: z.number().optional(),
+        commissionEgp: z.number().optional(),
+        performanceMonth: z.string().optional(),
+      })),
+    }))
+    .mutation(async ({ input }) => {
+      const { upsertCommissionLeaderboard } = await import("./db");
+      const count = await upsertCommissionLeaderboard(input.cycleKey, input.rows);
+      return { count };
+    }),
+
+  // Get available cycle keys that have leaderboard data
+  getLeaderboardCycles: publicProcedure
+    .query(async () => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { commissionLeaderboard } = await import("../drizzle/schema");
+      const { sql } = await import("drizzle-orm");
+      const rows = await db.selectDistinct({ cycleKey: commissionLeaderboard.cycleKey })
+        .from(commissionLeaderboard)
+        .orderBy(sql`${commissionLeaderboard.cycleKey} DESC`);
+      return rows.map(r => r.cycleKey);
+    }),
 });
 
 export const appRouter = router({

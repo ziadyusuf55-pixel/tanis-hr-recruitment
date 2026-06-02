@@ -981,3 +981,10 @@
 - [x] Random unique agent ID generator button in agent creation/edit form (6-digit, no duplicates)
 - [x] Reset agent portal password button per agent in admin Operations panel (already existed, improved to use traineeCode)
 - [x] Resigned/Terminated separation moves agent to Former Agents section in Candidates tab instead of deleting (already implemented, confirmed working)
+
+## Round 66 — Commission File: Dual-Purpose Upload (Leaderboard + Payments)
+- [x] Parse Campaign tabs (100/133/198) from commission file for leaderboard data (rows start at row 5, columns: Rank, CRDTS, Alias, Hours, Revenue, Profit, Performance Month, Commission)
+- [x] Parse Manus Upload tab for commission payments (rows start at row 2, skip non-numeric CRDTS and zero commission)
+- [x] Store leaderboard rows in a new commissionLeaderboard table (crdts, alias, campaignName, cycleKey, rank, hours, revenue, profit, commissionEgp)
+- [x] getFullLeaderboard endpoint reads from commissionLeaderboard table instead of cycleTracker
+- [x] Single upload dialog handles both in one pass, shows preview for both leaderboard rows and payment rows
