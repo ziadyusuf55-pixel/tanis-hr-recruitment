@@ -988,3 +988,19 @@
 - [x] Store leaderboard rows in a new commissionLeaderboard table (crdts, alias, campaignName, cycleKey, rank, hours, revenue, profit, commissionEgp)
 - [x] getFullLeaderboard endpoint reads from commissionLeaderboard table instead of cycleTracker
 - [x] Single upload dialog handles both in one pass, shows preview for both leaderboard rows and payment rows
+
+## Round 35 — Commission Parser & Leaderboard Fixes
+- [x] Commission parser: Campaign tabs use range:2 + slice(1), exact column matching with getCol helper
+- [x] Commission parser: emoji medals (🥇🥈🥉) converted to rank numbers 1/2/3 via parseRank()
+- [x] Commission parser: hours NOT read from file (loginHours set to undefined — comes from cycleStats)
+- [x] Commission parser: Manus Upload tab — skip rows where CRDTS non-numeric or Commission is 0/null
+- [x] Commission parser: campaign sheet detection excludes Manus Upload tab by name
+- [x] Commission parser: robust getCol() helper with exact + partial fallback matching for complex column names
+- [x] Leaderboard: Revenue ($) column added (replaced Rev/Hr), Profit ($) kept
+- [x] Leaderboard: Login Hrs shows — when hours are 0/null (not stored from file)
+- [x] Leaderboard: medals 🥇🥈🥉 shown for ranks 1/2/3 based on rank number
+- [x] Leaderboard: You badge matches by myCrdts OR myTraineeCode (dual match)
+- [x] Leaderboard: profit/revenue read from commissionLeaderboard table (uploaded from commission file)
+- [x] Upload dialog: Pay Cycle auto-calculated as performanceMonth + 2 months (confirmed working)
+- [x] Upload → payroll sync: commissionEgp synced to payrollRecords on upload (confirmed working)
+- [x] Manual edit → payroll sync: updateCommission syncs to payrollRecords (confirmed working)

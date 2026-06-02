@@ -172,6 +172,7 @@ export default function CommissionAdmin() {
         const data = new Uint8Array(ev.target!.result as ArrayBuffer);
         const wb = XLSX.read(data, { type: "array", raw: false });
 
+        // ── Shared helpers ──
         const cleanNum = (v: unknown): number => {
           if (v == null || v === "") return 0;
           const s = String(v).replace(/^'/, "").replace(/,/g, "").trim();
@@ -182,53 +183,115 @@ export default function CommissionAdmin() {
         const isValidCrdts = (s: string) =>
           s !== "" && /^\d+$/.test(s) && !(/\s/.test(s));
 
+        // Convert emoji medals to rank numbers (older files may use 🥇🥈🥉 instead of 1,2,3)
+        const parseRank = (v: unknown): number => {
+          if (v == null || v === "") return 0;
+          const s = String(v).trim();
+          if (s === "🥇") return 1;
+          if (s === "🥈") return 2;
+          if (s === "🥉") return 3;
+          // Strip any leading emoji/medal chars then parse number
+          const stripped = s.replace(/[🥇🥈🥉]/g, "").trim();
+          const n = parseInt(stripped, 10);
+          return isNaN(n) ? 0 : n;
+        };
+
+        // Normalise a column header key for fuzzy matching
+        // Strips whitespace, parentheses, $, newlines, underscores, hyphens
+        const norm = (k: string) =>
+          k.toLowerCase()
+            .replace(/\r?\n/g, " ")
+            .replace(/[\s()$%_\-,]/g, "");
+
+        // Find a value in a row by matching normalised key against a list of candidate names
+        const getCol = (r: Record<string, unknown>, ...candidates: string[]): unknown => {
+          const keys = Object.keys(r);
+          for (const candidate of candidates) {
+            const nc = norm(candidate);
+            const found = keys.find(k => norm(k) === nc);
+            if (found !== undefined) return r[found];
+          }
+          // Fallback: partial match (key contains candidate or vice versa)
+          for (const candidate of candidates) {
+            const nc = norm(candidate);
+            const found = keys.find(k => norm(k).includes(nc) || nc.includes(norm(k)));
+            if (found !== undefined) return r[found];
+          }
+          return null;
+        };
+
         // ── 1. Parse Campaign tabs for leaderboard ──
-        // File structure: Rows 1-2 = title rows, Row 3 = column headers, Row 4 = sub-headers, Row 5+ = data
-        // Strategy: use range:2 so row 3 (0-based index 2) becomes the header row,
-        // then skip the first result row which is the sub-header row (row 4).
-        const campaignSheets = wb.SheetNames.filter(name => {
-          const low = name.toLowerCase();
-          return low.includes("campaign") || low.includes("camp");
-        });
+        // Sheet names: 'Campaign 100 — Main', 'Campaign 133', 'Campaign 198'
+        // Row 1-2: title rows (skipped by range:2)
+        // Row 3: column headers  → range:2 makes this the header row
+        // Row 4: sub-headers     → first item in raw[], skipped with slice(1)
+        // Row 5+: data
+        const campaignSheets = wb.SheetNames.filter(name =>
+          name.toLowerCase() !== "manus upload" &&
+          !name.toLowerCase().replace(/\s/g, "").startsWith("manusupload")
+        );
 
         const leaderboardRows: ParsedLeaderboardRow[] = [];
         for (const sheetName of campaignSheets) {
           const ws = wb.Sheets[sheetName];
-          // range:2 → 0-based row index 2 = Excel row 3 → used as header row
-          // First item in raw[] will be the sub-header row (row 4) — we skip it
+          // range:2 → 0-based row index 2 = Excel row 3 → becomes the header row
           const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
             defval: null,
             rawNumbers: false,
-            range: 2, // Excel row 3 = headers
+            range: 2,
           });
-          // Skip first row (sub-headers, row 4); actual data starts at index 1
+          // raw[0] is the sub-header row (Excel row 4) — skip it
           const dataRows = raw.slice(1);
 
-          const norm = (k: string) => k.toLowerCase().replace(/[\s()%_\-]/g, "");
           for (const r of dataRows) {
-            const get = (key: string) => {
-              const found = Object.keys(r).find(k => norm(k) === norm(key));
-              return found ? r[found] : null;
-            };
-            const crdts = cleanStr(get("CRDTS"));
+            const crdts = cleanStr(getCol(r, "CRDTS", "crdts"));
             if (!isValidCrdts(crdts)) continue;
-            const rank = cleanNum(get("Rank"));
+
+            const rank = parseRank(getCol(r, "Rank", "rank"));
             if (rank <= 0) continue;
+
+            // Profit: try multiple column name variants used in the file
+            // File headers include: "Profit($)", "Profit ()", "Profit (\n),Profit()"
+            const profitRaw = getCol(r,
+              "Profit ($)", "Profit($)", "Profit ()", "Profit",
+              "profit", "PROFIT"
+            );
+            // Revenue: "Revenue ()", "Revenue"
+            const revenueRaw = getCol(r,
+              "Revenue ()", "Revenue()", "Revenue",
+              "revenue", "REVENUE"
+            );
+            // Commission: "Commission (EGP)", "Commission(EGP)", "Commission"
+            const commRaw = getCol(r,
+              "Commission (EGP)", "Commission(EGP)", "Commission",
+              "commission", "COMMISSION"
+            );
+            // Performance Month
+            const perfMonthRaw = getCol(r,
+              "Performance Month", "PerformanceMonth", "Perf Month"
+            );
+            // Alias
+            const aliasRaw = getCol(r, "Alias", "alias", "Name", "name");
+
             leaderboardRows.push({
               campaignName: sheetName,
               crdts,
-              alias: cleanStr(get("Alias")) || undefined,
+              alias: cleanStr(aliasRaw) || undefined,
               rank,
-              loginHours: cleanNum(get("Hours") ?? get("Login Hours") ?? get("LoginHours")),
-              revenue: cleanNum(get("Revenue")),
-              profit: cleanNum(get("Profit")),
-              commissionEgp: cleanNum(get("Commission (EGP)") ?? get("Commission")),
-              performanceMonth: cleanStr(get("Performance Month")) || performanceMonth || undefined,
+              // Do NOT read hours from file — hours come from Vicidial cycleStats
+              loginHours: undefined,
+              revenue: cleanNum(revenueRaw),
+              profit: cleanNum(profitRaw),
+              commissionEgp: cleanNum(commRaw),
+              performanceMonth: cleanStr(perfMonthRaw) || performanceMonth || undefined,
             });
           }
         }
 
-        // ── 2. Parse Manus Upload tab for commission payments (rows start at row 2) ──
+        // ── 2. Parse Manus Upload tab for commission payments ──
+        // Row 1: headers (CRDTS, Commission (EGP), Performance Month)
+        // Row 2+: data
+        // Skip rows where CRDTS is non-numeric or Commission is 0/null
         const manusUploadSheet = wb.SheetNames.find(n =>
           n.toLowerCase().replace(/\s/g, "") === "manusupload"
         );
@@ -236,21 +299,17 @@ export default function CommissionAdmin() {
         let paymentRows: ParsedCommRow[] = [];
         if (manusUploadSheet) {
           const ws = wb.Sheets[manusUploadSheet];
-          // Row 1 = headers, row 2+ = data (default sheet_to_json behaviour)
-          const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null, rawNumbers: false });
-          const norm = (k: string) => k.toLowerCase().replace(/[\s()%_-]/g, "");
-          paymentRows = raw.map((r) => {
-            const get = (key: string) => {
-              const found = Object.keys(r).find(k => norm(k) === norm(key));
-              return found ? r[found] : null;
-            };
-            return {
-              crdts: cleanStr(get("CRDTS")),
-              alias: cleanStr(get("Alias")) || undefined,
-              commissionEgp: cleanNum(get("Commission (EGP)") ?? get("Commission")),
-              performanceMonth: cleanStr(get("Performance Month")) || performanceMonth || undefined,
-            };
-          }).filter(r => isValidCrdts(r.crdts) && r.commissionEgp > 0);
+          // Default range: row 1 = headers, row 2+ = data
+          const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
+            defval: null,
+            rawNumbers: false,
+          });
+          paymentRows = raw.map((r) => ({
+            crdts: cleanStr(getCol(r, "CRDTS", "crdts")),
+            alias: cleanStr(getCol(r, "Alias", "alias", "Name")) || undefined,
+            commissionEgp: cleanNum(getCol(r, "Commission (EGP)", "Commission(EGP)", "Commission")),
+            performanceMonth: cleanStr(getCol(r, "Performance Month", "PerformanceMonth")) || performanceMonth || undefined,
+          })).filter(r => isValidCrdts(r.crdts) && r.commissionEgp > 0);
         }
 
         if (paymentRows.length === 0 && leaderboardRows.length === 0) {

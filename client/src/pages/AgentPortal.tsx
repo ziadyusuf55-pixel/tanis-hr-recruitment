@@ -2539,17 +2539,23 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
                   <th className="px-4 py-2 text-left font-semibold" style={{ color: theme.textFaint }}>Rank</th>
                   <th className="px-4 py-2 text-left font-semibold" style={{ color: theme.textFaint }}>Alias</th>
                   <th className="px-4 py-2 text-left font-semibold" style={{ color: theme.textFaint }}>Campaign</th>
+                  <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Revenue ($)</th>
                   <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Profit ($)</th>
-                  <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Rev/Hr ($)</th>
                   <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Login Hrs</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredLeaderboard.map((row, idx) => {
-                  const isMe = myCrdts && row.crdts === myCrdts;
+                  const isMe = (myCrdts && row.crdts === myCrdts) ||
+                    (myTraineeCode && row.crdts === myTraineeCode);
                   const medal = row.rank === 1 ? "🥇" : row.rank === 2 ? "🥈" : row.rank === 3 ? "🥉" : null;
+                  // loginHours comes from commissionLeaderboard table (uploaded from file);
+                  // if 0 or null it means hours were not stored — show dash
+                  const hoursDisplay = row.loginHours && row.loginHours > 0
+                    ? fmtNum(row.loginHours, "h")
+                    : "—";
                   return (
-                    <tr key={row.crdts}
+                    <tr key={`${row.crdts}-${row.campaignName}`}
                       style={{
                         background: isMe ? `${BRAND}18` : idx % 2 === 0 ? "transparent" : `${theme.surface}88`,
                         border: isMe ? `1px solid ${BRAND}44` : undefined,
@@ -2562,9 +2568,9 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
                         {isMe && <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded-full font-semibold" style={{ background: `${BRAND}33`, color: BRAND }}>You</span>}
                       </td>
                       <td className="px-4 py-2.5" style={{ color: theme.textMuted }}>{row.campaignName}</td>
+                      <td className="px-4 py-2.5 text-right" style={{ color: theme.text }}>${fmtNum(row.revenue)}</td>
                       <td className="px-4 py-2.5 text-right font-semibold" style={{ color: "oklch(0.65 0.15 142)" }}>${fmtNum(row.profit)}</td>
-                      <td className="px-4 py-2.5 text-right" style={{ color: theme.text }}>${fmtNum(row.revPerHr)}</td>
-                      <td className="px-4 py-2.5 text-right" style={{ color: theme.textFaint }}>{fmtNum(row.loginHours, "h")}</td>
+                      <td className="px-4 py-2.5 text-right" style={{ color: theme.textFaint }}>{hoursDisplay}</td>
                     </tr>
                   );
                 })}
