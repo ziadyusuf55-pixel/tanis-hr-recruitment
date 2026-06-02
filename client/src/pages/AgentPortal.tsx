@@ -2242,11 +2242,15 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
   const { data: leaderboardCycles = [] } = trpc.commission.getLeaderboardCycles.useQuery();
   // Default to latest available cycle, fall back to current month
   const [selectedCycle, setSelectedCycle] = useState<string>(currentCycleKey);
-  // Once cycles load, update selectedCycle to the latest one if not already set
-  const latestLeaderboardCycle = (leaderboardCycles as string[])[0] ?? currentCycleKey;
-  const effectiveCycle = selectedCycle === currentCycleKey && (leaderboardCycles as string[]).length > 0
-    ? latestLeaderboardCycle
-    : selectedCycle;
+  const [cycleInitialized, setCycleInitialized] = useState(false);
+  // Once cycles load, update selectedCycle to the latest one
+  useEffect(() => {
+    if (!cycleInitialized && (leaderboardCycles as string[]).length > 0) {
+      setSelectedCycle((leaderboardCycles as string[])[0]);
+      setCycleInitialized(true);
+    }
+  }, [leaderboardCycles, cycleInitialized]);
+  const effectiveCycle = selectedCycle;
 
   // Available months for commission data
   const { data: availableMonths = [], isLoading: loadingMonths } =
