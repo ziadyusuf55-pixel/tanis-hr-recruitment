@@ -125,12 +125,15 @@ export default function CommissionAdmin() {
       try {
         const data = new Uint8Array(ev.target!.result as ArrayBuffer);
         const wb = XLSX.read(data, { type: "array" });
-        // Find Main Campaign or first sheet
+        // Priority: "Manus Upload" > "Main" > "Commission" > first sheet
         const sheetName = wb.SheetNames.find(n =>
+          n.toLowerCase().replace(/\s/g, "") === "manusupload"
+        ) ?? wb.SheetNames.find(n =>
           n.toLowerCase().includes("main") || n.toLowerCase().includes("commission")
         ) ?? wb.SheetNames[0];
         const ws = wb.Sheets[sheetName];
-        const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null });
+        // rawNumbers: false keeps text-prefixed numbers as strings (handles '114063 apostrophe trick)
+        const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null, rawNumbers: false });
 
         if (raw.length === 0) { setParseError("File appears empty."); return; }
 
@@ -142,15 +145,28 @@ export default function CommissionAdmin() {
           };
           const num = (v: unknown): number => {
             if (v == null || v === "") return 0;
-            const n = Number(v); return isNaN(n) ? 0 : n;
+            // Strip any leading apostrophe Excel uses to force text
+            const s = String(v).replace(/^'/, "").trim();
+            const n = Number(s); return isNaN(n) ? 0 : n;
+          };
+          const cleanCrdts = (v: unknown): string => {
+            // Strip leading apostrophe if present (Excel text-format trick)
+            return String(v ?? "").replace(/^'/, "").trim();
           };
           return {
-            crdts: String(get("CRDTS") ?? "").trim(),
+            crdts: cleanCrdts(get("CRDTS")),
             alias: String(get("Alias") ?? "").trim() || undefined,
             commissionEgp: num(get("Commission (EGP)") ?? get("Commission")),
             performanceMonth: String(get("Performance Month") ?? performanceMonth ?? "").trim() || undefined,
           };
-        }).filter(r => r.crdts !== "" && r.commissionEgp > 0);
+        }).filter(r => {
+          // Skip rows where CRDTS is not a valid numeric-like code (catches text notes like row 9)
+          if (r.crdts === "") return false;
+          if (r.commissionEgp <= 0) return false;
+          // Skip rows where CRDTS looks like a sentence/note (contains spaces or is non-numeric)
+          if (/\s/.test(r.crdts) || !/^\d+$/.test(r.crdts)) return false;
+          return true;
+        });
 
         if (rows.length === 0) {
           setParseError("No valid rows found. Make sure CRDTS and Commission (EGP) columns are present and commission > 0.");
