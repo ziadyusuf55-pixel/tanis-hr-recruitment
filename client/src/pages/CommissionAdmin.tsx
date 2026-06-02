@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Upload, Download, FileSpreadsheet, CheckCircle2, Clock, AlertTriangle, Info, DollarSign, Pencil, Check, X } from "lucide-react";
+import { Upload, Download, FileSpreadsheet, CheckCircle2, Clock, AlertTriangle, Info, DollarSign, Pencil, Check, X, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 
@@ -99,6 +99,28 @@ export default function CommissionAdmin() {
   // Edit commission state
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editValue, setEditValue] = useState<string>("");
+
+  // Delete state
+  const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  const [confirmClearCycle, setConfirmClearCycle] = useState(false);
+
+  const deleteRecordMutation = trpc.commission.deleteCommissionRecord.useMutation({
+    onSuccess: () => {
+      toast.success("Commission record deleted");
+      setConfirmDeleteId(null);
+      utils.commission.getForMonth.invalidate({ month: viewMonth });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const clearCycleMutation = trpc.commission.clearCommissionCycle.useMutation({
+    onSuccess: () => {
+      toast.success(`All commission records for ${formatMonthLabel(viewMonth)} cleared`);
+      setConfirmClearCycle(false);
+      utils.commission.getForMonth.invalidate({ month: viewMonth });
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   const updateCommissionMutation = trpc.commission.updateCommission.useMutation({
     onSuccess: () => {
@@ -344,9 +366,16 @@ export default function CommissionAdmin() {
                 {" · "}
                 {records.length} agents
               </span>
-              <Button variant="outline" size="sm" className="gap-1.5" onClick={exportRecords} disabled={records.length === 0}>
-                <Download className="h-3.5 w-3.5" /> Export
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" size="sm" className="gap-1.5" onClick={exportRecords} disabled={records.length === 0}>
+                  <Download className="h-3.5 w-3.5" /> Export
+                </Button>
+                {records.length > 0 && (
+                  <Button variant="outline" size="sm" className="gap-1.5 text-red-600 border-red-200 hover:bg-red-50" onClick={() => setConfirmClearCycle(true)}>
+                    <Trash2 className="h-3.5 w-3.5" /> Clear Cycle
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -407,6 +436,7 @@ export default function CommissionAdmin() {
                         <th className="text-right px-4 py-3 font-medium text-emerald-600">Commission</th>
                         <th className="text-center px-4 py-3 font-medium">Pay Cycle</th>
                         <th className="text-center px-4 py-3 font-medium">Status</th>
+                        <th className="px-4 py-3" />
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -458,6 +488,15 @@ export default function CommissionAdmin() {
                               </Badge>
                             )}
                           </td>
+                          <td className="px-4 py-3 text-center">
+                            <button
+                              onClick={() => setConfirmDeleteId(r.id)}
+                              className="text-muted-foreground hover:text-red-600 transition-colors"
+                              title="Delete this commission record"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
@@ -465,7 +504,7 @@ export default function CommissionAdmin() {
                       <tr className="border-t bg-muted/30 font-semibold">
                         <td colSpan={3} className="px-4 py-3 text-right text-sm">Total Commission:</td>
                         <td className="px-4 py-3 text-right text-sm text-emerald-600">{fmtEGP(totalCommission)}</td>
-                        <td colSpan={2} />
+                        <td colSpan={3} />
                       </tr>
                     </tfoot>
                   </table>
@@ -724,6 +763,62 @@ export default function CommissionAdmin() {
               </div>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Confirm Delete Single Record ── */}
+      <Dialog open={confirmDeleteId !== null} onOpenChange={open => { if (!open) setConfirmDeleteId(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-red-600 flex items-center gap-2">
+              <Trash2 className="h-4 w-4" /> Delete Commission Record
+            </DialogTitle>
+          </DialogHeader>
+          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+            This will permanently delete this agent's commission record and clear their commission from the matching payroll record. This cannot be undone.
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setConfirmDeleteId(null)}>Cancel</Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={deleteRecordMutation.isPending}
+              onClick={() => confirmDeleteId !== null && deleteRecordMutation.mutate({ id: confirmDeleteId })}
+            >
+              {deleteRecordMutation.isPending ? "Deleting…" : "Delete Record"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Confirm Clear Entire Cycle ── */}
+      <Dialog open={confirmClearCycle} onOpenChange={open => { if (!open) setConfirmClearCycle(false); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-red-600 flex items-center gap-2">
+              <Trash2 className="h-4 w-4" /> Clear Entire Cycle
+            </DialogTitle>
+          </DialogHeader>
+          <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800 space-y-1">
+            <p className="font-semibold">This will delete ALL commission records for {formatMonthLabel(viewMonth)}:</p>
+            <ul className="list-disc list-inside text-xs space-y-0.5">
+              <li>All {records.length} commission payment records</li>
+              <li>All leaderboard rows for this cycle</li>
+              <li>Commission amounts cleared from matching payroll records</li>
+            </ul>
+            <p className="text-xs font-semibold mt-1">This cannot be undone.</p>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => setConfirmClearCycle(false)}>Cancel</Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={clearCycleMutation.isPending}
+              onClick={() => clearCycleMutation.mutate({ cycleKey: viewMonth })}
+            >
+              {clearCycleMutation.isPending ? "Clearing…" : `Clear ${formatMonthLabel(viewMonth)}`}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

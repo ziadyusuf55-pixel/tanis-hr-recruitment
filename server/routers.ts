@@ -3944,6 +3944,53 @@ const commissionRouter = router({
         .orderBy(sql`${commissionLeaderboard.cycleKey} DESC`);
       return rows.map(r => r.cycleKey);
     }),
+
+  // Delete a single commission record by id (also clears commissionEgp from matching payroll record)
+  deleteCommissionRecord: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+      const { commissions, payrollRecords } = await import("../drizzle/schema");
+      const { eq, and } = await import("drizzle-orm");
+      // Fetch the record first so we can clear the payroll commission
+      const [rec] = await db.select().from(commissions).where(eq(commissions.id, input.id)).limit(1);
+      if (rec) {
+        // Clear commission from matching payroll record
+        await db.update(payrollRecords)
+          .set({ commissionEgp: "0" })
+          .where(and(
+            eq(payrollRecords.crdts, rec.crdts),
+            eq(payrollRecords.month, rec.paymentCycle)
+          ));
+        await db.delete(commissions).where(eq(commissions.id, input.id));
+      }
+      return { success: true };
+    }),
+
+  // Clear all commission records AND leaderboard rows for a given pay cycle
+  clearCommissionCycle: protectedProcedure
+    .input(z.object({ cycleKey: z.string() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+      const { commissions, commissionLeaderboard, payrollRecords } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      // Get all commission records for this cycle to clear payroll commission fields
+      const recs = await db.select().from(commissions).where(eq(commissions.paymentCycle, input.cycleKey));
+      for (const rec of recs) {
+        await db.update(payrollRecords)
+          .set({ commissionEgp: "0" })
+          .where(eq(payrollRecords.crdts, rec.crdts));
+      }
+      // Delete all commission records for this cycle
+      await db.delete(commissions).where(eq(commissions.paymentCycle, input.cycleKey));
+      // Delete all leaderboard rows for this cycle
+      await db.delete(commissionLeaderboard).where(eq(commissionLeaderboard.cycleKey, input.cycleKey));
+      return { success: true };
+    }),
 });
 
 export const appRouter = router({
