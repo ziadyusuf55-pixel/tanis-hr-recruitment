@@ -2237,7 +2237,16 @@ function AgentCommentsTab({ theme }: { theme: Theme }) {
 function CommissionTrackerTab({ theme }: { theme: Theme }) {
   const currentCycleKey = (() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`; })();
   const [selectedMonth, setSelectedMonth] = useState<string | null>(null);
+
+  // Fetch available leaderboard cycles from DB (replaces hardcoded 6-month list)
+  const { data: leaderboardCycles = [] } = trpc.commission.getLeaderboardCycles.useQuery();
+  // Default to latest available cycle, fall back to current month
   const [selectedCycle, setSelectedCycle] = useState<string>(currentCycleKey);
+  // Once cycles load, update selectedCycle to the latest one if not already set
+  const latestLeaderboardCycle = (leaderboardCycles as string[])[0] ?? currentCycleKey;
+  const effectiveCycle = selectedCycle === currentCycleKey && (leaderboardCycles as string[]).length > 0
+    ? latestLeaderboardCycle
+    : selectedCycle;
 
   // Available months for commission data
   const { data: availableMonths = [], isLoading: loadingMonths } =
@@ -2265,15 +2274,15 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
   // Campaign ranking for selected cycle (own stats)
   const { data: ranking, isLoading: loadingRanking } =
     trpc.cycleTracker.getMyCampaignRankingAgent.useQuery(
-      { cycleKey: selectedCycle },
-      { enabled: !!selectedCycle }
+      { cycleKey: effectiveCycle },
+      { enabled: !!effectiveCycle }
     );
 
   // Full leaderboard for selected cycle (all agents)
   const { data: fullLeaderboard = [], isLoading: loadingLeaderboard } =
     trpc.commission.getFullLeaderboardAgent.useQuery(
-      { cycleKey: selectedCycle },
-      { enabled: !!selectedCycle }
+      { cycleKey: effectiveCycle },
+      { enabled: !!effectiveCycle }
     );
 
   // My own crdts for highlighting
@@ -2412,16 +2421,21 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
             <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.textFaint }}>Campaign Leaderboard</p>
           </div>
           <select
-            value={selectedCycle}
+            value={effectiveCycle}
             onChange={e => { setSelectedCycle(e.target.value); setLeaderboardCampaign("all"); }}
             className="text-xs rounded-lg px-2 py-1 border"
             style={{ background: theme.surface, borderColor: theme.surfaceBorder, color: theme.text }}
           >
-            {Array.from({ length: 6 }, (_, i) => {
-              const d = new Date(); d.setMonth(d.getMonth() - i);
-              const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-              return <option key={k} value={k}>{formatMonthLabel(k)}</option>;
-            })}
+            {(leaderboardCycles as string[]).length > 0
+              ? (leaderboardCycles as string[]).map(k => (
+                  <option key={k} value={k}>{formatMonthLabel(k)}</option>
+                ))
+              : Array.from({ length: 6 }, (_, i) => {
+                  const d = new Date(); d.setMonth(d.getMonth() - i);
+                  const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+                  return <option key={k} value={k}>{formatMonthLabel(k)}</option>;
+                })
+            }
           </select>
         </div>
 

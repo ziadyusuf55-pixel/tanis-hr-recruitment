@@ -3835,6 +3835,14 @@ const commissionRouter = router({
               uploadedAt: sql`VALUES(uploadedAt)`,
             },
           });
+          // Auto-sync commission into matching payroll record (same crdts + paymentCycle = month)
+          try {
+            const { payrollRecords } = await import("../drizzle/schema");
+            const { sql: sqlFn } = await import("drizzle-orm");
+            await db.update(payrollRecords)
+              .set({ commissionEgp: String(row.commissionEgp) })
+              .where(sqlFn`${payrollRecords.crdts} = ${row.crdts} AND ${payrollRecords.month} = ${input.paymentCycle}`);
+          } catch { /* non-fatal: payroll record may not exist yet */ }
           count++;
         } catch (err) {
           warnings.push({ crdts: row.crdts, type: "insert_error", message: String(err) });
