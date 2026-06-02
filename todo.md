@@ -1014,3 +1014,13 @@
 - [x] CommissionAdmin: Slack message generator dialog — auto-generates announcement with performance month, date range, top 3 agents with medals, total agent count, hub.tanis-eg.com link
 - [x] Slack message dialog: copy-to-clipboard button with confirmation feedback
 - [x] Slack message dialog auto-opens after successful commission upload
+
+## Round 37 — Leaderboard cleanup + Commission restore + Manual Adjustments
+- [ ] Remove Commission (EGP) and Revenue ($) columns from admin Leaderboard tab
+- [ ] Remove Commission (EGP) and Revenue ($) columns from Agent Portal leaderboard table
+- [ ] Keep Commission visible in Agent Portal summary bar (Your Commission — own agent only)
+- [ ] Restore EGP 1000 commission for all agents in May 2026 pay cycle via SQL
+- [ ] Add payroll_adjustments table (id, crdts, month, type: bonus|deduction, label, amount, created_at)
+- [ ] Add tRPC procedures: addAdjustment, updateAdjustment, deleteAdjustment, getAdjustmentsForMonth
+- [ ] Add Manual Adjustments section to Payroll tab (per agent per month, add/edit/delete, bonus/deduction with label + EGP amount)
+- [ ] Net pay calculation must include adjustments (base + commission + bonuses - deductions)

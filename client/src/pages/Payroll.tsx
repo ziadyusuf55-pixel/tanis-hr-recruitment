@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Upload, Download, ChevronDown, ChevronUp, FileSpreadsheet, CheckCircle2, Clock, Trash2, Pencil, AlertTriangle, Info } from "lucide-react";
+import { Upload, Download, ChevronDown, ChevronUp, FileSpreadsheet, CheckCircle2, Clock, Trash2, Pencil, AlertTriangle, Info, PlusCircle, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
@@ -87,7 +87,36 @@ function n(v: string | null | undefined) {
 
 export default function PayrollPage() {
   const utils = trpc.useUtils();
-  const [activeTab, setActiveTab] = useState<"status" | "upload">("status");
+  const [activeTab, setActiveTab] = useState<"status" | "upload" | "adjustments">("status");
+
+  // Adjustments tab state
+  const [adjMonth, setAdjMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
+  const [adjDialog, setAdjDialog] = useState(false);
+  const [adjForm, setAdjForm] = useState<{ crdts: string; type: "bonus" | "deduction"; label: string; amount: string }>({ crdts: "", type: "bonus", label: "", amount: "" });
+  const [adjEditId, setAdjEditId] = useState<number | null>(null);
+
+  const { data: adjustments = [], refetch: refetchAdj } = trpc.adjustments.getForMonth.useQuery(
+    { month: adjMonth },
+    { enabled: activeTab === "adjustments" }
+  );
+  type AdjRow = { id: number; crdts: string; month: string; type: string; label: string; amount: string; createdAt: number; createdBy: string | null };
+  const adjRows = adjustments as AdjRow[];
+
+  const addAdjMutation = trpc.adjustments.add.useMutation({
+    onSuccess: () => { refetchAdj(); setAdjDialog(false); setAdjForm({ crdts: "", type: "bonus", label: "", amount: "" }); setAdjEditId(null); toast.success("Adjustment added"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const updateAdjMutation = trpc.adjustments.update.useMutation({
+    onSuccess: () => { refetchAdj(); setAdjDialog(false); setAdjForm({ crdts: "", type: "bonus", label: "", amount: "" }); setAdjEditId(null); toast.success("Adjustment updated"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteAdjMutation = trpc.adjustments.delete.useMutation({
+    onSuccess: () => { refetchAdj(); toast.success("Adjustment deleted"); },
+    onError: (e) => toast.error(e.message),
+  });
 
   // Status tab
   const [statusMonth, setStatusMonth] = useState<string>(() => {
@@ -290,7 +319,7 @@ export default function PayrollPage() {
 
       {/* Tab bar */}
       <div className="flex gap-1 border-b">
-        {(["status", "upload"] as const).map(tab => (
+        {(["status", "adjustments", "upload"] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -300,7 +329,7 @@ export default function PayrollPage() {
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            {tab === "status" ? "Payment Status" : "Upload History"}
+            {tab === "status" ? "Payment Status" : tab === "adjustments" ? "Manual Adjustments" : "Upload History"}
           </button>
         ))}
       </div>
@@ -528,6 +557,171 @@ export default function PayrollPage() {
               </CardContent>
             </Card>
           )}
+        </div>
+      )}
+
+      {/* ── Manual Adjustments Tab ── */}
+      {activeTab === "adjustments" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium">Pay Cycle:</label>
+              <input
+                type="month"
+                value={adjMonth}
+                onChange={e => setAdjMonth(e.target.value)}
+                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+              />
+            </div>
+            <Button size="sm" className="gap-1.5" onClick={() => { setAdjEditId(null); setAdjForm({ crdts: "", type: "bonus", label: "", amount: "" }); setAdjDialog(true); }}>
+              <PlusCircle className="h-3.5 w-3.5" /> Add Adjustment
+            </Button>
+          </div>
+
+          {adjRows.length === 0 ? (
+            <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">No manual adjustments for this pay cycle.</CardContent></Card>
+          ) : (
+            <Card>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/40">
+                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">CRDTS</th>
+                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Type</th>
+                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Label / Reason</th>
+                        <th className="px-4 py-3 text-right font-semibold text-muted-foreground">Amount (EGP)</th>
+                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Added By</th>
+                        <th className="px-4 py-3 text-center font-semibold text-muted-foreground">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adjRows.map((adj, idx) => (
+                        <tr key={adj.id} className={`border-b last:border-0 ${idx % 2 === 0 ? "" : "bg-muted/20"}`}>
+                          <td className="px-4 py-3 font-mono text-xs">{adj.crdts}</td>
+                          <td className="px-4 py-3">
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold ${
+                              adj.type === "bonus" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"
+                            }`}>{adj.type === "bonus" ? "Bonus" : "Deduction"}</span>
+                          </td>
+                          <td className="px-4 py-3">{adj.label}</td>
+                          <td className={`px-4 py-3 text-right font-semibold ${
+                            adj.type === "bonus" ? "text-emerald-600" : "text-red-600"
+                          }`}>{adj.type === "deduction" ? "-" : "+"}EGP {parseFloat(adj.amount).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-xs text-muted-foreground">{adj.createdBy ?? "—"}</td>
+                          <td className="px-4 py-3 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <Button variant="ghost" size="sm" className="h-7 text-blue-600 hover:text-blue-700"
+                                onClick={() => {
+                                  setAdjEditId(adj.id);
+                                  setAdjForm({ crdts: adj.crdts, type: adj.type as "bonus" | "deduction", label: adj.label, amount: adj.amount });
+                                  setAdjDialog(true);
+                                }}>
+                                <Pencil className="h-3 w-3" />
+                              </Button>
+                              <Button variant="ghost" size="sm" className="h-7 text-red-500 hover:text-red-600"
+                                onClick={() => { if (confirm("Delete this adjustment?")) deleteAdjMutation.mutate({ id: adj.id }); }}
+                                disabled={deleteAdjMutation.isPending}>
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t bg-muted/30 font-semibold">
+                        <td colSpan={3} className="px-4 py-3 text-right text-sm text-muted-foreground">{adjRows.length} adjustments</td>
+                        <td className="px-4 py-3 text-right text-sm">
+                          {(() => {
+                            const total = adjRows.reduce((s, a) => s + (a.type === "bonus" ? parseFloat(a.amount) : -parseFloat(a.amount)), 0);
+                            return <span className={total >= 0 ? "text-emerald-600" : "text-red-600"}>{total >= 0 ? "+" : ""}EGP {total.toLocaleString()}</span>;
+                          })()}
+                        </td>
+                        <td colSpan={2} />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Add/Edit Adjustment Dialog */}
+          <Dialog open={adjDialog} onOpenChange={(o) => { if (!o) { setAdjDialog(false); setAdjEditId(null); setAdjForm({ crdts: "", type: "bonus", label: "", amount: "" }); } }}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <PlusCircle className="h-4 w-4" /> {adjEditId ? "Edit Adjustment" : "Add Manual Adjustment"}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 py-2 text-sm">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-muted-foreground">CRDTS</label>
+                  <input
+                    type="text"
+                    value={adjForm.crdts}
+                    onChange={e => setAdjForm(f => ({ ...f, crdts: e.target.value }))}
+                    placeholder="e.g. 114063"
+                    className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+                    disabled={!!adjEditId}
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-muted-foreground">Type</label>
+                  <select
+                    value={adjForm.type}
+                    onChange={e => setAdjForm(f => ({ ...f, type: e.target.value as "bonus" | "deduction" }))}
+                    className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+                  >
+                    <option value="bonus">Bonus</option>
+                    <option value="deduction">Deduction</option>
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-muted-foreground">Label / Reason</label>
+                  <input
+                    type="text"
+                    value={adjForm.label}
+                    onChange={e => setAdjForm(f => ({ ...f, label: e.target.value }))}
+                    placeholder="e.g. Overtime bonus, Equipment deduction"
+                    className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-muted-foreground">Amount (EGP)</label>
+                  <input
+                    type="number"
+                    min="0.01"
+                    step="0.01"
+                    value={adjForm.amount}
+                    onChange={e => setAdjForm(f => ({ ...f, amount: e.target.value }))}
+                    placeholder="0.00"
+                    className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { setAdjDialog(false); setAdjEditId(null); setAdjForm({ crdts: "", type: "bonus", label: "", amount: "" }); }}>Cancel</Button>
+                <Button
+                  onClick={() => {
+                    const amt = parseFloat(adjForm.amount);
+                    if (!adjForm.crdts.trim()) return toast.error("CRDTS is required");
+                    if (!adjForm.label.trim()) return toast.error("Label is required");
+                    if (isNaN(amt) || amt <= 0) return toast.error("Amount must be a positive number");
+                    if (adjEditId) {
+                      updateAdjMutation.mutate({ id: adjEditId, type: adjForm.type, label: adjForm.label, amount: amt });
+                    } else {
+                      addAdjMutation.mutate({ crdts: adjForm.crdts.trim(), month: adjMonth, type: adjForm.type, label: adjForm.label, amount: amt });
+                    }
+                  }}
+                  disabled={addAdjMutation.isPending || updateAdjMutation.isPending}
+                >
+                  {(addAdjMutation.isPending || updateAdjMutation.isPending) ? "Saving…" : adjEditId ? "Save Changes" : "Add Adjustment"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       )}
 

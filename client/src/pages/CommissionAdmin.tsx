@@ -700,9 +700,7 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
                         <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Alias</th>
                         <th className="px-4 py-3 text-left font-semibold text-muted-foreground">CRDTS</th>
                         <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Campaign</th>
-                        <th className="px-4 py-3 text-right font-semibold text-muted-foreground">Revenue ($)</th>
                         <th className="px-4 py-3 text-right font-semibold text-muted-foreground">Profit ($)</th>
-                        <th className="px-4 py-3 text-right font-semibold text-muted-foreground">Commission (EGP)</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -721,15 +719,9 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
                             <td className="px-4 py-3 font-medium">{row.alias || "—"}</td>
                             <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{row.crdts}</td>
                             <td className="px-4 py-3 text-muted-foreground">{row.campaignName}</td>
-                            <td className={`px-4 py-3 text-right ${
-                              Number(row.revenue) < 0 ? "text-red-600" : ""
-                            }`}>{fmtMoney(Number(row.revenue))}</td>
                             <td className={`px-4 py-3 text-right font-semibold ${
                               Number(row.profit) < 0 ? "text-red-600" : "text-emerald-600"
                             }`}>{fmtMoney(Number(row.profit))}</td>
-                            <td className={`px-4 py-3 text-right font-semibold ${
-                              commAmt > 0 ? "text-emerald-700" : "text-muted-foreground"
-                            }`}>{commAmt > 0 ? `EGP ${commAmt.toLocaleString()}` : "—"}</td>
                           </tr>
                         );
                       })}
@@ -737,14 +729,8 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
                     <tfoot>
                       <tr className="border-t bg-muted/30 font-semibold">
                         <td colSpan={4} className="px-4 py-3 text-right text-sm text-muted-foreground">{lbFiltered.length} agents</td>
-                        <td className="px-4 py-3 text-right text-sm">
-                          {(() => { const t = lbFiltered.reduce((s, r) => s + Number(r.revenue), 0); return t < 0 ? `-$${Math.abs(t).toLocaleString()}` : `$${t.toLocaleString()}`; })()}
-                        </td>
                         <td className="px-4 py-3 text-right text-sm text-emerald-600">
                           {(() => { const t = lbFiltered.reduce((s, r) => s + Number(r.profit), 0); return t < 0 ? `-$${Math.abs(t).toLocaleString()}` : `$${t.toLocaleString()}`; })()}
-                        </td>
-                        <td className="px-4 py-3 text-right text-sm text-emerald-700">
-                          EGP {lbFiltered.reduce((s, r) => s + Number(r.commissionEgp ?? 0), 0).toLocaleString()}
                         </td>
                       </tr>
                     </tfoot>

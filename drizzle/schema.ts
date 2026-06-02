@@ -897,3 +897,22 @@ export const commissionLeaderboard = mysqlTable("commission_leaderboard", {
 }));
 export type CommissionLeaderboard = typeof commissionLeaderboard.$inferSelect;
 export type InsertCommissionLeaderboard = typeof commissionLeaderboard.$inferInsert;
+
+/**
+ * payrollAdjustments — manual bonus or deduction entries per agent per pay cycle.
+ * Added by admin from the Payroll tab. Included in net pay calculation.
+ * type: 'bonus' | 'deduction'
+ * month: YYYY-MM (pay cycle)
+ */
+export const payrollAdjustments = mysqlTable("payroll_adjustments", {
+  id:          int("id").autoincrement().primaryKey(),
+  crdts:       varchar("crdts", { length: 50 }).notNull(),
+  month:       varchar("month", { length: 7 }).notNull(),   // YYYY-MM pay cycle
+  type:        mysqlEnum("type", ["bonus", "deduction"]).notNull(),
+  label:       varchar("label", { length: 255 }).notNull(), // e.g. "Overtime bonus", "Equipment deduction"
+  amount:      decimal("amount", { precision: 10, scale: 2 }).notNull(),
+  createdAt:   bigint("createdAt", { mode: "number" }).notNull(),
+  createdBy:   varchar("createdBy", { length: 255 }),       // admin name
+});
+export type PayrollAdjustment = typeof payrollAdjustments.$inferSelect;
+export type InsertPayrollAdjustment = typeof payrollAdjustments.$inferInsert;

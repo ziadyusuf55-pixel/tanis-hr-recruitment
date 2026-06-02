@@ -2559,9 +2559,7 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
                   <th className="px-4 py-2 text-left font-semibold" style={{ color: theme.textFaint }}>Rank</th>
                   <th className="px-4 py-2 text-left font-semibold" style={{ color: theme.textFaint }}>Alias</th>
                   <th className="px-4 py-2 text-left font-semibold" style={{ color: theme.textFaint }}>Campaign</th>
-                  <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Revenue ($)</th>
                   <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Profit ($)</th>
-                  <th className="px-4 py-2 text-right font-semibold" style={{ color: theme.textFaint }}>Commission (EGP)</th>
                 </tr>
               </thead>
               <tbody>
@@ -2586,11 +2584,7 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
                         {isMe && <span className="ml-1.5 text-xs px-1.5 py-0.5 rounded-full font-semibold" style={{ background: `${BRAND}33`, color: BRAND }}>You</span>}
                       </td>
                       <td className="px-4 py-2.5" style={{ color: theme.textMuted }}>{row.campaignName}</td>
-                      <td className="px-4 py-2.5 text-right" style={{ color: Number(row.revenue) < 0 ? "#ef4444" : theme.text }}>{fmtMoney(Number(row.revenue))}</td>
                       <td className="px-4 py-2.5 text-right font-semibold" style={{ color: profitColor(Number(row.profit)) }}>{fmtMoney(Number(row.profit))}</td>
-                      <td className="px-4 py-2.5 text-right font-semibold" style={{ color: commAmt > 0 ? "oklch(0.55 0.18 145)" : theme.textFaint }}>
-                        {commAmt > 0 ? `EGP ${fmtNum(commAmt)}` : "—"}
-                      </td>
                     </tr>
                   );
                 })}

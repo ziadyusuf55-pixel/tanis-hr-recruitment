@@ -3779,6 +3779,80 @@ const integrationsRouter = router({
 });
 
 // ─── Commission Router ────────────────────────────────────────────────────────
+// ─── Payroll Adjustments Router ──────────────────────────────────────────────
+const adjustmentsRouter = router({
+  getForMonth: protectedProcedure
+    .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { payrollAdjustments } = await import("../drizzle/schema");
+      const { eq, asc } = await import("drizzle-orm");
+      return db.select().from(payrollAdjustments)
+        .where(eq(payrollAdjustments.month, input.month))
+        .orderBy(asc(payrollAdjustments.createdAt));
+    }),
+
+  add: protectedProcedure
+    .input(z.object({
+      crdts: z.string().min(1),
+      month: z.string().regex(/^\d{4}-\d{2}$/),
+      type: z.enum(["bonus", "deduction"]),
+      label: z.string().min(1).max(255),
+      amount: z.number().positive(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { payrollAdjustments } = await import("../drizzle/schema");
+      const result = await db.insert(payrollAdjustments).values({
+        crdts: input.crdts,
+        month: input.month,
+        type: input.type,
+        label: input.label,
+        amount: String(input.amount),
+        createdAt: Date.now(),
+        createdBy: (ctx as { user?: { name?: string } }).user?.name ?? "Admin",
+      });
+      return { id: (result as { insertId?: number }).insertId ?? 0 };
+    }),
+
+  update: protectedProcedure
+    .input(z.object({
+      id: z.number(),
+      type: z.enum(["bonus", "deduction"]).optional(),
+      label: z.string().min(1).max(255).optional(),
+      amount: z.number().positive().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { payrollAdjustments } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const updates: Record<string, unknown> = {};
+      if (input.type !== undefined) updates.type = input.type;
+      if (input.label !== undefined) updates.label = input.label;
+      if (input.amount !== undefined) updates.amount = String(input.amount);
+      await db.update(payrollAdjustments).set(updates).where(eq(payrollAdjustments.id, input.id));
+      return { success: true };
+    }),
+
+  delete: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const { payrollAdjustments } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      await db.delete(payrollAdjustments).where(eq(payrollAdjustments.id, input.id));
+      return { success: true };
+    }),
+});
+
 const commissionRouter = router({
   // Get all commission records for a given payment cycle (YYYY-MM)
   getForMonth: protectedProcedure
@@ -4029,7 +4103,7 @@ export const appRouter = router({
   hubspot: hubspotRouter,
   integrations: integrationsRouter,
   commission: commissionRouter,
+  adjustments: adjustmentsRouter,
 });
 export type AppRouter = typeof appRouter;
-
 
