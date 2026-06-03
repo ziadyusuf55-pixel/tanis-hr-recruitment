@@ -759,7 +759,7 @@ const agentRouter = router({
 
   // Reset agent password — admin only, generates a new random password
   resetPassword: protectedProcedure
-    .input(z.object({ candidateId: z.number().optional(), traineeCode: z.string().optional() }))
+    .input(z.object({ candidateId: z.number().optional(), traineeCode: z.string().optional(), crdts: z.string().optional() }))
     .mutation(async ({ input }) => {
       // Look up credentials by traineeCode first (more reliable for Operations agents),
       // fall back to candidateId for legacy Training-flow agents
@@ -769,8 +769,31 @@ const agentRouter = router({
           ? await getAgentCredentialByCandidateId(input.candidateId)
           : null;
 
-      const resolvedTraineeCode = input.traineeCode ?? cred?.traineeCode;
-      const resolvedCandidateId = input.candidateId ?? cred?.candidateId ?? 0;
+      let resolvedTraineeCode = input.traineeCode ?? cred?.traineeCode;
+      let resolvedCandidateId = input.candidateId ?? cred?.candidateId ?? 0;
+
+      // If still no traineeCode, try to look up from workforce table by crdts
+      if (!resolvedTraineeCode && input.crdts) {
+        const { getDb } = await import("./db");
+        const { eq: eqOp } = await import("drizzle-orm");
+        const db = await getDb();
+        if (db) {
+          const { workforceAgents } = await import("../drizzle/schema");
+          const wa = await db.select({ traineeCode: workforceAgents.traineeCode, candidateId: workforceAgents.candidateId })
+            .from(workforceAgents)
+            .where(eqOp(workforceAgents.crdts, input.crdts))
+            .limit(1);
+          if (wa[0]?.traineeCode) {
+            resolvedTraineeCode = wa[0].traineeCode;
+            resolvedCandidateId = wa[0].candidateId ?? resolvedCandidateId;
+          }
+        }
+      }
+
+      // Last resort: use crdts itself as the traineeCode identifier
+      if (!resolvedTraineeCode && input.crdts) {
+        resolvedTraineeCode = input.crdts;
+      }
 
       if (!resolvedTraineeCode) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "traineeCode is required" });

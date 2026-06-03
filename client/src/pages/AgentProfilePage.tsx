@@ -280,7 +280,7 @@ export default function AgentProfilePage() {
                 variant="outline"
                 size="sm"
                 className="gap-1.5 text-amber-700 border-amber-300 hover:bg-amber-50"
-                onClick={() => resetPassword.mutate({ candidateId: agent.candidateId })}
+                onClick={() => resetPassword.mutate({ candidateId: agent.candidateId, traineeCode: agent.traineeCode ?? undefined, crdts: agent.crdts ?? undefined })}
                 disabled={resetPassword.isPending}
               >
                 <KeyRound className="h-3.5 w-3.5" />
