@@ -37,6 +37,7 @@ import {
   Pencil,
   Check,
   X,
+  Ban,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
@@ -133,6 +134,37 @@ export default function Training() {
     onSuccess: (_data, vars) => {
       utils.batches.listCandidates.invalidate({ batchId: selectedBatchId! });
       toast.success(vars.value ? "Mock call passed" : "Mock call pending");
+    },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+
+  // Delete / Blacklist candidate from training
+  const [deleteTraineeId, setDeleteTraineeId] = useState<number | null>(null);
+  const [deleteTraineeName, setDeleteTraineeName] = useState("");
+  const [blacklistTraineeId, setBlacklistTraineeId] = useState<number | null>(null);
+  const [blacklistTraineeName, setBlacklistTraineeName] = useState("");
+  const [blacklistReason, setBlacklistReason] = useState("");
+
+  const deleteCandidate = trpc.candidates.delete.useMutation({
+    onSuccess: () => {
+      utils.batches.listCandidates.invalidate({ batchId: selectedBatchId! });
+      utils.batches.list.invalidate();
+      utils.workforce.allInTraining.invalidate();
+      toast.success("Candidate deleted");
+      setDeleteTraineeId(null);
+      setDeleteTraineeName("");
+    },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+  const blacklistCandidate = trpc.candidates.blacklist.useMutation({
+    onSuccess: () => {
+      utils.batches.listCandidates.invalidate({ batchId: selectedBatchId! });
+      utils.batches.list.invalidate();
+      utils.workforce.allInTraining.invalidate();
+      toast.success("Candidate blacklisted");
+      setBlacklistTraineeId(null);
+      setBlacklistTraineeName("");
+      setBlacklistReason("");
     },
     onError: (e) => toast.error(getErrorMessage(e)),
   });
@@ -391,6 +423,24 @@ export default function Training() {
                         >
                           <UserMinus className="h-3.5 w-3.5" />
                         </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-orange-600 hover:bg-orange-50"
+                          onClick={() => { setBlacklistTraineeId(c.id); setBlacklistTraineeName(c.name); setBlacklistReason(""); }}
+                          title="Blacklist candidate"
+                        >
+                          <Ban className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 w-7 p-0 text-muted-foreground hover:text-red-700 hover:bg-red-50"
+                          onClick={() => { setDeleteTraineeId(c.id); setDeleteTraineeName(c.name); }}
+                          title="Delete candidate"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
                       </div>
                     </td>
                   </tr>
@@ -446,6 +496,58 @@ export default function Training() {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Delete candidate from training confirm */}
+        <AlertDialog open={deleteTraineeId !== null} onOpenChange={(o) => !o && setDeleteTraineeId(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete {deleteTraineeName}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete <strong>{deleteTraineeName}</strong> from the system — including their profile, training assignment, and all records. This cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-red-600 hover:bg-red-700"
+                onClick={() => deleteTraineeId && deleteCandidate.mutate({ id: deleteTraineeId })}
+              >
+                Delete Permanently
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Blacklist candidate from training */}
+        <AlertDialog open={blacklistTraineeId !== null} onOpenChange={(o) => !o && setBlacklistTraineeId(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2"><Ban className="h-5 w-5 text-orange-500" /> Blacklist {blacklistTraineeName}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently mark <strong>{blacklistTraineeName}</strong> as blacklisted and block them from re-entering the pipeline.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="px-6 pb-2">
+              <label className="text-sm font-medium mb-1.5 block">Reason <span className="text-red-500">*</span></label>
+              <Textarea
+                placeholder="e.g. Unprofessional conduct, no-show multiple times..."
+                value={blacklistReason}
+                onChange={(e) => setBlacklistReason(e.target.value)}
+                rows={3}
+              />
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-orange-600 hover:bg-orange-700"
+                disabled={!blacklistReason.trim()}
+                onClick={() => blacklistTraineeId && blacklistCandidate.mutate({ id: blacklistTraineeId, reason: blacklistReason.trim() })}
+              >
+                Blacklist
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Delete batch confirm */}
         <AlertDialog open={deleteBatchId !== null} onOpenChange={(o) => !o && setDeleteBatchId(null)}>

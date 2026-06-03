@@ -1489,6 +1489,39 @@ const workforceRouter = router({
       dialerCredentials: z.string().optional(),
     }))
     .mutation(async ({ input }) => {
+      // ── Trainee Code Reuse Guard ──────────────────────────────────────────
+      // Block reuse of any traineeCode that was ever assigned — regardless of
+      // current status (active, resigned, terminated, inactive).
+      const { getDb } = await import("./db");
+      const { eq: eqGuard } = await import("drizzle-orm");
+      const dbGuard = await getDb();
+      if (dbGuard) {
+        const { workforceAgents: waTable } = await import("../drizzle/schema");
+        const existing = await dbGuard.select({
+          fullName: waTable.fullName,
+          agentStatus: waTable.agentStatus,
+          isActive: waTable.isActive,
+        }).from(waTable).where(eqGuard(waTable.traineeCode, input.traineeCode)).limit(1);
+        if (existing.length > 0) {
+          const ex = existing[0];
+          const statusLabel = ex.agentStatus === "resigned" ? "resigned" : ex.agentStatus === "terminated" ? "terminated" : ex.isActive ? "active" : "inactive";
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: `"${input.traineeCode}" is already assigned to ${ex.fullName} (${statusLabel}). This ID cannot be reused — agent IDs are permanently retired.`,
+          });
+        }
+        // Also check agentCredentials to catch soft-deleted agents
+        const { agentCredentials: acTable } = await import("../drizzle/schema");
+        const existingCred = await dbGuard.select({ traineeCode: acTable.traineeCode })
+          .from(acTable).where(eqGuard(acTable.traineeCode, input.traineeCode)).limit(1);
+        if (existingCred.length > 0) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: `"${input.traineeCode}" has existing credentials in the system and cannot be reassigned. Agent IDs are permanently retired.`,
+          });
+        }
+      }
+      // ─────────────────────────────────────────────────────────────────────
       await createWorkforceAgent(input);
       // Send campaign assignment notification if a campaign was specified
       if (input.campaignId) {

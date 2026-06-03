@@ -904,9 +904,12 @@ export default function Operations() {
   }, [agents]);
 
   const filteredAgents = (agents as WorkforceAgent[]).filter(a => {
-    const matchesSearch = a.fullName.toLowerCase().includes(search.toLowerCase()) ||
-      a.traineeCode.toLowerCase().includes(search.toLowerCase()) ||
-      (a.alias ?? "").toLowerCase().includes(search.toLowerCase());
+    const q = search.toLowerCase();
+    const matchesSearch = !q ||
+      a.fullName.toLowerCase().includes(q) ||
+      a.traineeCode.toLowerCase().includes(q) ||
+      (a.alias ?? "").toLowerCase().includes(q) ||
+      (a.crdts ?? "").toLowerCase().includes(q);
     const matchesTL = tlFilter === "all" || a.teamLeader === tlFilter;
     return matchesSearch && matchesTL;
   });
@@ -1066,7 +1069,7 @@ export default function Operations() {
           <div className="flex items-center gap-3 mb-4">
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Search by name, ID, or alias..." className="pl-9" value={search} onChange={e => setSearch(e.target.value)} />
+              <Input placeholder="Search by name, ID, alias, or CRDTS..." className="pl-9" value={search} onChange={e => setSearch(e.target.value)} />
             </div>
             {uniqueTLs.length > 0 && (
               <select

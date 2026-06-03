@@ -1024,3 +1024,9 @@
 - [ ] Add tRPC procedures: addAdjustment, updateAdjustment, deleteAdjustment, getAdjustmentsForMonth
 - [ ] Add Manual Adjustments section to Payroll tab (per agent per month, add/edit/delete, bonus/deduction with label + EGP amount)
 - [ ] Net pay calculation must include adjustments (base + commission + bonuses - deductions)
+
+## Round 38 — ID guard, training delete/blacklist, CRDTS search
+- [x] traineeCode reuse guard: pre-check in workforce.create for existing traineeCode across all statuses
+- [x] Training page: delete candidate from training (with confirmation dialog)
+- [x] Training page: blacklist candidate from training (stores reason, prevents re-application)
+- [x] Operations tab: CRDTS search/filter input to find agent by CRDTS
