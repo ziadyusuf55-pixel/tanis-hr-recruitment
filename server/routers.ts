@@ -1184,6 +1184,16 @@ const adminAuthRouter = router({
       return { token, expiresAt, inviteUrl: token };
     }),
 
+  // Regenerate an existing invite — resets token + expiry + clears usedAt
+  regenerateInvite: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      const { regenerateAdminInviteById } = await import("./db");
+      const result = await regenerateAdminInviteById(input.id);
+      return { token: result.token, expiresAt: result.expiresAt };
+    }),
+
   // Validate invite token (public)
   validateInvite: publicProcedure
     .input(z.object({ token: z.string() }))
@@ -4226,6 +4236,75 @@ const commissionRouter = router({
     }),
 });
 
+// ─── Admin Invites Router ───────────────────────────────────────────────────
+const invitesRouter = router({
+  generate: protectedProcedure
+    .input(z.object({ origin: z.string().url() }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { adminInvites } = await import("../drizzle/schema");
+      const { randomBytes } = await import("crypto");
+      const token = randomBytes(32).toString("hex");
+      const now = new Date();
+      const expiresAt = Date.now() + 48 * 60 * 60 * 1000; // 48 hours
+      await db.insert(adminInvites).values({
+        token,
+        name: ctx.user.name ?? "Admin",
+        email: ctx.user.email ?? "",
+        invitedBy: ctx.user.name ?? ctx.user.openId,
+        expiresAt,
+      });
+      const inviteUrl = `${input.origin}/admin-invite?token=${token}`;
+      return { token, inviteUrl, expiresAt };
+    }),
+
+  list: protectedProcedure
+    .query(async ({ ctx }) => {
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { adminInvites } = await import("../drizzle/schema");
+      const { desc } = await import("drizzle-orm");
+      return db.select().from(adminInvites).orderBy(desc(adminInvites.createdAt));
+    }),
+
+  revoke: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { adminInvites } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      await db.delete(adminInvites).where(eq(adminInvites.id, input.id));
+      return { ok: true };
+    }),
+
+  use: publicProcedure
+    .input(z.object({ token: z.string(), openId: z.string() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { adminInvites, users } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const [invite] = await db.select().from(adminInvites).where(eq(adminInvites.token, input.token)).limit(1);
+      if (!invite) throw new TRPCError({ code: "NOT_FOUND", message: "Invite not found or already used" });
+      if (invite.usedAt) throw new TRPCError({ code: "BAD_REQUEST", message: "This invite link has already been used" });
+      if (Date.now() > invite.expiresAt) throw new TRPCError({ code: "BAD_REQUEST", message: "This invite link has expired" });
+      // Promote user to admin
+      await db.update(users).set({ role: "admin" }).where(eq(users.openId, input.openId));
+      // Mark invite as used
+      await db.update(adminInvites).set({ usedAt: Date.now() }).where(eq(adminInvites.id, invite.id));
+      return { ok: true };
+    }),
+});
+
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -4264,6 +4343,7 @@ export const appRouter = router({
   commission: commissionRouter,
   adjustments: adjustmentsRouter,
   trainerSalaries: trainerSalariesRouter,
+  invites: invitesRouter,
 });
 export type AppRouter = typeof appRouter;
 

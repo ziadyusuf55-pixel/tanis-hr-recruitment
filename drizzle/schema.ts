@@ -933,3 +933,4 @@ export const trainerSalaries = mysqlTable("trainer_salaries", {
 });
 export type TrainerSalary = typeof trainerSalaries.$inferSelect;
 export type InsertTrainerSalary = typeof trainerSalaries.$inferInsert;
+

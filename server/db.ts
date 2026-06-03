@@ -970,6 +970,18 @@ export async function markAdminInviteUsed(token: string) {
   const { adminInvites } = await import("../drizzle/schema");
   await db.update(adminInvites).set({ usedAt: Date.now() }).where(eq(adminInvites.token, token));
 }
+export async function regenerateAdminInviteById(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { adminInvites } = await import("../drizzle/schema");
+  const { randomBytes } = await import("crypto");
+  const newToken = randomBytes(48).toString("hex");
+  const newExpiresAt = Date.now() + 48 * 60 * 60 * 1000;
+  await db.update(adminInvites)
+    .set({ token: newToken, expiresAt: newExpiresAt, usedAt: null })
+    .where(eq(adminInvites.id, id));
+  return { token: newToken, expiresAt: newExpiresAt };
+}
 
 // ─── Login Rate Limiting ──────────────────────────────────────────────────────
 const LOCKOUT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes

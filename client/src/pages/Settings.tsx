@@ -418,6 +418,31 @@ export default function Settings() {
     },
   });
 
+  const [regenToken, setRegenToken] = useState<string | null>(null);
+  const [regenAdminId, setRegenAdminId] = useState<number | null>(null);
+  const [regenCopied, setRegenCopied] = useState(false);
+
+  const regenerateMutation = trpc.adminAuth.regenerateInvite.useMutation({
+    onSuccess: (data) => {
+      setRegenToken(data.token);
+      refetch();
+    },
+    onError: (err) => {
+      toast.error(getErrorMessage(err));
+    },
+  });
+
+  const regenLink = regenToken
+    ? `${window.location.origin}/admin-invite?token=${regenToken}`
+    : null;
+
+  const handleRegenCopy = () => {
+    if (!regenLink) return;
+    navigator.clipboard.writeText(regenLink);
+    setRegenCopied(true);
+    setTimeout(() => setRegenCopied(false), 2000);
+  };
+
   const setActiveMutation = trpc.adminAuth.setActive.useMutation({
     onSuccess: () => {
       refetch();
@@ -552,6 +577,20 @@ export default function Settings() {
                     <Badge variant={admin.isActive ? "default" : "secondary"} className="text-xs">
                       {admin.isActive ? "Active" : "Inactive"}
                     </Badge>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      title="Regenerate invite link"
+                      disabled={regenerateMutation.isPending && regenAdminId === admin.id}
+                      onClick={() => {
+                        setRegenAdminId(admin.id);
+                        setRegenToken(null);
+                        regenerateMutation.mutate({ id: admin.id });
+                      }}
+                    >
+                      <RefreshCw className="h-3.5 w-3.5 text-muted-foreground" />
+                    </Button>
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
                         <Button
@@ -596,6 +635,40 @@ export default function Settings() {
           )}
         </CardContent>
       </Card>
+
+      {/* Regenerated invite link dialog */}
+      {regenToken && regenLink && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => { setRegenToken(null); setRegenAdminId(null); }}>
+          <div className="bg-background rounded-xl shadow-xl p-6 w-full max-w-md mx-4 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-base">New Invite Link Generated</h3>
+              <button className="text-muted-foreground hover:text-foreground" onClick={() => { setRegenToken(null); setRegenAdminId(null); }}>✕</button>
+            </div>
+            <div className="rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 p-3">
+              <p className="text-xs text-blue-700 dark:text-blue-400">This link replaces the previous one. The old link is now invalid. Share this new link — it expires in 48 hours.</p>
+            </div>
+            <div className="flex gap-2">
+              <input
+                readOnly
+                value={regenLink}
+                className="flex-1 text-xs font-mono border rounded-md px-3 py-2 bg-muted"
+              />
+              <button
+                className="shrink-0 border rounded-md px-3 py-2 hover:bg-muted transition-colors"
+                onClick={handleRegenCopy}
+              >
+                {regenCopied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+              </button>
+            </div>
+            <button
+              className="w-full border rounded-md py-2 text-sm hover:bg-muted transition-colors"
+              onClick={() => { setRegenToken(null); setRegenAdminId(null); }}
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Team Leaders */}
       <TeamLeadersSection />

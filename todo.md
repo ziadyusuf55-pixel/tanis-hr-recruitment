@@ -1038,3 +1038,12 @@
 - [ ] Trainer salaries: tRPC CRUD procedures (list, upsert, delete)
 - [ ] Trainer salaries: manual entry section in Payroll tab (add/edit/delete per trainer per month)
 - [ ] Trainer salaries: manual entry section in Commission tab (same UI, shared data)
+
+## Round 40 — Admin Invite Links
+- [ ] admin_invites DB table (id, token, createdBy, usedBy, expiresAt, usedAt, createdAt)
+- [ ] backend: invites.generate — creates a signed token, returns full invite URL
+- [ ] backend: invites.list — list all invites (pending/used/expired) for admin view
+- [ ] backend: invites.revoke — delete an invite before it's used
+- [ ] OAuth callback: detect invite token in state, promote user to admin after login
+- [ ] Admin Team page: shows current admins list + Generate Invite Link button + invite history
+- [ ] Invite link landing: /admin-invite?token=xxx — auto-uses token after OAuth login
