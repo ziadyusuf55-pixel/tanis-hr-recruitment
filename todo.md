@@ -1030,3 +1030,11 @@
 - [x] Training page: delete candidate from training (with confirmation dialog)
 - [x] Training page: blacklist candidate from training (stores reason, prevents re-application)
 - [x] Operations tab: CRDTS search/filter input to find agent by CRDTS
+
+## Round 39 — Cycle UX + Trainer Salaries
+- [ ] Upload dialog: show date range "26 May 2026 – 25 Jun 2026" auto-calculated from selected performance month
+- [ ] Commission records: Edit Cycle button to reassign performance month + pay cycle on existing upload
+- [ ] Trainer salaries: DB schema (trainer_salaries table: trainerId, name, month, salaryEgp, notes)
+- [ ] Trainer salaries: tRPC CRUD procedures (list, upsert, delete)
+- [ ] Trainer salaries: manual entry section in Payroll tab (add/edit/delete per trainer per month)
+- [ ] Trainer salaries: manual entry section in Commission tab (same UI, shared data)

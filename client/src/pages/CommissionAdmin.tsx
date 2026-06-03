@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Upload, Download, FileSpreadsheet, CheckCircle2, Clock, AlertTriangle, Info, DollarSign, Pencil, Check, X, Trash2, Trophy, Copy, MessageSquare } from "lucide-react";
+import { Upload, Download, FileSpreadsheet, CheckCircle2, Clock, AlertTriangle, Info, DollarSign, Pencil, Check, X, Trash2, Trophy, Copy, MessageSquare, CalendarDays } from "lucide-react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 
@@ -150,6 +150,16 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
     const d = new Date(y, m - 1 + 2, 1);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   }, [performanceMonthKey]);
+
+  // Cycle date range: 26th of prev month → 25th of performance month
+  const cycleDateRange = useMemo(() => {
+    if (!performanceMonthKey) return null;
+    const [y, m] = performanceMonthKey.split("-").map(Number);
+    const startDate = new Date(y, m - 2, 26); // 26th of month before performance month
+    const endDate = new Date(y, m - 1, 25);   // 25th of performance month
+    const fmt = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+    return `${fmt(startDate)} – ${fmt(endDate)}`;
+  }, [performanceMonthKey]);
   const [parsedRows, setParsedRows] = useState<ParsedCommRow[]>([]);
   const [parsedLeaderboard, setParsedLeaderboard] = useState<ParsedLeaderboardRow[]>([]);
   const [parseError, setParseError] = useState<string | null>(null);
@@ -162,6 +172,32 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
 
   // Delete state
   const [confirmDeleteId, setConfirmDeleteId] = useState<number | null>(null);
+  // Edit Cycle dialog
+  const [editCycleId, setEditCycleId] = useState<number | null>(null);
+  const [editCycleNewMonth, setEditCycleNewMonth] = useState(""); // YYYY-MM (performance month)
+  const editCycleNewPayCycle = useMemo(() => {
+    if (!editCycleNewMonth) return "";
+    const [y, m] = editCycleNewMonth.split("-").map(Number);
+    const d = new Date(y, m - 1 + 2, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  }, [editCycleNewMonth]);
+  const editCycleDateRange = useMemo(() => {
+    if (!editCycleNewMonth) return null;
+    const [y, m] = editCycleNewMonth.split("-").map(Number);
+    const startDate = new Date(y, m - 2, 26);
+    const endDate = new Date(y, m - 1, 25);
+    const fmt = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+    return `${fmt(startDate)} – ${fmt(endDate)}`;
+  }, [editCycleNewMonth]);
+  const changeCycleMutation = trpc.commission.changeCycle.useMutation({
+    onSuccess: () => {
+      utils.commission.getForMonth.invalidate();
+      toast.success("Cycle updated and payroll synced");
+      setEditCycleId(null);
+      setEditCycleNewMonth("");
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const [confirmClearCycle, setConfirmClearCycle] = useState(false);
 
   const deleteRecordMutation = trpc.commission.deleteCommissionRecord.useMutation({
@@ -615,13 +651,22 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
                             )}
                           </td>
                           <td className="px-4 py-3 text-center">
-                            <button
-                              onClick={() => setConfirmDeleteId(r.id)}
-                              className="text-muted-foreground hover:text-red-600 transition-colors"
-                              title="Delete this commission record"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                onClick={() => { setEditCycleId(r.id); setEditCycleNewMonth(""); }}
+                                className="text-muted-foreground hover:text-blue-600 transition-colors"
+                                title="Change pay cycle"
+                              >
+                                <CalendarDays className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setConfirmDeleteId(r.id)}
+                                className="text-muted-foreground hover:text-red-600 transition-colors"
+                                title="Delete this commission record"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -794,7 +839,12 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
                   }}
                   className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
                 />
-                <p className="text-xs text-muted-foreground">The month agents worked to earn this commission</p>
+                {cycleDateRange && (
+                  <p className="text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded px-2 py-1">
+                    📅 Work period: {cycleDateRange}
+                  </p>
+                )}
+                {!cycleDateRange && <p className="text-xs text-muted-foreground">The month agents worked to earn this commission</p>}
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-sm font-medium">Pay Cycle (auto-calculated)</label>
@@ -1044,6 +1094,55 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
               onClick={() => clearCycleMutation.mutate({ cycleKey: viewMonth })}
             >
               {clearCycleMutation.isPending ? "Clearing…" : `Clear ${formatMonthLabel(viewMonth)}`}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Edit Cycle Dialog ── */}
+      <Dialog open={editCycleId !== null} onOpenChange={open => { if (!open) { setEditCycleId(null); setEditCycleNewMonth(""); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <CalendarDays className="h-5 w-5 text-blue-600" /> Change Pay Cycle
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">Select the correct performance month. The pay cycle will be auto-calculated as performance month + 2 months.</p>
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium">New Performance Month</label>
+              <input
+                type="month"
+                value={editCycleNewMonth}
+                onChange={e => setEditCycleNewMonth(e.target.value)}
+                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+              />
+              {editCycleDateRange && (
+                <p className="text-xs font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded px-2 py-1">
+                  📅 Work period: {editCycleDateRange}
+                </p>
+              )}
+            </div>
+            {editCycleNewPayCycle && (
+              <div className="rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+                <span className="text-muted-foreground">New Pay Cycle: </span>
+                <strong>{formatMonthLabel(editCycleNewPayCycle)}</strong>
+                <span className="text-xs text-muted-foreground ml-1">(paid 1st {formatMonthLabel(editCycleNewPayCycle)})</span>
+              </div>
+            )}
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setEditCycleId(null); setEditCycleNewMonth(""); }}>Cancel</Button>
+            <Button
+              size="sm"
+              disabled={!editCycleNewPayCycle || changeCycleMutation.isPending}
+              onClick={() => editCycleId !== null && changeCycleMutation.mutate({
+                id: editCycleId,
+                newPaymentCycle: editCycleNewPayCycle,
+                newPerformanceMonth: editCycleNewMonth ? new Date(parseInt(editCycleNewMonth.split("-")[0]), parseInt(editCycleNewMonth.split("-")[1]) - 1).toLocaleString("en-US", { month: "long", year: "numeric" }) : undefined,
+              })}
+            >
+              {changeCycleMutation.isPending ? "Updating…" : "Update Cycle"}
             </Button>
           </DialogFooter>
         </DialogContent>

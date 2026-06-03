@@ -87,7 +87,38 @@ function n(v: string | null | undefined) {
 
 export default function PayrollPage() {
   const utils = trpc.useUtils();
-  const [activeTab, setActiveTab] = useState<"status" | "upload" | "adjustments">("status");
+  const [activeTab, setActiveTab] = useState<"status" | "upload" | "adjustments" | "trainers">("status");
+
+  // Trainer Salaries tab state
+  const [trainerMonth, setTrainerMonth] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
+  const [trainerDialog, setTrainerDialog] = useState(false);
+  const [trainerEditId, setTrainerEditId] = useState<number | null>(null);
+  const [trainerForm, setTrainerForm] = useState<{ trainerName: string; salaryEgp: string; notes: string }>({ trainerName: "", salaryEgp: "", notes: "" });
+
+  const { data: trainerSalaries = [], refetch: refetchTrainers } = trpc.trainerSalaries.getForMonth.useQuery(
+    { month: trainerMonth },
+    { enabled: activeTab === "trainers" }
+  );
+  type TrainerRow = { id: number; trainerName: string; month: string; salaryEgp: string; notes: string | null; createdAt: number; updatedAt: number };
+  const trainerRows = trainerSalaries as TrainerRow[];
+
+  const upsertTrainerMutation = trpc.trainerSalaries.upsert.useMutation({
+    onSuccess: () => {
+      refetchTrainers();
+      setTrainerDialog(false);
+      setTrainerEditId(null);
+      setTrainerForm({ trainerName: "", salaryEgp: "", notes: "" });
+      toast.success(trainerEditId ? "Trainer salary updated" : "Trainer salary added");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const deleteTrainerMutation = trpc.trainerSalaries.delete.useMutation({
+    onSuccess: () => { refetchTrainers(); toast.success("Trainer salary deleted"); },
+    onError: (e) => toast.error(e.message),
+  });
 
   // Adjustments tab state
   const [adjMonth, setAdjMonth] = useState<string>(() => {
@@ -319,7 +350,7 @@ export default function PayrollPage() {
 
       {/* Tab bar */}
       <div className="flex gap-1 border-b">
-        {(["status", "adjustments", "upload"] as const).map(tab => (
+        {(["status", "adjustments", "trainers", "upload"] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
@@ -329,7 +360,7 @@ export default function PayrollPage() {
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            {tab === "status" ? "Payment Status" : tab === "adjustments" ? "Manual Adjustments" : "Upload History"}
+            {tab === "status" ? "Payment Status" : tab === "adjustments" ? "Manual Adjustments" : tab === "trainers" ? "Trainer Salaries" : "Upload History"}
           </button>
         ))}
       </div>
@@ -718,6 +749,149 @@ export default function PayrollPage() {
                   disabled={addAdjMutation.isPending || updateAdjMutation.isPending}
                 >
                   {(addAdjMutation.isPending || updateAdjMutation.isPending) ? "Saving…" : adjEditId ? "Save Changes" : "Add Adjustment"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
+      )}
+
+      {/* ── Trainer Salaries Tab ── */}
+      {activeTab === "trainers" && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <label className="text-sm font-medium">Pay Cycle:</label>
+              <input
+                type="month"
+                value={trainerMonth}
+                onChange={e => setTrainerMonth(e.target.value)}
+                className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+              />
+            </div>
+            <Button size="sm" className="gap-1.5" onClick={() => { setTrainerEditId(null); setTrainerForm({ trainerName: "", salaryEgp: "", notes: "" }); setTrainerDialog(true); }}>
+              <PlusCircle className="h-3.5 w-3.5" /> Add Trainer Salary
+            </Button>
+          </div>
+
+          {trainerRows.length === 0 ? (
+            <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">No trainer salaries for this pay cycle. Click "Add Trainer Salary" to add one.</CardContent></Card>
+          ) : (
+            <Card>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-muted/40">
+                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Trainer Name</th>
+                        <th className="px-4 py-3 text-right font-semibold text-muted-foreground">Salary (EGP)</th>
+                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Notes</th>
+                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Last Updated</th>
+                        <th className="px-4 py-3 text-center font-semibold text-muted-foreground">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {trainerRows.map((t, idx) => (
+                        <tr key={t.id} className={`border-b last:border-0 ${idx % 2 === 0 ? "" : "bg-muted/20"}`}>
+                          <td className="px-4 py-3 font-medium">{t.trainerName}</td>
+                          <td className="px-4 py-3 text-right font-semibold text-emerald-600">EGP {parseFloat(t.salaryEgp).toLocaleString()}</td>
+                          <td className="px-4 py-3 text-xs text-muted-foreground">{t.notes ?? "—"}</td>
+                          <td className="px-4 py-3 text-xs text-muted-foreground">{new Date(t.updatedAt).toLocaleDateString("en-EG")}</td>
+                          <td className="px-4 py-3 text-center">
+                            <div className="flex items-center justify-center gap-1">
+                              <Button variant="ghost" size="sm" className="h-7 text-blue-600 hover:text-blue-700"
+                                onClick={() => {
+                                  setTrainerEditId(t.id);
+                                  setTrainerForm({ trainerName: t.trainerName, salaryEgp: t.salaryEgp, notes: t.notes ?? "" });
+                                  setTrainerDialog(true);
+                                }}>
+                                <Pencil className="h-3 w-3" />
+                              </Button>
+                              <Button variant="ghost" size="sm" className="h-7 text-red-500 hover:text-red-600"
+                                onClick={() => { if (confirm(`Delete ${t.trainerName}'s salary record?`)) deleteTrainerMutation.mutate({ id: t.id }); }}
+                                disabled={deleteTrainerMutation.isPending}>
+                                <Trash2 className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t bg-muted/30 font-semibold">
+                        <td className="px-4 py-3 text-sm text-muted-foreground">{trainerRows.length} trainer{trainerRows.length !== 1 ? "s" : ""}</td>
+                        <td className="px-4 py-3 text-right text-sm text-emerald-600">
+                          EGP {trainerRows.reduce((s, t) => s + parseFloat(t.salaryEgp), 0).toLocaleString()}
+                        </td>
+                        <td colSpan={3} />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Add/Edit Trainer Salary Dialog */}
+          <Dialog open={trainerDialog} onOpenChange={(o) => { if (!o) { setTrainerDialog(false); setTrainerEditId(null); setTrainerForm({ trainerName: "", salaryEgp: "", notes: "" }); } }}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <PlusCircle className="h-4 w-4" /> {trainerEditId ? "Edit Trainer Salary" : "Add Trainer Salary"}
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 py-2 text-sm">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-muted-foreground">Trainer Name</label>
+                  <input
+                    type="text"
+                    value={trainerForm.trainerName}
+                    onChange={e => setTrainerForm(f => ({ ...f, trainerName: e.target.value }))}
+                    placeholder="e.g. Ahmed Hassan"
+                    className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-muted-foreground">Salary (EGP)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={trainerForm.salaryEgp}
+                    onChange={e => setTrainerForm(f => ({ ...f, salaryEgp: e.target.value }))}
+                    placeholder="0.00"
+                    className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs font-medium text-muted-foreground">Notes (optional)</label>
+                  <input
+                    type="text"
+                    value={trainerForm.notes}
+                    onChange={e => setTrainerForm(f => ({ ...f, notes: e.target.value }))}
+                    placeholder="e.g. Includes transport allowance"
+                    className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { setTrainerDialog(false); setTrainerEditId(null); setTrainerForm({ trainerName: "", salaryEgp: "", notes: "" }); }}>Cancel</Button>
+                <Button
+                  onClick={() => {
+                    const amt = parseFloat(trainerForm.salaryEgp);
+                    if (!trainerForm.trainerName.trim()) return toast.error("Trainer name is required");
+                    if (isNaN(amt) || amt < 0) return toast.error("Salary must be a valid number");
+                    upsertTrainerMutation.mutate({
+                      id: trainerEditId ?? undefined,
+                      trainerName: trainerForm.trainerName.trim(),
+                      month: trainerMonth,
+                      salaryEgp: amt,
+                      notes: trainerForm.notes.trim() || undefined,
+                    });
+                  }}
+                  disabled={upsertTrainerMutation.isPending}
+                >
+                  {upsertTrainerMutation.isPending ? "Saving…" : trainerEditId ? "Save Changes" : "Add Salary"}
                 </Button>
               </DialogFooter>
             </DialogContent>

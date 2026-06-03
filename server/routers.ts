@@ -3834,6 +3834,70 @@ const integrationsRouter = router({
     }),
 });
 
+// ─── Trainer Salaries Router ─────────────────────────────────────────────────
+const trainerSalariesRouter = router({
+  getForMonth: protectedProcedure
+    .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { trainerSalaries } = await import("../drizzle/schema");
+      const { eq, asc } = await import("drizzle-orm");
+      return db.select().from(trainerSalaries)
+        .where(eq(trainerSalaries.month, input.month))
+        .orderBy(asc(trainerSalaries.trainerName));
+    }),
+
+  upsert: protectedProcedure
+    .input(z.object({
+      id: z.number().optional(),
+      trainerName: z.string().min(1),
+      month: z.string().regex(/^\d{4}-\d{2}$/),
+      salaryEgp: z.number().min(0),
+      notes: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { trainerSalaries } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const now = Date.now();
+      if (input.id) {
+        await db.update(trainerSalaries).set({
+          trainerName: input.trainerName,
+          salaryEgp: String(input.salaryEgp),
+          notes: input.notes ?? null,
+          updatedAt: now,
+        }).where(eq(trainerSalaries.id, input.id));
+        return { id: input.id };
+      } else {
+        const [result] = await db.insert(trainerSalaries).values({
+          trainerName: input.trainerName,
+          month: input.month,
+          salaryEgp: String(input.salaryEgp),
+          notes: input.notes ?? null,
+          createdAt: now,
+          updatedAt: now,
+        });
+        return { id: (result as { insertId: number }).insertId };
+      }
+    }),
+
+  delete: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { trainerSalaries } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      await db.delete(trainerSalaries).where(eq(trainerSalaries.id, input.id));
+      return { ok: true };
+    }),
+});
+
 // ─── Commission Router ────────────────────────────────────────────────────────
 // ─── Payroll Adjustments Router ──────────────────────────────────────────────
 const adjustmentsRouter = router({
@@ -4009,6 +4073,45 @@ const commissionRouter = router({
       return { ok: true };
     }),
 
+  // Change the payment cycle (and performance month) on an existing commission record
+  changeCycle: protectedProcedure
+    .input(z.object({
+      id: z.number(),
+      newPaymentCycle: z.string().regex(/^\d{4}-\d{2}$/),
+      newPerformanceMonth: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { commissions, payrollRecords } = await import("../drizzle/schema");
+      // Fetch old record to clean up old payroll sync
+      const old = await db.select().from(commissions).where(eq(commissions.id, input.id)).limit(1);
+      if (!old[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Commission record not found" });
+      const { crdts, paymentCycle: oldCycle, commissionEgp } = old[0];
+      // Remove commission from OLD payroll record
+      if (crdts && oldCycle) {
+        const { sql: sqlFn } = await import("drizzle-orm");
+        await db.update(payrollRecords)
+          .set({ commissionEgp: "0" })
+          .where(sqlFn`${payrollRecords.crdts} = ${crdts} AND ${payrollRecords.month} = ${oldCycle}`);
+      }
+      // Update commission record to new cycle
+      await db.update(commissions).set({
+        paymentCycle: input.newPaymentCycle,
+        ...(input.newPerformanceMonth ? { performanceMonth: input.newPerformanceMonth } : {}),
+      }).where(eq(commissions.id, input.id));
+      // Sync to NEW payroll record
+      if (crdts) {
+        const { sql: sqlFn } = await import("drizzle-orm");
+        await db.update(payrollRecords)
+          .set({ commissionEgp: commissionEgp ?? "0" })
+          .where(sqlFn`${payrollRecords.crdts} = ${crdts} AND ${payrollRecords.month} = ${input.newPaymentCycle}`);
+      }
+      return { ok: true };
+    }),
+
   // Get full leaderboard for a cycle (all campaigns)
   getFullLeaderboard: protectedProcedure
     .input(z.object({ cycleKey: z.string() }))
@@ -4160,6 +4263,7 @@ export const appRouter = router({
   integrations: integrationsRouter,
   commission: commissionRouter,
   adjustments: adjustmentsRouter,
+  trainerSalaries: trainerSalariesRouter,
 });
 export type AppRouter = typeof appRouter;
 

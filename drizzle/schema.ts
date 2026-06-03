@@ -916,3 +916,20 @@ export const payrollAdjustments = mysqlTable("payroll_adjustments", {
 });
 export type PayrollAdjustment = typeof payrollAdjustments.$inferSelect;
 export type InsertPayrollAdjustment = typeof payrollAdjustments.$inferInsert;
+
+/**
+ * trainerSalaries — manually entered salary records for trainers.
+ * Managed from the Payroll tab and Commission tab.
+ * month: YYYY-MM (pay cycle)
+ */
+export const trainerSalaries = mysqlTable("trainer_salaries", {
+  id:          int("id").autoincrement().primaryKey(),
+  trainerName: varchar("trainerName", { length: 255 }).notNull(),
+  month:       varchar("month", { length: 7 }).notNull(),   // YYYY-MM pay cycle
+  salaryEgp:   decimal("salaryEgp", { precision: 10, scale: 2 }).notNull().default("0"),
+  notes:       varchar("notes", { length: 500 }),
+  createdAt:   bigint("createdAt", { mode: "number" }).notNull(),
+  updatedAt:   bigint("updatedAt", { mode: "number" }).notNull(),
+});
+export type TrainerSalary = typeof trainerSalaries.$inferSelect;
+export type InsertTrainerSalary = typeof trainerSalaries.$inferInsert;
