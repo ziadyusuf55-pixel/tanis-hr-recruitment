@@ -906,7 +906,11 @@ export async function getAdminByEmail(email: string) {
   const db = await getDb();
   if (!db) return null;
   const { adminAccounts } = await import("../drizzle/schema");
-  const rows = await db.select().from(adminAccounts).where(eq(adminAccounts.email, email)).limit(1);
+  // Case-insensitive lookup — normalize both sides to lowercase
+  const { sql: rawSql } = await import("drizzle-orm");
+  const rows = await db.select().from(adminAccounts)
+    .where(rawSql`LOWER(${adminAccounts.email}) = LOWER(${email})`)
+    .limit(1);
   return rows[0] ?? null;
 }
 export async function getAdminById(id: number) {
@@ -923,7 +927,7 @@ export async function createAdminAccount(data: {
   if (!db) throw new Error("Database not available");
   const { adminAccounts } = await import("../drizzle/schema");
   await db.insert(adminAccounts).values({
-    email: data.email, name: data.name, passwordHash: data.passwordHash,
+    email: data.email.toLowerCase(), name: data.name, passwordHash: data.passwordHash,
     invitedBy: data.invitedBy, forcePasswordChange: false, isActive: true,
   });
 }

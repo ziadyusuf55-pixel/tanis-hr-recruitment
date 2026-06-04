@@ -26,7 +26,15 @@ export default function AdminInviteAccept() {
   );
 
   const acceptMutation = trpc.adminAuth.acceptInvite.useMutation({
-    onSuccess: () => {
+    onSuccess: (data) => {
+      if (data.accountAlreadyExists) {
+        // Account already set up — just redirect to login
+        toast.success("Your account is already set up. Please log in.");
+        setTimeout(() => {
+          window.location.href = "/admin";
+        }, 1500);
+        return;
+      }
       setDone(true);
     },
     onError: (err) => {

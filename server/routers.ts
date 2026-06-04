@@ -1213,7 +1213,11 @@ const adminAuthRouter = router({
       if (!invite || invite.usedAt || Date.now() > invite.expiresAt)
         throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid or expired invite" });
       const existing = await getAdminByEmail(invite.email);
-      if (existing) throw new TRPCError({ code: "CONFLICT", message: "Account already exists" });
+      if (existing) {
+        // Account already exists — mark invite as used and tell frontend to redirect to login
+        await markAdminInviteUsed(input.token);
+        return { success: true, email: invite.email, accountAlreadyExists: true };
+      }
       const passwordHash = await bcrypt.hash(input.password, 12);
       await createAdminAccount({ email: invite.email, name: invite.name, passwordHash, invitedBy: invite.invitedBy });
       await markAdminInviteUsed(input.token);
