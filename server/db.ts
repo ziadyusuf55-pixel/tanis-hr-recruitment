@@ -1285,20 +1285,33 @@ export async function listPaymentMethodsGrouped() {
 export async function getEligibleCandidatesForOps() {
   const db = await getDb();
   if (!db) return [];
-  const { candidates: candidatesTable, workforceAgents } = await import("../drizzle/schema");
-  // Get all accepted candidates who are NOT yet in Operations
+  const { candidates: candidatesTable, workforceAgents, batchCandidates } = await import("../drizzle/schema");
+  // Get all agents already in Operations
   const existingOpsIds = await db.select({ candidateId: workforceAgents.candidateId }).from(workforceAgents);
   const opsIdSet = new Set(existingOpsIds.map(r => r.candidateId));
-  const accepted = await db.select({
+  // Get candidates who passed mock call (slackJoined = true in batchCandidates)
+  const passedMock = await db.select({
+    candidateId: batchCandidates.candidateId,
+    traineeCode: batchCandidates.traineeCode,
+  }).from(batchCandidates)
+    .where(eq(batchCandidates.slackJoined, true));
+  const passedIds = [...new Set(passedMock.map(r => r.candidateId))];
+  if (!passedIds.length) return [];
+  // Get candidate details for passed mock call candidates
+  const eligible = await db.select({
     candidateId: candidatesTable.id,
-    traineeCode: sql<string | null>`null`,
+    traineeCode: batchCandidates.traineeCode,
     name: candidatesTable.name,
     phone: candidatesTable.phone,
-    source: sql<string>`'accepted'`,
+    source: sql<string>\`'accepted'\`,
   }).from(candidatesTable)
-    .where(eq(candidatesTable.status, "accepted"));
+    .innerJoin(batchCandidates, eq(batchCandidates.candidateId, candidatesTable.id))
+    .where(and(
+      inArray(candidatesTable.id, passedIds),
+      eq(batchCandidates.slackJoined, true)
+    ));
   // Filter out those already in Operations
-  return accepted
+  return eligible
     .filter(r => !opsIdSet.has(r.candidateId))
     .sort((a, b) => a.name.localeCompare(b.name));
 }

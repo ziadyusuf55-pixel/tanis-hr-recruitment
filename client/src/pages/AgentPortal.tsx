@@ -746,12 +746,12 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
             </div>
           </div>
 
-          {/* Net Pay (excludes commission) + Commission + Final Total */}
+          {/* Net Pay + Adjustments + Trainer Salary + Commission + Final Total */}
           {(() => {
             const nv = (v: string | null | undefined) => v != null ? parseFloat(String(v)) || 0 : 0;
             const netPay = nv(r.baseSalary) + nv(r.ot1x5Pay) + nv(r.ot2xPay) + nv(r.ot3xPay) + nv(r.coachingBonus) - nv(r.totalDeductions);
             const commission = nv(r.commissionEgp);
-            const finalTotal = netPay + commission;
+            const finalTotal = netPay + commission + adjNet + trainerSal;
             return (
               <div className="space-y-2">
                 {/* Net Pay box */}
@@ -2671,6 +2671,39 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
         </div>
       </div>
 
+      {/* Month Summary Table */}
+      {cycles.length > 0 && (
+        <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+          <div className="px-4 py-3" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+            <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.textFaint }}>Month Summary</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr style={{ background: theme.surface, borderBottom: `1px solid ${theme.cardBorder}` }}>
+                  {["Cycle","Days","Login Hrs","Revenue","Cost","Profit","Rev/Hr"].map(h => (
+                    <th key={h} className="px-3 py-2 text-right font-medium first:text-left" style={{ color: theme.textFaint }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(cycles as Array<{ cycleKey: string; loginHours: number; totalCalls: number; revenue: number; profit: number; days: number; revPerHr: number; cost?: number }>).map((c,i) => (
+                  <tr key={c.cycleKey} style={{ borderBottom: `1px solid ${theme.cardBorder}`, background: i%2===0 ? "transparent" : theme.surface }}>
+                    <td className="px-3 py-2 font-semibold font-mono" style={{ color: theme.text }}>{c.cycleKey}</td>
+                    <td className="px-3 py-2 text-right" style={{ color: theme.textMuted }}>{c.days}</td>
+                    <td className="px-3 py-2 text-right" style={{ color: theme.textMuted }}>{fmtHr(c.loginHours)}</td>
+                    <td className="px-3 py-2 text-right font-semibold" style={{ color: "oklch(0.55 0.18 145)" }}>{fmtEGP(c.revenue)}</td>
+                    <td className="px-3 py-2 text-right" style={{ color: "#ef4444" }}>{fmtEGP(c.cost ?? (c.revenue - c.profit))}</td>
+                    <td className="px-3 py-2 text-right font-bold" style={{ color: c.profit >= 0 ? "oklch(0.55 0.18 145)" : "#ef4444" }}>{fmtEGP(c.profit)}</td>
+                    <td className="px-3 py-2 text-right" style={{ color: theme.textMuted }}>{fmtEGP(c.revPerHr)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Cycle selector */}
       <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
         <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
@@ -2705,6 +2738,82 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
           </div>
         )}
       </div>
+
+      {/* Charts for selected cycle */}
+      {activeCycle && dailyData && dailyData.daily.length > 0 && (() => {
+        const days = dailyData.daily as Array<{ date: string; loginHours: number; revenue: number; totalCalls: number; profit: number }>;
+        let cumul = 0;
+        const chartData = days.map(d => { cumul += d.profit; return { date: d.date.slice(5), profit: d.profit, cumul: Math.round(cumul*100)/100, hours: d.loginHours }; });
+        const maxProfit = Math.max(...chartData.map(d => Math.abs(d.profit)), 1);
+        const bestDay  = days.reduce((a,b) => b.profit > a.profit ? b : a, days[0]);
+        const worstDay = days.reduce((a,b) => b.profit < a.profit ? b : a, days[0]);
+        return (
+          <div className="space-y-4">
+            {/* Personal Bests */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: "Best Day", value: fmtEGP(bestDay.profit), sub: bestDay.date, positive: true },
+                { label: "Worst Day", value: fmtEGP(worstDay.profit), sub: worstDay.date, positive: worstDay.profit >= 0 },
+                { label: "Most Hours", value: `${Math.max(...days.map(d=>d.loginHours)).toFixed(1)}h`, sub: days.reduce((a,b)=>b.loginHours>a.loginHours?b:a,days[0]).date, positive: true },
+              ].map((card,i) => (
+                <div key={i} className="rounded-xl p-3" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+                  <p className="text-[10px] uppercase tracking-wider mb-1" style={{ color: theme.textFaint }}>{card.label}</p>
+                  <p className="text-base font-bold" style={{ color: card.positive ? "oklch(0.55 0.18 145)" : "#ef4444" }}>{card.value}</p>
+                  <p className="text-[10px] mt-0.5 font-mono" style={{ color: theme.textMuted }}>{card.sub}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Daily Profit Bar Chart */}
+            <div className="rounded-xl p-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+              <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: theme.textFaint }}>Daily Profit</p>
+              <div className="flex items-end gap-1 h-24 overflow-x-auto">
+                {chartData.map((d,i) => {
+                  const h = Math.abs(d.profit) / maxProfit * 100;
+                  const isPos = d.profit >= 0;
+                  return (
+                    <div key={i} className="flex flex-col items-center gap-0.5 flex-shrink-0" style={{ minWidth: 14 }} title={`${d.date}: ${fmtEGP(d.profit)}`}>
+                      {isPos && <div style={{ height: `${h}%`, minHeight: 2, width: 10, background: "oklch(0.55 0.18 145)", borderRadius: 2 }} />}
+                      <div style={{ width: 1, height: 2, background: theme.cardBorder }} />
+                      {!isPos && <div style={{ height: `${h}%`, minHeight: 2, width: 10, background: "#ef4444", borderRadius: 2 }} />}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] mt-2" style={{ color: theme.textFaint }}>Green = profitable · Red = below cost</p>
+            </div>
+
+            {/* Cumulative Profit Trend */}
+            <div className="rounded-xl p-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+              <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: theme.textFaint }}>Cumulative Profit Trend</p>
+              <div className="relative h-20 overflow-x-auto">
+                <svg width={Math.max(chartData.length * 20, 200)} height="80" style={{ overflow: "visible" }}>
+                  {(() => {
+                    const vals = chartData.map(d => d.cumul);
+                    const minV = Math.min(...vals, 0);
+                    const maxV = Math.max(...vals, 0.01);
+                    const range = maxV - minV || 1;
+                    const pts = vals.map((v,i) => `${i*20+10},${60 - ((v-minV)/range)*50}`).join(" ");
+                    const zeroY = 60 - ((0-minV)/range)*50;
+                    return <>
+                      <line x1="0" y1={zeroY} x2={chartData.length*20} y2={zeroY} stroke={theme.cardBorder} strokeWidth="1" strokeDasharray="4,2"/>
+                      <polyline points={pts} fill="none" stroke={vals[vals.length-1] >= 0 ? "oklch(0.55 0.18 145)" : "#ef4444"} strokeWidth="2"/>
+                      {vals.map((v,i) => <circle key={i} cx={i*20+10} cy={60-((v-minV)/range)*50} r="3" fill={v>=0?"oklch(0.55 0.18 145)":"#ef4444"} title={`${chartData[i].date}: ${fmtEGP(v)}`}/>)}
+                    </>;
+                  })()}
+                </svg>
+              </div>
+              <div className="flex justify-between text-[10px] mt-1" style={{ color: theme.textFaint }}>
+                <span>{chartData[0]?.date}</span>
+                <span className="font-bold" style={{ color: chartData[chartData.length-1]?.cumul >= 0 ? "oklch(0.55 0.18 145)" : "#ef4444" }}>
+                  Final: {fmtEGP(chartData[chartData.length-1]?.cumul)}
+                </span>
+                <span>{chartData[chartData.length-1]?.date}</span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Daily breakdown for selected cycle */}
       {activeCycle && (

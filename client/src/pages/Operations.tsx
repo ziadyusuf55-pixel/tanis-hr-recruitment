@@ -1614,6 +1614,13 @@ export default function Operations() {
               <select
                 className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
                 value={addAgentForm.candidateId}
+                onChange={(e) => {
+                  const candidateId = e.target.value;
+                  const selected = (eligibleCandidates as Array<{candidateId: number; traineeCode: string | null; name: string}>).find(c => String(c.candidateId) === candidateId);
+                  setAddAgentForm(f => ({ ...f, candidateId, traineeCode: selected?.traineeCode ?? "" }));
+                }}
+                // hidden original onChange below
+                data-original
                 onChange={e => {
                   const selected = (eligibleCandidates as Array<{candidateId: number; traineeCode: string | null; name: string; phone: string | null; source: string}>).find(c => c.candidateId === Number(e.target.value));
                   if (selected) {
@@ -1640,7 +1647,13 @@ export default function Operations() {
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Trainee Code</label>
               <div className="flex gap-2">
-                <Input placeholder="e.g. 114001" value={addAgentForm.traineeCode} onChange={e => setAddAgentForm(f => ({ ...f, traineeCode: e.target.value }))} />
+                <Input 
+                  placeholder="Auto-assigned from training record" 
+                  value={addAgentForm.traineeCode} 
+                  readOnly 
+                  className="bg-muted/40 cursor-not-allowed"
+                />
+                <p className="text-xs text-muted-foreground mt-1">Trainee code is assigned from the training pipeline. Only agents who passed mock call appear here.</p>
                 <Button
                   type="button"
                   variant="outline"

@@ -96,7 +96,7 @@ export default function PayrollPage() {
   });
   const [trainerDialog, setTrainerDialog] = useState(false);
   const [trainerEditId, setTrainerEditId] = useState<number | null>(null);
-  const [trainerForm, setTrainerForm] = useState<{ trainerName: string; salaryEgp: string; notes: string }>({ trainerName: "", salaryEgp: "", notes: "" });
+  const [trainerForm, setTrainerForm] = useState<{ crdts: string; trainerName: string; salaryEgp: string; notes: string }>({ crdts: "", trainerName: "", salaryEgp: "", notes: "" });
 
   const { data: trainerSalaries = [], refetch: refetchTrainers } = trpc.trainerSalaries.getForMonth.useQuery(
     { month: trainerMonth },

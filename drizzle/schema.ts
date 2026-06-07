@@ -924,6 +924,7 @@ export type InsertPayrollAdjustment = typeof payrollAdjustments.$inferInsert;
  */
 export const trainerSalaries = mysqlTable("trainer_salaries", {
   id:          int("id").autoincrement().primaryKey(),
+  crdts:       varchar("crdts", { length: 50 }),             // linked agent CRDTS
   trainerName: varchar("trainerName", { length: 255 }).notNull(),
   month:       varchar("month", { length: 7 }).notNull(),   // YYYY-MM pay cycle
   salaryEgp:   decimal("salaryEgp", { precision: 10, scale: 2 }).notNull().default("0"),
