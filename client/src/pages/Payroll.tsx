@@ -102,7 +102,7 @@ export default function PayrollPage() {
     { month: trainerMonth },
     { enabled: activeTab === "trainers" }
   );
-  type TrainerRow = { id: number; trainerName: string; month: string; salaryEgp: string; notes: string | null; createdAt: number; updatedAt: number };
+  type TrainerRow = { id: number; crdts: string | null; trainerName: string; month: string; salaryEgp: string; notes: string | null; createdAt: number; updatedAt: number };
   const trainerRows = trainerSalaries as TrainerRow[];
 
   const upsertTrainerMutation = trpc.trainerSalaries.upsert.useMutation({
@@ -110,7 +110,7 @@ export default function PayrollPage() {
       refetchTrainers();
       setTrainerDialog(false);
       setTrainerEditId(null);
-      setTrainerForm({ trainerName: "", salaryEgp: "", notes: "" });
+      setTrainerForm({ crdts: "", trainerName: "", salaryEgp: "", notes: "" });
       toast.success(trainerEditId ? "Trainer salary updated" : "Trainer salary added");
     },
     onError: (e) => toast.error(e.message),
@@ -769,7 +769,7 @@ export default function PayrollPage() {
                 className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
               />
             </div>
-            <Button size="sm" className="gap-1.5" onClick={() => { setTrainerEditId(null); setTrainerForm({ trainerName: "", salaryEgp: "", notes: "" }); setTrainerDialog(true); }}>
+            <Button size="sm" className="gap-1.5" onClick={() => { setTrainerEditId(null); setTrainerForm({ crdts: "", trainerName: "", salaryEgp: "", notes: "" }); setTrainerDialog(true); }}>
               <PlusCircle className="h-3.5 w-3.5" /> Add Trainer Salary
             </Button>
           </div>
@@ -802,7 +802,7 @@ export default function PayrollPage() {
                               <Button variant="ghost" size="sm" className="h-7 text-blue-600 hover:text-blue-700"
                                 onClick={() => {
                                   setTrainerEditId(t.id);
-                                  setTrainerForm({ trainerName: t.trainerName, salaryEgp: t.salaryEgp, notes: t.notes ?? "" });
+                                  setTrainerForm({ crdts: t.crdts ?? "", trainerName: t.trainerName, salaryEgp: t.salaryEgp, notes: t.notes ?? "" });
                                   setTrainerDialog(true);
                                 }}>
                                 <Pencil className="h-3 w-3" />
@@ -833,7 +833,7 @@ export default function PayrollPage() {
           )}
 
           {/* Add/Edit Trainer Salary Dialog */}
-          <Dialog open={trainerDialog} onOpenChange={(o) => { if (!o) { setTrainerDialog(false); setTrainerEditId(null); setTrainerForm({ trainerName: "", salaryEgp: "", notes: "" }); } }}>
+          <Dialog open={trainerDialog} onOpenChange={(o) => { if (!o) { setTrainerDialog(false); setTrainerEditId(null); setTrainerForm({ crdts: "", trainerName: "", salaryEgp: "", notes: "" }); } }}>
             <DialogContent className="max-w-md">
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
@@ -875,7 +875,7 @@ export default function PayrollPage() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => { setTrainerDialog(false); setTrainerEditId(null); setTrainerForm({ trainerName: "", salaryEgp: "", notes: "" }); }}>Cancel</Button>
+                <Button variant="outline" onClick={() => { setTrainerDialog(false); setTrainerEditId(null); setTrainerForm({ crdts: "", trainerName: "", salaryEgp: "", notes: "" }); }}>Cancel</Button>
                 <Button
                   onClick={() => {
                     const amt = parseFloat(trainerForm.salaryEgp);

@@ -751,6 +751,8 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
             const nv = (v: string | null | undefined) => v != null ? parseFloat(String(v)) || 0 : 0;
             const netPay = nv(r.baseSalary) + nv(r.ot1x5Pay) + nv(r.ot2xPay) + nv(r.ot3xPay) + nv(r.coachingBonus) - nv(r.totalDeductions);
             const commission = nv(r.commissionEgp);
+            const adjNet = 0; // adjustments not shown on agent payslip
+            const trainerSal = 0; // trainer salary not shown on agent payslip
             const finalTotal = netPay + commission + adjNet + trainerSal;
             return (
               <div className="space-y-2">
@@ -2798,7 +2800,7 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
                     return <>
                       <line x1="0" y1={zeroY} x2={chartData.length*20} y2={zeroY} stroke={theme.cardBorder} strokeWidth="1" strokeDasharray="4,2"/>
                       <polyline points={pts} fill="none" stroke={vals[vals.length-1] >= 0 ? "oklch(0.55 0.18 145)" : "#ef4444"} strokeWidth="2"/>
-                      {vals.map((v,i) => <circle key={i} cx={i*20+10} cy={60-((v-minV)/range)*50} r="3" fill={v>=0?"oklch(0.55 0.18 145)":"#ef4444"} title={`${chartData[i].date}: ${fmtEGP(v)}`}/>)}
+                      {vals.map((v,i) => <circle key={i} cx={i*20+10} cy={60-((v-minV)/range)*50} r="3" fill={v>=0?"oklch(0.55 0.18 145)":"#ef4444"} aria-label={`${chartData[i].date}: ${fmtEGP(v)}`}/>)}
                     </>;
                   })()}
                 </svg>

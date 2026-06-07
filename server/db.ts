@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
@@ -500,15 +500,15 @@ export async function getAvgTimeToHire(sinceMs: number) {
   const db = await getDb();
   if (!db) return null;
   const conditions = [
-    sql`\`acceptedAt\` IS NOT NULL`,
-    sql`\`appliedAt\` IS NOT NULL`,
+    isNotNull(candidates.acceptedAt),
+    isNotNull(candidates.appliedAt),
   ];
   if (sinceMs > 0) {
     conditions.push(gte(candidates.createdAt, new Date(sinceMs)));
   }
   const result = await db
     .select({
-      avgMs: sql<number>`AVG(\`acceptedAt\` - \`appliedAt\`)`.mapWith(Number),
+      avgMs: sql<number>`AVG(UNIX_TIMESTAMP(${candidates.acceptedAt}) - UNIX_TIMESTAMP(${candidates.appliedAt})) * 1000`.mapWith(Number),
     })
     .from(candidates)
     .where(and(...conditions));
@@ -1295,7 +1295,7 @@ export async function getEligibleCandidatesForOps() {
     traineeCode: batchCandidates.traineeCode,
   }).from(batchCandidates)
     .where(eq(batchCandidates.slackJoined, true));
-  const passedIds = [...new Set(passedMock.map(r => r.candidateId))];
+  const passedIds = Array.from(new Set(passedMock.map(r => r.candidateId)));
   if (!passedIds.length) return [];
   // Get candidate details for passed mock call candidates
   const eligible = await db.select({
@@ -1303,7 +1303,7 @@ export async function getEligibleCandidatesForOps() {
     traineeCode: batchCandidates.traineeCode,
     name: candidatesTable.name,
     phone: candidatesTable.phone,
-    source: sql<string>\`'accepted'\`,
+    source: sql<string>`'accepted'`,
   }).from(candidatesTable)
     .innerJoin(batchCandidates, eq(batchCandidates.candidateId, candidatesTable.id))
     .where(and(

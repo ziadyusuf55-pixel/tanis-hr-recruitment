@@ -1616,13 +1616,7 @@ export default function Operations() {
                 value={addAgentForm.candidateId}
                 onChange={(e) => {
                   const candidateId = e.target.value;
-                  const selected = (eligibleCandidates as Array<{candidateId: number; traineeCode: string | null; name: string}>).find(c => String(c.candidateId) === candidateId);
-                  setAddAgentForm(f => ({ ...f, candidateId, traineeCode: selected?.traineeCode ?? "" }));
-                }}
-                // hidden original onChange below
-                data-original
-                onChange={e => {
-                  const selected = (eligibleCandidates as Array<{candidateId: number; traineeCode: string | null; name: string; phone: string | null; source: string}>).find(c => c.candidateId === Number(e.target.value));
+                  const selected = (eligibleCandidates as Array<{candidateId: number; traineeCode: string | null; name: string; phone: string | null; source: string}>).find(c => String(c.candidateId) === candidateId);
                   if (selected) {
                     setAddAgentForm(f => ({
                       ...f,
