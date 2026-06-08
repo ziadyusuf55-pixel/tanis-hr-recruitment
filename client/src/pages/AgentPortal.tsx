@@ -151,7 +151,7 @@ function formatCurrency(amount: string | number | null | undefined) {
   return `EGP ${num.toLocaleString()}`;
 }
 
-type Tab = "profile" | "opplan" | "cycle" | "payroll" | "commission" | "perfhistory" | "requests" | "referrals" | "documents" | "payment" | "comments";
+type Tab = "profile" | "opplan" | "performance" | "payroll" | "commission" | "requests" | "referrals" | "documents" | "payment" | "comments";
 
 export default function AgentPortal() {
   const [, navigate] = useLocation();
@@ -216,10 +216,9 @@ export default function AgentPortal() {
   const navItems: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: "profile", label: "Profile", icon: <User className="w-4 h-4" /> },
     { id: "opplan", label: "Op Plan", icon: <LayoutGrid className="w-4 h-4" /> },
-    { id: "cycle", label: "Cycle", icon: <Activity className="w-4 h-4" /> },
+    { id: "performance", label: "Performance", icon: <TrendingUp className="w-4 h-4" /> },
     { id: "payroll", label: "Payroll", icon: <CreditCard className="w-4 h-4" /> },
     { id: "commission", label: "Commission", icon: <BarChart2 className="w-4 h-4" /> },
-    { id: "perfhistory", label: "History", icon: <TrendingUp className="w-4 h-4" /> },
     { id: "requests", label: "Requests", icon: <MessageSquare className="w-4 h-4" /> },
     { id: "documents", label: "Documents", icon: <FileText className="w-4 h-4" /> },
     { id: "payment", label: "Payment", icon: <Wallet className="w-4 h-4" /> },
@@ -345,10 +344,9 @@ export default function AgentPortal() {
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
         {activeTab === "profile" && <ProfileTab agent={agent} theme={theme} />}
         {activeTab === "opplan" && <OperationPlanTab theme={theme} />}
-        {activeTab === "cycle" && <CycleTrackerTab theme={theme} />}
+        {activeTab === "performance" && <PerformanceTab theme={theme} />}
         {activeTab === "payroll" && <PayrollTab theme={theme} />}
         {activeTab === "commission" && <CommissionTrackerTab theme={theme} />}
-        {activeTab === "perfhistory" && <PerformanceHistoryTab theme={theme} />}
         {activeTab === "requests" && <RequestCenterTab candidateId={agent.candidateId} theme={theme} />}
         {activeTab === "documents" && <DocumentsTab theme={theme} />}
         {activeTab === "payment" && <PaymentMethodsTab theme={theme} />}
@@ -2012,6 +2010,8 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
   const cycleCost = stats.reduce((s, r) => s + parseFloat(String(r.cost ?? 0)), 0);
   const cycleProfit = stats.reduce((s, r) => s + parseFloat(String(r.profit ?? 0)), 0);
   const revenuePerHour = cycleLoginHours > 0 ? cycleRevenue / cycleLoginHours : 0;
+  const callsPerHour = cycleLoginHours > 0 ? cycleCalls / cycleLoginHours : 0;
+  const profitMargin = cycleRevenue > 0 ? (cycleProfit / cycleRevenue) * 100 : 0;
 
   // Deductions total
   const totalDeductions = deductions.reduce((s, r) => s + parseFloat(String(r.deductionAmount ?? 0)), 0);
@@ -2084,9 +2084,11 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
           {[
             { label: "Total Login Hours", value: cycleLoginHours.toFixed(1) + "h" },
             { label: "Total Calls", value: cycleCalls.toLocaleString() },
+            { label: "Calls / Hour", value: callsPerHour.toFixed(1) },
             { label: "Total Revenue", value: `$${cycleRevenue.toLocaleString()}` },
             { label: "Total Cost", value: `$${cycleCost.toLocaleString()}` },
             { label: "Total Profit", value: `$${cycleProfit.toLocaleString()}` },
+            { label: "Profit Margin", value: `${profitMargin.toFixed(1)}%` },
             { label: "Revenue / Hour", value: `$${revenuePerHour.toFixed(2)}` },
           ].map(({ label, value }) => (
             <div key={label} className="rounded-lg p-3" style={{ background: theme.inputBg }}>
@@ -2880,6 +2882,33 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Unified Performance Tab (merges Cycle + History under one toggle) ────────
+function PerformanceTab({ theme }: { theme: Theme }) {
+  const [view, setView] = useState<"cycle" | "all">("cycle");
+  return (
+    <div className="space-y-5">
+      {/* This Cycle / All-Time toggle */}
+      <div className="inline-flex rounded-xl p-1" style={{ background: theme.inputBg, border: `1px solid ${theme.cardBorder}` }}>
+        {([["cycle", "This Cycle"], ["all", "All-Time"]] as const).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setView(id)}
+            className="px-4 py-1.5 rounded-lg text-sm font-medium transition-colors"
+            style={{
+              background: view === id ? BRAND : "transparent",
+              color: view === id ? "#ffffff" : theme.textMuted,
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {view === "cycle" ? <CycleTrackerTab theme={theme} /> : <PerformanceHistoryTab theme={theme} />}
     </div>
   );
 }
