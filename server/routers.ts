@@ -4346,6 +4346,82 @@ const invitesRouter = router({
     }),
 });
 
+// ─── API Keys Router ─────────────────────────────────────────────────────────
+const apiKeysRouter = router({
+  // Generate a new API key (admin only)
+  generate: protectedProcedure
+    .input(z.object({ name: z.string().min(1).max(100) }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { apiKeys } = await import("../drizzle/schema");
+      const { randomBytes, createHash } = await import("crypto");
+      const rawKey = `tanis_${randomBytes(32).toString("hex")}`;
+      const keyHash = createHash("sha256").update(rawKey).digest("hex");
+      const keyPrefix = rawKey.slice(0, 12);
+      await db.insert(apiKeys).values({
+        name: input.name,
+        keyHash,
+        keyPrefix,
+        createdBy: ctx.user.name ?? ctx.user.openId,
+        createdAt: Date.now(),
+      });
+      // Return the raw key ONCE — it will never be shown again
+      return { rawKey, keyPrefix, name: input.name };
+    }),
+
+  // List all API keys (admin only) — never returns raw key, only prefix
+  list: protectedProcedure
+    .query(async ({ ctx }) => {
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { apiKeys } = await import("../drizzle/schema");
+      const { desc } = await import("drizzle-orm");
+      const rows = await db.select({
+        id: apiKeys.id,
+        name: apiKeys.name,
+        keyPrefix: apiKeys.keyPrefix,
+        createdBy: apiKeys.createdBy,
+        lastUsedAt: apiKeys.lastUsedAt,
+        revokedAt: apiKeys.revokedAt,
+        createdAt: apiKeys.createdAt,
+      }).from(apiKeys).orderBy(desc(apiKeys.createdAt));
+      return rows;
+    }),
+
+  // Revoke an API key (admin only)
+  revoke: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { apiKeys } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      await db.update(apiKeys).set({ revokedAt: Date.now() }).where(eq(apiKeys.id, input.id));
+      return { ok: true };
+    }),
+
+  // Delete an API key permanently (admin only)
+  delete: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { apiKeys } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      await db.delete(apiKeys).where(eq(apiKeys.id, input.id));
+      return { ok: true };
+    }),
+});
+
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -4385,6 +4461,7 @@ export const appRouter = router({
   adjustments: adjustmentsRouter,
   trainerSalaries: trainerSalariesRouter,
   invites: invitesRouter,
+  apiKeys: apiKeysRouter,
 });
 export type AppRouter = typeof appRouter;
 

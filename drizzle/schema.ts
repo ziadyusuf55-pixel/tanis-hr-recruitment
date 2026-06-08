@@ -935,3 +935,19 @@ export const trainerSalaries = mysqlTable("trainer_salaries", {
 export type TrainerSalary = typeof trainerSalaries.$inferSelect;
 export type InsertTrainerSalary = typeof trainerSalaries.$inferInsert;
 
+/**
+ * API keys — for programmatic REST API access.
+ * Admin generates keys; each key is hashed before storage.
+ */
+export const apiKeys = mysqlTable("api_keys", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  keyHash: varchar("key_hash", { length: 255 }).notNull().unique(),
+  keyPrefix: varchar("key_prefix", { length: 16 }).notNull(),
+  createdBy: varchar("created_by", { length: 255 }).notNull(),
+  lastUsedAt: bigint("last_used_at", { mode: "number" }),
+  revokedAt: bigint("revoked_at", { mode: "number" }),
+  createdAt: bigint("created_at", { mode: "number" }).notNull(),
+});
+export type ApiKey = typeof apiKeys.$inferSelect;
+export type InsertApiKey = typeof apiKeys.$inferInsert;

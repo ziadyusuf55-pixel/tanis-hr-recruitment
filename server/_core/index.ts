@@ -236,6 +236,83 @@ async function startServer() {
     }
   });
 
+  // ─── REST API: POST /api/upload/cycle-stats ───────────────────────────────
+  // Accepts JSON array of cycle stats records, authenticated via X-API-Key header.
+  // Same upsert logic as the UI upload (calls upsertCycleStats from db.ts).
+  app.post("/api/upload/cycle-stats", async (req, res) => {
+    try {
+      const apiKey = req.headers["x-api-key"] as string | undefined;
+      if (!apiKey) {
+        res.status(401).json({ error: "Missing X-API-Key header" });
+        return;
+      }
+      // Validate API key against DB
+      const { getDb } = await import("../db");
+      const db = await getDb();
+      if (!db) { res.status(503).json({ error: "Database unavailable" }); return; }
+      const { apiKeys } = await import("../../drizzle/schema");
+      const { eq, isNull } = await import("drizzle-orm");
+      const { createHash } = await import("crypto");
+      const keyHash = createHash("sha256").update(apiKey).digest("hex");
+      const [keyRow] = await db.select().from(apiKeys)
+        .where(eq(apiKeys.keyHash, keyHash))
+        .limit(1);
+      if (!keyRow) { res.status(401).json({ error: "Invalid API key" }); return; }
+      if (keyRow.revokedAt) { res.status(401).json({ error: "API key has been revoked" }); return; }
+      // Update last used timestamp
+      await db.update(apiKeys).set({ lastUsedAt: Date.now() }).where(eq(apiKeys.id, keyRow.id));
+      // Validate payload
+      const body = req.body;
+      if (!Array.isArray(body)) {
+        res.status(400).json({ error: "Request body must be a JSON array" });
+        return;
+      }
+      if (body.length === 0) {
+        res.status(400).json({ error: "Empty array — nothing to upload" });
+        return;
+      }
+      // Map incoming fields to the upsertCycleStats schema
+      // Accepted fields: CRDTS, Date, Login Hours, Total Calls, Revenue, Cost, Profit, Rev/Hr
+      const { upsertCycleStats } = await import("../db");
+      // Helper: compute cycleKey from a date string (26th→25th cycle = named after end month)
+      const getCycleKey = (dateStr: string): string => {
+        const d = new Date(dateStr);
+        if (isNaN(d.getTime())) throw new Error(`Invalid date: ${dateStr}`);
+        const day = d.getDate();
+        // If day >= 26, cycle ends in the NEXT month
+        if (day >= 26) {
+          const next = new Date(d.getFullYear(), d.getMonth() + 1, 1);
+          return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+        }
+        // Otherwise cycle ends in the current month
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      };
+      const rows = body.map((r: Record<string, unknown>, i: number) => {
+        const crdts = String(r["CRDTS"] ?? r["crdts"] ?? "").trim();
+        const date = String(r["Date"] ?? r["date"] ?? "").trim();
+        if (!crdts || !date) throw new Error(`Row ${i + 1}: CRDTS and Date are required`);
+        return {
+          crdts,
+          agentCode: String(r["agentCode"] ?? r["Agent Code"] ?? "").trim() || undefined,
+          alias: String(r["Alias"] ?? r["alias"] ?? "").trim() || undefined,
+          date,
+          cycleKey: getCycleKey(date),
+          loginHours: parseFloat(String(r["Login Hours"] ?? r["loginHours"] ?? 0)) || 0,
+          totalCalls: parseInt(String(r["Total Calls"] ?? r["totalCalls"] ?? 0), 10) || 0,
+          revenue: parseFloat(String(r["Revenue"] ?? r["revenue"] ?? 0)) || 0,
+          cost: parseFloat(String(r["Cost"] ?? r["cost"] ?? 0)) || 0,
+          profit: parseFloat(String(r["Profit"] ?? r["profit"] ?? 0)) || 0,
+          revPerHr: parseFloat(String(r["Rev/Hr"] ?? r["revPerHr"] ?? 0)) || 0,
+        };
+      });
+      const count = await upsertCycleStats(rows);
+      res.json({ ok: true, count, message: `${count} records processed` });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(400).json({ error: msg });
+    }
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",
