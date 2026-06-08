@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
@@ -500,15 +500,15 @@ export async function getAvgTimeToHire(sinceMs: number) {
   const db = await getDb();
   if (!db) return null;
   const conditions = [
-    sql`\`acceptedAt\` IS NOT NULL`,
-    sql`\`appliedAt\` IS NOT NULL`,
+    isNotNull(candidates.acceptedAt),
+    isNotNull(candidates.appliedAt),
   ];
   if (sinceMs > 0) {
     conditions.push(gte(candidates.createdAt, new Date(sinceMs)));
   }
   const result = await db
     .select({
-      avgMs: sql<number>`AVG(\`acceptedAt\` - \`appliedAt\`)`.mapWith(Number),
+      avgMs: sql<number>`AVG(UNIX_TIMESTAMP(${candidates.acceptedAt}) - UNIX_TIMESTAMP(${candidates.appliedAt})) * 1000`.mapWith(Number),
     })
     .from(candidates)
     .where(and(...conditions));
@@ -1285,20 +1285,33 @@ export async function listPaymentMethodsGrouped() {
 export async function getEligibleCandidatesForOps() {
   const db = await getDb();
   if (!db) return [];
-  const { candidates: candidatesTable, workforceAgents } = await import("../drizzle/schema");
-  // Get all accepted candidates who are NOT yet in Operations
+  const { candidates: candidatesTable, workforceAgents, batchCandidates } = await import("../drizzle/schema");
+  // Get all agents already in Operations
   const existingOpsIds = await db.select({ candidateId: workforceAgents.candidateId }).from(workforceAgents);
   const opsIdSet = new Set(existingOpsIds.map(r => r.candidateId));
-  const accepted = await db.select({
+  // Get candidates who passed mock call (slackJoined = true in batchCandidates)
+  const passedMock = await db.select({
+    candidateId: batchCandidates.candidateId,
+    traineeCode: batchCandidates.traineeCode,
+  }).from(batchCandidates)
+    .where(eq(batchCandidates.slackJoined, true));
+  const passedIds = Array.from(new Set(passedMock.map(r => r.candidateId)));
+  if (!passedIds.length) return [];
+  // Get candidate details for passed mock call candidates
+  const eligible = await db.select({
     candidateId: candidatesTable.id,
-    traineeCode: sql<string | null>`null`,
+    traineeCode: batchCandidates.traineeCode,
     name: candidatesTable.name,
     phone: candidatesTable.phone,
     source: sql<string>`'accepted'`,
   }).from(candidatesTable)
-    .where(eq(candidatesTable.status, "accepted"));
+    .innerJoin(batchCandidates, eq(batchCandidates.candidateId, candidatesTable.id))
+    .where(and(
+      inArray(candidatesTable.id, passedIds),
+      eq(batchCandidates.slackJoined, true)
+    ));
   // Filter out those already in Operations
-  return accepted
+  return eligible
     .filter(r => !opsIdSet.has(r.candidateId))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -2279,6 +2292,18 @@ export function getCurrentCycleKey(): string {
     return `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
   }
   return `${year}-${String(month).padStart(2, "0")}`;
+}
+
+// Compute the cycle key (YYYY-MM) a given DATE belongs to, using the 26th→25th
+// rule. A date on the 26th or later belongs to the NEXT month's cycle.
+// This files each record into the cycle its own date falls in — unlike
+// getCurrentCycleKey(), which is based on "now" and is only correct for
+// same-day uploads.
+export function getCycleKeyForDate(dateStr: string): string {
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) throw new Error(`Invalid date: ${dateStr}`);
+  const base = d.getDate() >= 26 ? new Date(d.getFullYear(), d.getMonth() + 1, 1) : d;
+  return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}`;
 }
 
 export function getCycleDateRange(cycleKey: string): { start: string; end: string } {
