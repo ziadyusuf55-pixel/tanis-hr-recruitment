@@ -1064,8 +1064,23 @@ export async function getReferralsByReferrer(referrerCandidateId: number) {
 export async function listAllReferrals() {
   const db = await getDb();
   if (!db) return [];
-  const { referrals } = await import("../drizzle/schema");
-  return db.select().from(referrals).orderBy(desc(referrals.createdAt));
+  const { referrals, candidates } = await import("../drizzle/schema");
+  const rows = await db
+    .select({
+      id: referrals.id,
+      refereeName: referrals.refereeName,
+      refereePhone: referrals.refereePhone,
+      refereeNote: referrals.refereeNote,
+      status: referrals.status,
+      createdAt: referrals.createdAt,
+      createdCandidateId: referrals.createdCandidateId,
+      referrerCandidateId: referrals.referrerCandidateId,
+      referrerName: candidates.name,
+    })
+    .from(referrals)
+    .leftJoin(candidates, eq(referrals.referrerCandidateId, candidates.id))
+    .orderBy(desc(referrals.createdAt));
+  return rows.map(r => ({ ...r, referrerAlias: null as string | null }));
 }
 export async function updateReferralStatus(id: number, status: "pending" | "contacted" | "hired" | "rejected") {
   const db = await getDb();
