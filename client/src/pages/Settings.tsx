@@ -31,7 +31,192 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { UserPlus, Copy, Check, ShieldOff, ShieldCheck, Mail, Users, Trash2, Pencil, Link2, Link2Off, RefreshCw, Calendar, Building2 } from "lucide-react";
+import { UserPlus, Copy, Check, ShieldOff, ShieldCheck, Mail, Users, Trash2, Pencil, Link2, Link2Off, RefreshCw, Calendar, Building2, Key, Plus, Eye, EyeOff, Ban } from "lucide-react";
+
+// ─── API Keys Section ───────────────────────────────────────────────────────
+function ApiKeysSection() {
+  const [createOpen, setCreateOpen] = useState(false);
+  const [keyName, setKeyName] = useState("");
+  const [newKey, setNewKey] = useState<{ rawKey: string; name: string } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const utils = trpc.useUtils();
+  const { data: keys = [], isLoading } = trpc.apiKeys.list.useQuery();
+
+  const generateMutation = trpc.apiKeys.generate.useMutation({
+    onSuccess: (data) => {
+      setNewKey({ rawKey: data.rawKey, name: data.name });
+      setCreateOpen(false);
+      setKeyName("");
+      utils.apiKeys.list.invalidate();
+    },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+
+  const revokeMutation = trpc.apiKeys.revoke.useMutation({
+    onSuccess: () => { utils.apiKeys.list.invalidate(); toast.success("Key revoked"); },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+
+  const deleteMutation = trpc.apiKeys.delete.useMutation({
+    onSuccess: () => { utils.apiKeys.list.invalidate(); toast.success("Key deleted"); },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+
+  const handleCopy = () => {
+    if (!newKey) return;
+    navigator.clipboard.writeText(newKey.rawKey);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <>
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-3">
+          <div>
+            <CardTitle className="text-base flex items-center gap-2"><Key className="h-4 w-4" /> API Keys</CardTitle>
+            <CardDescription className="mt-1">Generate API keys for programmatic data uploads (e.g. cycle stats via POST /api/upload/cycle-stats).</CardDescription>
+          </div>
+          <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <DialogTrigger asChild>
+              <Button size="sm" className="gap-1.5"><Plus className="h-3.5 w-3.5" /> Generate Key</Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-sm">
+              <DialogHeader><DialogTitle>Generate API Key</DialogTitle></DialogHeader>
+              <div className="space-y-4 pt-2">
+                <div className="space-y-1.5">
+                  <Label>Key Name</Label>
+                  <Input
+                    placeholder="e.g. Vicidial Integration, Automation Script"
+                    value={keyName}
+                    onChange={(e) => setKeyName(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">A label to identify what this key is used for.</p>
+                </div>
+                <Button
+                  className="w-full"
+                  disabled={!keyName.trim() || generateMutation.isPending}
+                  onClick={() => generateMutation.mutate({ name: keyName.trim() })}
+                >
+                  {generateMutation.isPending ? "Generating..." : "Generate"}
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading...</p>
+          ) : keys.length === 0 ? (
+            <div className="text-center py-6 text-muted-foreground">
+              <Key className="h-8 w-8 mx-auto mb-2 opacity-30" />
+              <p className="text-sm">No API keys yet. Generate one to enable programmatic uploads.</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {keys.map((k) => (
+                <div key={k.id} className={`flex items-center gap-3 rounded-lg border px-3 py-2.5 ${
+                  k.revokedAt ? "opacity-50 bg-muted/30" : "bg-card"
+                }`}>
+                  <Key className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{k.name}</p>
+                    <p className="text-xs text-muted-foreground font-mono">{k.keyPrefix}... · Created by {k.createdBy}</p>
+                    {k.revokedAt && <Badge variant="destructive" className="text-xs mt-0.5">Revoked</Badge>}
+                    {k.lastUsedAt && !k.revokedAt && (
+                      <p className="text-xs text-muted-foreground">Last used: {new Date(k.lastUsedAt).toLocaleDateString()}</p>
+                    )}
+                  </div>
+                  <div className="flex gap-1 shrink-0">
+                    {!k.revokedAt && (
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="ghost" size="icon" className="h-7 w-7" title="Revoke key">
+                            <Ban className="h-3.5 w-3.5 text-amber-500" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Revoke "{k.name}"?</AlertDialogTitle>
+                            <AlertDialogDescription>The key will stop working immediately. You can delete it afterwards.</AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancel</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => revokeMutation.mutate({ id: k.id })} className="bg-amber-500 hover:bg-amber-600">Revoke</AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    )}
+                    <AlertDialog>
+                      <AlertDialogTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-7 w-7" title="Delete key">
+                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
+                        </Button>
+                      </AlertDialogTrigger>
+                      <AlertDialogContent>
+                        <AlertDialogHeader>
+                          <AlertDialogTitle>Delete "{k.name}"?</AlertDialogTitle>
+                          <AlertDialogDescription>This permanently removes the key record. It cannot be recovered.</AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                          <AlertDialogCancel>Cancel</AlertDialogCancel>
+                          <AlertDialogAction onClick={() => deleteMutation.mutate({ id: k.id })} className="bg-destructive hover:bg-destructive/90">Delete</AlertDialogAction>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* New key reveal dialog */}
+      {newKey && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setNewKey(null)}>
+          <div className="bg-background rounded-xl shadow-xl p-6 w-full max-w-md mx-4 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold text-base">API Key Generated — "{newKey.name}"</h3>
+              <button className="text-muted-foreground hover:text-foreground" onClick={() => setNewKey(null)}>✕</button>
+            </div>
+            <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 p-3">
+              <p className="text-xs text-amber-700 dark:text-amber-400 font-medium">⚠️ Copy this key now — it will never be shown again.</p>
+            </div>
+            <div className="flex gap-2">
+              <input
+                readOnly
+                value={newKey.rawKey}
+                className="flex-1 text-xs font-mono border rounded-md px-3 py-2 bg-muted"
+              />
+              <button
+                className="shrink-0 border rounded-md px-3 py-2 hover:bg-muted transition-colors"
+                onClick={handleCopy}
+              >
+                {copied ? <Check className="h-4 w-4 text-green-500" /> : <Copy className="h-4 w-4" />}
+              </button>
+            </div>
+            <div className="rounded-lg bg-muted p-3 space-y-1">
+              <p className="text-xs font-medium">Usage example:</p>
+              <code className="text-xs block font-mono text-muted-foreground break-all">
+                POST /api/upload/cycle-stats<br/>
+                X-API-Key: {newKey.rawKey.slice(0, 20)}...<br/>
+                Content-Type: application/json
+              </code>
+            </div>
+            <button
+              className="w-full border rounded-md py-2 text-sm hover:bg-muted transition-colors"
+              onClick={() => setNewKey(null)}
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 // ─── Team Leaders Section ────────────────────────────────────────────────────
 function TeamLeadersSection() {
@@ -675,6 +860,9 @@ export default function Settings() {
 
        {/* Integrations */}
       <IntegrationsSection />
+
+      {/* API Keys */}
+      <ApiKeysSection />
 
       {/* Security */}
       <Card>

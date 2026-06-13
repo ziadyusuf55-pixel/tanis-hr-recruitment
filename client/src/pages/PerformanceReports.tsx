@@ -169,8 +169,8 @@ export default function PerformanceReports() {
   }
 
   function exportCSV() {
-    const header = ["CRDTS", "Agent Code", "Alias", "Revenue ($)", "Calls", "Login Hours", "Profit ($)", "Rev/Hr ($)"];
-    const rows = filtered.map(s => [s.crdts, s.agentCode ?? "", s.alias ?? "", s.totalRevenue.toFixed(2), s.totalCalls, s.totalLoginHours.toFixed(1), s.totalProfit.toFixed(2), s.avgRevPerHr.toFixed(2)]);
+    const header = ["CRDTS", "Agent Code", "Alias", "Revenue ($)", "Login Hours", "Profit ($)", "Rev/Hr ($)"];
+    const rows = filtered.map(s => [s.crdts, s.agentCode ?? "", s.alias ?? "", s.totalRevenue.toFixed(2), s.totalLoginHours.toFixed(1), s.totalProfit.toFixed(2), s.avgRevPerHr.toFixed(2)]);
     const csv = [header, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -194,12 +194,11 @@ export default function PerformanceReports() {
       {stats.length > 0 && (
         <>
           {/* KPI Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {(() => {
               const revChange = prevTeamRevenue > 0 ? ((teamTotals.revenue - prevTeamRevenue) / prevTeamRevenue) * 100 : null;
               return [
                 { label: "Team Revenue", value: fmt$(teamTotals.revenue), icon: DollarSign, color: "text-emerald-600", sub: revChange !== null ? `${revChange >= 0 ? "+" : ""}${revChange.toFixed(1)}% vs ${prevCycleKey}` : undefined, subColor: revChange !== null ? (revChange >= 0 ? "text-emerald-600" : "text-red-500") : undefined },
-                { label: "Total Calls", value: teamTotals.calls.toLocaleString(), icon: Phone, color: "text-blue-600" },
                 { label: "Login Hours", value: fmtHr(teamTotals.loginHours), icon: Clock, color: "text-purple-600" },
                 { label: "Agents", value: stats.length.toString(), icon: Users, color: "text-amber-600" },
               ];
@@ -300,7 +299,6 @@ export default function PerformanceReports() {
           <SelectTrigger className="w-36 h-9 text-xs"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="revenue" className="text-xs">Sort: Revenue</SelectItem>
-            <SelectItem value="calls" className="text-xs">Sort: Calls</SelectItem>
             <SelectItem value="revPerHr" className="text-xs">Sort: Rev/Hr</SelectItem>
             <SelectItem value="profit" className="text-xs">Sort: Profit</SelectItem>
           </SelectContent>
@@ -327,7 +325,6 @@ export default function PerformanceReports() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide w-8">#</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Agent</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide">Revenue</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide hidden sm:table-cell">Calls</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide hidden md:table-cell">Login Hrs</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide hidden md:table-cell">Rev/Hr</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide hidden lg:table-cell">Profit</th>
@@ -351,7 +348,6 @@ export default function PerformanceReports() {
                         {s.teamLeader && <p className="text-[10px] text-muted-foreground">TL: {s.teamLeader}</p>}
                       </td>
                       <td className="px-4 py-3 text-right font-semibold text-xs text-emerald-700">{fmt$(s.totalRevenue)}</td>
-                      <td className="px-4 py-3 text-right text-xs text-muted-foreground hidden sm:table-cell">{s.totalCalls.toLocaleString()}</td>
                       <td className="px-4 py-3 text-right text-xs text-muted-foreground hidden md:table-cell">{fmtHr(s.totalLoginHours)}</td>
                       <td className="px-4 py-3 text-right hidden md:table-cell">
                         <div className="flex items-center justify-end gap-1">

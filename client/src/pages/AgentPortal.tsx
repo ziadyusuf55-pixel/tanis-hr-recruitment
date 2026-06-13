@@ -151,7 +151,7 @@ function formatCurrency(amount: string | number | null | undefined) {
   return `EGP ${num.toLocaleString()}`;
 }
 
-type Tab = "profile" | "opplan" | "cycle" | "payroll" | "commission" | "perfhistory" | "requests" | "referrals" | "documents" | "payment" | "comments";
+type Tab = "profile" | "opplan" | "performance" | "payroll" | "commission" | "requests" | "referrals" | "documents" | "payment" | "comments";
 
 export default function AgentPortal() {
   const [, navigate] = useLocation();
@@ -216,10 +216,9 @@ export default function AgentPortal() {
   const navItems: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: "profile", label: "Profile", icon: <User className="w-4 h-4" /> },
     { id: "opplan", label: "Op Plan", icon: <LayoutGrid className="w-4 h-4" /> },
-    { id: "cycle", label: "Cycle", icon: <Activity className="w-4 h-4" /> },
+    { id: "performance", label: "Performance", icon: <TrendingUp className="w-4 h-4" /> },
     { id: "payroll", label: "Payroll", icon: <CreditCard className="w-4 h-4" /> },
     { id: "commission", label: "Commission", icon: <BarChart2 className="w-4 h-4" /> },
-    { id: "perfhistory", label: "History", icon: <TrendingUp className="w-4 h-4" /> },
     { id: "requests", label: "Requests", icon: <MessageSquare className="w-4 h-4" /> },
     { id: "documents", label: "Documents", icon: <FileText className="w-4 h-4" /> },
     { id: "payment", label: "Payment", icon: <Wallet className="w-4 h-4" /> },
@@ -345,10 +344,9 @@ export default function AgentPortal() {
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
         {activeTab === "profile" && <ProfileTab agent={agent} theme={theme} />}
         {activeTab === "opplan" && <OperationPlanTab theme={theme} />}
-        {activeTab === "cycle" && <CycleTrackerTab theme={theme} />}
+        {activeTab === "performance" && <PerformanceTab theme={theme} />}
         {activeTab === "payroll" && <PayrollTab theme={theme} />}
         {activeTab === "commission" && <CommissionTrackerTab theme={theme} />}
-        {activeTab === "perfhistory" && <PerformanceHistoryTab theme={theme} />}
         {activeTab === "requests" && <RequestCenterTab candidateId={agent.candidateId} theme={theme} />}
         {activeTab === "documents" && <DocumentsTab theme={theme} />}
         {activeTab === "payment" && <PaymentMethodsTab theme={theme} />}
@@ -746,12 +744,14 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
             </div>
           </div>
 
-          {/* Net Pay (excludes commission) + Commission + Final Total */}
+          {/* Net Pay + Adjustments + Trainer Salary + Commission + Final Total */}
           {(() => {
             const nv = (v: string | null | undefined) => v != null ? parseFloat(String(v)) || 0 : 0;
             const netPay = nv(r.baseSalary) + nv(r.ot1x5Pay) + nv(r.ot2xPay) + nv(r.ot3xPay) + nv(r.coachingBonus) - nv(r.totalDeductions);
             const commission = nv(r.commissionEgp);
-            const finalTotal = netPay + commission;
+            const adjNet = 0; // adjustments not shown on agent payslip
+            const trainerSal = 0; // trainer salary not shown on agent payslip
+            const finalTotal = netPay + commission + adjNet + trainerSal;
             return (
               <div className="space-y-2">
                 {/* Net Pay box */}
@@ -2000,12 +2000,10 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
 
   // Today section
   const todayLoginHours = todayStats?.reduce((s, r) => s + parseFloat(String(r.loginHours ?? 0)), 0) ?? 0;
-  const todayCalls = todayStats?.reduce((s, r) => s + (r.totalCalls ?? 0), 0) ?? 0;
   const todayRevenue = todayStats?.reduce((s, r) => s + parseFloat(String(r.revenue ?? 0)), 0) ?? 0;
 
   // Cycle totals
   const cycleLoginHours = stats.reduce((s, r) => s + parseFloat(String(r.loginHours ?? 0)), 0);
-  const cycleCalls = stats.reduce((s, r) => s + (r.totalCalls ?? 0), 0);
   const cycleRevenue = stats.reduce((s, r) => s + parseFloat(String(r.revenue ?? 0)), 0);
   const cycleCost = stats.reduce((s, r) => s + parseFloat(String(r.cost ?? 0)), 0);
   const cycleProfit = stats.reduce((s, r) => s + parseFloat(String(r.profit ?? 0)), 0);
@@ -2056,10 +2054,9 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
             <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: theme.inputBg, color: theme.textFaint }}>No data yet</span>
           )}
         </div>
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           {[
             { label: "Login Hours", value: todayLoginHours.toFixed(1) + "h", icon: <Clock className="w-4 h-4" /> },
-            { label: "Total Calls", value: todayCalls.toLocaleString(), icon: <BarChart2 className="w-4 h-4" /> },
             { label: "Revenue", value: `$${todayRevenue.toLocaleString()}`, icon: <TrendingUp className="w-4 h-4" /> },
           ].map(({ label, value, icon }) => (
             <div key={label} className="rounded-lg p-3 text-center" style={{ background: theme.inputBg }}>
@@ -2081,7 +2078,6 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {[
             { label: "Total Login Hours", value: cycleLoginHours.toFixed(1) + "h" },
-            { label: "Total Calls", value: cycleCalls.toLocaleString() },
             { label: "Total Revenue", value: `$${cycleRevenue.toLocaleString()}` },
             { label: "Total Cost", value: `$${cycleCost.toLocaleString()}` },
             { label: "Total Profit", value: `$${cycleProfit.toLocaleString()}` },
@@ -2419,10 +2415,9 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
         ) : (
           <>
             {/* Totals row */}
-            <div className="grid grid-cols-4 gap-3 px-4 py-3" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+            <div className="grid grid-cols-3 gap-3 px-4 py-3" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
               {[
                 { label: "Login Hours", value: fmtNum(totals.loginHours, " h") },
-                { label: "Total Calls", value: fmtNum(totals.totalCalls) },
                 { label: "Revenue", value: `$${fmtNum(totals.revenue)}` },
                 { label: "Profit", value: `$${fmtNum(totals.profit)}` },
               ].map(({ label, value }) => (
@@ -2437,7 +2432,7 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
               <table className="w-full text-xs">
                 <thead className="sticky top-0" style={{ background: theme.surface }}>
                   <tr style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
-                    {["Date", "Login Hrs", "Calls", "Revenue", "Cost", "Profit", "Rev/Hr"].map(h => (
+                    {["Date", "Login Hrs", "Revenue", "Cost", "Profit", "Rev/Hr"].map(h => (
                       <th key={h} className="text-left px-3 py-2 font-medium" style={{ color: theme.textFaint }}>{h}</th>
                     ))}
                   </tr>
@@ -2447,7 +2442,6 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
                     <tr key={i} style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
                       <td className="px-3 py-2 font-mono" style={{ color: theme.textMuted }}>{r.date}</td>
                       <td className="px-3 py-2" style={{ color: theme.text }}>{fmtNum(r.loginHours, " h")}</td>
-                      <td className="px-3 py-2" style={{ color: theme.text }}>{fmtNum(r.totalCalls)}</td>
                       <td className="px-3 py-2" style={{ color: theme.text }}>${fmtNum(r.revenue)}</td>
                       <td className="px-3 py-2" style={{ color: theme.text }}>${fmtNum(r.cost)}</td>
                       <td className="px-3 py-2 font-medium" style={{ color: parseFloat(String(r.profit ?? 0)) >= 0 ? "oklch(0.55 0.18 145)" : "#ef4444" }}>
@@ -2671,6 +2665,39 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
         </div>
       </div>
 
+      {/* Month Summary Table */}
+      {cycles.length > 0 && (
+        <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+          <div className="px-4 py-3" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+            <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.textFaint }}>Month Summary</p>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr style={{ background: theme.surface, borderBottom: `1px solid ${theme.cardBorder}` }}>
+                  {["Cycle","Days","Login Hrs","Revenue","Cost","Profit","Rev/Hr"].map(h => (
+                    <th key={h} className="px-3 py-2 text-right font-medium first:text-left" style={{ color: theme.textFaint }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(cycles as Array<{ cycleKey: string; loginHours: number; totalCalls: number; revenue: number; profit: number; days: number; revPerHr: number; cost?: number }>).map((c,i) => (
+                  <tr key={c.cycleKey} style={{ borderBottom: `1px solid ${theme.cardBorder}`, background: i%2===0 ? "transparent" : theme.surface }}>
+                    <td className="px-3 py-2 font-semibold font-mono" style={{ color: theme.text }}>{c.cycleKey}</td>
+                    <td className="px-3 py-2 text-right" style={{ color: theme.textMuted }}>{c.days}</td>
+                    <td className="px-3 py-2 text-right" style={{ color: theme.textMuted }}>{fmtHr(c.loginHours)}</td>
+                    <td className="px-3 py-2 text-right font-semibold" style={{ color: "oklch(0.55 0.18 145)" }}>{fmtEGP(c.revenue)}</td>
+                    <td className="px-3 py-2 text-right" style={{ color: "#ef4444" }}>{fmtEGP(c.cost ?? (c.revenue - c.profit))}</td>
+                    <td className="px-3 py-2 text-right font-bold" style={{ color: c.profit >= 0 ? "oklch(0.55 0.18 145)" : "#ef4444" }}>{fmtEGP(c.profit)}</td>
+                    <td className="px-3 py-2 text-right" style={{ color: theme.textMuted }}>{fmtEGP(c.revPerHr)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {/* Cycle selector */}
       <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
         <div className="px-4 py-3 flex items-center justify-between" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
@@ -2706,6 +2733,82 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
         )}
       </div>
 
+      {/* Charts for selected cycle */}
+      {activeCycle && dailyData && dailyData.daily.length > 0 && (() => {
+        const days = dailyData.daily as Array<{ date: string; loginHours: number; revenue: number; totalCalls: number; profit: number }>;
+        let cumul = 0;
+        const chartData = days.map(d => { cumul += d.profit; return { date: d.date.slice(5), profit: d.profit, cumul: Math.round(cumul*100)/100, hours: d.loginHours }; });
+        const maxProfit = Math.max(...chartData.map(d => Math.abs(d.profit)), 1);
+        const bestDay  = days.reduce((a,b) => b.profit > a.profit ? b : a, days[0]);
+        const worstDay = days.reduce((a,b) => b.profit < a.profit ? b : a, days[0]);
+        return (
+          <div className="space-y-4">
+            {/* Personal Bests */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: "Best Day", value: fmtEGP(bestDay.profit), sub: bestDay.date, positive: true },
+                { label: "Worst Day", value: fmtEGP(worstDay.profit), sub: worstDay.date, positive: worstDay.profit >= 0 },
+                { label: "Most Hours", value: `${Math.max(...days.map(d=>d.loginHours)).toFixed(1)}h`, sub: days.reduce((a,b)=>b.loginHours>a.loginHours?b:a,days[0]).date, positive: true },
+              ].map((card,i) => (
+                <div key={i} className="rounded-xl p-3" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+                  <p className="text-[10px] uppercase tracking-wider mb-1" style={{ color: theme.textFaint }}>{card.label}</p>
+                  <p className="text-base font-bold" style={{ color: card.positive ? "oklch(0.55 0.18 145)" : "#ef4444" }}>{card.value}</p>
+                  <p className="text-[10px] mt-0.5 font-mono" style={{ color: theme.textMuted }}>{card.sub}</p>
+                </div>
+              ))}
+            </div>
+
+            {/* Daily Profit Bar Chart */}
+            <div className="rounded-xl p-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+              <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: theme.textFaint }}>Daily Profit</p>
+              <div className="flex items-end gap-1 h-24 overflow-x-auto">
+                {chartData.map((d,i) => {
+                  const h = Math.abs(d.profit) / maxProfit * 100;
+                  const isPos = d.profit >= 0;
+                  return (
+                    <div key={i} className="flex flex-col items-center gap-0.5 flex-shrink-0" style={{ minWidth: 14 }} title={`${d.date}: ${fmtEGP(d.profit)}`}>
+                      {isPos && <div style={{ height: `${h}%`, minHeight: 2, width: 10, background: "oklch(0.55 0.18 145)", borderRadius: 2 }} />}
+                      <div style={{ width: 1, height: 2, background: theme.cardBorder }} />
+                      {!isPos && <div style={{ height: `${h}%`, minHeight: 2, width: 10, background: "#ef4444", borderRadius: 2 }} />}
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="text-[10px] mt-2" style={{ color: theme.textFaint }}>Green = profitable · Red = below cost</p>
+            </div>
+
+            {/* Cumulative Profit Trend */}
+            <div className="rounded-xl p-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+              <p className="text-xs font-semibold uppercase tracking-wider mb-3" style={{ color: theme.textFaint }}>Cumulative Profit Trend</p>
+              <div className="relative h-20 overflow-x-auto">
+                <svg width={Math.max(chartData.length * 20, 200)} height="80" style={{ overflow: "visible" }}>
+                  {(() => {
+                    const vals = chartData.map(d => d.cumul);
+                    const minV = Math.min(...vals, 0);
+                    const maxV = Math.max(...vals, 0.01);
+                    const range = maxV - minV || 1;
+                    const pts = vals.map((v,i) => `${i*20+10},${60 - ((v-minV)/range)*50}`).join(" ");
+                    const zeroY = 60 - ((0-minV)/range)*50;
+                    return <>
+                      <line x1="0" y1={zeroY} x2={chartData.length*20} y2={zeroY} stroke={theme.cardBorder} strokeWidth="1" strokeDasharray="4,2"/>
+                      <polyline points={pts} fill="none" stroke={vals[vals.length-1] >= 0 ? "oklch(0.55 0.18 145)" : "#ef4444"} strokeWidth="2"/>
+                      {vals.map((v,i) => <circle key={i} cx={i*20+10} cy={60-((v-minV)/range)*50} r="3" fill={v>=0?"oklch(0.55 0.18 145)":"#ef4444"} aria-label={`${chartData[i].date}: ${fmtEGP(v)}`}/>)}
+                    </>;
+                  })()}
+                </svg>
+              </div>
+              <div className="flex justify-between text-[10px] mt-1" style={{ color: theme.textFaint }}>
+                <span>{chartData[0]?.date}</span>
+                <span className="font-bold" style={{ color: chartData[chartData.length-1]?.cumul >= 0 ? "oklch(0.55 0.18 145)" : "#ef4444" }}>
+                  Final: {fmtEGP(chartData[chartData.length-1]?.cumul)}
+                </span>
+                <span>{chartData[chartData.length-1]?.date}</span>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Daily breakdown for selected cycle */}
       {activeCycle && (
         <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
@@ -2739,7 +2842,6 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
                       <th className="px-4 py-2 text-left font-medium" style={{ color: theme.textFaint }}>Date</th>
                       <th className="px-4 py-2 text-right font-medium" style={{ color: theme.textFaint }}>Login Hrs</th>
                       <th className="px-4 py-2 text-right font-medium" style={{ color: theme.textFaint }}>Revenue</th>
-                      <th className="px-4 py-2 text-right font-medium" style={{ color: theme.textFaint }}>Calls</th>
                       <th className="px-4 py-2 text-right font-medium" style={{ color: theme.textFaint }}>Profit</th>
                     </tr>
                   </thead>
@@ -2757,7 +2859,6 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
                           </td>
                           <td className="px-4 py-2 text-right" style={{ color: theme.textMuted }}>{fmtHr(d.loginHours)}</td>
                           <td className="px-4 py-2 text-right font-semibold" style={{ color: "oklch(0.55 0.18 145)" }}>{fmtEGP(d.revenue)}</td>
-                          <td className="px-4 py-2 text-right" style={{ color: theme.textMuted }}>{d.totalCalls.toLocaleString()}</td>
                           <td className="px-4 py-2 text-right" style={{ color: theme.textMuted }}>{fmtEGP(d.profit)}</td>
                         </tr>
                       );
@@ -2767,6 +2868,124 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
               </div>
             </>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Unified Performance Tab (Cycle / Calendar Month / All-Time) ──────────────
+function PerformanceTab({ theme }: { theme: Theme }) {
+  const [view, setView] = useState<"cycle" | "month" | "all">("cycle");
+  return (
+    <div className="space-y-5">
+      {/* Time-range toggle: This Cycle (salary basis) · This Month (commission basis) · All-Time */}
+      <div className="inline-flex rounded-xl p-1 flex-wrap" style={{ background: theme.inputBg, border: `1px solid ${theme.cardBorder}` }}>
+        {([["cycle", "This Cycle"], ["month", "This Month"], ["all", "All-Time"]] as const).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setView(id)}
+            className="px-4 py-1.5 rounded-lg text-sm font-medium transition-colors"
+            style={{
+              background: view === id ? BRAND : "transparent",
+              color: view === id ? "#ffffff" : theme.textMuted,
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {view === "cycle" && <CycleTrackerTab theme={theme} />}
+      {view === "month" && <ThisMonthView theme={theme} />}
+      {view === "all" && <PerformanceHistoryTab theme={theme} />}
+    </div>
+  );
+}
+
+// ─── This Month (calendar month — the basis used for commission) ──────────────
+function ThisMonthView({ theme }: { theme: Theme }) {
+  const now = new Date();
+  const [offset, setOffset] = useState(0); // 0 = current month, -1 = previous, etc.
+  const sel = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+  const monthPrefix = `${sel.getFullYear()}-${String(sel.getMonth() + 1).padStart(2, "0")}`;
+  // A calendar month spans two pay-cycles (26th→25th): days 1–25 live in the
+  // cycle keyed to this month; days 26–end live in next month's cycle. We pull
+  // both and filter to this calendar month's dates.
+  const nextMonth = new Date(sel.getFullYear(), sel.getMonth() + 1, 1);
+  const cycleA = monthPrefix;
+  const cycleB = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, "0")}`;
+
+  const qA = trpc.cycleTracker.getMyDailyStats.useQuery({ cycleKey: cycleA });
+  const qB = trpc.cycleTracker.getMyDailyStats.useQuery({ cycleKey: cycleB });
+  const loading = qA.isLoading || qB.isLoading;
+
+  const rows = [...(qA.data?.daily ?? []), ...(qB.data?.daily ?? [])].filter(r => r.date.startsWith(monthPrefix));
+  const hours = rows.reduce((s, r) => s + Number(r.loginHours ?? 0), 0);
+  const revenue = rows.reduce((s, r) => s + Number(r.revenue ?? 0), 0);
+  const profit = rows.reduce((s, r) => s + Number(r.profit ?? 0), 0);
+  const cost = revenue - profit;
+  const margin = revenue > 0 ? (profit / revenue) * 100 : 0;
+  const revPerHour = hours > 0 ? revenue / hours : 0;
+  const monthLabel = sel.toLocaleString("en-US", { month: "long", year: "numeric" });
+  const isCurrentMonth = offset === 0;
+  const money = (v: number) => `$${v.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+
+  return (
+    <div className="space-y-6">
+      {/* Commission-basis note */}
+      <div className="rounded-xl p-4 flex items-start gap-3" style={{ background: `${BRAND}12`, border: `1px solid ${BRAND}33` }}>
+        <TrendingUp className="w-4 h-4 mt-0.5 shrink-0" style={{ color: BRAND }} />
+        <div>
+          <p className="text-xs font-semibold" style={{ color: BRAND }}>Calendar Month</p>
+          <p className="text-xs mt-0.5" style={{ color: theme.textMuted }}>Full calendar month totals — this is the basis used for commission.</p>
+        </div>
+      </div>
+
+      {/* Month selector */}
+      <div className="flex items-center gap-3">
+        <button onClick={() => setOffset(offset - 1)}
+          className="h-8 w-8 rounded-lg flex items-center justify-center text-lg"
+          style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}>&#8249;</button>
+        <span className="text-base font-semibold min-w-[180px] text-center" style={{ color: theme.text }}>
+          {monthLabel}
+          {isCurrentMonth && <span className="ml-2 text-xs font-normal px-2 py-0.5 rounded-full" style={{ background: `${BRAND}22`, color: BRAND }}>Current</span>}
+        </span>
+        <button disabled={isCurrentMonth} onClick={() => setOffset(offset + 1)}
+          className="h-8 w-8 rounded-lg flex items-center justify-center text-lg disabled:opacity-30"
+          style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}>&#8250;</button>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-16">
+          <div className="w-6 h-6 border-2 rounded-full animate-spin" style={{ borderColor: BRAND, borderTopColor: "transparent" }} />
+        </div>
+      ) : rows.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 gap-2">
+          <Activity className="w-10 h-10" style={{ color: theme.textFaint }} />
+          <p className="text-sm" style={{ color: theme.textMuted }}>No data for {monthLabel}.</p>
+        </div>
+      ) : (
+        <div className="rounded-xl p-5 space-y-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+          <div className="flex items-center gap-2">
+            <TrendingUp className="w-4 h-4" style={{ color: BRAND }} />
+            <h3 className="font-semibold text-sm" style={{ color: theme.text }}>{monthLabel} — Performance</h3>
+            <span className="text-xs" style={{ color: theme.textFaint }}>{rows.length} days</span>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {[
+              { label: "Login Hours", value: hours.toFixed(1) + "h" },
+              { label: "Revenue", value: money(revenue) },
+              { label: "Cost", value: money(cost) },
+              { label: "Profit", value: money(profit) },
+              { label: "Revenue / Hour", value: `$${revPerHour.toFixed(2)}` },
+            ].map(({ label, value }) => (
+              <div key={label} className="rounded-lg p-3" style={{ background: theme.inputBg }}>
+                <div className="text-base font-bold" style={{ color: theme.text }}>{value}</div>
+                <div className="text-xs mt-0.5" style={{ color: theme.textFaint }}>{label}</div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

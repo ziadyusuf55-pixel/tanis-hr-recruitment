@@ -165,6 +165,7 @@ import {
   getQualityMonths,
   // Cycle Tracker
   getCurrentCycleKey,
+  getCycleKeyForDate,
   getCycleDateRange,
   upsertCycleStats,
   upsertCycleDeductions,
@@ -184,6 +185,7 @@ import {
   getCampaignRanking,
   adminDeleteAgent,
   getPendingDeletionAgents,
+  getNextAvailableTraineeCode,
 } from "./db";
 import { notifyOwner } from "./_core/notification";
 import { sendInterviewNotification } from "./email";
@@ -1485,6 +1487,9 @@ const workforceRouter = router({
     .query(({ input }) => listWorkforceAgents(input.campaignId, input.teamLeader)),
   allInTraining: protectedProcedure
     .query(() => listAllAgentsInTraining()),
+  // Returns the next available T-{N} code (lowest unused sequential number)
+  nextTraineeCode: protectedProcedure
+    .query(() => getNextAvailableTraineeCode()),
 
   create: protectedProcedure
     .input(z.object({
@@ -2246,6 +2251,16 @@ const payrollV2Router = router({
       for (const [k, v] of Object.entries(input.data)) {
         if (v !== undefined) updates[k] = v === "" ? null : v;
       }
+      // Auto-recalculate netPay if not explicitly set but other fields changed
+      if (!updates.netPay) {
+        const existing = await db.select().from(payrollRecords).where(eq(payrollRecords.id, input.id)).limit(1);
+        if (existing[0]) {
+          const r = { ...existing[0], ...updates };
+          const n = (v: string | null) => parseFloat(String(v || "0")) || 0;
+          const calcNet = n(r.baseSalary) + n(r.ot1x5Pay) + n(r.ot2xPay) + n(r.ot3xPay) + n(r.coachingBonus) - n(r.totalDeductions);
+          updates.netPay = calcNet.toFixed(2);
+        }
+      }
       await db.update(payrollRecords).set(updates).where(eq(payrollRecords.id, input.id));
       return { success: true };
     }),
@@ -2477,7 +2492,7 @@ const cycleTrackerRouter = router({
     }))
     .mutation(async ({ input }) => {
       const cycleKey = getCurrentCycleKey();
-      const rows = input.rows.map(r => ({ ...r, cycleKey }));
+      const rows = input.rows.map(r => ({ ...r, cycleKey: getCycleKeyForDate(r.date) }));
       await upsertCycleStats(rows);
 
       // Anomaly detection
@@ -2545,7 +2560,7 @@ const cycleTrackerRouter = router({
     }))
     .mutation(async ({ input }) => {
       const cycleKey = getCurrentCycleKey();
-      const rows = input.rows.map(r => ({ ...r, cycleKey }));
+      const rows = input.rows.map(r => ({ ...r, cycleKey: getCycleKeyForDate(r.date) }));
       await upsertCycleDeductions(rows);
       return { count: rows.length, cycleKey };
     }),
@@ -2565,7 +2580,7 @@ const cycleTrackerRouter = router({
     }))
     .mutation(async ({ input }) => {
       const cycleKey = getCurrentCycleKey();
-      const rows = input.rows.map(r => ({ ...r, cycleKey }));
+      const rows = input.rows.map(r => ({ ...r, cycleKey: getCycleKeyForDate(r.date) }));
       await upsertCycleOT(rows);
       return { count: rows.length, cycleKey };
     }),
@@ -3850,6 +3865,20 @@ const integrationsRouter = router({
 
 // ─── Trainer Salaries Router ─────────────────────────────────────────────────
 const trainerSalariesRouter = router({
+  // Agent: get own trainer salary
+  getForAgent: publicProcedure
+    .input(z.object({ crdts: z.string(), month: z.string() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { trainerSalaries } = await import("../drizzle/schema");
+      const { eq, and } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return null;
+      const rows = await db.select().from(trainerSalaries)
+        .where(and(eq(trainerSalaries.crdts, input.crdts), eq(trainerSalaries.month, input.month)))
+        .limit(1);
+      return rows[0] ?? null;
+    }),
   getForMonth: protectedProcedure
     .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
     .query(async ({ input }) => {
@@ -3866,6 +3895,7 @@ const trainerSalariesRouter = router({
   upsert: protectedProcedure
     .input(z.object({
       id: z.number().optional(),
+      crdts: z.string().optional(),
       trainerName: z.string().min(1),
       month: z.string().regex(/^\d{4}-\d{2}$/),
       salaryEgp: z.number().min(0),
@@ -3915,6 +3945,18 @@ const trainerSalariesRouter = router({
 // ─── Commission Router ────────────────────────────────────────────────────────
 // ─── Payroll Adjustments Router ──────────────────────────────────────────────
 const adjustmentsRouter = router({
+  // Agent: get own adjustments for a pay cycle
+  getForAgent: publicProcedure
+    .input(z.object({ crdts: z.string(), month: z.string() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { payrollAdjustments } = await import("../drizzle/schema");
+      const { eq, and } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      return db.select().from(payrollAdjustments)
+        .where(and(eq(payrollAdjustments.crdts, input.crdts), eq(payrollAdjustments.month, input.month)));
+    }),
   getForMonth: protectedProcedure
     .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
     .query(async ({ input }) => {
@@ -4309,6 +4351,82 @@ const invitesRouter = router({
     }),
 });
 
+// ─── API Keys Router ─────────────────────────────────────────────────────────
+const apiKeysRouter = router({
+  // Generate a new API key (admin only)
+  generate: protectedProcedure
+    .input(z.object({ name: z.string().min(1).max(100) }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { apiKeys } = await import("../drizzle/schema");
+      const { randomBytes, createHash } = await import("crypto");
+      const rawKey = `tanis_${randomBytes(32).toString("hex")}`;
+      const keyHash = createHash("sha256").update(rawKey).digest("hex");
+      const keyPrefix = rawKey.slice(0, 12);
+      await db.insert(apiKeys).values({
+        name: input.name,
+        keyHash,
+        keyPrefix,
+        createdBy: ctx.user.name ?? ctx.user.openId,
+        createdAt: Date.now(),
+      });
+      // Return the raw key ONCE — it will never be shown again
+      return { rawKey, keyPrefix, name: input.name };
+    }),
+
+  // List all API keys (admin only) — never returns raw key, only prefix
+  list: protectedProcedure
+    .query(async ({ ctx }) => {
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { apiKeys } = await import("../drizzle/schema");
+      const { desc } = await import("drizzle-orm");
+      const rows = await db.select({
+        id: apiKeys.id,
+        name: apiKeys.name,
+        keyPrefix: apiKeys.keyPrefix,
+        createdBy: apiKeys.createdBy,
+        lastUsedAt: apiKeys.lastUsedAt,
+        revokedAt: apiKeys.revokedAt,
+        createdAt: apiKeys.createdAt,
+      }).from(apiKeys).orderBy(desc(apiKeys.createdAt));
+      return rows;
+    }),
+
+  // Revoke an API key (admin only)
+  revoke: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { apiKeys } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      await db.update(apiKeys).set({ revokedAt: Date.now() }).where(eq(apiKeys.id, input.id));
+      return { ok: true };
+    }),
+
+  // Delete an API key permanently (admin only)
+  delete: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { apiKeys } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      await db.delete(apiKeys).where(eq(apiKeys.id, input.id));
+      return { ok: true };
+    }),
+});
+
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -4348,6 +4466,7 @@ export const appRouter = router({
   adjustments: adjustmentsRouter,
   trainerSalaries: trainerSalariesRouter,
   invites: invitesRouter,
+  apiKeys: apiKeysRouter,
 });
 export type AppRouter = typeof appRouter;
 

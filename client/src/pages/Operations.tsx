@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
@@ -849,6 +849,19 @@ export default function Operations() {
   const EMPTY_ADD_FORM: AddAgentForm = { candidateId: '', traineeCode: '', fullName: '', alias: '', campaignId: '', shiftHours: '', teamLeader: '', offDay1: '', offDay2: '', dialerCredentials: '' };
   const [addAgentForm, setAddAgentForm] = useState<AddAgentForm>(EMPTY_ADD_FORM);
   const { data: eligibleCandidates = [] } = trpc.workforce.getEligibleCandidates.useQuery(undefined, { enabled: addAgentDialog });
+  const { data: nextTraineeCodeData, isLoading: nextCodeLoading } = trpc.workforce.nextTraineeCode.useQuery(
+    undefined,
+    { enabled: addAgentDialog, staleTime: 0 }
+  );
+  // Auto-fill traineeCode when dialog opens and no candidate pre-selected
+  const prevNextCode = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (addAgentDialog && nextTraineeCodeData && nextTraineeCodeData !== prevNextCode.current) {
+      prevNextCode.current = nextTraineeCodeData;
+      setAddAgentForm(f => (f.traineeCode ? f : { ...f, traineeCode: nextTraineeCodeData }));
+    }
+    if (!addAgentDialog) { prevNextCode.current = undefined; }
+  }, [addAgentDialog, nextTraineeCodeData]);
   const generateUniqueId = trpc.workforce.generateUniqueId.useMutation({
     onSuccess: (data) => {
       setAddAgentForm(f => ({ ...f, traineeCode: data.code }));
@@ -1614,8 +1627,9 @@ export default function Operations() {
               <select
                 className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
                 value={addAgentForm.candidateId}
-                onChange={e => {
-                  const selected = (eligibleCandidates as Array<{candidateId: number; traineeCode: string | null; name: string; phone: string | null; source: string}>).find(c => c.candidateId === Number(e.target.value));
+                onChange={(e) => {
+                  const candidateId = e.target.value;
+                  const selected = (eligibleCandidates as Array<{candidateId: number; traineeCode: string | null; name: string; phone: string | null; source: string}>).find(c => String(c.candidateId) === candidateId);
                   if (selected) {
                     setAddAgentForm(f => ({
                       ...f,
@@ -1638,23 +1652,35 @@ export default function Operations() {
             </div>
             )}
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Trainee Code</label>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Trainee Code (T- ID)</label>
               <div className="flex gap-2">
-                <Input placeholder="e.g. 114001" value={addAgentForm.traineeCode} onChange={e => setAddAgentForm(f => ({ ...f, traineeCode: e.target.value }))} />
+                <Input 
+                  placeholder={nextCodeLoading ? "Loading..." : "e.g. T-53"}
+                  value={addAgentForm.traineeCode} 
+                  onChange={e => setAddAgentForm(f => ({ ...f, traineeCode: e.target.value }))}
+                  className="font-mono"
+                />
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
                   className="shrink-0 gap-1.5"
-                  onClick={() => generateUniqueId.mutate()}
-                  disabled={generateUniqueId.isPending}
-                  title="Generate a unique 6-digit agent ID"
+                  onClick={() => {
+                    if (nextTraineeCodeData) {
+                      setAddAgentForm(f => ({ ...f, traineeCode: nextTraineeCodeData }));
+                      toast.success(`Next available T- ID: ${nextTraineeCodeData}`);
+                    } else {
+                      generateUniqueId.mutate();
+                    }
+                  }}
+                  disabled={nextCodeLoading || generateUniqueId.isPending}
+                  title="Auto-fill next available T- ID"
                 >
                   <Shuffle className="h-3.5 w-3.5" />
-                  {generateUniqueId.isPending ? "..." : "Auto"}
+                  {nextCodeLoading ? "..." : "Next"}
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground mt-1">Click Auto to generate a unique ID that avoids retired codes.</p>
+              <p className="text-xs text-muted-foreground mt-1">Auto-filled with the next available T- number. You can edit it manually if needed.</p>
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Full Name</label>
