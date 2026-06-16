@@ -151,6 +151,19 @@ function formatCurrency(amount: string | number | null | undefined) {
   return `EGP ${num.toLocaleString()}`;
 }
 
+// Decimal hours -> H:MM  (e.g. 130.9 -> "130:54", 0 -> "0:00", 2.5 -> "2:30")
+function fmtHM(decimalHours: number | string | null | undefined): string {
+  if (decimalHours == null || decimalHours === "") return "—";
+  const n = parseFloat(String(decimalHours));
+  if (!isFinite(n)) return "—";
+  const sign = n < 0 ? "-" : "";
+  const abs = Math.abs(n);
+  let h = Math.floor(abs);
+  let m = Math.round((abs - h) * 60);
+  if (m === 60) { h += 1; m = 0; }
+  return `${sign}${h}:${m.toString().padStart(2, "0")}`;
+}
+
 type Tab = "profile" | "opplan" | "performance" | "payroll" | "commission" | "requests" | "referrals" | "documents" | "payment" | "comments";
 
 export default function AgentPortal() {
@@ -697,17 +710,17 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
             <div className="divide-y" style={{ borderColor: theme.cardBorder }}>
               {([
                 { label: "Base Salary", value: fmtEGP(r.baseSalary) },
-                { label: "Working Hours", value: fmtNum(r.workingHours, " hrs") },
+                { label: "Working Hours", value: fmtHM(r.workingHours) },
                 ...(r.ot1x5Hours && parseFloat(String(r.ot1x5Hours)) > 0 ? [
-                  { label: "OT 1.5× Hours", value: fmtNum(r.ot1x5Hours, " hrs") },
+                  { label: "OT 1.5× Hours", value: fmtHM(r.ot1x5Hours) },
                   { label: "OT 1.5× Pay", value: fmtEGP(r.ot1x5Pay) },
                 ] : []),
                 ...(r.ot2xHours && parseFloat(String(r.ot2xHours)) > 0 ? [
-                  { label: "OT 2× Hours", value: fmtNum(r.ot2xHours, " hrs") },
+                  { label: "OT 2× Hours", value: fmtHM(r.ot2xHours) },
                   { label: "OT 2× Pay", value: fmtEGP(r.ot2xPay) },
                 ] : []),
                 ...(r.ot3xHours && parseFloat(String(r.ot3xHours)) > 0 ? [
-                  { label: "OT 3× Hours", value: fmtNum(r.ot3xHours, " hrs") },
+                  { label: "OT 3× Hours", value: fmtHM(r.ot3xHours) },
                   { label: "OT 3× Pay", value: fmtEGP(r.ot3xPay) },
                 ] : []),
                 ...(r.coachingBonus && parseFloat(String(r.coachingBonus)) > 0
@@ -2000,18 +2013,14 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
 
   // Today section
   const todayLoginHours = todayStats?.reduce((s, r) => s + parseFloat(String(r.loginHours ?? 0)), 0) ?? 0;
-  const todayCalls = todayStats?.reduce((s, r) => s + (r.totalCalls ?? 0), 0) ?? 0;
   const todayRevenue = todayStats?.reduce((s, r) => s + parseFloat(String(r.revenue ?? 0)), 0) ?? 0;
 
   // Cycle totals
   const cycleLoginHours = stats.reduce((s, r) => s + parseFloat(String(r.loginHours ?? 0)), 0);
-  const cycleCalls = stats.reduce((s, r) => s + (r.totalCalls ?? 0), 0);
   const cycleRevenue = stats.reduce((s, r) => s + parseFloat(String(r.revenue ?? 0)), 0);
   const cycleCost = stats.reduce((s, r) => s + parseFloat(String(r.cost ?? 0)), 0);
   const cycleProfit = stats.reduce((s, r) => s + parseFloat(String(r.profit ?? 0)), 0);
   const revenuePerHour = cycleLoginHours > 0 ? cycleRevenue / cycleLoginHours : 0;
-  const callsPerHour = cycleLoginHours > 0 ? cycleCalls / cycleLoginHours : 0;
-  const profitMargin = cycleRevenue > 0 ? (cycleProfit / cycleRevenue) * 100 : 0;
 
   // Deductions total
   const totalDeductions = deductions.reduce((s, r) => s + parseFloat(String(r.deductionAmount ?? 0)), 0);
@@ -2060,7 +2069,7 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
         </div>
         <div className="grid grid-cols-2 gap-4">
           {[
-            { label: "Login Hours", value: todayLoginHours.toFixed(1) + "h", icon: <Clock className="w-4 h-4" /> },
+            { label: "Login Hours", value: fmtHM(todayLoginHours), icon: <Clock className="w-4 h-4" /> },
             { label: "Revenue", value: `$${todayRevenue.toLocaleString()}`, icon: <TrendingUp className="w-4 h-4" /> },
           ].map(({ label, value, icon }) => (
             <div key={label} className="rounded-lg p-3 text-center" style={{ background: theme.inputBg }}>
@@ -2081,11 +2090,10 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
         </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {[
-            { label: "Total Login Hours", value: cycleLoginHours.toFixed(1) + "h" },
+            { label: "Total Login Hours", value: fmtHM(cycleLoginHours) },
             { label: "Total Revenue", value: `$${cycleRevenue.toLocaleString()}` },
             { label: "Total Cost", value: `$${cycleCost.toLocaleString()}` },
             { label: "Total Profit", value: `$${cycleProfit.toLocaleString()}` },
-            { label: "Profit Margin", value: `${profitMargin.toFixed(1)}%` },
             { label: "Revenue / Hour", value: `$${revenuePerHour.toFixed(2)}` },
           ].map(({ label, value }) => (
             <div key={label} className="rounded-lg p-3" style={{ background: theme.inputBg }}>
@@ -2124,7 +2132,7 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
                   <tr key={i} style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
                     <td className="py-2 px-2" style={{ color: theme.textMuted }}>{d.date}</td>
                     <td className="py-2 px-2" style={{ color: theme.text }}>{d.violationType}</td>
-                    <td className="py-2 px-2" style={{ color: theme.textMuted }}>{parseFloat(String(d.hours ?? 0)).toFixed(1)}h</td>
+                    <td className="py-2 px-2" style={{ color: theme.textMuted }}>{fmtHM(parseFloat(String(d.hours ?? 0)))}</td>
                     <td className="py-2 px-2 font-medium" style={{ color: "oklch(0.55 0.22 25)" }}>-EGP {parseFloat(String(d.deductionAmount ?? 0)).toLocaleString()}</td>
                   </tr>
                 ))}
@@ -2142,7 +2150,7 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
             <h3 className="font-semibold text-sm" style={{ color: theme.text }}>OT This Cycle</h3>
           </div>
           {totalOTHours > 0 && (
-            <span className="text-sm font-bold" style={{ color: "oklch(0.55 0.18 145)" }}>+{totalOTHours.toFixed(1)}h · EGP {totalOTEgp.toLocaleString()}</span>
+            <span className="text-sm font-bold" style={{ color: "oklch(0.55 0.18 145)" }}>+{fmtHM(totalOTHours)} · EGP {totalOTEgp.toLocaleString()}</span>
           )}
         </div>
         {ot.length === 0 ? (
@@ -2164,7 +2172,7 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
                     <td className="py-2 px-2">
                       <span className="px-1.5 py-0.5 rounded text-xs font-medium" style={{ background: "oklch(0.55 0.18 145 / 0.15)", color: "oklch(0.55 0.18 145)" }}>{o.otType}</span>
                     </td>
-                    <td className="py-2 px-2" style={{ color: theme.textMuted }}>{parseFloat(String(o.hours ?? 0)).toFixed(1)}h</td>
+                    <td className="py-2 px-2" style={{ color: theme.textMuted }}>{fmtHM(parseFloat(String(o.hours ?? 0)))}</td>
                     <td className="py-2 px-2 font-medium" style={{ color: "oklch(0.55 0.18 145)" }}>+EGP {parseFloat(String(o.egpAmount ?? 0)).toLocaleString()}</td>
                   </tr>
                 ))}
@@ -2420,10 +2428,9 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
         ) : (
           <>
             {/* Totals row */}
-            <div className="grid grid-cols-4 gap-3 px-4 py-3" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+            <div className="grid grid-cols-3 gap-3 px-4 py-3" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
               {[
-                { label: "Login Hours", value: fmtNum(totals.loginHours, " h") },
-                { label: "Total Calls", value: fmtNum(totals.totalCalls) },
+                { label: "Login Hours", value: fmtHM(totals.loginHours) },
                 { label: "Revenue", value: `$${fmtNum(totals.revenue)}` },
                 { label: "Profit", value: `$${fmtNum(totals.profit)}` },
               ].map(({ label, value }) => (
@@ -2438,7 +2445,7 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
               <table className="w-full text-xs">
                 <thead className="sticky top-0" style={{ background: theme.surface }}>
                   <tr style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
-                    {["Date", "Login Hrs", "Calls", "Revenue", "Cost", "Profit", "Rev/Hr"].map(h => (
+                    {["Date", "Login Hrs", "Revenue", "Cost", "Profit", "Rev/Hr"].map(h => (
                       <th key={h} className="text-left px-3 py-2 font-medium" style={{ color: theme.textFaint }}>{h}</th>
                     ))}
                   </tr>
@@ -2447,8 +2454,7 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
                   {rows.map((r, i) => (
                     <tr key={i} style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
                       <td className="px-3 py-2 font-mono" style={{ color: theme.textMuted }}>{r.date}</td>
-                      <td className="px-3 py-2" style={{ color: theme.text }}>{fmtNum(r.loginHours, " h")}</td>
-                      <td className="px-3 py-2" style={{ color: theme.text }}>{fmtNum(r.totalCalls)}</td>
+                      <td className="px-3 py-2" style={{ color: theme.text }}>{fmtHM(r.loginHours)}</td>
                       <td className="px-3 py-2" style={{ color: theme.text }}>${fmtNum(r.revenue)}</td>
                       <td className="px-3 py-2" style={{ color: theme.text }}>${fmtNum(r.cost)}</td>
                       <td className="px-3 py-2 font-medium" style={{ color: parseFloat(String(r.profit ?? 0)) >= 0 ? "oklch(0.55 0.18 145)" : "#ef4444" }}>
@@ -2656,7 +2662,7 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
   }
   function fmtHr(v: number | null | undefined) {
     if (v == null) return "—";
-    return `${Number(v).toFixed(1)}h`;
+    return fmtHM(Number(v));
   }
 
   return (
@@ -2755,7 +2761,7 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
               {[
                 { label: "Best Day", value: fmtEGP(bestDay.profit), sub: bestDay.date, positive: true },
                 { label: "Worst Day", value: fmtEGP(worstDay.profit), sub: worstDay.date, positive: worstDay.profit >= 0 },
-                { label: "Most Hours", value: `${Math.max(...days.map(d=>d.loginHours)).toFixed(1)}h`, sub: days.reduce((a,b)=>b.loginHours>a.loginHours?b:a,days[0]).date, positive: true },
+                { label: "Most Hours", value: fmtHM(Math.max(...days.map(d=>d.loginHours))), sub: days.reduce((a,b)=>b.loginHours>a.loginHours?b:a,days[0]).date, positive: true },
               ].map((card,i) => (
                 <div key={i} className="rounded-xl p-3" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
                   <p className="text-[10px] uppercase tracking-wider mb-1" style={{ color: theme.textFaint }}>{card.label}</p>
@@ -2849,7 +2855,6 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
                       <th className="px-4 py-2 text-left font-medium" style={{ color: theme.textFaint }}>Date</th>
                       <th className="px-4 py-2 text-right font-medium" style={{ color: theme.textFaint }}>Login Hrs</th>
                       <th className="px-4 py-2 text-right font-medium" style={{ color: theme.textFaint }}>Revenue</th>
-                      <th className="px-4 py-2 text-right font-medium" style={{ color: theme.textFaint }}>Calls</th>
                       <th className="px-4 py-2 text-right font-medium" style={{ color: theme.textFaint }}>Profit</th>
                     </tr>
                   </thead>
@@ -2867,7 +2872,6 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
                           </td>
                           <td className="px-4 py-2 text-right" style={{ color: theme.textMuted }}>{fmtHr(d.loginHours)}</td>
                           <td className="px-4 py-2 text-right font-semibold" style={{ color: "oklch(0.55 0.18 145)" }}>{fmtEGP(d.revenue)}</td>
-                          <td className="px-4 py-2 text-right" style={{ color: theme.textMuted }}>{d.totalCalls.toLocaleString()}</td>
                           <td className="px-4 py-2 text-right" style={{ color: theme.textMuted }}>{fmtEGP(d.profit)}</td>
                         </tr>
                       );
@@ -2983,11 +2987,10 @@ function ThisMonthView({ theme }: { theme: Theme }) {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {[
-              { label: "Login Hours", value: hours.toFixed(1) + "h" },
+              { label: "Login Hours", value: fmtHM(hours) },
               { label: "Revenue", value: money(revenue) },
               { label: "Cost", value: money(cost) },
               { label: "Profit", value: money(profit) },
-              { label: "Profit Margin", value: `${margin.toFixed(1)}%` },
               { label: "Revenue / Hour", value: `$${revPerHour.toFixed(2)}` },
             ].map(({ label, value }) => (
               <div key={label} className="rounded-lg p-3" style={{ background: theme.inputBg }}>
