@@ -138,6 +138,11 @@ import {
   terminateAgent,
   approveResignationRequest,
   getSeparationsByAgent,
+  scheduleResignation,
+  cancelScheduledSeparation,
+  getPendingSeparationForAgent,
+  processDueSeparations,
+  archiveAgentCrdts,
   // Payroll v2
   upsertPayrollRecordV2,
   getPayrollStatusPage,
@@ -1484,7 +1489,7 @@ const campaignsRouter = router({
 const workforceRouter = router({
   list: protectedProcedure
     .input(z.object({ campaignId: z.number().optional(), teamLeader: z.string().optional() }))
-    .query(({ input }) => listWorkforceAgents(input.campaignId, input.teamLeader)),
+    .query(async ({ input }) => { await processDueSeparations(); return listWorkforceAgents(input.campaignId, input.teamLeader); }),
   allInTraining: protectedProcedure
     .query(() => listAllAgentsInTraining()),
   // Returns the next available T-{N} code (lowest unused sequential number)
@@ -2092,6 +2097,7 @@ const separationRouter = router({
     .mutation(async ({ input, ctx }) => {
       const adminName = ctx.user?.name ?? "Admin";
       await markAgentResignedOnSpot(input.agentCode, input.reason, adminName);
+      await archiveAgentCrdts(input.agentCode);
       return { success: true };
     }),
 
@@ -2101,6 +2107,7 @@ const separationRouter = router({
     .mutation(async ({ input, ctx }) => {
       const adminName = ctx.user?.name ?? "Admin";
       await terminateAgent(input.agentCode, input.reason, adminName);
+      await archiveAgentCrdts(input.agentCode);
       return { success: true };
     }),
 
@@ -2130,6 +2137,7 @@ const separationRouter = router({
         await dbConn.update(arTable).set({ adminLastWorkingDay: input.adminLastWorkingDay }).where(eqOp(arTable.id, input.requestId));
       }
       await approveResignationRequest(input.agentCode, lastWorkingDay, reason, adminName, req.requestedDate ?? Date.now());
+      await archiveAgentCrdts(input.agentCode);
       // Also update the request status to resolved
       await updateAgentRequestStatus(input.requestId, "resolved", input.adminReply ?? "Your resignation has been approved.");
       return { success: true };
@@ -2148,7 +2156,25 @@ const separationRouter = router({
     }),
   // Admin: get all terminated/resigned agents pending deletion
   pendingDeletion: protectedProcedure
-    .query(() => getPendingDeletionAgents()),
+    .query(async () => { await processDueSeparations(); return getPendingDeletionAgents(); }),
+
+  // Admin: schedule a resignation for a future effective date. The agent stays
+  // active (login + headcount) until then; processDueSeparations applies it.
+  scheduleResignation: protectedProcedure
+    .input(z.object({ agentCode: z.string(), effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), reason: z.string().min(1) }))
+    .mutation(async ({ input, ctx }) => {
+      const adminName = ctx.user?.name ?? "Admin";
+      const res = await scheduleResignation(input.agentCode, input.effectiveDate, input.reason, adminName);
+      return { success: true, effectiveAt: res.effectiveAt };
+    }),
+  // Admin: cancel a pending (not-yet-effective) scheduled resignation
+  cancelScheduled: protectedProcedure
+    .input(z.object({ agentCode: z.string() }))
+    .mutation(async ({ input }) => { await cancelScheduledSeparation(input.agentCode); return { success: true }; }),
+  // Admin/Agent: the pending scheduled separation for an agent (if any)
+  getPendingForAgent: protectedProcedure
+    .input(z.object({ agentCode: z.string() }))
+    .query(({ input }) => getPendingSeparationForAgent(input.agentCode)),
 });
 
 // ─── Payroll v2 Router ───────────────────────────────────────────────────────
@@ -2218,7 +2244,7 @@ const payrollV2Router = router({
 
   getStatusPage: protectedProcedure
     .input(z.object({ month: z.string() }))
-    .query(({ input }) => getPayrollStatusPage(input.month)),
+    .query(async ({ input }) => { await processDueSeparations(); return getPayrollStatusPage(input.month); }),
 
   setStatus: protectedProcedure
     .input(z.object({ id: z.number(), status: z.enum(["pending", "paid"]) }))
@@ -2711,14 +2737,23 @@ const cycleTrackerRouter = router({
       const { getDb } = await import("./db");
       const dbConn = await getDb();
       if (!dbConn) return null;
-      const { eq } = await import("drizzle-orm");
+      const { eq, and, inArray } = await import("drizzle-orm");
       const agent = await dbConn.select({ crdts: workforceAgents.crdts })
         .from(workforceAgents).where(eq(workforceAgents.traineeCode, traineeCode)).limit(1);
       const crdts = agent[0]?.crdts;
       if (!crdts) return null;
       const dateRange = getCycleDateRange(input.cycleKey);
       const data = await getCycleTrackerForAgent(crdts, input.cycleKey);
-      return { ...data, cycleKey: input.cycleKey, dateRange };
+      // Manual payroll adjustments (admin-added) for this cycle -> shown to the
+      // agent as "Other Bonuses" / "Other Deductions". Split CRDTS on commas so an
+      // agent with more than one dialer ID picks up all of them.
+      const { payrollAdjustments } = await import("../drizzle/schema");
+      const crdtsList = String(crdts).split(",").map(x => x.trim()).filter(Boolean);
+      const adjustments = crdtsList.length
+        ? await dbConn.select().from(payrollAdjustments)
+            .where(and(inArray(payrollAdjustments.crdts, crdtsList), eq(payrollAdjustments.month, input.cycleKey)))
+        : [];
+      return { ...data, adjustments, cycleKey: input.cycleKey, dateRange };
     }),
 
   // Admin: get all cycle history for a specific agent by CRDTS

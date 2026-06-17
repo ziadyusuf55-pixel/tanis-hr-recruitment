@@ -39,6 +39,7 @@ type StatusRecord = {
   agentCode: string | null;
   traineeCode: string | null;
   agentStatus: string | null;
+  fullName: string | null;
   baseSalary: string | null;
   workingHours: string | null;
   ot1x5Hours: string | null;
@@ -58,6 +59,7 @@ type StatusRecord = {
   paymentStatus: string | null;
   paidAt: number | null;
   month: string;
+  pendingLeave?: { effectiveAt: number | null; lastWorkingDay: string | null } | null;
 };
 
 type Warning = { crdts: string; alias?: string; type: string; message: string };
@@ -89,7 +91,7 @@ export default function PayrollPage() {
   const utils = trpc.useUtils();
   const [activeTab, setActiveTab] = useState<"status" | "upload" | "adjustments" | "trainers">("status");
 
-  // Trainer Salaries tab state
+  // Trainee Salaries tab state
   const [trainerMonth, setTrainerMonth] = useState<string>(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -111,12 +113,12 @@ export default function PayrollPage() {
       setTrainerDialog(false);
       setTrainerEditId(null);
       setTrainerForm({ crdts: "", trainerName: "", salaryEgp: "", notes: "" });
-      toast.success(trainerEditId ? "Trainer salary updated" : "Trainer salary added");
+      toast.success(trainerEditId ? "Trainee salary updated" : "Trainee salary added");
     },
     onError: (e) => toast.error(e.message),
   });
   const deleteTrainerMutation = trpc.trainerSalaries.delete.useMutation({
-    onSuccess: () => { refetchTrainers(); toast.success("Trainer salary deleted"); },
+    onSuccess: () => { refetchTrainers(); toast.success("Trainee salary deleted"); },
     onError: (e) => toast.error(e.message),
   });
 
@@ -126,6 +128,12 @@ export default function PayrollPage() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   });
   const [adjDialog, setAdjDialog] = useState(false);
+  // active roster -> options for the CRDTS dropdown in Manual Adjustments (#8)
+  const { data: wfAgents = [] } = trpc.workforce.list.useQuery({});
+  const agentOptions = (wfAgents as Array<{ crdts: string | null; alias: string | null; fullName: string }>)
+    .filter(a => a.crdts && String(a.crdts).trim())
+    .map(a => { const primary = String(a.crdts).split(",")[0].trim(); return { crdts: primary, label: `${a.alias || a.fullName} — ${String(a.crdts).trim()}` }; })
+    .sort((x, y) => x.label.localeCompare(y.label));
   const [adjForm, setAdjForm] = useState<{ crdts: string; type: "bonus" | "deduction"; label: string; amount: string }>({ crdts: "", type: "bonus", label: "", amount: "" });
   const [adjEditId, setAdjEditId] = useState<number | null>(null);
 
@@ -360,7 +368,7 @@ export default function PayrollPage() {
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            {tab === "status" ? "Payment Status" : tab === "adjustments" ? "Manual Adjustments" : tab === "trainers" ? "Trainer Salaries" : "Upload History"}
+            {tab === "status" ? "Payment Status" : tab === "adjustments" ? "Manual Adjustments" : tab === "trainers" ? "Trainee Salaries" : "Upload History"}
           </button>
         ))}
       </div>
@@ -442,6 +450,7 @@ export default function PayrollPage() {
                       <tr className="border-b bg-muted/30">
                         <th className="text-left px-4 py-3 font-medium w-8"></th>
                         <th className="text-left px-4 py-3 font-medium">CRDTS</th>
+                        <th className="text-left px-4 py-3 font-medium">Name</th>
                         <th className="text-left px-4 py-3 font-medium">Alias</th>
                         <th className="text-right px-4 py-3 font-medium">Base + OT</th>
                         <th className="text-right px-4 py-3 font-medium text-blue-600">Commission</th>
@@ -464,11 +473,13 @@ export default function PayrollPage() {
                               </button>
                             </td>
                             <td className="px-4 py-3 font-mono font-medium">{r.crdts ?? "—"}</td>
+                            <td className="px-4 py-3">{r.fullName ?? "—"}</td>
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-1.5 flex-wrap">
                                 <span>{r.alias ?? "—"}</span>
                                 {r.agentStatus === "resigned" && <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-orange-100 text-orange-700 border border-orange-200">Resigned</span>}
                                 {r.agentStatus === "terminated" && <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-red-100 text-red-700 border border-red-200">Terminated</span>}
+                                {r.pendingLeave && <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-700 border border-amber-200">Leaving {r.pendingLeave.lastWorkingDay ?? ""}</span>}
                               </div>
                             </td>
                             <td className="px-4 py-3 text-right text-muted-foreground">{fmtEGP(n(r.netPay))}</td>
@@ -513,7 +524,7 @@ export default function PayrollPage() {
                           {/* Expanded breakdown row */}
                           {expandedRow === r.id && (
                             <tr key={`${r.id}-expand`} className="bg-muted/10">
-                              <td colSpan={8} className="px-8 py-4">
+                              <td colSpan={9} className="px-8 py-4">
                                 <div className="grid grid-cols-3 gap-6">
                                   {/* Col 1: Earnings */}
                                   <div>
@@ -576,7 +587,7 @@ export default function PayrollPage() {
                     {/* Totals footer */}
                     <tfoot>
                       <tr className="border-t bg-muted/30 font-semibold">
-                        <td colSpan={3} className="px-4 py-3 text-right text-sm">Totals:</td>
+                        <td colSpan={4} className="px-4 py-3 text-right text-sm">Totals:</td>
                         <td className="px-4 py-3 text-right text-sm">{fmtEGP(records.reduce((s, r) => s + n(r.netPay), 0))}</td>
                         <td className="px-4 py-3 text-right text-sm text-blue-600">{fmtEGP(records.reduce((s, r) => s + n(r.commissionEgp), 0))}</td>
                         <td className="px-4 py-3 text-right text-sm text-emerald-600">{fmtEGP(totalNetPay)}</td>
@@ -689,14 +700,20 @@ export default function PayrollPage() {
               <div className="space-y-3 py-2 text-sm">
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-medium text-muted-foreground">CRDTS</label>
-                  <input
-                    type="text"
+                  <select
                     value={adjForm.crdts}
                     onChange={e => setAdjForm(f => ({ ...f, crdts: e.target.value }))}
-                    placeholder="e.g. 114063"
                     className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
                     disabled={!!adjEditId}
-                  />
+                  >
+                    <option value="">Select agent…</option>
+                    {agentOptions.map(o => (
+                      <option key={o.crdts} value={o.crdts}>{o.label}</option>
+                    ))}
+                    {!!adjEditId && adjForm.crdts && !agentOptions.some(o => o.crdts === adjForm.crdts) && (
+                      <option value={adjForm.crdts}>{adjForm.crdts}</option>
+                    )}
+                  </select>
                 </div>
                 <div className="flex flex-col gap-1">
                   <label className="text-xs font-medium text-muted-foreground">Type</label>
@@ -756,7 +773,7 @@ export default function PayrollPage() {
         </div>
       )}
 
-      {/* ── Trainer Salaries Tab ── */}
+      {/* ── Trainee Salaries Tab ── */}
       {activeTab === "trainers" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-3">
@@ -770,12 +787,12 @@ export default function PayrollPage() {
               />
             </div>
             <Button size="sm" className="gap-1.5" onClick={() => { setTrainerEditId(null); setTrainerForm({ crdts: "", trainerName: "", salaryEgp: "", notes: "" }); setTrainerDialog(true); }}>
-              <PlusCircle className="h-3.5 w-3.5" /> Add Trainer Salary
+              <PlusCircle className="h-3.5 w-3.5" /> Add Trainee Salary
             </Button>
           </div>
 
           {trainerRows.length === 0 ? (
-            <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">No trainer salaries for this pay cycle. Click "Add Trainer Salary" to add one.</CardContent></Card>
+            <Card><CardContent className="py-10 text-center text-sm text-muted-foreground">No trainee salaries for this pay cycle. Click "Add Trainee Salary" to add one.</CardContent></Card>
           ) : (
             <Card>
               <CardContent className="p-0">
@@ -783,7 +800,7 @@ export default function PayrollPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="border-b bg-muted/40">
-                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Trainer Name</th>
+                        <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Trainee Name</th>
                         <th className="px-4 py-3 text-right font-semibold text-muted-foreground">Salary (EGP)</th>
                         <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Notes</th>
                         <th className="px-4 py-3 text-left font-semibold text-muted-foreground">Last Updated</th>
@@ -832,17 +849,17 @@ export default function PayrollPage() {
             </Card>
           )}
 
-          {/* Add/Edit Trainer Salary Dialog */}
+          {/* Add/Edit Trainee Salary Dialog */}
           <Dialog open={trainerDialog} onOpenChange={(o) => { if (!o) { setTrainerDialog(false); setTrainerEditId(null); setTrainerForm({ crdts: "", trainerName: "", salaryEgp: "", notes: "" }); } }}>
             <DialogContent className="max-w-md">
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
-                  <PlusCircle className="h-4 w-4" /> {trainerEditId ? "Edit Trainer Salary" : "Add Trainer Salary"}
+                  <PlusCircle className="h-4 w-4" /> {trainerEditId ? "Edit Trainee Salary" : "Add Trainee Salary"}
                 </DialogTitle>
               </DialogHeader>
               <div className="space-y-3 py-2 text-sm">
                 <div className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-muted-foreground">Trainer Name</label>
+                  <label className="text-xs font-medium text-muted-foreground">Trainee Name</label>
                   <input
                     type="text"
                     value={trainerForm.trainerName}
@@ -879,7 +896,7 @@ export default function PayrollPage() {
                 <Button
                   onClick={() => {
                     const amt = parseFloat(trainerForm.salaryEgp);
-                    if (!trainerForm.trainerName.trim()) return toast.error("Trainer name is required");
+                    if (!trainerForm.trainerName.trim()) return toast.error("Trainee name is required");
                     if (isNaN(amt) || amt < 0) return toast.error("Salary must be a valid number");
                     upsertTrainerMutation.mutate({
                       id: trainerEditId ?? undefined,

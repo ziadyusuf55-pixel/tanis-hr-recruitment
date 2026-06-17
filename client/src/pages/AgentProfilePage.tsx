@@ -67,10 +67,12 @@ export default function AgentProfilePage() {
   const { data: campaigns = [] } = trpc.campaigns.list.useQuery();
   const { data: teamLeaders = [] } = trpc.settings.listTeamLeaders.useQuery();
   const utils = trpc.useUtils();
+  const { data: pendingSep } = trpc.separation.getPendingForAgent.useQuery({ agentCode: traineeCode }, { enabled: !!traineeCode });
 
   // ── Separation dialogs ────────────────────────────────────────────────────
   const [separationDialog, setSeparationDialog] = useState<"resign" | "terminate" | null>(null);
   const [separationReason, setSeparationReason] = useState("");
+  const [separationEffectiveDate, setSeparationEffectiveDate] = useState("");
   const [deleteDialog, setDeleteDialog] = useState(false);
   const [resetPwDialog, setResetPwDialog] = useState(false);
   const [newPwResult, setNewPwResult] = useState<string | null>(null);
@@ -93,6 +95,25 @@ export default function AgentProfilePage() {
       setSeparationReason("");
       utils.workforce.list.invalidate();
       navigate("/operations");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const scheduleResignationMut = trpc.separation.scheduleResignation.useMutation({
+    onSuccess: () => {
+      toast.success("Resignation scheduled — agent stays active until the effective date");
+      setSeparationDialog(null); setSeparationReason(""); setSeparationEffectiveDate("");
+      utils.separation.getPendingForAgent.invalidate({ agentCode: traineeCode });
+      utils.workforce.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const cancelScheduledMut = trpc.separation.cancelScheduled.useMutation({
+    onSuccess: () => {
+      toast.success("Scheduled resignation cancelled");
+      utils.separation.getPendingForAgent.invalidate({ agentCode: traineeCode });
+      utils.workforce.list.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -236,6 +257,9 @@ export default function AgentProfilePage() {
                 ) : (
                   <Badge variant="secondary">Inactive</Badge>
                 )}
+                {pendingSep && (
+                  <Badge className="bg-amber-100 text-amber-700 border-amber-200" variant="outline">Leaving {pendingSep.lastWorkingDay ?? ""}</Badge>
+                )}
                 {nestingStatus === "senior" && (
                   <Badge className="bg-purple-100 text-purple-700 border-purple-200" variant="outline">Senior</Badge>
                 )}
@@ -308,6 +332,14 @@ export default function AgentProfilePage() {
                       >
                         <XCircle className="h-4 w-4" /> Terminate Agent
                       </DropdownMenuItem>
+                      {pendingSep && (
+                        <DropdownMenuItem
+                          className="gap-2 text-amber-700 focus:text-amber-700 focus:bg-amber-50"
+                          onClick={() => cancelScheduledMut.mutate({ agentCode: traineeCode })}
+                        >
+                          <LogOut className="h-4 w-4" /> Cancel scheduled resignation
+                        </DropdownMenuItem>
+                      )}
                       <DropdownMenuSeparator />
                     </>
                   )}
@@ -572,16 +604,31 @@ export default function AgentProfilePage() {
                 onChange={e => setSeparationReason(e.target.value)}
               />
             </div>
+            {separationDialog === "resign" && (
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                  Effective date <span className="text-muted-foreground">(optional — blank = immediate)</span>
+                </label>
+                <input type="date" value={separationEffectiveDate}
+                  onChange={e => setSeparationEffectiveDate(e.target.value)}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm" />
+                <p className="text-[11px] text-muted-foreground mt-1">If set, the agent stays active, can log in, and counts in headcount until this date — then is deactivated automatically and their CRDTS is freed.</p>
+              </div>
+            )}
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setSeparationDialog(null)}>Cancel</Button>
             <Button
-              disabled={!separationReason.trim() || resignOnSpot.isPending || terminateAgent.isPending}
+              disabled={!separationReason.trim() || resignOnSpot.isPending || terminateAgent.isPending || scheduleResignationMut.isPending}
               className={separationDialog === "terminate" ? "bg-red-600 hover:bg-red-700 text-white" : "bg-amber-600 hover:bg-amber-700 text-white"}
               onClick={() => {
                 if (!separationReason.trim()) return;
                 if (separationDialog === "resign") {
-                  resignOnSpot.mutate({ agentCode: traineeCode, reason: separationReason.trim() });
+                  if (separationEffectiveDate) {
+                    scheduleResignationMut.mutate({ agentCode: traineeCode, effectiveDate: separationEffectiveDate, reason: separationReason.trim() });
+                  } else {
+                    resignOnSpot.mutate({ agentCode: traineeCode, reason: separationReason.trim() });
+                  }
                 } else {
                   terminateAgent.mutate({ agentCode: traineeCode, reason: separationReason.trim() });
                 }
