@@ -185,6 +185,7 @@ import {
   getCampaignRanking,
   adminDeleteAgent,
   getPendingDeletionAgents,
+  getNextAvailableTraineeCode,
 } from "./db";
 import { notifyOwner } from "./_core/notification";
 import { sendInterviewNotification } from "./email";
@@ -1486,6 +1487,9 @@ const workforceRouter = router({
     .query(({ input }) => listWorkforceAgents(input.campaignId, input.teamLeader)),
   allInTraining: protectedProcedure
     .query(() => listAllAgentsInTraining()),
+  // Returns the next available T-{N} code (lowest unused sequential number)
+  nextTraineeCode: protectedProcedure
+    .query(() => getNextAvailableTraineeCode()),
 
   create: protectedProcedure
     .input(z.object({

@@ -1064,8 +1064,23 @@ export async function getReferralsByReferrer(referrerCandidateId: number) {
 export async function listAllReferrals() {
   const db = await getDb();
   if (!db) return [];
-  const { referrals } = await import("../drizzle/schema");
-  return db.select().from(referrals).orderBy(desc(referrals.createdAt));
+  const { referrals, candidates } = await import("../drizzle/schema");
+  const rows = await db
+    .select({
+      id: referrals.id,
+      refereeName: referrals.refereeName,
+      refereePhone: referrals.refereePhone,
+      refereeNote: referrals.refereeNote,
+      status: referrals.status,
+      createdAt: referrals.createdAt,
+      createdCandidateId: referrals.createdCandidateId,
+      referrerCandidateId: referrals.referrerCandidateId,
+      referrerName: candidates.name,
+    })
+    .from(referrals)
+    .leftJoin(candidates, eq(referrals.referrerCandidateId, candidates.id))
+    .orderBy(desc(referrals.createdAt));
+  return rows.map(r => ({ ...r, referrerAlias: null as string | null }));
 }
 export async function updateReferralStatus(id: number, status: "pending" | "contacted" | "hired" | "rejected") {
   const db = await getDb();
@@ -2699,6 +2714,30 @@ export async function upsertCommissionLeaderboard(
     }))
   );
   return rows.length;
+}
+
+// ─── Get next available T- trainee code ─────────────────────────────────────
+// Finds the lowest T-{N} not already used across workforce_agents AND agent_credentials.
+// Starts at T-1 and increments until a free slot is found.
+export async function getNextAvailableTraineeCode(): Promise<string> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { workforceAgents, agentCredentials } = await import("../drizzle/schema");
+
+  // Collect all used T- codes from both tables
+  const existing = await db.select({ code: workforceAgents.traineeCode }).from(workforceAgents);
+  const existingCreds = await db.select({ code: agentCredentials.traineeCode }).from(agentCredentials);
+  const usedNums = new Set<number>();
+  for (const { code } of [...existing, ...existingCreds]) {
+    if (typeof code === "string" && /^T-\d+$/.test(code)) {
+      usedNums.add(parseInt(code.slice(2), 10));
+    }
+  }
+
+  // Find the next sequential number not in use
+  let n = 1;
+  while (usedNums.has(n)) n++;
+  return `T-${n}`;
 }
 
 // ─── Generate unique trainee code (6-digit, not already in use) ───────────────

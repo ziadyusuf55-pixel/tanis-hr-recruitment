@@ -68,7 +68,18 @@ const EMPTY_FORM = { name: "", trainerName: "", startDate: "", notes: "" };
 
 export default function Training() {
   const utils = trpc.useUtils();
-  const [activeTab, setActiveTab] = useState<"batches" | "agents">("batches");
+  const [activeTab, setActiveTab] = useState<"batches" | "agents" | "referrals">("batches");
+
+  // Referrals
+  const { data: allReferrals = [], isLoading: referralsLoading } = trpc.referrals.listAll.useQuery();
+  const [refSearch, setRefSearch] = useState("");
+  const createCandidateFromRef = trpc.candidates.create.useMutation({
+    onSuccess: (_data, vars) => {
+      utils.referrals.listAll.invalidate();
+      toast.success(`Candidate "${vars.name}" created from referral`);
+    },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
   const [agentSearch, setAgentSearch] = useState("");
 
   // Batch list
@@ -792,6 +803,20 @@ export default function Training() {
           </span>
         </button>
         <button
+          onClick={() => setActiveTab("referrals")}
+          className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px ${
+            activeTab === "referrals"
+              ? "border-primary text-primary"
+              : "border-transparent text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <span className="flex items-center gap-1.5">
+            <UserPlus className="h-4 w-4" />
+            Referrals
+            <span className="ml-1 bg-muted text-muted-foreground text-xs rounded-full px-1.5 py-0.5">{allReferrals.length}</span>
+          </span>
+        </button>
+        <button
           onClick={() => setActiveTab("agents")}
           className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors -mb-px ${
             activeTab === "agents"
@@ -984,6 +1009,117 @@ export default function Training() {
           </table>
         </div>
       )}</div>)}
+
+      {/* Referrals tab */}
+      {activeTab === "referrals" && (
+        <div>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="relative flex-1 max-w-sm">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+              <input
+                className="pl-9 pr-3 py-2 text-sm border rounded-lg w-full bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+                placeholder="Search by name, phone, referrer..."
+                value={refSearch}
+                onChange={(e) => setRefSearch(e.target.value)}
+              />
+            </div>
+          </div>
+          {referralsLoading ? (
+            <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-12 rounded-lg bg-muted/40 animate-pulse" />)}</div>
+          ) : allReferrals.length === 0 ? (
+            <div className="text-center py-20 text-muted-foreground">
+              <UserPlus className="h-12 w-12 mx-auto mb-4 opacity-25" />
+              <p className="font-medium text-base">No referrals yet</p>
+              <p className="text-sm mt-1">Referrals submitted by agents will appear here</p>
+            </div>
+          ) : (
+            <div className="rounded-xl border overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b bg-muted/40">
+                    <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Referred Candidate</th>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden sm:table-cell">Phone</th>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Referred By</th>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground hidden md:table-cell">Date</th>
+                    <th className="text-left px-4 py-3 text-xs font-medium text-muted-foreground">Status</th>
+                    <th className="text-right px-4 py-3 text-xs font-medium text-muted-foreground">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {(allReferrals as Array<{
+                    id: number;
+                    refereeName: string;
+                    refereePhone: string;
+                    refereeNote: string | null;
+                    status: string;
+                    createdAt: Date;
+                    createdCandidateId: number | null;
+                    referrerCandidateId: number;
+                    referrerName: string | null;
+                    referrerAlias: string | null;
+                  }>)
+                    .filter(r => {
+                      if (!refSearch) return true;
+                      const q = refSearch.toLowerCase();
+                      return (
+                        r.refereeName.toLowerCase().includes(q) ||
+                        r.refereePhone.includes(q) ||
+                        (r.referrerName ?? "").toLowerCase().includes(q) ||
+                        (r.referrerAlias ?? "").toLowerCase().includes(q)
+                      );
+                    })
+                    .map((r, i) => (
+                      <tr key={r.id} className={`hover:bg-muted/30 transition-colors ${i % 2 === 0 ? "" : "bg-muted/10"}`}>
+                        <td className="px-4 py-3">
+                          <div className="font-medium">{r.refereeName}</div>
+                          {r.refereeNote && <div className="text-xs text-muted-foreground truncate max-w-[180px]">{r.refereeNote}</div>}
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground text-xs hidden sm:table-cell">{r.refereePhone}</td>
+                        <td className="px-4 py-3">
+                          <div className="text-sm font-medium">{r.referrerName ?? "Unknown"}</div>
+                          {r.referrerAlias && <div className="text-xs text-muted-foreground">{r.referrerAlias}</div>}
+                        </td>
+                        <td className="px-4 py-3 text-muted-foreground text-xs hidden md:table-cell">
+                          {new Date(r.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                            r.status === "hired" ? "bg-green-100 text-green-700" :
+                            r.status === "contacted" ? "bg-blue-100 text-blue-700" :
+                            r.status === "rejected" ? "bg-red-100 text-red-700" :
+                            "bg-yellow-100 text-yellow-700"
+                          }`}>{r.status.charAt(0).toUpperCase() + r.status.slice(1)}</span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          {r.createdCandidateId ? (
+                            <span className="text-xs text-green-600 font-medium flex items-center justify-end gap-1">
+                              <Check className="h-3.5 w-3.5" /> In Pipeline
+                            </span>
+                          ) : (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs gap-1"
+                              disabled={createCandidateFromRef.isPending}
+                              onClick={() => createCandidateFromRef.mutate({
+                                name: r.refereeName,
+                                phone: r.refereePhone,
+                                source: "referral",
+                                notes: `Referred by ${r.referrerName ?? "agent"} (ID: ${r.referrerCandidateId}). ${r.refereeNote ?? ""}`.trim(),
+                              })}
+                            >
+                              <UserPlus className="h-3 w-3" /> Create Candidate
+                            </Button>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Create batch dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
