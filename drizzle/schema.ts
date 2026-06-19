@@ -590,6 +590,7 @@ export const agentSeparations = mysqlTable("agent_separations", {
   effectiveAt: bigint("effectiveAt", { mode: "number" }),     // UTC ms — when separation took effect
   approvedBy: varchar("approvedBy", { length: 255 }),         // admin name who approved/processed
   approvedAt: bigint("approvedAt", { mode: "number" }),       // UTC ms
+  appliedAt: bigint("appliedAt", { mode: "number" }),        // UTC ms — when the deactivation actually executed (null = scheduled, pending)
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 export type AgentSeparation = typeof agentSeparations.$inferSelect;
