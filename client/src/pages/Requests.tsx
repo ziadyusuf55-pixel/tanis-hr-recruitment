@@ -47,6 +47,8 @@ type AgentRequest = {
   id: number;
   candidateId: number;
   traineeCode: string;
+  fullName?: string | null;
+  alias?: string | null;
   type: string;
   subject: string;
   message: string;
@@ -288,7 +290,7 @@ export default function Requests() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="text-xs font-semibold text-muted-foreground">{req.traineeCode}</span>
+                        <span className="text-xs font-semibold text-muted-foreground">{req.fullName ? `${req.fullName}${req.alias ? ` (${req.alias})` : ""} — ${req.traineeCode}` : req.traineeCode}</span>
                         <span className="text-xs text-muted-foreground">·</span>
                         <span className="text-xs text-muted-foreground">{REQUEST_TYPE_LABELS[req.type] ?? req.type}</span>
                         {req.requestedDate && (
@@ -338,7 +340,7 @@ export default function Requests() {
             <div className="space-y-4">
               {/* Meta */}
               <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                <span className="bg-muted rounded px-2 py-0.5 font-medium">{selected.traineeCode}</span>
+                <span className="bg-muted rounded px-2 py-0.5 font-medium">{selected.fullName ? `${selected.fullName}${selected.alias ? ` (${selected.alias})` : ""} — ${selected.traineeCode}` : selected.traineeCode}</span>
                 <span className="bg-muted rounded px-2 py-0.5">{REQUEST_TYPE_LABELS[selected.type] ?? selected.type}</span>
                 <span className="bg-muted rounded px-2 py-0.5">
                   {new Date(selected.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}

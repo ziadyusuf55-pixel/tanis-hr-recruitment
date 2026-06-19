@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
@@ -850,6 +850,13 @@ export async function createAgentRequest(data: {
     hrLetterLanguage: data.hrLetterLanguage ?? null,
     status: "pending",
   });
+  // Notify the admin Slack channel via T Bot (fire-and-forget — never blocks the request)
+  const hook = process.env.SLACK_ADMIN_WEBHOOK;
+  if (hook) {
+    const typeLabel = data.type.replace(/_/g, " ");
+    const text = `:bell: *New ${typeLabel} request* from *${data.traineeCode}*\n*${data.subject}*\n${data.message}`;
+    try { fetch(hook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }).catch(() => {}); } catch (e) { /* ignore */ }
+  }
   return result;
 }
 
@@ -866,9 +873,11 @@ export async function listAgentRequestsByCandidate(candidateId: number) {
 export async function listAllAgentRequests() {
   const db = await getDb();
   if (!db) return [];
+  const { workforceAgents } = await import("../drizzle/schema");
   return db
-    .select()
+    .select({ ...getTableColumns(agentRequests), fullName: workforceAgents.fullName, alias: workforceAgents.alias })
     .from(agentRequests)
+    .leftJoin(workforceAgents, eq(agentRequests.traineeCode, workforceAgents.traineeCode))
     .orderBy(desc(agentRequests.createdAt));
 }
 
@@ -1194,6 +1203,8 @@ export async function listWorkforceAgents(campaignId?: number, teamLeader?: stri
     crdts: workforceAgents.crdts,
     agentStatus: workforceAgents.agentStatus,
     nestingStatus: workforceAgents.nestingStatus,
+    workLocation: workforceAgents.workLocation,
+    avatarUrl: workforceAgents.avatarUrl,
   }).from(workforceAgents)
     .leftJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
     .orderBy(workforceAgents.fullName);
@@ -1358,6 +1369,8 @@ export async function getWorkforceAgentByCode(traineeCode: string) {
     crdts: workforceAgents.crdts,
     agentStatus: workforceAgents.agentStatus,
     nestingStatus: workforceAgents.nestingStatus,
+    workLocation: workforceAgents.workLocation,
+    avatarUrl: workforceAgents.avatarUrl,
   }).from(workforceAgents)
     .leftJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
     .leftJoin(candidates, eq(workforceAgents.candidateId, candidates.id))
@@ -1387,6 +1400,7 @@ export async function updateWorkforceAgent(traineeCode: string, data: Partial<{
   fullName: string; alias: string; email: string; phone: string; campaignId: number;
   shiftHours: string; teamLeader: string; offDay1: number; offDay2: number; joinDate: number; isActive: boolean;
   dialerCredentials: string; crdts: string; agentStatus: "active" | "inactive" | "resigned" | "terminated";
+  workLocation: "office" | "wfh"; avatarUrl: string;
 }>) {
   const db = await getDb();
   if (!db) return;

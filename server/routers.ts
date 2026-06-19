@@ -138,11 +138,6 @@ import {
   terminateAgent,
   approveResignationRequest,
   getSeparationsByAgent,
-  scheduleResignation,
-  cancelScheduledSeparation,
-  getPendingSeparationForAgent,
-  processDueSeparations,
-  archiveAgentCrdts,
   // Payroll v2
   upsertPayrollRecordV2,
   getPayrollStatusPage,
@@ -1489,7 +1484,7 @@ const campaignsRouter = router({
 const workforceRouter = router({
   list: protectedProcedure
     .input(z.object({ campaignId: z.number().optional(), teamLeader: z.string().optional() }))
-    .query(async ({ input }) => { await processDueSeparations(); return listWorkforceAgents(input.campaignId, input.teamLeader); }),
+    .query(({ input }) => listWorkforceAgents(input.campaignId, input.teamLeader)),
   allInTraining: protectedProcedure
     .query(() => listAllAgentsInTraining()),
   // Returns the next available T-{N} code (lowest unused sequential number)
@@ -1580,6 +1575,7 @@ const workforceRouter = router({
       dialerCredentials: z.string().optional(),
       crdts: z.string().optional(),
       nestingStatus: z.enum(["nesting", "active", "senior"]).optional(),
+      workLocation: z.enum(["office", "wfh"]).optional(),
     }))
      .mutation(async ({ input }) => {
       const { traineeCode, ...rest } = input;
@@ -1611,6 +1607,24 @@ const workforceRouter = router({
       return getWorkforceAgentByCode(traineeCode);
     } catch { return null; }
   }),
+  // Agent: upload my profile picture (stores the file + saves the URL on my record)
+  setMyAvatar: publicProcedure
+    .input(z.object({ fileBase64: z.string(), fileName: z.string().max(255), mimeType: z.string().max(100) }))
+    .mutation(async ({ input, ctx }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) throw new TRPCError({ code: "UNAUTHORIZED", message: "Not authenticated as agent" });
+      let traineeCode: string;
+      try { ({ traineeCode } = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string }); }
+      catch { throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid agent session" }); }
+      const buffer = Buffer.from(input.fileBase64, "base64");
+      if (buffer.length > 5 * 1024 * 1024) throw new TRPCError({ code: "BAD_REQUEST", message: "Image too large (max 5MB)" });
+      const ext = (input.fileName.split(".").pop() ?? "jpg").toLowerCase();
+      const key = `agent-avatars/${traineeCode}-${Date.now()}.${ext}`;
+      const { storagePut } = await import("./storage");
+      const { url } = await storagePut(key, buffer, input.mimeType);
+      await updateWorkforceAgent(traineeCode, { avatarUrl: url });
+      return { url };
+    }),
 
   getCampaignAgents: publicProcedure
     .input(z.object({ campaignId: z.number() }))
@@ -2097,7 +2111,6 @@ const separationRouter = router({
     .mutation(async ({ input, ctx }) => {
       const adminName = ctx.user?.name ?? "Admin";
       await markAgentResignedOnSpot(input.agentCode, input.reason, adminName);
-      await archiveAgentCrdts(input.agentCode);
       return { success: true };
     }),
 
@@ -2107,7 +2120,6 @@ const separationRouter = router({
     .mutation(async ({ input, ctx }) => {
       const adminName = ctx.user?.name ?? "Admin";
       await terminateAgent(input.agentCode, input.reason, adminName);
-      await archiveAgentCrdts(input.agentCode);
       return { success: true };
     }),
 
@@ -2137,7 +2149,6 @@ const separationRouter = router({
         await dbConn.update(arTable).set({ adminLastWorkingDay: input.adminLastWorkingDay }).where(eqOp(arTable.id, input.requestId));
       }
       await approveResignationRequest(input.agentCode, lastWorkingDay, reason, adminName, req.requestedDate ?? Date.now());
-      await archiveAgentCrdts(input.agentCode);
       // Also update the request status to resolved
       await updateAgentRequestStatus(input.requestId, "resolved", input.adminReply ?? "Your resignation has been approved.");
       return { success: true };
@@ -2156,25 +2167,7 @@ const separationRouter = router({
     }),
   // Admin: get all terminated/resigned agents pending deletion
   pendingDeletion: protectedProcedure
-    .query(async () => { await processDueSeparations(); return getPendingDeletionAgents(); }),
-
-  // Admin: schedule a resignation for a future effective date. The agent stays
-  // active (login + headcount) until then; processDueSeparations applies it.
-  scheduleResignation: protectedProcedure
-    .input(z.object({ agentCode: z.string(), effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), reason: z.string().min(1) }))
-    .mutation(async ({ input, ctx }) => {
-      const adminName = ctx.user?.name ?? "Admin";
-      const res = await scheduleResignation(input.agentCode, input.effectiveDate, input.reason, adminName);
-      return { success: true, effectiveAt: res.effectiveAt };
-    }),
-  // Admin: cancel a pending (not-yet-effective) scheduled resignation
-  cancelScheduled: protectedProcedure
-    .input(z.object({ agentCode: z.string() }))
-    .mutation(async ({ input }) => { await cancelScheduledSeparation(input.agentCode); return { success: true }; }),
-  // Admin/Agent: the pending scheduled separation for an agent (if any)
-  getPendingForAgent: protectedProcedure
-    .input(z.object({ agentCode: z.string() }))
-    .query(({ input }) => getPendingSeparationForAgent(input.agentCode)),
+    .query(() => getPendingDeletionAgents()),
 });
 
 // ─── Payroll v2 Router ───────────────────────────────────────────────────────
@@ -2244,7 +2237,7 @@ const payrollV2Router = router({
 
   getStatusPage: protectedProcedure
     .input(z.object({ month: z.string() }))
-    .query(async ({ input }) => { await processDueSeparations(); return getPayrollStatusPage(input.month); }),
+    .query(({ input }) => getPayrollStatusPage(input.month)),
 
   setStatus: protectedProcedure
     .input(z.object({ id: z.number(), status: z.enum(["pending", "paid"]) }))

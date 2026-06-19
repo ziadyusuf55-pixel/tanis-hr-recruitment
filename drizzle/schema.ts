@@ -454,6 +454,8 @@ export const workforceAgents = mysqlTable("workforce_agents", {
   crdts: varchar("crdts", { length: 500 }),                         // CRDTS field — admin fills manually
   agentStatus: mysqlEnum("agentStatus", ["active", "inactive", "resigned", "terminated"]).default("active").notNull(),
   nestingStatus: mysqlEnum("nestingStatus", ["nesting", "active", "senior"]).default("nesting").notNull(),
+  workLocation: mysqlEnum("workLocation", ["office", "wfh"]).default("office").notNull(),  // office vs work-from-home
+  avatarUrl: varchar("avatarUrl", { length: 1024 }),                                        // agent profile picture (uploaded via portal)
   isActive: boolean("isActive").default(true).notNull(),
   orientationShown: boolean("orientationShown").default(false).notNull(), // true after agent completes orientation tour
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -588,7 +590,6 @@ export const agentSeparations = mysqlTable("agent_separations", {
   effectiveAt: bigint("effectiveAt", { mode: "number" }),     // UTC ms — when separation took effect
   approvedBy: varchar("approvedBy", { length: 255 }),         // admin name who approved/processed
   approvedAt: bigint("approvedAt", { mode: "number" }),       // UTC ms
-  appliedAt: bigint("appliedAt", { mode: "number" }),        // UTC ms — when the deactivation actually executed (null = scheduled, pending)
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 export type AgentSeparation = typeof agentSeparations.$inferSelect;

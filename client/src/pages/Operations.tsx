@@ -428,6 +428,8 @@ type WorkforceAgent = {
   agentStatus?: string | null;
   dialerCredentials?: string | null;
   nestingStatus?: "nesting" | "active" | "senior" | null;
+  workLocation?: string | null;
+  avatarUrl?: string | null;
 };
 
 type ForecastDay = {
@@ -771,6 +773,7 @@ export default function Operations() {
     campaignId?: string; shiftHours?: string; teamLeader?: string;
     offDay1?: string; offDay2?: string; joinDateStr?: string; isActive?: boolean;
     crdts?: string;
+    workLocation?: string;
   };
   const [editForm, setEditForm] = useState<EditForm>({});
   const updateAgent = trpc.workforce.update.useMutation({
@@ -942,6 +945,7 @@ export default function Operations() {
       joinDateStr: agent.joinDate ? new Date(agent.joinDate).toISOString().slice(0, 10) : "",
       isActive: agent.isActive,
       crdts: agent.crdts ?? "",
+      workLocation: agent.workLocation ?? "office",
     });
     setEditDialog(true);
   };
@@ -962,6 +966,7 @@ export default function Operations() {
       joinDate: editForm.joinDateStr ? new Date(editForm.joinDateStr).getTime() : undefined,
       isActive: editForm.isActive,
       crdts: editForm.crdts || undefined,
+      workLocation: (editForm.workLocation as "office" | "wfh" | undefined) || undefined,
     });
   };
 
@@ -1210,6 +1215,9 @@ export default function Operations() {
                             }
                             return null;
                           })()}
+                          {agent.workLocation === "wfh" && (
+                            <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">🏠 WFH</Badge>
+                          )}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-right">
@@ -1527,6 +1535,13 @@ export default function Operations() {
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Team Leader</label>
               <Input value={editForm.teamLeader ?? ""} onChange={e => setEditForm(f => ({ ...f, teamLeader: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Work Location</label>
+              <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={editForm.workLocation ?? "office"} onChange={e => setEditForm(f => ({ ...f, workLocation: e.target.value }))}>
+                <option value="office">🏢 Office</option>
+                <option value="wfh">🏠 WFH</option>
+              </select>
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Join Date</label>

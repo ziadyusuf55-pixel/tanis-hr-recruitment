@@ -392,6 +392,23 @@ const COMMENT_TAG_CONFIG = {
 const DAY_NAMES_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
   const { data: wfProfile } = trpc.workforce.getMyProfile.useQuery();
+  const utils = trpc.useUtils();
+  const setAvatar = trpc.workforce.setMyAvatar.useMutation({
+    onSuccess: () => { utils.workforce.getMyProfile.invalidate(); toast.success("Profile photo updated"); },
+    onError: (e) => toast.error(e.message),
+  });
+  function onPickAvatar(e: any) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) { toast.error("Image too large (max 5MB)"); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result);
+      const base64 = result.includes(",") ? result.split(",")[1] : result;
+      setAvatar.mutate({ fileBase64: base64, fileName: file.name, mimeType: file.type || "image/jpeg" });
+    };
+    reader.readAsDataURL(file);
+  }
   const joinDate = wfProfile?.joinDate
     ? formatDate(new Date(wfProfile.joinDate as number))
     : agent.batch?.assignedAt
@@ -453,6 +470,30 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
 
   return (
     <div className="space-y-6">
+      {/* Profile picture + work location */}
+      <div className="rounded-xl p-4 flex items-center gap-4" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
+        {wfProfile?.avatarUrl ? (
+          <img src={wfProfile.avatarUrl as string} alt="Profile" className="w-20 h-20 rounded-full object-cover" style={{ border: `2px solid ${theme.surfaceBorder}` }} />
+        ) : (
+          <div className="w-20 h-20 rounded-full flex items-center justify-center text-2xl font-bold" style={{ background: "oklch(0.32 0.18 28 / 0.15)", color: BRAND_LIGHT }}>
+            {String((wfProfile?.fullName as string | undefined) ?? agent.name ?? "?").trim().charAt(0).toUpperCase()}
+          </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="font-semibold text-base truncate" style={{ color: theme.text }}>{(wfProfile?.fullName as string | null) ?? agent.name}</p>
+            {wfProfile && (
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full" style={(wfProfile.workLocation as string) === "wfh" ? { background: "oklch(0.55 0.18 145 / 0.15)", color: "oklch(0.5 0.18 145)" } : { background: theme.surfaceBorder, color: theme.textMuted }}>
+                {(wfProfile.workLocation as string) === "wfh" ? "🏠 WFH" : "🏢 Office"}
+              </span>
+            )}
+          </div>
+          <label className="inline-block mt-2 text-xs font-medium cursor-pointer px-3 py-1.5 rounded-md" style={{ background: "oklch(0.32 0.18 28 / 0.12)", color: BRAND_LIGHT }}>
+            {setAvatar.isPending ? "Uploading…" : (wfProfile?.avatarUrl ? "Change photo" : "Upload photo")}
+            <input type="file" accept="image/*" className="hidden" onChange={onPickAvatar} disabled={setAvatar.isPending} />
+          </label>
+        </div>
+      </div>
       {wfProfile && (
         <div className="rounded-xl p-4 flex items-center gap-3" style={{ background: "oklch(0.32 0.18 28 / 0.15)", border: "1px solid oklch(0.32 0.18 28 / 0.3)" }}>
           <Briefcase className="w-5 h-5 shrink-0" style={{ color: BRAND_LIGHT }} />
