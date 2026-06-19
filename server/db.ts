@@ -854,8 +854,17 @@ export async function createAgentRequest(data: {
   const hook = process.env.SLACK_ADMIN_WEBHOOK;
   if (hook) {
     const typeLabel = data.type.replace(/_/g, " ");
-    const text = `:bell: *New ${typeLabel} request* from *${data.traineeCode}*\n*${data.subject}*\n${data.message}`;
-    try { fetch(hook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) }).catch(() => {}); } catch (e) { /* ignore */ }
+    // Look up the agent's real name / alias / CRDTS so the alert is identifiable (async, non-blocking)
+    getWorkforceAgentByCode(data.traineeCode).then((wf) => {
+      const nm = String(wf?.fullName ?? "").trim();
+      const al = String(wf?.alias ?? "").trim();
+      const cr = String(wf?.crdts ?? "").trim();
+      const who =
+        `*Name:* ${nm || "—"}${al ? `   *Alias:* ${al}` : ""}\n` +
+        `*Code:* ${data.traineeCode}${cr ? `   *CRDTS:* ${cr}` : ""}`;
+      const text = `:bell: *New ${typeLabel} request*\n${who}\n*${data.subject}*\n${data.message}`;
+      return fetch(hook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+    }).catch(() => {});
   }
   return result;
 }

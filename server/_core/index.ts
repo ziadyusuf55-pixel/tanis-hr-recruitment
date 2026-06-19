@@ -313,6 +313,50 @@ async function startServer() {
     }
   });
 
+  // ─── REST API: GET /api/agents/status ─────────────────────────────────────
+  // Returns current agent status (one entry per CRDTS) so the analysis sheet can
+  // auto-exclude resigned/terminated agents from pivots & charts. Auth: X-API-Key.
+  app.get("/api/agents/status", async (req, res) => {
+    try {
+      const apiKey = req.headers["x-api-key"] as string | undefined;
+      if (!apiKey) { res.status(401).json({ error: "Missing X-API-Key header" }); return; }
+      const { getDb } = await import("../db");
+      const db = await getDb();
+      if (!db) { res.status(503).json({ error: "Database unavailable" }); return; }
+      const { apiKeys } = await import("../../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const { createHash } = await import("crypto");
+      const keyHash = createHash("sha256").update(apiKey).digest("hex");
+      const [keyRow] = await db.select().from(apiKeys).where(eq(apiKeys.keyHash, keyHash)).limit(1);
+      if (!keyRow) { res.status(401).json({ error: "Invalid API key" }); return; }
+      if (keyRow.revokedAt) { res.status(401).json({ error: "API key has been revoked" }); return; }
+      await db.update(apiKeys).set({ lastUsedAt: Date.now() }).where(eq(apiKeys.id, keyRow.id));
+
+      const { listWorkforceAgents } = await import("../db");
+      const agents = await listWorkforceAgents();
+      const out: Array<Record<string, unknown>> = [];
+      for (const a of agents as Array<Record<string, unknown>>) {
+        const active = a.agentStatus === "active" && a.isActive !== false;
+        const codes = String(a.crdts ?? "").split(",").map((c) => c.trim()).filter(Boolean);
+        if (codes.length === 0) codes.push("");
+        for (const crdts of codes) {
+          out.push({
+            crdts,
+            agentCode: a.traineeCode,
+            name: a.fullName ?? "",
+            alias: a.alias ?? "",
+            status: a.agentStatus ?? (a.isActive ? "active" : "inactive"),
+            active,
+          });
+        }
+      }
+      res.json({ ok: true, count: out.length, agents: out });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(400).json({ error: msg });
+    }
+  });
+
   // tRPC API
   app.use(
     "/api/trpc",
