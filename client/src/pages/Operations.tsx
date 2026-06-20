@@ -430,6 +430,16 @@ type WorkforceAgent = {
   nestingStatus?: "nesting" | "active" | "senior" | null;
   workLocation?: string | null;
   avatarUrl?: string | null;
+  nationalId?: string | null;
+  nationalIdExpiry?: string | null;
+  dateOfBirth?: string | null;
+  gender?: string | null;
+  nationality?: string | null;
+  maritalStatus?: string | null;
+  militaryStatus?: string | null;
+  jobTitle?: string | null;
+  city?: string | null;
+  profileLocked?: boolean | null;
 };
 
 type ForecastDay = {
@@ -774,6 +784,16 @@ export default function Operations() {
     offDay1?: string; offDay2?: string; joinDateStr?: string; isActive?: boolean;
     crdts?: string;
     workLocation?: string;
+    nationalId?: string;
+    nationalIdExpiry?: string;
+    dateOfBirth?: string;
+    gender?: string;
+    nationality?: string;
+    maritalStatus?: string;
+    militaryStatus?: string;
+    jobTitle?: string;
+    city?: string;
+    profileLocked?: boolean;
   };
   const [editForm, setEditForm] = useState<EditForm>({});
   const updateAgent = trpc.workforce.update.useMutation({
@@ -946,6 +966,16 @@ export default function Operations() {
       isActive: agent.isActive,
       crdts: agent.crdts ?? "",
       workLocation: agent.workLocation ?? "office",
+      nationalId: agent.nationalId ?? "",
+      nationalIdExpiry: agent.nationalIdExpiry ?? "",
+      dateOfBirth: agent.dateOfBirth ?? "",
+      gender: agent.gender ?? "",
+      nationality: agent.nationality ?? "",
+      maritalStatus: agent.maritalStatus ?? "",
+      militaryStatus: agent.militaryStatus ?? "",
+      jobTitle: agent.jobTitle ?? "",
+      city: agent.city ?? "",
+      profileLocked: agent.profileLocked ?? false,
     });
     setEditDialog(true);
   };
@@ -967,6 +997,16 @@ export default function Operations() {
       isActive: editForm.isActive,
       crdts: editForm.crdts || undefined,
       workLocation: (editForm.workLocation as "office" | "wfh" | undefined) || undefined,
+      nationalId: editForm.nationalId || undefined,
+      nationalIdExpiry: editForm.nationalIdExpiry || undefined,
+      dateOfBirth: editForm.dateOfBirth || undefined,
+      gender: (editForm.gender as "male" | "female" | undefined) || undefined,
+      nationality: editForm.nationality || undefined,
+      maritalStatus: (editForm.maritalStatus as "single" | "married" | "divorced" | "widowed" | undefined) || undefined,
+      militaryStatus: (editForm.militaryStatus as "completed" | "exempt" | "postponed" | "not_applicable" | undefined) || undefined,
+      jobTitle: editForm.jobTitle || undefined,
+      city: editForm.city || undefined,
+      profileLocked: editForm.profileLocked,
     });
   };
 
@@ -1542,6 +1582,52 @@ export default function Operations() {
                 <option value="office">🏢 Office</option>
                 <option value="wfh">🏠 WFH</option>
               </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">National ID</label>
+              <Input value={editForm.nationalId ?? ""} onChange={e => setEditForm(f => ({ ...f, nationalId: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">ID Expiry</label>
+              <Input type="date" value={editForm.nationalIdExpiry ?? ""} onChange={e => setEditForm(f => ({ ...f, nationalIdExpiry: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Date of Birth</label>
+              <Input type="date" value={editForm.dateOfBirth ?? ""} onChange={e => setEditForm(f => ({ ...f, dateOfBirth: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Gender</label>
+              <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={editForm.gender ?? ""} onChange={e => setEditForm(f => ({ ...f, gender: e.target.value }))}>
+                <option value="">—</option><option value="male">Male</option><option value="female">Female</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Nationality</label>
+              <Input value={editForm.nationality ?? ""} onChange={e => setEditForm(f => ({ ...f, nationality: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Marital Status</label>
+              <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={editForm.maritalStatus ?? ""} onChange={e => setEditForm(f => ({ ...f, maritalStatus: e.target.value }))}>
+                <option value="">—</option><option value="single">Single</option><option value="married">Married</option><option value="divorced">Divorced</option><option value="widowed">Widowed</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Military Status</label>
+              <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={editForm.militaryStatus ?? ""} onChange={e => setEditForm(f => ({ ...f, militaryStatus: e.target.value }))}>
+                <option value="">—</option><option value="completed">Completed</option><option value="exempt">Exempt</option><option value="postponed">Postponed</option><option value="not_applicable">Not applicable</option>
+              </select>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Job Title</label>
+              <Input value={editForm.jobTitle ?? ""} onChange={e => setEditForm(f => ({ ...f, jobTitle: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">City</label>
+              <Input value={editForm.city ?? ""} onChange={e => setEditForm(f => ({ ...f, city: e.target.value }))} />
+            </div>
+            <div className="flex items-center gap-2 pt-1">
+              <input type="checkbox" id="profileLocked" checked={editForm.profileLocked === true} onChange={e => setEditForm(f => ({ ...f, profileLocked: e.target.checked }))} />
+              <label htmlFor="profileLocked" className="text-xs font-medium text-muted-foreground">Profile locked (uncheck to let the agent edit again)</label>
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Join Date</label>

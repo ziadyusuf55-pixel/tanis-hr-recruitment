@@ -356,6 +356,37 @@ export default function AgentProfilePage() {
         </CardContent>
       </Card>
 
+      {/* Personal Information (HR profile) */}
+      <Card className="border-0 shadow-sm">
+        <CardContent className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-sm font-semibold text-foreground">Personal Information</h2>
+            {agent.profileLocked
+              ? <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">🔒 Submitted by agent</span>
+              : <span className="text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-50 text-amber-700">Awaiting agent</span>}
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4 text-sm">
+            {([
+              ["National ID", agent.nationalId],
+              ["ID Expiry", agent.nationalIdExpiry],
+              ["Date of Birth", agent.dateOfBirth],
+              ["Age", agent.dateOfBirth ? Math.floor((Date.now() - new Date(agent.dateOfBirth).getTime()) / 31557600000) + " yrs" : ""],
+              ["Gender", agent.gender ? agent.gender.charAt(0).toUpperCase() + agent.gender.slice(1) : ""],
+              ["Nationality", agent.nationality],
+              ["Marital Status", agent.maritalStatus ? agent.maritalStatus.charAt(0).toUpperCase() + agent.maritalStatus.slice(1) : ""],
+              ["Military Status", agent.militaryStatus ? agent.militaryStatus.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()) : ""],
+              ["Job Title", agent.jobTitle],
+              ["City", agent.city],
+            ] as [string, string | null | undefined][]).map(([label, value]) => (
+              <div key={label}>
+                <p className="text-[11px] uppercase tracking-wider text-muted-foreground mb-0.5">{label}</p>
+                <p className="font-medium text-foreground">{value || "—"}</p>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Tab Navigation */}
       <div className="flex gap-1 border-b">
         {([

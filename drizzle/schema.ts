@@ -456,6 +456,17 @@ export const workforceAgents = mysqlTable("workforce_agents", {
   nestingStatus: mysqlEnum("nestingStatus", ["nesting", "active", "senior"]).default("nesting").notNull(),
   workLocation: mysqlEnum("workLocation", ["office", "wfh"]).default("office").notNull(),  // office vs work-from-home
   avatarUrl: varchar("avatarUrl", { length: 1024 }),                                        // agent profile picture (uploaded via portal)
+  // ── Personal profile (agent self-fills once; then locked, edits go through HR) ──
+  nationalId: varchar("nationalId", { length: 50 }),
+  nationalIdExpiry: varchar("nationalIdExpiry", { length: 20 }),       // YYYY-MM-DD
+  dateOfBirth: varchar("dateOfBirth", { length: 20 }),                 // YYYY-MM-DD
+  gender: mysqlEnum("gender", ["male", "female"]),
+  nationality: varchar("nationality", { length: 100 }),
+  maritalStatus: mysqlEnum("maritalStatus", ["single", "married", "divorced", "widowed"]),
+  militaryStatus: mysqlEnum("militaryStatus", ["completed", "exempt", "postponed", "not_applicable"]),
+  jobTitle: varchar("jobTitle", { length: 150 }),
+  city: varchar("city", { length: 120 }),
+  profileLocked: boolean("profileLocked").default(false).notNull(),    // true after the agent's one-time self-edit
   isActive: boolean("isActive").default(true).notNull(),
   orientationShown: boolean("orientationShown").default(false).notNull(), // true after agent completes orientation tour
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -590,7 +601,6 @@ export const agentSeparations = mysqlTable("agent_separations", {
   effectiveAt: bigint("effectiveAt", { mode: "number" }),     // UTC ms — when separation took effect
   approvedBy: varchar("approvedBy", { length: 255 }),         // admin name who approved/processed
   approvedAt: bigint("approvedAt", { mode: "number" }),       // UTC ms
-  appliedAt: bigint("appliedAt", { mode: "number" }),        // UTC ms — when the deactivation actually executed (null = scheduled, pending)
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 export type AgentSeparation = typeof agentSeparations.$inferSelect;

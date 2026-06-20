@@ -1214,6 +1214,16 @@ export async function listWorkforceAgents(campaignId?: number, teamLeader?: stri
     nestingStatus: workforceAgents.nestingStatus,
     workLocation: workforceAgents.workLocation,
     avatarUrl: workforceAgents.avatarUrl,
+    nationalId: workforceAgents.nationalId,
+    nationalIdExpiry: workforceAgents.nationalIdExpiry,
+    dateOfBirth: workforceAgents.dateOfBirth,
+    gender: workforceAgents.gender,
+    nationality: workforceAgents.nationality,
+    maritalStatus: workforceAgents.maritalStatus,
+    militaryStatus: workforceAgents.militaryStatus,
+    jobTitle: workforceAgents.jobTitle,
+    city: workforceAgents.city,
+    profileLocked: workforceAgents.profileLocked,
   }).from(workforceAgents)
     .leftJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
     .orderBy(workforceAgents.fullName);
@@ -1380,6 +1390,16 @@ export async function getWorkforceAgentByCode(traineeCode: string) {
     nestingStatus: workforceAgents.nestingStatus,
     workLocation: workforceAgents.workLocation,
     avatarUrl: workforceAgents.avatarUrl,
+    nationalId: workforceAgents.nationalId,
+    nationalIdExpiry: workforceAgents.nationalIdExpiry,
+    dateOfBirth: workforceAgents.dateOfBirth,
+    gender: workforceAgents.gender,
+    nationality: workforceAgents.nationality,
+    maritalStatus: workforceAgents.maritalStatus,
+    militaryStatus: workforceAgents.militaryStatus,
+    jobTitle: workforceAgents.jobTitle,
+    city: workforceAgents.city,
+    profileLocked: workforceAgents.profileLocked,
   }).from(workforceAgents)
     .leftJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
     .leftJoin(candidates, eq(workforceAgents.candidateId, candidates.id))
@@ -1410,6 +1430,10 @@ export async function updateWorkforceAgent(traineeCode: string, data: Partial<{
   shiftHours: string; teamLeader: string; offDay1: number; offDay2: number; joinDate: number; isActive: boolean;
   dialerCredentials: string; crdts: string; agentStatus: "active" | "inactive" | "resigned" | "terminated";
   workLocation: "office" | "wfh"; avatarUrl: string;
+  nationalId: string; nationalIdExpiry: string; dateOfBirth: string; gender: "male" | "female";
+  nationality: string; maritalStatus: "single" | "married" | "divorced" | "widowed";
+  militaryStatus: "completed" | "exempt" | "postponed" | "not_applicable"; city: string; jobTitle: string;
+  profileLocked: boolean;
 }>) {
   const db = await getDb();
   if (!db) return;

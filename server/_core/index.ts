@@ -31,7 +31,7 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
   // Configure body parser with larger size limit for file uploads
-  app.use(express.json({ limit: "50mb" }));
+  app.use(express.json({ limit: "50mb", verify: (req, _res, buf) => { (req as unknown as { rawBody?: Buffer }).rawBody = buf; } }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
@@ -345,6 +345,8 @@ async function startServer() {
             agentCode: a.traineeCode,
             name: a.fullName ?? "",
             alias: a.alias ?? "",
+            campaignId: a.campaignId ?? null,
+            campaign: a.campaignName ?? "",
             status: a.agentStatus ?? (a.isActive ? "active" : "inactive"),
             active,
           });
@@ -354,6 +356,58 @@ async function startServer() {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       res.status(400).json({ error: msg });
+    }
+  });
+
+  // ─── Slack Events API: emoji-typed → canned auto-reply ────────────────────
+  // When SLACK_TRIGGER_EMOJI is TYPED in a message in a channel the bot is in,
+  // the bot posts SLACK_TRIGGER_MESSAGE back to that channel via an incoming webhook.
+  // Env:  SLACK_SIGNING_SECRET (recommended) · SLACK_TRIGGER_EMOJI · SLACK_TRIGGER_MESSAGE
+  //       SLACK_TRIGGER_WEBHOOK (falls back to SLACK_ADMIN_WEBHOOK)
+  app.post("/api/slack/events", async (req, res) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      // 1) URL verification handshake (when you save the Request URL in Slack)
+      if (body.type === "url_verification") { res.status(200).send(String(body.challenge ?? "")); return; }
+
+      // 2) Verify the request genuinely came from Slack (only if a signing secret is set)
+      const signingSecret = process.env.SLACK_SIGNING_SECRET;
+      if (signingSecret) {
+        const ts = req.headers["x-slack-request-timestamp"] as string | undefined;
+        const sig = req.headers["x-slack-signature"] as string | undefined;
+        const raw = (req as unknown as { rawBody?: Buffer }).rawBody;
+        let okSig = false;
+        if (ts && sig && raw && Math.abs(Date.now() / 1000 - Number(ts)) <= 300) {
+          const { createHmac, timingSafeEqual } = await import("crypto");
+          const base = `v0:${ts}:${raw.toString("utf8")}`;
+          const mine = "v0=" + createHmac("sha256", signingSecret).update(base).digest("hex");
+          try { okSig = timingSafeEqual(Buffer.from(mine), Buffer.from(sig)); } catch { okSig = false; }
+        }
+        if (!okSig) { res.status(401).send("bad signature"); return; }
+      }
+
+      // 3) Acknowledge immediately (Slack requires a fast 200, then we act)
+      res.status(200).send("");
+
+      // 4) Process the event — supports BOTH a reaction and a typed emoji
+      if (body.type !== "event_callback") return;
+      const ev = (body.event ?? {}) as Record<string, unknown>;
+      const trigger = process.env.SLACK_TRIGGER_EMOJI || "";
+      const reply = process.env.SLACK_TRIGGER_MESSAGE || "";
+      const hook = process.env.SLACK_TRIGGER_WEBHOOK || process.env.SLACK_ADMIN_WEBHOOK;
+      if (!trigger || !reply || !hook) return;
+      const triggerName = trigger.replace(/:/g, "").trim().toLowerCase();   // ":x:" or "x" → "x"
+      let matched = false;
+      if (ev.type === "reaction_added") {
+        matched = String(ev.reaction ?? "").toLowerCase() === triggerName;   // someone REACTED with the emoji
+      } else if (ev.type === "message" && !ev.bot_id && !ev.subtype) {
+        const text = String(ev.text ?? "");                                  // someone TYPED the emoji
+        matched = text.includes(trigger) || text.includes(`:${triggerName}:`);
+      }
+      if (!matched) return;
+      fetch(hook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: reply }) }).catch(() => {});
+    } catch {
+      try { if (!res.headersSent) res.status(200).send(""); } catch { /* ignore */ }
     }
   });
 

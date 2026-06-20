@@ -390,6 +390,26 @@ const COMMENT_TAG_CONFIG = {
 };
 // ─── Profile Tab ──────────────────────────────────────────────────────
 const DAY_NAMES_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+function PField({ theme, label, value, onChange, type }: { theme: Theme; label: string; value: string; onChange: (v: string) => void; type?: string }) {
+  return (
+    <div className="rounded-xl p-3" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
+      <p className="text-xs uppercase tracking-wider mb-1" style={{ color: theme.textFaint }}>{label}</p>
+      <input type={type || "text"} value={value} onChange={e => onChange(e.target.value)} className="w-full bg-transparent text-sm outline-none" style={{ color: theme.text }} />
+    </div>
+  );
+}
+function PSelect({ theme, label, value, onChange, options }: { theme: Theme; label: string; value: string; onChange: (v: string) => void; options: [string, string][] }) {
+  return (
+    <div className="rounded-xl p-3" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
+      <p className="text-xs uppercase tracking-wider mb-1" style={{ color: theme.textFaint }}>{label}</p>
+      <select value={value} onChange={e => onChange(e.target.value)} className="w-full bg-transparent text-sm outline-none" style={{ color: theme.text }}>
+        {options.map(([v, l]) => <option key={v} value={v} style={{ color: "#000" }}>{l}</option>)}
+      </select>
+    </div>
+  );
+}
+function pTitle(str: string) { return str ? str.charAt(0).toUpperCase() + str.slice(1) : str; }
+
 function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
   const { data: wfProfile } = trpc.workforce.getMyProfile.useQuery();
   const utils = trpc.useUtils();
@@ -409,6 +429,40 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
     };
     reader.readAsDataURL(file);
   }
+  // ── Personal profile: one-time self-edit, then locked ──
+  const profileLocked = !!wfProfile?.profileLocked;
+  const [pForm, setPForm] = useState({
+    nationalId: "", nationalIdExpiry: "", dateOfBirth: "", gender: "",
+    nationality: "", maritalStatus: "", militaryStatus: "", city: "",
+  });
+  useEffect(() => {
+    if (!wfProfile) return;
+    setPForm({
+      nationalId: (wfProfile.nationalId as string) ?? "",
+      nationalIdExpiry: (wfProfile.nationalIdExpiry as string) ?? "",
+      dateOfBirth: (wfProfile.dateOfBirth as string) ?? "",
+      gender: (wfProfile.gender as string) ?? "",
+      nationality: (wfProfile.nationality as string) ?? "",
+      maritalStatus: (wfProfile.maritalStatus as string) ?? "",
+      militaryStatus: (wfProfile.militaryStatus as string) ?? "",
+      city: (wfProfile.city as string) ?? "",
+    });
+  }, [wfProfile]);
+  const saveProfile = trpc.workforce.updateMyProfile.useMutation({
+    onSuccess: () => { utils.workforce.getMyProfile.invalidate(); toast.success("Profile saved. Changes now go through HR."); },
+    onError: (e) => toast.error(e.message),
+  });
+  function submitMyProfile() {
+    const clean: Record<string, string> = {};
+    Object.entries(pForm).forEach(([k, v]) => { if (v) clean[k] = v; });
+    saveProfile.mutate(clean as Record<string, never>);
+  }
+  const [reqOpen, setReqOpen] = useState(false);
+  const [reqMsg, setReqMsg] = useState("");
+  const reqUpdate = trpc.requests.submit.useMutation({
+    onSuccess: () => { setReqOpen(false); setReqMsg(""); toast.success("Update request sent to HR."); },
+    onError: (e) => toast.error(e.message),
+  });
   const joinDate = wfProfile?.joinDate
     ? formatDate(new Date(wfProfile.joinDate as number))
     : agent.batch?.assignedAt
@@ -516,6 +570,58 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
           </div>
         ))}
       </div>
+
+      {wfProfile && (
+        <>
+          <SectionTitle theme={theme}>Personal Information</SectionTitle>
+          {profileLocked ? (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {[
+                  { label: "National ID", value: (wfProfile.nationalId as string) || "—" },
+                  { label: "ID Expiry", value: (wfProfile.nationalIdExpiry as string) || "—" },
+                  { label: "Date of Birth", value: (wfProfile.dateOfBirth as string) || "—" },
+                  { label: "Gender", value: pTitle((wfProfile.gender as string) || "—") },
+                  { label: "Nationality", value: (wfProfile.nationality as string) || "—" },
+                  { label: "Marital Status", value: pTitle((wfProfile.maritalStatus as string) || "—") },
+                  { label: "Military Status", value: pTitle(((wfProfile.militaryStatus as string) || "—").replace(/_/g, " ")) },
+                  { label: "City", value: (wfProfile.city as string) || "—" },
+                ].map(({ label, value }) => (
+                  <div key={label} className="rounded-xl p-4" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
+                    <p className="text-xs uppercase tracking-wider mb-1" style={{ color: theme.textFaint }}>{label}</p>
+                    <p className="font-medium text-sm" style={{ color: theme.text }}>{value}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="rounded-xl p-4 flex items-center justify-between gap-3 flex-wrap" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
+                <p className="text-xs" style={{ color: theme.textMuted }}>🔒 Your info is locked. To change anything, request an update from HR.</p>
+                <button onClick={() => setReqOpen(v => !v)} className="text-xs font-semibold px-3 py-1.5 rounded-md" style={{ background: "oklch(0.32 0.18 28 / 0.12)", color: BRAND_LIGHT }}>Request update from HR</button>
+              </div>
+              {reqOpen && (
+                <div className="rounded-xl p-4 space-y-2" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
+                  <textarea value={reqMsg} onChange={e => setReqMsg(e.target.value)} placeholder="What needs to change? (e.g. new phone number, updated ID expiry…)" rows={3} className="w-full rounded-md p-2 text-sm" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}`, color: theme.text }} />
+                  <button disabled={!reqMsg.trim() || reqUpdate.isPending} onClick={() => reqUpdate.mutate({ type: "other", subject: "Profile update request", message: reqMsg.trim() })} className="text-xs font-semibold px-3 py-1.5 rounded-md disabled:opacity-50" style={{ background: BRAND_LIGHT, color: "#fff" }}>{reqUpdate.isPending ? "Sending…" : "Send request"}</button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <p className="text-xs" style={{ color: theme.textMuted }}>Fill this in once. After you save, it locks and any changes go through HR.</p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <PField theme={theme} label="National ID" value={pForm.nationalId} onChange={v => setPForm(f => ({ ...f, nationalId: v }))} />
+                <PField theme={theme} label="ID Expiry" value={pForm.nationalIdExpiry} onChange={v => setPForm(f => ({ ...f, nationalIdExpiry: v }))} type="date" />
+                <PField theme={theme} label="Date of Birth" value={pForm.dateOfBirth} onChange={v => setPForm(f => ({ ...f, dateOfBirth: v }))} type="date" />
+                <PSelect theme={theme} label="Gender" value={pForm.gender} onChange={v => setPForm(f => ({ ...f, gender: v }))} options={[["","—"],["male","Male"],["female","Female"]]} />
+                <PField theme={theme} label="Nationality" value={pForm.nationality} onChange={v => setPForm(f => ({ ...f, nationality: v }))} />
+                <PSelect theme={theme} label="Marital Status" value={pForm.maritalStatus} onChange={v => setPForm(f => ({ ...f, maritalStatus: v }))} options={[["","—"],["single","Single"],["married","Married"],["divorced","Divorced"],["widowed","Widowed"]]} />
+                <PSelect theme={theme} label="Military Status" value={pForm.militaryStatus} onChange={v => setPForm(f => ({ ...f, militaryStatus: v }))} options={[["","—"],["completed","Completed"],["exempt","Exempt"],["postponed","Postponed"],["not_applicable","Not applicable"]]} />
+                <PField theme={theme} label="City" value={pForm.city} onChange={v => setPForm(f => ({ ...f, city: v }))} />
+              </div>
+              <button disabled={saveProfile.isPending} onClick={submitMyProfile} className="text-sm font-semibold px-4 py-2 rounded-md disabled:opacity-50" style={{ background: BRAND_LIGHT, color: "#fff" }}>{saveProfile.isPending ? "Saving…" : "Save my info"}</button>
+            </div>
+          )}
+        </>
+      )}
 
       {wfProfile && (
         <>

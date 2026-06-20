@@ -138,9 +138,6 @@ import {
   terminateAgent,
   approveResignationRequest,
   getSeparationsByAgent,
-  scheduleResignation,
-  cancelScheduledSeparation,
-  getPendingSeparationForAgent,
   // Payroll v2
   upsertPayrollRecordV2,
   getPayrollStatusPage,
@@ -1579,6 +1576,16 @@ const workforceRouter = router({
       crdts: z.string().optional(),
       nestingStatus: z.enum(["nesting", "active", "senior"]).optional(),
       workLocation: z.enum(["office", "wfh"]).optional(),
+      nationalId: z.string().max(50).optional(),
+      nationalIdExpiry: z.string().max(20).optional(),
+      dateOfBirth: z.string().max(20).optional(),
+      gender: z.enum(["male", "female"]).optional(),
+      nationality: z.string().max(100).optional(),
+      maritalStatus: z.enum(["single", "married", "divorced", "widowed"]).optional(),
+      militaryStatus: z.enum(["completed", "exempt", "postponed", "not_applicable"]).optional(),
+      jobTitle: z.string().max(150).optional(),
+      city: z.string().max(120).optional(),
+      profileLocked: z.boolean().optional(),
     }))
      .mutation(async ({ input }) => {
       const { traineeCode, ...rest } = input;
@@ -1627,6 +1634,30 @@ const workforceRouter = router({
       const { url } = await storagePut(key, buffer, input.mimeType);
       await updateWorkforceAgent(traineeCode, { avatarUrl: url });
       return { url };
+    }),
+  // Agent: fill my personal profile ONCE. After submitting it locks; further edits go through HR.
+  updateMyProfile: publicProcedure
+    .input(z.object({
+      nationalId: z.string().max(50).optional(),
+      nationalIdExpiry: z.string().max(20).optional(),
+      dateOfBirth: z.string().max(20).optional(),
+      gender: z.enum(["male", "female"]).optional(),
+      nationality: z.string().max(100).optional(),
+      maritalStatus: z.enum(["single", "married", "divorced", "widowed"]).optional(),
+      militaryStatus: z.enum(["completed", "exempt", "postponed", "not_applicable"]).optional(),
+      city: z.string().max(120).optional(),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) throw new TRPCError({ code: "UNAUTHORIZED", message: "Not authenticated as agent" });
+      let traineeCode: string;
+      try { ({ traineeCode } = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string }); }
+      catch { throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid agent session" }); }
+      const me = await getWorkforceAgentByCode(traineeCode);
+      if (!me) throw new TRPCError({ code: "NOT_FOUND", message: "Agent not found" });
+      if (me.profileLocked) throw new TRPCError({ code: "FORBIDDEN", message: "Your profile is already submitted. Please request an update from HR." });
+      await updateWorkforceAgent(traineeCode, { ...input, profileLocked: true });
+      return { success: true };
     }),
 
   getCampaignAgents: publicProcedure
@@ -2171,29 +2202,6 @@ const separationRouter = router({
   // Admin: get all terminated/resigned agents pending deletion
   pendingDeletion: protectedProcedure
     .query(() => getPendingDeletionAgents()),
-  // Get pending (scheduled, not yet applied) separation for an agent
-  getPendingForAgent: protectedProcedure
-    .input(z.object({ agentCode: z.string() }))
-    .query(({ input }) => getPendingSeparationForAgent(input.agentCode)),
-  // Schedule a future resignation (stays active until effectiveDate)
-  scheduleResignation: protectedProcedure
-    .input(z.object({
-      agentCode: z.string(),
-      effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      reason: z.string().min(1),
-    }))
-    .mutation(async ({ input, ctx }) => {
-      const adminName = ctx.user?.name ?? "Admin";
-      await scheduleResignation(input.agentCode, input.effectiveDate, input.reason, adminName);
-      return { success: true };
-    }),
-  // Cancel a pending scheduled separation
-  cancelScheduled: protectedProcedure
-    .input(z.object({ agentCode: z.string() }))
-    .mutation(async ({ input }) => {
-      await cancelScheduledSeparation(input.agentCode);
-      return { success: true };
-    }),
 });
 
 // ─── Payroll v2 Router ───────────────────────────────────────────────────────
