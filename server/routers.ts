@@ -138,6 +138,9 @@ import {
   terminateAgent,
   approveResignationRequest,
   getSeparationsByAgent,
+  scheduleResignation,
+  cancelScheduledSeparation,
+  getPendingSeparationForAgent,
   // Payroll v2
   upsertPayrollRecordV2,
   getPayrollStatusPage,
@@ -2199,11 +2202,33 @@ const separationRouter = router({
       await adminDeleteAgent(input.agentCode);
       return { success: true };
     }),
-  // Admin: get all terminated/resigned agents pending deletion
+    // Admin: get all terminated/resigned agents pending deletion
   pendingDeletion: protectedProcedure
     .query(() => getPendingDeletionAgents()),
+  // Get pending (scheduled, not yet applied) separation for an agent
+  getPendingForAgent: protectedProcedure
+    .input(z.object({ agentCode: z.string() }))
+    .query(({ input }) => getPendingSeparationForAgent(input.agentCode)),
+  // Schedule a future resignation (stays active until effectiveDate)
+  scheduleResignation: protectedProcedure
+    .input(z.object({
+      agentCode: z.string(),
+      effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      reason: z.string().min(1),
+    }))
+    .mutation(async ({ input, ctx }) => {
+      const adminName = ctx.user?.name ?? "Admin";
+      await scheduleResignation(input.agentCode, input.effectiveDate, input.reason, adminName);
+      return { success: true };
+    }),
+  // Cancel a pending scheduled separation
+  cancelScheduled: protectedProcedure
+    .input(z.object({ agentCode: z.string() }))
+    .mutation(async ({ input }) => {
+      await cancelScheduledSeparation(input.agentCode);
+      return { success: true };
+    }),
 });
-
 // ─── Payroll v2 Router ───────────────────────────────────────────────────────
 const payrollV2Router = router({
   uploadPayrollV2: protectedProcedure
