@@ -993,6 +993,140 @@ function getMinDateStr(type?: string) {
   return d.toISOString().split("T")[0];
 }
 
+function ScheduleSwapSection({ theme }: { theme: Theme }) {
+  const utils = trpc.useUtils();
+  const { data: myProfile } = trpc.workforce.getMyProfile.useQuery();
+  const myCode = (myProfile as { traineeCode?: string } | null)?.traineeCode ?? "";
+  const myOff1 = (myProfile as { offDay1?: number | null } | null)?.offDay1 ?? null;
+  const myOff2 = (myProfile as { offDay2?: number | null } | null)?.offDay2 ?? null;
+
+  const { data: mine = [] } = trpc.scheduleChange.listMine.useQuery();
+  const { data: colleagues = [] } = trpc.scheduleChange.listColleagues.useQuery();
+
+  const requestMut = trpc.scheduleChange.request.useMutation({
+    onSuccess: () => { utils.scheduleChange.listMine.invalidate(); toast.success("Swap request sent — waiting for your colleague to approve."); setShowForm(false); resetForm(); },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+  const peerMut = trpc.scheduleChange.peerApprove.useMutation({
+    onSuccess: (_d, vars) => { utils.scheduleChange.listMine.invalidate(); toast.success(vars.approve ? "Approved — sent to admin for final approval." : "Declined."); },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ targetCode: "", myNewOff1: "", myNewOff2: "", theirNewOff1: "", theirNewOff2: "", message: "" });
+  function resetForm() { setForm({ targetCode: "", myNewOff1: "", myNewOff2: "", theirNewOff1: "", theirNewOff2: "", message: "" }); }
+
+  type ScRow = { id: number; requesterCode: string; targetCode: string; status: string; requesterNewOff1: number | null; requesterNewOff2: number | null; targetNewOff1: number | null; targetNewOff2: number | null; message: string | null };
+  type Colleague = { traineeCode: string; name: string; alias: string; offDay1: number | null; offDay2: number | null };
+  const rows = mine as ScRow[];
+  const cols = colleagues as Colleague[];
+  const incoming = rows.filter(r => r.targetCode === myCode && r.status === "pending_peer");
+  const outgoing = rows.filter(r => r.requesterCode === myCode);
+
+  const dayLabel = (d: number | null | undefined) => (d == null ? "—" : DAY_NAMES_FULL[d]);
+  const statusLabel: Record<string, string> = { pending_peer: "Waiting on colleague", pending_manager: "Waiting on admin", approved: "Approved", rejected: "Declined" };
+  const selected = cols.find(c => c.traineeCode === form.targetCode);
+  const inputStyle = { background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, color: theme.text };
+  const DAYS = [0, 1, 2, 3, 4, 5, 6];
+
+  function submit() {
+    if (!form.targetCode) { toast.error("Pick a colleague to swap with"); return; }
+    const toNum = (v: string) => (v === "" ? undefined : parseInt(v, 10));
+    requestMut.mutate({
+      targetCode: form.targetCode,
+      requesterNewOff1: toNum(form.myNewOff1),
+      requesterNewOff2: toNum(form.myNewOff2),
+      targetNewOff1: toNum(form.theirNewOff1),
+      targetNewOff2: toNum(form.theirNewOff2),
+      message: form.message.trim() || undefined,
+    });
+  }
+
+  const daySelect = (label: string, val: string, set: (v: string) => void) => (
+    <div className="space-y-1.5">
+      <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>{label}</Label>
+      <Select value={val} onValueChange={set}>
+        <SelectTrigger style={inputStyle}><SelectValue placeholder="Day..." /></SelectTrigger>
+        <SelectContent>{DAYS.map(d => <SelectItem key={d} value={String(d)}>{DAY_NAMES_FULL[d]}</SelectItem>)}</SelectContent>
+      </Select>
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      {incoming.length > 0 && (
+        <div className="rounded-2xl p-5 space-y-3" style={{ background: theme.surface, border: `1px solid ${BRAND}` }}>
+          <p className="text-sm font-semibold" style={{ color: theme.text }}>Swap requests for you ({incoming.length})</p>
+          {incoming.map(r => (
+            <div key={r.id} className="rounded-xl p-4 space-y-2" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+              <p className="text-sm" style={{ color: theme.text }}><span className="font-semibold">{r.requesterCode}</span> wants to swap off-days with you.</p>
+              <div className="grid grid-cols-2 gap-2 text-xs" style={{ color: theme.textMuted }}>
+                <div><p className="font-medium" style={{ color: theme.text }}>Their new off days</p><p>{dayLabel(r.requesterNewOff1)} · {dayLabel(r.requesterNewOff2)}</p></div>
+                <div><p className="font-medium" style={{ color: theme.text }}>Your new off days</p><p>{dayLabel(r.targetNewOff1)} · {dayLabel(r.targetNewOff2)}</p></div>
+              </div>
+              {r.message && <p className="text-xs italic" style={{ color: theme.textFaint }}>&ldquo;{r.message}&rdquo;</p>}
+              <div className="flex gap-2 pt-1">
+                <Button size="sm" disabled={peerMut.isPending} onClick={() => peerMut.mutate({ id: r.id, approve: true })} className="text-white text-xs h-8" style={{ background: BRAND }}>Approve</Button>
+                <Button size="sm" variant="outline" disabled={peerMut.isPending} onClick={() => peerMut.mutate({ id: r.id, approve: false })} className="text-xs h-8">Decline</Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="rounded-2xl p-5" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold" style={{ color: theme.text }}>Schedule Swap</p>
+            <p className="text-xs" style={{ color: theme.textFaint }}>Your current off days: {dayLabel(myOff1)} · {dayLabel(myOff2)}</p>
+          </div>
+          {!showForm && <Button size="sm" onClick={() => setShowForm(true)} className="text-white text-xs" style={{ background: BRAND }}>+ Request swap</Button>}
+        </div>
+
+        {showForm && (
+          <div className="space-y-4 mt-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>Swap with</Label>
+              <Select value={form.targetCode} onValueChange={(v) => setForm(f => ({ ...f, targetCode: v }))}>
+                <SelectTrigger style={inputStyle}><SelectValue placeholder="Pick a colleague..." /></SelectTrigger>
+                <SelectContent>{cols.map(c => <SelectItem key={c.traineeCode} value={c.traineeCode}>{c.name}{c.alias ? ` (${c.alias})` : ""}</SelectItem>)}</SelectContent>
+              </Select>
+              {selected && <p className="text-xs" style={{ color: theme.textFaint }}>{selected.name}&apos;s current off days: {dayLabel(selected.offDay1)} · {dayLabel(selected.offDay2)}</p>}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {daySelect("My new off day 1", form.myNewOff1, (v) => setForm(f => ({ ...f, myNewOff1: v })))}
+              {daySelect("My new off day 2", form.myNewOff2, (v) => setForm(f => ({ ...f, myNewOff2: v })))}
+              {daySelect("Their new off day 1", form.theirNewOff1, (v) => setForm(f => ({ ...f, theirNewOff1: v })))}
+              {daySelect("Their new off day 2", form.theirNewOff2, (v) => setForm(f => ({ ...f, theirNewOff2: v })))}
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>Note (optional)</Label>
+              <Textarea value={form.message} onChange={(e) => setForm(f => ({ ...f, message: e.target.value }))} placeholder="Reason for the swap..." style={inputStyle} rows={2} className="resize-none" />
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" disabled={requestMut.isPending} onClick={submit} className="text-white text-xs" style={{ background: BRAND }}>Send to colleague</Button>
+              <Button size="sm" variant="outline" onClick={() => { setShowForm(false); resetForm(); }} className="text-xs">Cancel</Button>
+            </div>
+            <p className="text-[11px]" style={{ color: theme.textFaint }}>Your colleague approves first; only then does it go to admin for final approval.</p>
+          </div>
+        )}
+
+        {outgoing.length > 0 && (
+          <div className="mt-4 space-y-2">
+            <p className="text-xs uppercase tracking-wider font-semibold" style={{ color: theme.textFaint }}>My swap requests</p>
+            {outgoing.map(r => (
+              <div key={r.id} className="flex items-center justify-between rounded-lg px-3 py-2 text-xs" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+                <span style={{ color: theme.text }}>With <span className="font-semibold">{r.targetCode}</span></span>
+                <span style={{ color: theme.textMuted }}>{statusLabel[r.status] ?? r.status}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: number; theme: Theme }) {
   const utils = trpc.useUtils();
   const { data: requests = [], isLoading } = trpc.requests.listMine.useQuery();
@@ -1106,6 +1240,8 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
           <p className="text-xs leading-relaxed" style={{ color: theme.textFaint }}>Submit formal requests here — day off, paid leave, HR letter, schedule change, or resignation. Your team leader will review and respond. You can track the status of each request below.</p>
         </div>
       </div>
+      <ScheduleSwapSection theme={theme} />
+
       <div className="flex items-center justify-between">
         <SectionTitle theme={theme}>My Requests</SectionTitle>
         {!showForm && (

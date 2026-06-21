@@ -313,6 +313,68 @@ async function startServer() {
     }
   });
 
+  // ─── REST API: POST /api/upload/logouts ───────────────────────────────────
+  // Accepts a JSON array of client-logout records from the admin sheet's Logouts
+  // tab, authenticated via X-API-Key. Upserts on (crdts, date). Fields per row:
+  // CRDTS, Date (YYYY-MM-DD or DD/MM/YYYY), Alias (optional).
+  app.post("/api/upload/logouts", async (req, res) => {
+    try {
+      const apiKey = req.headers["x-api-key"] as string | undefined;
+      if (!apiKey) { res.status(401).json({ error: "Missing X-API-Key header" }); return; }
+      const { getDb } = await import("../db");
+      const db = await getDb();
+      if (!db) { res.status(503).json({ error: "Database unavailable" }); return; }
+      const { apiKeys } = await import("../../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const { createHash } = await import("crypto");
+      const keyHash = createHash("sha256").update(apiKey).digest("hex");
+      const [keyRow] = await db.select().from(apiKeys).where(eq(apiKeys.keyHash, keyHash)).limit(1);
+      if (!keyRow) { res.status(401).json({ error: "Invalid API key" }); return; }
+      if (keyRow.revokedAt) { res.status(401).json({ error: "API key has been revoked" }); return; }
+      await db.update(apiKeys).set({ lastUsedAt: Date.now() }).where(eq(apiKeys.id, keyRow.id));
+
+      const body = req.body;
+      if (!Array.isArray(body)) { res.status(400).json({ error: "Request body must be a JSON array" }); return; }
+
+      // Normalize a date to YYYY-MM-DD (accepts YYYY-MM-DD or DD/MM/YYYY).
+      const normDate = (raw: string): string => {
+        const s = String(raw).trim();
+        let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+        if (m) return `${m[1]}-${String(+m[2]).padStart(2, "0")}-${String(+m[3]).padStart(2, "0")}`;
+        m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);   // DD/MM/YYYY
+        if (m) return `${m[3]}-${String(+m[2]).padStart(2, "0")}-${String(+m[1]).padStart(2, "0")}`;
+        throw new Error(`Unrecognized date: ${raw}`);
+      };
+
+      const seen = new Set<string>();
+      const rows: Array<{ crdts: string; alias?: string; date: string; cycleKey: string }> = [];
+      for (let i = 0; i < body.length; i++) {
+        const r = body[i] as Record<string, unknown>;
+        let crdts = String(r["CRDTS"] ?? r["crdts"] ?? "").trim();
+        crdts = crdts.replace(/\.0+$/, "");   // 114084.0 -> 114084
+        const dateRaw = String(r["Date"] ?? r["date"] ?? "").trim();
+        if (!crdts || !dateRaw) continue;     // skip blank rows
+        const date = normDate(dateRaw);
+        const key = `${crdts}|${date}`;
+        if (seen.has(key)) continue;          // de-dupe within the payload
+        seen.add(key);
+        rows.push({
+          crdts,
+          alias: String(r["Alias"] ?? r["alias"] ?? "").trim() || undefined,
+          date,
+          cycleKey: date.slice(0, 7),         // YYYY-MM (calendar month)
+        });
+      }
+      if (rows.length === 0) { res.status(400).json({ error: "No valid logout rows" }); return; }
+      const { bulkUpsertClientLogouts } = await import("../db");
+      await bulkUpsertClientLogouts(rows);
+      res.json({ ok: true, count: rows.length, message: `${rows.length} logout records processed` });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(400).json({ error: msg });
+    }
+  });
+
   // ─── REST API: GET /api/agents/status ─────────────────────────────────────
   // Returns current agent status (one entry per CRDTS) so the analysis sheet can
   // auto-exclude resigned/terminated agents from pivots & charts. Auth: X-API-Key.
@@ -359,6 +421,74 @@ async function startServer() {
     }
   });
 
+  // ─── REST API: GET /api/celebrations/today (birthdays + work anniversaries) ───
+  app.get("/api/celebrations/today", async (req, res) => {
+    try {
+      const apiKey = req.headers["x-api-key"] as string | undefined;
+      if (!apiKey) { res.status(401).json({ error: "Missing X-API-Key header" }); return; }
+      const { getDb } = await import("../db");
+      const db = await getDb();
+      if (!db) { res.status(503).json({ error: "Database unavailable" }); return; }
+      const { apiKeys } = await import("../../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const { createHash } = await import("crypto");
+      const keyHash = createHash("sha256").update(apiKey).digest("hex");
+      const [keyRow] = await db.select().from(apiKeys).where(eq(apiKeys.keyHash, keyHash)).limit(1);
+      if (!keyRow || keyRow.revokedAt) { res.status(401).json({ error: "Invalid or revoked API key" }); return; }
+      const { listWorkforceAgents } = await import("../db");
+      const agents = await listWorkforceAgents();
+      const now = new Date();
+      const todayMd = `${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      const birthdays: Array<Record<string, unknown>> = [];
+      const anniversaries: Array<Record<string, unknown>> = [];
+      for (const a of agents as Array<Record<string, unknown>>) {
+        if (!(a.agentStatus === "active" && a.isActive !== false)) continue;
+        const name = (a.fullName as string) || (a.alias as string) || (a.traineeCode as string);
+        const dob = a.dateOfBirth ? String(a.dateOfBirth) : "";
+        if (dob.length >= 10 && dob.slice(5, 10) === todayMd) birthdays.push({ name, traineeCode: a.traineeCode });
+        if (a.joinDate) {
+          const jd = new Date(Number(a.joinDate));
+          if (`${String(jd.getMonth() + 1).padStart(2, "0")}-${String(jd.getDate()).padStart(2, "0")}` === todayMd) {
+            const years = now.getFullYear() - jd.getFullYear();
+            if (years >= 1) anniversaries.push({ name, traineeCode: a.traineeCode, years });
+          }
+        }
+      }
+      res.json({ ok: true, date: `${now.getFullYear()}-${todayMd}`, birthdays, anniversaries });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
+  // ─── REST API: GET /api/requests/pending (open requests + age in hours) ───
+  app.get("/api/requests/pending", async (req, res) => {
+    try {
+      const apiKey = req.headers["x-api-key"] as string | undefined;
+      if (!apiKey) { res.status(401).json({ error: "Missing X-API-Key header" }); return; }
+      const { getDb } = await import("../db");
+      const db = await getDb();
+      if (!db) { res.status(503).json({ error: "Database unavailable" }); return; }
+      const { apiKeys } = await import("../../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const { createHash } = await import("crypto");
+      const keyHash = createHash("sha256").update(apiKey).digest("hex");
+      const [keyRow] = await db.select().from(apiKeys).where(eq(apiKeys.keyHash, keyHash)).limit(1);
+      if (!keyRow || keyRow.revokedAt) { res.status(401).json({ error: "Invalid or revoked API key" }); return; }
+      const { listAllAgentRequests } = await import("../db");
+      const all = await listAllAgentRequests();
+      const now = Date.now();
+      const requests = (all as Array<Record<string, unknown>>)
+        .filter((r) => r.status === "pending")
+        .map((r) => {
+          const created = r.createdAt ? new Date(r.createdAt as string | number | Date).getTime() : now;
+          return { id: r.id, traineeCode: r.traineeCode, name: r.fullName ?? "", type: r.type, subject: r.subject, createdAt: created, ageHours: Math.floor((now - created) / 3600000) };
+        });
+      res.json({ ok: true, count: requests.length, requests });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+
   // ─── Slack Events API: emoji-typed → canned auto-reply ────────────────────
   // When SLACK_TRIGGER_EMOJI is TYPED in a message in a channel the bot is in,
   // the bot posts SLACK_TRIGGER_MESSAGE back to that channel via an incoming webhook.
@@ -389,19 +519,42 @@ async function startServer() {
       // 3) Acknowledge immediately (Slack requires a fast 200, then we act)
       res.status(200).send("");
 
-      // 4) Process the event — supports BOTH a reaction and a typed emoji
+      // 4) Process the event
       if (body.type !== "event_callback") return;
       const ev = (body.event ?? {}) as Record<string, unknown>;
+
+      // 4a) React-to-action on a request alert: ✅ resolved · 👀 in progress · ❌ rejected
+      if (ev.type === "reaction_added") {
+        const rxn = String(ev.reaction ?? "").toLowerCase();
+        const statusMap: Record<string, "resolved" | "in_progress" | "rejected"> = {
+          white_check_mark: "resolved", heavy_check_mark: "resolved",
+          eyes: "in_progress",
+          x: "rejected", negative_squared_cross_mark: "rejected",
+        };
+        const item = (ev.item ?? {}) as { ts?: string };
+        if (statusMap[rxn] && item.ts) {
+          const { getRequestBySlackMessageTs, updateAgentRequestStatus } = await import("../db");
+          const reqRow = await getRequestBySlackMessageTs(item.ts);
+          if (reqRow) {
+            await updateAgentRequestStatus(reqRow.id, statusMap[rxn]);
+            const cHook = process.env.SLACK_ADMIN_WEBHOOK;
+            if (cHook) fetch(cHook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: `:white_check_mark: Request from *${reqRow.traineeCode}* \u2192 *${statusMap[rxn].replace("_", " ")}*` }) }).catch(() => {});
+            return;
+          }
+        }
+      }
+
+      // 4b) Emoji typed/reacted → canned auto-reply
       const trigger = process.env.SLACK_TRIGGER_EMOJI || "";
       const reply = process.env.SLACK_TRIGGER_MESSAGE || "";
       const hook = process.env.SLACK_TRIGGER_WEBHOOK || process.env.SLACK_ADMIN_WEBHOOK;
       if (!trigger || !reply || !hook) return;
-      const triggerName = trigger.replace(/:/g, "").trim().toLowerCase();   // ":x:" or "x" → "x"
+      const triggerName = trigger.replace(/:/g, "").trim().toLowerCase();
       let matched = false;
       if (ev.type === "reaction_added") {
-        matched = String(ev.reaction ?? "").toLowerCase() === triggerName;   // someone REACTED with the emoji
+        matched = String(ev.reaction ?? "").toLowerCase() === triggerName;
       } else if (ev.type === "message" && !ev.bot_id && !ev.subtype) {
-        const text = String(ev.text ?? "");                                  // someone TYPED the emoji
+        const text = String(ev.text ?? "");
         matched = text.includes(trigger) || text.includes(`:${triggerName}:`);
       }
       if (!matched) return;

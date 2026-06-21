@@ -850,20 +850,33 @@ export async function createAgentRequest(data: {
     hrLetterLanguage: data.hrLetterLanguage ?? null,
     status: "pending",
   });
-  // Notify the admin Slack channel via T Bot (fire-and-forget — never blocks the request)
+  // Notify the admin Slack channel (fire-and-forget). With a bot token + channel we post via
+  // chat.postMessage so we can capture the message ts and enable react-to-action on the alert.
+  const newId = (result as unknown as Array<{ insertId?: number }>)[0]?.insertId;
+  const botToken = process.env.SLACK_BOT_TOKEN;
+  const channelId = process.env.SLACK_ADMIN_CHANNEL_ID;
   const hook = process.env.SLACK_ADMIN_WEBHOOK;
-  if (hook) {
+  if (botToken || hook) {
     const typeLabel = data.type.replace(/_/g, " ");
-    // Look up the agent's real name / alias / CRDTS so the alert is identifiable (async, non-blocking)
-    getWorkforceAgentByCode(data.traineeCode).then((wf) => {
+    getWorkforceAgentByCode(data.traineeCode).then(async (wf) => {
       const nm = String(wf?.fullName ?? "").trim();
       const al = String(wf?.alias ?? "").trim();
       const cr = String(wf?.crdts ?? "").trim();
       const who =
         `*Name:* ${nm || "—"}${al ? `   *Alias:* ${al}` : ""}\n` +
         `*Code:* ${data.traineeCode}${cr ? `   *CRDTS:* ${cr}` : ""}`;
-      const text = `:bell: *New ${typeLabel} request*\n${who}\n*${data.subject}*\n${data.message}`;
-      return fetch(hook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+      const text = `:bell: *New ${typeLabel} request*\n${who}\n*${data.subject}*\n${data.message}\n_React :white_check_mark: resolved · :eyes: in progress · :x: rejected_`;
+      if (botToken && channelId) {
+        const resp = await fetch("https://slack.com/api/chat.postMessage", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${botToken}` },
+          body: JSON.stringify({ channel: channelId, text }),
+        });
+        const j = (await resp.json()) as { ok?: boolean; ts?: string };
+        if (j.ok && j.ts && newId) await setRequestSlackMessageTs(newId, j.ts);
+      } else if (hook) {
+        await fetch(hook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text }) });
+      }
     }).catch(() => {});
   }
   return result;
@@ -901,6 +914,19 @@ export async function updateAgentRequestStatus(
     .update(agentRequests)
     .set({ status, ...(adminReply !== undefined ? { adminReply } : {}) })
     .where(eq(agentRequests.id, id));
+}
+
+export async function setRequestSlackMessageTs(id: number, ts: string) {
+  const db = await getDb();
+  if (!db) return;
+  await db.update(agentRequests).set({ slackMessageTs: ts }).where(eq(agentRequests.id, id));
+}
+
+export async function getRequestBySlackMessageTs(ts: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(agentRequests).where(eq(agentRequests.slackMessageTs, ts)).limit(1);
+  return row ?? null;
 }
 
 export async function countUnreadAgentRequests() {

@@ -138,9 +138,6 @@ import {
   terminateAgent,
   approveResignationRequest,
   getSeparationsByAgent,
-  scheduleResignation,
-  cancelScheduledSeparation,
-  getPendingSeparationForAgent,
   // Payroll v2
   upsertPayrollRecordV2,
   getPayrollStatusPage,
@@ -1677,7 +1674,11 @@ const workforceRouter = router({
         getPaymentMethodsByCode(input.traineeCode),
         getCommentsByCode(input.traineeCode),
       ]);
-      return { agent, documents, paymentMethods, comments };
+      const [candidate, payroll] = await Promise.all([
+        agent.candidateId ? getCandidateById(agent.candidateId) : Promise.resolve(undefined),
+        agent.candidateId ? getPayrollByCandidateId(agent.candidateId) : Promise.resolve([]),
+      ]);
+      return { agent, documents, paymentMethods, comments, candidate: candidate ?? null, payroll: payroll ?? [] };
     }),
 
   getMyOperationPlan: publicProcedure
@@ -2007,6 +2008,26 @@ const scheduleChangeRouter = router({
     } catch { return []; }
   }),
 
+  // Active colleagues an agent can pick to swap with (excludes self + resigned).
+  listColleagues: publicProcedure.query(async ({ ctx }) => {
+    const _scCTok = getAgentCookieFromReq(ctx.req);
+    if (!_scCTok) return [];
+    let _me: string;
+    try { _me = (jwt.verify(_scCTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; }
+    catch { return []; }
+    const all = await listWorkforceAgents();
+    return (all as Array<Record<string, unknown>>)
+      .filter(a => a.traineeCode && a.traineeCode !== _me && a.agentStatus === "active" && a.isActive !== false)
+      .map(a => ({
+        traineeCode: a.traineeCode as string,
+        name: (a.fullName as string) || (a.alias as string) || (a.traineeCode as string),
+        alias: (a.alias as string) || "",
+        offDay1: (a.offDay1 as number | null) ?? null,
+        offDay2: (a.offDay2 as number | null) ?? null,
+      }))
+      .sort((x, y) => x.name.localeCompare(y.name));
+  }),
+
   listAll: protectedProcedure.query(() => listAllScheduleChangeRequests()),
 
   peerApprove: publicProcedure
@@ -2015,9 +2036,9 @@ const scheduleChangeRouter = router({
       const _scRTok = getAgentCookieFromReq(ctx.req);
       if (!_scRTok) throw new TRPCError({ code: "UNAUTHORIZED" });
       try { jwt.verify(_scRTok, ENV.cookieSecret); } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      const reqs = await listAllScheduleChangeRequests();
+      const req = reqs.find(r => r.id === input.id);
       if (input.approve) {
-        const reqs = await listAllScheduleChangeRequests();
-        const req = reqs.find(r => r.id === input.id);
         await updateScheduleChangeRequest(input.id, {
           status: "pending_manager",
           peerApprovedAt: Date.now(),
@@ -2031,6 +2052,18 @@ const scheduleChangeRouter = router({
         }
       } else {
         await updateScheduleChangeRequest(input.id, { status: "rejected" });
+        // Peer declined → close it and tell the requester (A). It never reaches admin.
+        if (req) {
+          const requester = await getWorkforceAgentByCode(req.requesterCode);
+          if (requester) {
+            await createAgentNotification({
+              candidateId: requester.candidateId,
+              message: `${req.targetCode} declined your schedule swap request. It has been closed and was not sent to the admin.`,
+              type: "general",
+              relatedId: null,
+            }).catch(() => {});
+          }
+        }
       }
       return { success: true };
     }),
@@ -2202,33 +2235,11 @@ const separationRouter = router({
       await adminDeleteAgent(input.agentCode);
       return { success: true };
     }),
-    // Admin: get all terminated/resigned agents pending deletion
+  // Admin: get all terminated/resigned agents pending deletion
   pendingDeletion: protectedProcedure
     .query(() => getPendingDeletionAgents()),
-  // Get pending (scheduled, not yet applied) separation for an agent
-  getPendingForAgent: protectedProcedure
-    .input(z.object({ agentCode: z.string() }))
-    .query(({ input }) => getPendingSeparationForAgent(input.agentCode)),
-  // Schedule a future resignation (stays active until effectiveDate)
-  scheduleResignation: protectedProcedure
-    .input(z.object({
-      agentCode: z.string(),
-      effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      reason: z.string().min(1),
-    }))
-    .mutation(async ({ input, ctx }) => {
-      const adminName = ctx.user?.name ?? "Admin";
-      await scheduleResignation(input.agentCode, input.effectiveDate, input.reason, adminName);
-      return { success: true };
-    }),
-  // Cancel a pending scheduled separation
-  cancelScheduled: protectedProcedure
-    .input(z.object({ agentCode: z.string() }))
-    .mutation(async ({ input }) => {
-      await cancelScheduledSeparation(input.agentCode);
-      return { success: true };
-    }),
 });
+
 // ─── Payroll v2 Router ───────────────────────────────────────────────────────
 const payrollV2Router = router({
   uploadPayrollV2: protectedProcedure

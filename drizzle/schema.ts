@@ -326,6 +326,7 @@ export const agentRequests = mysqlTable("agent_requests", {
   status: mysqlEnum("status", ["pending", "in_progress", "resolved", "rejected"]).default("pending").notNull(),
    isAdminRead: boolean("isAdminRead").default(false).notNull(), // true once admin has viewed this request
   adminReply: text("adminReply"),
+  slackMessageTs: varchar("slackMessageTs", { length: 50 }),   // Slack message ts of the request alert (for react-to-action)
   adminLastWorkingDay: varchar("adminLastWorkingDay", { length: 10 }), // YYYY-MM-DD — admin sets this when approving resignation
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
@@ -601,7 +602,6 @@ export const agentSeparations = mysqlTable("agent_separations", {
   effectiveAt: bigint("effectiveAt", { mode: "number" }),     // UTC ms — when separation took effect
   approvedBy: varchar("approvedBy", { length: 255 }),         // admin name who approved/processed
   approvedAt: bigint("approvedAt", { mode: "number" }),       // UTC ms
-  appliedAt: bigint("appliedAt", { mode: "number" }),        // UTC ms — when the deactivation actually executed (null = scheduled, pending)
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 export type AgentSeparation = typeof agentSeparations.$inferSelect;

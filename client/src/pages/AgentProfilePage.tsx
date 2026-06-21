@@ -16,6 +16,7 @@ import {
   Plus, Trash2, ExternalLink, CheckCircle2, AlertTriangle, Info,
   Star, Building2, Phone, Mail, Calendar, Clock, Shield,
   LogOut, XCircle, KeyRound, MoreVertical, Pencil, GraduationCap, History,
+  Briefcase, Wallet, TrendingUp,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -24,9 +25,14 @@ import {
 import { toast } from "sonner";
 
 const BRAND = "#8B1A1A";
+
+const moneyEGP = (v: unknown) => {
+  const n = typeof v === "number" ? v : parseFloat(String(v ?? ""));
+  return isNaN(n) || n === 0 ? "—" : `EGP ${n.toLocaleString("en-EG", { maximumFractionDigits: 0 })}`;
+};
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-type Tab = "documents" | "payment" | "comments" | "coaching" | "history";
+type Tab = "recruitment" | "payroll" | "commission" | "documents" | "payment" | "comments" | "coaching" | "history";
 
 const TAG_CONFIG = {
   note:     { label: "Note",     icon: Info,          color: "bg-blue-100 text-blue-700 border-blue-200" },
@@ -223,7 +229,7 @@ export default function AgentProfilePage() {
     );
   }
 
-  const { agent, documents, paymentMethods, comments } = profile;
+  const { agent, documents, paymentMethods, comments, candidate, payroll } = profile;
   const campaign = (campaigns as Array<{id: number; name: string}>).find(c => c.id === agent.campaignId);
   const offDays = [agent.offDay1, agent.offDay2].filter(d => d !== null && d !== undefined) as number[];
   const isActive = agent.agentStatus === "active" || agent.isActive;
@@ -240,10 +246,15 @@ export default function AgentProfilePage() {
       <Card className="border-0 shadow-sm">
         <CardContent className="p-6">
           <div className="flex items-start gap-5">
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-white text-2xl font-bold flex-shrink-0"
-              style={{ background: BRAND }}>
-              {agent.fullName.charAt(0).toUpperCase()}
-            </div>
+            {agent.avatarUrl ? (
+              <img src={agent.avatarUrl} alt={agent.fullName}
+                className="w-16 h-16 rounded-2xl object-cover flex-shrink-0" />
+            ) : (
+              <div className="w-16 h-16 rounded-2xl flex items-center justify-center text-white text-2xl font-bold flex-shrink-0"
+                style={{ background: BRAND }}>
+                {agent.fullName.charAt(0).toUpperCase()}
+              </div>
+            )}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-3 flex-wrap">
                 <h1 className="text-xl font-bold text-foreground">{agent.fullName}</h1>
@@ -390,6 +401,9 @@ export default function AgentProfilePage() {
       {/* Tab Navigation */}
       <div className="flex gap-1 border-b">
         {([
+          { id: "recruitment", label: "Recruitment", icon: Briefcase, count: 0 },
+          { id: "payroll",     label: "Payroll", icon: Wallet, count: payroll.length },
+          { id: "commission",  label: "Commission", icon: TrendingUp, count: 0 },
           { id: "documents", label: "Documents", icon: FileText, count: documents.length },
           { id: "payment",   label: "Payment Preferences", icon: CreditCard, count: paymentMethods.length },
           { id: "comments",  label: "Comments / Issues", icon: MessageSquare, count: comments.length },
@@ -560,6 +574,119 @@ export default function AgentProfilePage() {
       {/* ── History Tab ───────────────────────────────────────────────────────────────────── */}
       {activeTab === "history" && (
         <AgentHistoryTab crdts={agent.crdts ?? ""} />
+      )}
+
+      {/* ── Recruitment Tab ── */}
+      {activeTab === "recruitment" && (
+        <Card className="border-0 shadow-sm">
+          <CardContent className="p-6">
+            {candidate ? (
+              <div className="space-y-5">
+                <h3 className="text-sm font-semibold text-foreground">Recruitment record</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2.5 text-sm">
+                  {([
+                    ["Position applied", candidate.positionApplied],
+                    ["Source", candidate.source],
+                    ["Status", candidate.status],
+                    ["Wave", candidate.wave],
+                    ["Location", candidate.location],
+                    ["Age", candidate.age != null ? String(candidate.age) : ""],
+                    ["Applied", candidate.appliedAt ? new Date(Number(candidate.appliedAt)).toLocaleDateString() : ""],
+                    ["Accepted", candidate.acceptedAt ? new Date(Number(candidate.acceptedAt)).toLocaleDateString() : ""],
+                  ] as [string, string | null | undefined][]).map(([k, v]) => (
+                    <div key={k} className="flex justify-between gap-4 border-b border-border/50 pb-1.5">
+                      <span className="text-muted-foreground">{k}</span>
+                      <span className="font-medium text-foreground text-right">{v || "—"}</span>
+                    </div>
+                  ))}
+                </div>
+                {candidate.screeningNotes && (
+                  <div>
+                    <p className="text-xs uppercase tracking-wider text-muted-foreground mb-1">Screening notes</p>
+                    <p className="text-sm text-foreground whitespace-pre-wrap">{candidate.screeningNotes}</p>
+                  </div>
+                )}
+                {candidate.cvUrl && (
+                  <a href={candidate.cvUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 text-sm" style={{ color: BRAND }}>
+                    <ExternalLink className="h-4 w-4" /> View CV{candidate.cvFileName ? ` (${candidate.cvFileName})` : ""}
+                  </a>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No recruitment record linked to this employee.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Payroll Tab ── */}
+      {activeTab === "payroll" && (
+        <Card className="border-0 shadow-sm">
+          <CardContent className="p-6">
+            {payroll.length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground border-b border-border">
+                      <th className="py-2 pr-4">Month</th>
+                      <th className="py-2 pr-4 text-right">Base</th>
+                      <th className="py-2 pr-4 text-right">Commission</th>
+                      <th className="py-2 pr-4 text-right">Deductions</th>
+                      <th className="py-2 pr-4 text-right">Net Pay</th>
+                      <th className="py-2 text-right">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(payroll as Array<Record<string, unknown>>).map((p, i) => (
+                      <tr key={i} className="border-b border-border/50">
+                        <td className="py-2 pr-4 font-medium text-foreground">{String(p.month ?? "")}</td>
+                        <td className="py-2 pr-4 text-right">{moneyEGP(p.baseSalary)}</td>
+                        <td className="py-2 pr-4 text-right text-green-700">{moneyEGP(p.commissionEgp)}</td>
+                        <td className="py-2 pr-4 text-right text-red-600">{moneyEGP(p.totalDeductions)}</td>
+                        <td className="py-2 pr-4 text-right font-semibold text-foreground">{moneyEGP(p.netPay)}</td>
+                        <td className="py-2 text-right">
+                          <span className="text-xs rounded-full px-2 py-0.5 bg-muted text-muted-foreground">{String(p.paymentStatus ?? p.status ?? "—")}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No payroll records yet.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── Commission Tab ── */}
+      {activeTab === "commission" && (
+        <Card className="border-0 shadow-sm">
+          <CardContent className="p-6">
+            {(payroll as Array<Record<string, unknown>>).filter(p => Number(p.commissionEgp ?? 0) > 0).length > 0 ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground border-b border-border">
+                      <th className="py-2 pr-4">Month</th>
+                      <th className="py-2 text-right">Commission (EGP)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(payroll as Array<Record<string, unknown>>).filter(p => Number(p.commissionEgp ?? 0) > 0).map((p, i) => (
+                      <tr key={i} className="border-b border-border/50">
+                        <td className="py-2 pr-4 font-medium text-foreground">{String(p.month ?? "")}</td>
+                        <td className="py-2 text-right font-semibold" style={{ color: BRAND }}>{moneyEGP(p.commissionEgp)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No commission earned yet.</p>
+            )}
+          </CardContent>
+        </Card>
       )}
 
       {/* ── Edit Info Dialog ─────────────────────────────────────────────── */}
