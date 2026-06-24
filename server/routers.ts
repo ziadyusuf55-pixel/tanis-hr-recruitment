@@ -138,9 +138,6 @@ import {
   terminateAgent,
   approveResignationRequest,
   getSeparationsByAgent,
-  scheduleResignation,
-  cancelScheduledSeparation,
-  getPendingSeparationForAgent,
   // Payroll v2
   upsertPayrollRecordV2,
   getPayrollStatusPage,
@@ -182,6 +179,7 @@ import {
   bulkUpsertClientLogouts,
   getClientLogoutsByCycle,
   getClientLogoutsByAgent,
+  getAgentQualityFlagsByAgent,
   getCommissionMonthData,
   getAvailableCommissionMonths,
   getAgentPerformanceHistory,
@@ -2238,33 +2236,11 @@ const separationRouter = router({
       await adminDeleteAgent(input.agentCode);
       return { success: true };
     }),
-    // Admin: get all terminated/resigned agents pending deletion
+  // Admin: get all terminated/resigned agents pending deletion
   pendingDeletion: protectedProcedure
     .query(() => getPendingDeletionAgents()),
-  // Get pending (scheduled, not yet applied) separation for an agent
-  getPendingForAgent: protectedProcedure
-    .input(z.object({ agentCode: z.string() }))
-    .query(({ input }) => getPendingSeparationForAgent(input.agentCode)),
-  // Schedule a future resignation (stays active until effectiveDate)
-  scheduleResignation: protectedProcedure
-    .input(z.object({
-      agentCode: z.string(),
-      effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      reason: z.string().min(1),
-    }))
-    .mutation(async ({ input, ctx }) => {
-      const adminName = ctx.user?.name ?? "Admin";
-      await scheduleResignation(input.agentCode, input.effectiveDate, input.reason, adminName);
-      return { success: true };
-    }),
-  // Cancel a pending scheduled separation
-  cancelScheduled: protectedProcedure
-    .input(z.object({ agentCode: z.string() }))
-    .mutation(async ({ input }) => {
-      await cancelScheduledSeparation(input.agentCode);
-      return { success: true };
-    }),
 });
+
 // ─── Payroll v2 Router ───────────────────────────────────────────────────────
 const payrollV2Router = router({
   uploadPayrollV2: protectedProcedure
@@ -3044,6 +3020,27 @@ const cycleTrackerRouter = router({
       const crdts = agent[0]?.crdts;
       if (!crdts) return [];
       return getClientLogoutsByAgent(crdts);
+    }),
+
+  getMyQualityFlagsAgent: publicProcedure
+    .query(async ({ ctx }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) return [];
+      let traineeCode: string;
+      try {
+        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
+        traineeCode = decoded.traineeCode;
+      } catch { return []; }
+      const { workforceAgents } = await import('../drizzle/schema');
+      const { getDb } = await import('./db');
+      const dbConn = await getDb();
+      if (!dbConn) return [];
+      const { eq } = await import('drizzle-orm');
+      const agent = await dbConn.select({ crdts: workforceAgents.crdts })
+        .from(workforceAgents).where(eq(workforceAgents.traineeCode, traineeCode)).limit(1);
+      const crdts = agent[0]?.crdts;
+      if (!crdts) return [];
+      return getAgentQualityFlagsByAgent(crdts);
     }),
   getMyCommissionMonthsAgent: publicProcedure
     .query(async ({ ctx }) => {

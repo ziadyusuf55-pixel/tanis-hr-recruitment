@@ -2644,6 +2644,10 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
   const { data: logouts = [], isLoading: loadingLogouts } =
     trpc.cycleTracker.getMyClientLogoutsAgent.useQuery();
 
+  // Quality flags (QA results — visible to the agent only, never affects pay)
+  const { data: qualityFlags = [], isLoading: loadingQuality } =
+    trpc.cycleTracker.getMyQualityFlagsAgent.useQuery();
+
   // Campaign ranking for selected cycle (own stats)
   const { data: ranking, isLoading: loadingRanking } =
     trpc.cycleTracker.getMyCampaignRankingAgent.useQuery(
@@ -2965,7 +2969,7 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
       <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
         <div className="px-4 py-3 flex items-center gap-2" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
           <PhoneOff className="w-4 h-4" style={{ color: "#ef4444" }} />
-          <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.textFaint }}>Client Logouts</p>
+          <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.textFaint }}>Logout Summary</p>
           {logouts.length > 0 && (
             <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: "oklch(0.55 0.22 25 / 0.15)", color: "#ef4444" }}>
               {logouts.length} total
@@ -2976,14 +2980,17 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
           <div className="h-24 animate-pulse" style={{ background: theme.surface }} />
         ) : logouts.length === 0 ? (
           <div className="px-4 py-8 text-center">
-            <p className="text-sm font-medium" style={{ color: "oklch(0.55 0.18 145)" }}>No client logouts on record.</p>
+            <p className="text-sm font-medium" style={{ color: "oklch(0.55 0.18 145)" }}>No logouts on record.</p>
             <p className="text-xs mt-1" style={{ color: theme.textFaint }}>Keep up the great work!</p>
           </div>
         ) : (
           <div className="divide-y" style={{ borderColor: theme.cardBorder }}>
             {logoutCycles.map(cycle => (
               <div key={cycle} className="px-4 py-3">
-                <p className="text-xs font-semibold mb-2" style={{ color: theme.textMuted }}>{formatMonthLabel(cycle)}</p>
+                <p className="text-xs font-semibold mb-2 flex items-center justify-between" style={{ color: theme.textMuted }}>
+                  <span>{formatMonthLabel(cycle)}</span>
+                  <span style={{ color: "#ef4444" }}>{logoutsByCycle[cycle].length} logout{logoutsByCycle[cycle].length === 1 ? "" : "s"}</span>
+                </p>
                 <div className="space-y-1">
                   {logoutsByCycle[cycle].map((l, i) => (
                     <div key={i} className="flex items-center gap-3 text-xs rounded-lg px-3 py-2"
@@ -2994,6 +3001,43 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
                     </div>
                   ))}
                 </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Section 4: Quality (QA results — visible only, never affects pay) ── */}
+      <div className="rounded-xl overflow-hidden" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <div className="px-4 py-3 flex items-center gap-2" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+          <AlertCircle className="w-4 h-4" style={{ color: "#f59e0b" }} />
+          <p className="text-xs font-semibold uppercase tracking-wider" style={{ color: theme.textFaint }}>Quality (QA)</p>
+          {qualityFlags.length > 0 && (
+            <span className="ml-auto text-xs font-bold px-2 py-0.5 rounded-full" style={{ background: "oklch(0.7 0.15 75 / 0.15)", color: "#f59e0b" }}>
+              {qualityFlags.length} flagged
+            </span>
+          )}
+        </div>
+        {loadingQuality ? (
+          <div className="h-24 animate-pulse" style={{ background: theme.surface }} />
+        ) : qualityFlags.length === 0 ? (
+          <div className="px-4 py-8 text-center">
+            <p className="text-sm font-medium" style={{ color: "oklch(0.55 0.18 145)" }}>No quality flags on record.</p>
+            <p className="text-xs mt-1" style={{ color: theme.textFaint }}>Keep up the great work!</p>
+          </div>
+        ) : (
+          <div className="divide-y" style={{ borderColor: theme.cardBorder }}>
+            {(qualityFlags as Array<{ date: string; violation: string | null; score: string | null; deductionEgp: string | null }>).map((q, i) => (
+              <div key={i} className="px-4 py-3 flex items-center gap-3 text-xs">
+                <AlertCircle className="w-3 h-3 flex-shrink-0" style={{ color: "#f59e0b" }} />
+                <span className="font-mono" style={{ color: theme.textMuted }}>{q.date}</span>
+                <span className="flex-1" style={{ color: theme.text }}>{q.violation || "—"}</span>
+                {q.score != null && String(q.score) !== "" && (
+                  <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: theme.surface, color: theme.textMuted }}>{Math.round(Number(q.score))}/100</span>
+                )}
+                {q.deductionEgp != null && Number(q.deductionEgp) > 0 && (
+                  <span className="text-xs px-1.5 py-0.5 rounded font-semibold" style={{ background: "oklch(0.7 0.15 75 / 0.15)", color: "#f59e0b" }}>−{Math.round(Number(q.deductionEgp))} EGP</span>
+                )}
               </div>
             ))}
           </div>

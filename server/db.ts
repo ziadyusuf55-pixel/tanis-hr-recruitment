@@ -2605,6 +2605,32 @@ export async function getClientLogoutsByAgent(crdts: string) {
   return db.select().from(clientLogouts).where(eq(clientLogouts.crdts, crdts)).orderBy(desc(clientLogouts.date));
 }
 
+export async function bulkUpsertAgentQualityFlags(rows: Array<{ crdts: string; agentCode?: string; alias?: string; date: string; violation?: string; score?: string; deductionEgp?: string; hours?: string; cycleKey: string }>) {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { agentQualityFlags } = await import("../drizzle/schema");
+  const now = Date.now();
+  let inserted = 0; let updated = 0;
+  for (const row of rows) {
+    const existing = await db.select({ id: agentQualityFlags.id }).from(agentQualityFlags)
+      .where(and(eq(agentQualityFlags.crdts, row.crdts), eq(agentQualityFlags.date, row.date), eq(agentQualityFlags.violation, row.violation ?? ""))).limit(1);
+    if (existing[0]) {
+      await db.update(agentQualityFlags).set({ ...row, uploadedAt: now }).where(eq(agentQualityFlags.id, existing[0].id));
+      updated++;
+    } else {
+      await db.insert(agentQualityFlags).values({ ...row, uploadedAt: now });
+      inserted++;
+    }
+  }
+  return { inserted, updated };
+}
+export async function getAgentQualityFlagsByAgent(crdts: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { agentQualityFlags } = await import("../drizzle/schema");
+  return db.select().from(agentQualityFlags).where(eq(agentQualityFlags.crdts, crdts)).orderBy(desc(agentQualityFlags.date));
+}
+
 // ─── Commission Month (calendar-month grouping of cycle_stats) ────────────────
 export async function getCommissionMonthData(crdts: string, month: string) {
   const db = await getDb();

@@ -375,6 +375,75 @@ async function startServer() {
     }
   });
 
+  // ─── REST API: POST /api/upload/quality ───────────────────────────────────
+  // Per-call QA results from the Quality sheet, for AGENT VISIBILITY ONLY (never
+  // feeds payroll). Fields per row: CRDTS, Date, Violation, Score, EGP, Hours, Alias.
+  app.post("/api/upload/quality", async (req, res) => {
+    try {
+      const apiKey = req.headers["x-api-key"] as string | undefined;
+      if (!apiKey) { res.status(401).json({ error: "Missing X-API-Key header" }); return; }
+      const { getDb } = await import("../db");
+      const db = await getDb();
+      if (!db) { res.status(503).json({ error: "Database unavailable" }); return; }
+      const { apiKeys } = await import("../../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const { createHash } = await import("crypto");
+      const keyHash = createHash("sha256").update(apiKey).digest("hex");
+      const [keyRow] = await db.select().from(apiKeys).where(eq(apiKeys.keyHash, keyHash)).limit(1);
+      if (!keyRow) { res.status(401).json({ error: "Invalid API key" }); return; }
+      if (keyRow.revokedAt) { res.status(401).json({ error: "API key has been revoked" }); return; }
+      await db.update(apiKeys).set({ lastUsedAt: Date.now() }).where(eq(apiKeys.id, keyRow.id));
+
+      const body = req.body;
+      if (!Array.isArray(body)) { res.status(400).json({ error: "Request body must be a JSON array" }); return; }
+
+      const normDate = (raw: string): string => {
+        const s = String(raw).trim();
+        let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+        if (m) return `${m[1]}-${String(+m[2]).padStart(2, "0")}-${String(+m[3]).padStart(2, "0")}`;
+        m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);   // DD/MM/YYYY
+        if (m) return `${m[3]}-${String(+m[2]).padStart(2, "0")}-${String(+m[1]).padStart(2, "0")}`;
+        throw new Error(`Unrecognized date: ${raw}`);
+      };
+      const numStr = (v: unknown): string | undefined => {
+        if (v === undefined || v === null || v === "") return undefined;
+        const n = parseFloat(String(v).replace(/[^0-9.\-]/g, ""));
+        return isNaN(n) ? undefined : String(n);
+      };
+
+      const seen = new Set<string>();
+      const rows: Array<{ crdts: string; alias?: string; date: string; violation?: string; score?: string; deductionEgp?: string; hours?: string; cycleKey: string }> = [];
+      for (let i = 0; i < body.length; i++) {
+        const r = body[i] as Record<string, unknown>;
+        const crdts = String(r["CRDTS"] ?? r["crdts"] ?? "").trim().replace(/\.0+$/, "");
+        const dateRaw = String(r["Date"] ?? r["date"] ?? "").trim();
+        const violation = String(r["Violation"] ?? r["violation"] ?? "").trim();
+        if (!crdts || !dateRaw) continue;
+        const date = normDate(dateRaw);
+        const key = `${crdts}|${date}|${violation}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        rows.push({
+          crdts,
+          alias: String(r["Alias"] ?? r["alias"] ?? "").trim() || undefined,
+          date,
+          violation: violation || undefined,
+          score: numStr(r["Score"] ?? r["score"] ?? r["TOTAL"]),
+          deductionEgp: numStr(r["EGP"] ?? r["egp"] ?? r["deductionEgp"]),
+          hours: numStr(r["Hours"] ?? r["hours"]),
+          cycleKey: date.slice(0, 7),
+        });
+      }
+      if (rows.length === 0) { res.status(400).json({ error: "No valid quality rows" }); return; }
+      const { bulkUpsertAgentQualityFlags } = await import("../db");
+      await bulkUpsertAgentQualityFlags(rows);
+      res.json({ ok: true, count: rows.length, message: `${rows.length} quality records processed` });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(400).json({ error: msg });
+    }
+  });
+
   // ─── REST API: GET /api/agents/status ─────────────────────────────────────
   // Returns current agent status (one entry per CRDTS) so the analysis sheet can
   // auto-exclude resigned/terminated agents from pivots & charts. Auth: X-API-Key.
@@ -497,6 +566,8 @@ async function startServer() {
   app.post("/api/slack/events", async (req, res) => {
     try {
       const body = (req.body ?? {}) as Record<string, unknown>;
+      const _sev = (body.event ?? {}) as Record<string, unknown>;
+      console.log("[slack] in:", body.type, _sev.type ?? "", _sev.reaction ?? "");
       // 1) URL verification handshake (when you save the Request URL in Slack)
       if (body.type === "url_verification") { res.status(200).send(String(body.challenge ?? "")); return; }
 
@@ -513,7 +584,7 @@ async function startServer() {
           const mine = "v0=" + createHmac("sha256", signingSecret).update(base).digest("hex");
           try { okSig = timingSafeEqual(Buffer.from(mine), Buffer.from(sig)); } catch { okSig = false; }
         }
-        if (!okSig) { res.status(401).send("bad signature"); return; }
+        if (!okSig) { console.log("[slack] signature FAILED — check SLACK_SIGNING_SECRET / rawBody"); res.status(401).send("bad signature"); return; }
       }
 
       // 3) Acknowledge immediately (Slack requires a fast 200, then we act)
@@ -557,7 +628,8 @@ async function startServer() {
         const text = String(ev.text ?? "");
         matched = text.includes(trigger) || text.includes(`:${triggerName}:`);
       }
-      if (!matched) return;
+      if (!matched) { console.log("[slack] reaction", String(ev.reaction ?? ""), "≠ trigger", triggerName); return; }
+      console.log("[slack] trigger matched — posting reply");
       fetch(hook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: reply }) }).catch(() => {});
     } catch {
       try { if (!res.headersSent) res.status(200).send(""); } catch { /* ignore */ }

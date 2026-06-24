@@ -602,7 +602,6 @@ export const agentSeparations = mysqlTable("agent_separations", {
   effectiveAt: bigint("effectiveAt", { mode: "number" }),     // UTC ms — when separation took effect
   approvedBy: varchar("approvedBy", { length: 255 }),         // admin name who approved/processed
   approvedAt: bigint("approvedAt", { mode: "number" }),       // UTC ms
-  appliedAt: bigint("appliedAt", { mode: "number" }),        // UTC ms — when the deactivation actually executed (null = scheduled, pending)
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 });
 export type AgentSeparation = typeof agentSeparations.$inferSelect;
@@ -834,6 +833,28 @@ export const clientLogouts = mysqlTable("client_logouts", {
 });
 export type ClientLogout = typeof clientLogouts.$inferSelect;
 export type InsertClientLogout = typeof clientLogouts.$inferInsert;
+
+/**
+ * agent_quality_flags — per-call QA results pushed from the Quality sheet for
+ * AGENT VISIBILITY ONLY. This is intentionally separate from agent_violations and
+ * is NEVER read by payroll. deductionEgp/hours are shown for the agent's awareness.
+ */
+export const agentQualityFlags = mysqlTable("agent_quality_flags", {
+  id: int("id").autoincrement().primaryKey(),
+  crdts: varchar("crdts", { length: 100 }).notNull(),
+  agentCode: varchar("agentCode", { length: 100 }),
+  alias: varchar("alias", { length: 100 }),
+  date: varchar("date", { length: 10 }).notNull(),              // YYYY-MM-DD
+  violation: varchar("violation", { length: 255 }),
+  score: decimal("score", { precision: 5, scale: 1 }),          // TOTAL /100
+  deductionEgp: decimal("deductionEgp", { precision: 10, scale: 2 }).default("0"), // informational only
+  hours: decimal("hours", { precision: 6, scale: 2 }).default("0"),                // informational only
+  cycleKey: varchar("cycleKey", { length: 7 }).notNull(),       // YYYY-MM
+  uploadedAt: bigint("uploadedAt", { mode: "number" }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+export type AgentQualityFlag = typeof agentQualityFlags.$inferSelect;
+export type InsertAgentQualityFlag = typeof agentQualityFlags.$inferInsert;
 
 /**
  * coaching_case_status_log — audit trail of status changes on a coaching case.
