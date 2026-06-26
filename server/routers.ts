@@ -655,6 +655,8 @@ const dashboardRouter = router({
 const AGENT_COOKIE = "tanis_agent_session";
 // Helper: parse a named cookie from req.headers.cookie (no cookie-parser needed)
 function getAgentCookieFromReq(req: { headers: { cookie?: string } }): string | undefined {
+  // Global lock — when set, no agent request resolves (kicks active sessions, not just new logins)
+  if (process.env.AGENT_PORTAL_LOCKED === "true") return undefined;
   if (!req.headers.cookie) return undefined;
   const parsed = parseCookieHeader(req.headers.cookie);
   return parsed[AGENT_COOKIE];
@@ -695,6 +697,13 @@ const agentRouter = router({
   login: publicProcedure
     .input(z.object({ traineeCode: z.string().min(1), password: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
+      // Global portal lock — set env AGENT_PORTAL_LOCKED=true to block ALL agent logins
+      if (process.env.AGENT_PORTAL_LOCKED === "true") {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "The agent portal is temporarily locked. Please contact your manager.",
+        });
+      }
       // Check lockout before any credential lookup
       const lockoutStatus = await isLockedOut(input.traineeCode, "agent");
       if (lockoutStatus.locked) {
@@ -2271,8 +2280,28 @@ const payrollV2Router = router({
     .mutation(async ({ input, ctx }) => {
       const uploadedBy = ctx.user?.name ?? "admin";
       const uploadedAt = Date.now();
+
+      // Auto-attach commission: the payroll for month M is paid together with the
+      // commission earned the PREVIOUS calendar month (June payroll / July 1 salary
+      // carries May's commission). Pull it from commission_leaderboard by CRDTS.
+      const { getDb: _getDbComm } = await import("./db");
+      const _dbComm = await _getDbComm();
+      const commissionMap = new Map<string, number>();
+      let commissionCycle = "";
+      if (_dbComm) {
+        const [py, pm] = input.month.split("-").map(Number);
+        const prev = new Date(py, pm - 2, 1);   // calendar month before the payroll month
+        commissionCycle = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
+        const { commissionLeaderboard } = await import("../drizzle/schema");
+        const { eq: _eqComm } = await import("drizzle-orm");
+        const comms = await _dbComm.select({ crdts: commissionLeaderboard.crdts, amt: commissionLeaderboard.commissionEgp })
+          .from(commissionLeaderboard).where(_eqComm(commissionLeaderboard.cycleKey, commissionCycle));
+        for (const c of comms) if (c.crdts) commissionMap.set(c.crdts, Number(c.amt || 0));
+      }
+
       for (const row of input.rows) {
-        await upsertPayrollRecordV2({ ...row, month: input.month, uploadedBy, uploadedAt });
+        const commissionEgp = commissionMap.get(row.crdts) ?? row.commissionEgp;
+        await upsertPayrollRecordV2({ ...row, commissionEgp, month: input.month, uploadedBy, uploadedAt });
       }
 
       // Anomaly detection
@@ -2303,7 +2332,11 @@ const payrollV2Router = router({
         }
       }
 
-      return { success: true, count: input.rows.length, warnings };
+      if (commissionCycle && commissionMap.size === 0) {
+        warnings.push({ crdts: "—", type: "no_commission", message: `No commission found for ${commissionCycle} — upload that month's commission file first, then re-upload payroll to attach it.` });
+      }
+
+      return { success: true, count: input.rows.length, commissionCycle, commissionAttached: commissionMap.size, warnings };
     }),
 
   getStatusPage: protectedProcedure
