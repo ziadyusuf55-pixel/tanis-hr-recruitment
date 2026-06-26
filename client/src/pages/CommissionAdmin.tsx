@@ -143,13 +143,28 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
   const [uploadDialog, setUploadDialog] = useState(false);
   const [performanceMonthKey, setPerformanceMonthKey] = useState<string>(""); // YYYY-MM
   const [performanceMonth, setPerformanceMonth] = useState(""); // free text label
-  // Auto-calculate Pay Cycle = performanceMonthKey + 2 months
-  const payCycle = useMemo(() => {
+  // Pay Cycle = the payroll month this commission ATTACHES to (paid on the 1st of the following month).
+  // Default = performance month + 1 (e.g. May work → June payroll → paid 1 July). Admin can override below.
+  const [payCycleOverride, setPayCycleOverride] = useState<string>("");
+  const payCycleAuto = useMemo(() => {
     if (!performanceMonthKey) return "";
     const [y, m] = performanceMonthKey.split("-").map(Number);
-    const d = new Date(y, m - 1 + 2, 1);
+    const d = new Date(y, m - 1 + 1, 1);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   }, [performanceMonthKey]);
+  const payCycle = payCycleOverride || payCycleAuto;
+
+  // Plain-language breakdown of where this commission goes
+  const payCycleInfo = useMemo(() => {
+    if (!payCycle) return null;
+    const [y, m] = payCycle.split("-").map(Number);
+    const cycleStart = new Date(y, m - 2, 26);   // 26th of month before the payroll month
+    const cycleEnd = new Date(y, m - 1, 25);     // 25th of the payroll month
+    const payDate = new Date(y, m, 1);           // 1st of the month AFTER the payroll month
+    const fmt = (d: Date) => d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+    const monthLabel = new Date(y, m - 1).toLocaleString("en-US", { month: "long", year: "numeric" });
+    return { monthLabel, cycle: `${fmt(cycleStart)} – ${fmt(cycleEnd)}`, payDate: fmt(payDate) };
+  }, [payCycle]);
 
   // Cycle date range: 26th of prev month → 25th of performance month
   const cycleDateRange = useMemo(() => {
@@ -245,6 +260,7 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
         setParsedLeaderboard([]);
         setPerformanceMonth("");
         setPerformanceMonthKey("");
+        setPayCycleOverride("");
         // Open Slack message generator
         setSlackCycle(payCycle);
         setSlackPerfMonth(performanceMonth);
@@ -847,15 +863,29 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
                 {!cycleDateRange && <p className="text-xs text-muted-foreground">The month agents worked to earn this commission</p>}
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-sm font-medium">Pay Cycle (auto-calculated)</label>
-                <div className="h-9 rounded-md border border-input bg-muted px-3 py-1 text-sm flex items-center text-muted-foreground">
-                  {payCycle ? formatMonthLabel(payCycle) : "Select performance month first"}
-                </div>
+                <label className="text-sm font-medium">Pay Cycle (you can change this)</label>
+                <input
+                  type="month"
+                  value={payCycle}
+                  onChange={e => setPayCycleOverride(e.target.value)}
+                  className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+                />
                 <p className="text-xs text-muted-foreground">
-                  {payCycle ? `Paid on 1st ${formatMonthLabel(payCycle)} (performance + 2 months)` : "Will be auto-set to performance month + 2 months"}
+                  The payroll month this commission attaches to (defaults to performance month + 1).
                 </p>
               </div>
             </div>
+
+            {/* Explicit "where does this go" preview */}
+            {payCycleInfo && (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900 space-y-0.5">
+                <p className="font-semibold">✅ Where this commission goes:</p>
+                <p>• Earned for work in <strong>{performanceMonth || "the selected performance month"}</strong></p>
+                <p>• Attaches to the <strong>{payCycleInfo.monthLabel}</strong> payroll (cycle {payCycleInfo.cycle})</p>
+                <p>• Paid to agents on <strong>{payCycleInfo.payDate}</strong></p>
+                {parsedRows.length > 0 && <p>• Affects <strong>{parsedRows.length}</strong> agent{parsedRows.length !== 1 ? "s" : ""} in this file</p>}
+              </div>
+            )}
 
             {/* File picker */}
             <div className="flex flex-col gap-1">
@@ -987,7 +1017,7 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
                       // Upload leaderboard rows first (if any)
                       if (parsedLeaderboard.length > 0) {
                         await uploadLeaderboardMutation.mutateAsync({
-                          cycleKey: payCycle,
+                          cycleKey: performanceMonthKey || payCycle,
                           rows: parsedLeaderboard.map(r => ({
                             campaignName: r.campaignName,
                             crdts: r.crdts,

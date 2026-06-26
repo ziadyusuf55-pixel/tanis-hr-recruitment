@@ -1028,6 +1028,7 @@ export default function PayrollPage() {
                 ["ot3xHours", "OT 3x Hours"],
                 ["ot3xPay", "OT 3x Pay (EGP)"],
                 ["coachingBonus", "Coaching Bonus (EGP)"],
+                ["commissionEgp", "Commission (EGP)"],
                 ["totalDeductions", "Total Deductions (EGP)"],
                 ["netPay", "Net Pay (EGP)"],
               ] as [keyof StatusRecord, string][]).map(([field, label]) => (
@@ -1048,7 +1049,7 @@ export default function PayrollPage() {
             <Button
               onClick={() => {
                 if (editingRow === null) return;
-                updateRecordMutation.mutate({ id: editingRow, data: editValues as { baseSalary?: string; workingHours?: string; ot1x5Hours?: string; ot1x5Pay?: string; ot2xHours?: string; ot2xPay?: string; ot3xHours?: string; ot3xPay?: string; coachingBonus?: string; totalDeductions?: string; netPay?: string; } });
+                updateRecordMutation.mutate({ id: editingRow, data: editValues as { baseSalary?: string; workingHours?: string; ot1x5Hours?: string; ot1x5Pay?: string; ot2xHours?: string; ot2xPay?: string; ot3xHours?: string; ot3xPay?: string; coachingBonus?: string; commissionEgp?: string; totalDeductions?: string; netPay?: string; } });
               }}
               disabled={updateRecordMutation.isPending}
             >

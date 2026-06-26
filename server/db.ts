@@ -2653,8 +2653,13 @@ export async function getAvailableCommissionMonths(crdts: string): Promise<strin
   const db = await getDb();
   if (!db) return [];
   const { cycleStats } = await import("../drizzle/schema");
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  // Exclude impossible future months (e.g. a mis-parsed date landing in a month that hasn't happened yet)
   const result = await db.selectDistinct({ month: sql<string>`LEFT(${cycleStats.date}, 7)` })
-    .from(cycleStats).where(eq(cycleStats.crdts, crdts)).orderBy(sql`LEFT(${cycleStats.date}, 7) DESC`);
+    .from(cycleStats)
+    .where(and(eq(cycleStats.crdts, crdts), sql`LEFT(${cycleStats.date}, 7) <= ${currentMonth}`))
+    .orderBy(sql`LEFT(${cycleStats.date}, 7) DESC`);
   return result.map(r => r.month);
 }
 
