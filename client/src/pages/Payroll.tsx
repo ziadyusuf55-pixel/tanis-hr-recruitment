@@ -60,6 +60,7 @@ type StatusRecord = {
   paidAt: number | null;
   month: string;
   pendingLeave?: { effectiveAt: number | null; lastWorkingDay: string | null } | null;
+  adjustments?: Array<{ type: string; label: string; amount: string | number }>;
 };
 
 type Warning = { crdts: string; alias?: string; type: string; message: string };
@@ -80,7 +81,8 @@ function formatMonthLabel(m: string) {
   return new Date(parseInt(y), parseInt(mo) - 1).toLocaleString("en-US", { month: "long", year: "numeric" });
 }
 
-function n(v: string | null | undefined) {
+function n(v: string | number | null | undefined) {
+  if (typeof v === "number") return isNaN(v) ? 0 : v;
   const parsed = parseFloat(v ?? "0");
   return isNaN(parsed) ? 0 : parsed;
 }
@@ -321,11 +323,24 @@ export default function PayrollPage() {
   }
 
   const records = statusRecords as StatusRecord[];
+  // Net manual adjustment for a record: + bonuses − deductions.
+  const adjNet = (r: StatusRecord) => (r.adjustments ?? []).reduce(
+    (s, a) => s + (a.type === "deduction" ? -1 : 1) * (n(a.amount) || 0), 0);
+  // Final pay an agent actually receives = net pay + commission + adjustments.
+  const rowTotal = (r: StatusRecord) => n(r.netPay) + n(r.commissionEgp) + adjNet(r);
   const paidCount = records.filter(r => r.paymentStatus === "paid").length;
   const pendingCount = records.length - paidCount;
-  const totalNetPay = records.reduce((sum, r) => sum + n(r.netPay) + n(r.commissionEgp), 0);
-  const totalPaidNetPay = records.filter(r => r.paymentStatus === "paid").reduce((sum, r) => sum + n(r.netPay) + n(r.commissionEgp), 0);
-  const totalPendingNetPay = records.filter(r => r.paymentStatus !== "paid").reduce((sum, r) => sum + n(r.netPay) + n(r.commissionEgp), 0);
+  const totalNetPay = records.reduce((sum, r) => sum + rowTotal(r), 0);
+  const totalPaidNetPay = records.filter(r => r.paymentStatus === "paid").reduce((sum, r) => sum + rowTotal(r), 0);
+  const totalPendingNetPay = records.filter(r => r.paymentStatus !== "paid").reduce((sum, r) => sum + rowTotal(r), 0);
+  // Breakdown totals
+  const totalBaseSalary = records.reduce((sum, r) => sum + n(r.baseSalary), 0);
+  const totalOtPay = records.reduce((sum, r) => sum + n(r.ot1x5Pay) + n(r.ot2xPay) + n(r.ot3xPay), 0);
+  const totalCoachingBonus = records.reduce((sum, r) => sum + n(r.coachingBonus), 0);
+  const totalCommission = records.reduce((sum, r) => sum + n(r.commissionEgp), 0);
+  const totalAdjBonuses = records.reduce((sum, r) => sum + (r.adjustments ?? []).filter(a => a.type === "bonus").reduce((s, a) => s + n(a.amount), 0), 0);
+  const totalDeductions = records.reduce((sum, r) => sum + n(r.totalDeductions), 0);
+  const totalAdjDeductions = records.reduce((sum, r) => sum + (r.adjustments ?? []).filter(a => a.type === "deduction").reduce((s, a) => s + n(a.amount), 0), 0);
 
   return (
     <div className="space-y-6">
@@ -428,6 +443,22 @@ export default function PayrollPage() {
             </div>
           )}
 
+          {/* ── Breakdown Bar ── */}
+          {records.length > 0 && (
+            <div className="rounded-xl border bg-muted/30 px-5 py-3">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">Breakdown</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-1.5 text-sm">
+                <div className="flex justify-between gap-2"><span className="text-muted-foreground">Base Salaries</span><span className="font-medium">{fmtEGP(totalBaseSalary)}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-muted-foreground">OT Pay</span><span className="font-medium">{fmtEGP(totalOtPay)}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-muted-foreground">Coaching Bonus</span><span className="font-medium text-emerald-600">{fmtEGP(totalCoachingBonus)}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-muted-foreground">Commission</span><span className="font-medium text-blue-600">{fmtEGP(totalCommission)}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-muted-foreground">Other Bonuses</span><span className="font-medium text-emerald-600">{fmtEGP(totalAdjBonuses)}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-muted-foreground">Deductions</span><span className="font-medium text-red-500">−{fmtEGP(totalDeductions)}</span></div>
+                <div className="flex justify-between gap-2"><span className="text-muted-foreground">Other Deductions</span><span className="font-medium text-red-500">−{fmtEGP(totalAdjDeductions)}</span></div>
+                <div className="flex justify-between gap-2 font-semibold border-t pt-1.5 col-span-2 sm:col-span-4"><span>Total to Disburse</span><span className="text-emerald-700">{fmtEGP(totalNetPay)}</span></div>
+              </div>
+            </div>
+          )}
           {loadingStatus ? (
             <div className="space-y-2">{[1,2,3,4,5].map(i => <div key={i} className="h-12 rounded-lg bg-muted/40 animate-pulse" />)}</div>
           ) : records.length === 0 ? (
@@ -484,7 +515,14 @@ export default function PayrollPage() {
                             </td>
                             <td className="px-4 py-3 text-right text-muted-foreground">{fmtEGP(n(r.netPay))}</td>
                             <td className="px-4 py-3 text-right font-medium text-blue-600">{n(r.commissionEgp) > 0 ? fmtEGP(n(r.commissionEgp)) : <span className="text-muted-foreground/40">—</span>}</td>
-                            <td className="px-4 py-3 text-right font-semibold text-emerald-600">{fmtEGP(n(r.netPay) + n(r.commissionEgp))}</td>
+                            <td className="px-4 py-3 text-right font-semibold text-emerald-600">
+                              {fmtEGP(rowTotal(r))}
+                              {adjNet(r) !== 0 && (
+                                <span className={`block text-[10px] font-medium ${adjNet(r) > 0 ? "text-emerald-600" : "text-red-600"}`}>
+                                  {adjNet(r) > 0 ? "+" : "−"}{fmtEGP(Math.abs(adjNet(r)))} adj
+                                </span>
+                              )}
+                            </td>
                             <td className="px-4 py-3 text-center">
                               {r.paymentStatus === "paid" ? (
                                 <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 gap-1">
@@ -550,6 +588,20 @@ export default function PayrollPage() {
                                       <div className="flex justify-between text-emerald-600 font-semibold border-t pt-1 mt-1">
                                         <span>Net Pay</span><span>{fmtEGP(r.netPay)}</span>
                                       </div>
+                                      {n(r.commissionEgp) > 0 && (
+                                        <div className="flex justify-between text-blue-600"><span>Commission</span><span>+{fmtEGP(r.commissionEgp)}</span></div>
+                                      )}
+                                      {(r.adjustments ?? []).map((a, i) => (
+                                        <div key={i} className={`flex justify-between ${a.type === "deduction" ? "text-red-500" : "text-green-600"}`}>
+                                          <span>{a.label || (a.type === "deduction" ? "Other Deduction" : "Other Bonus")}</span>
+                                          <span>{a.type === "deduction" ? "−" : "+"}{fmtEGP(Math.abs(n(a.amount)))}</span>
+                                        </div>
+                                      ))}
+                                      {(n(r.commissionEgp) > 0 || adjNet(r) !== 0) && (
+                                        <div className="flex justify-between text-emerald-700 font-bold border-t pt-1 mt-1">
+                                          <span>Final Total</span><span>{fmtEGP(rowTotal(r))}</span>
+                                        </div>
+                                      )}
                                       {r.paidAt && (
                                         <div className="flex justify-between text-muted-foreground mt-1">
                                           <span>Paid</span><span>{new Date(r.paidAt).toLocaleDateString("en-EG")}</span>

@@ -808,6 +808,7 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
     paymentStatus: string | null;
     paymentDate: number | null;
     notes?: string | null;
+    adjustments?: Array<{ type: "bonus" | "deduction"; label: string; amount: string | number }>;
   } | null | undefined;
 
   return (
@@ -904,14 +905,17 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
             </div>
           </div>
 
-          {/* Net Pay + Adjustments + Trainer Salary + Commission + Final Total */}
+          {/* Net Pay + Adjustments + Commission + Final Total */}
           {(() => {
             const nv = (v: string | null | undefined) => v != null ? parseFloat(String(v)) || 0 : 0;
             const netPay = nv(r.baseSalary) + nv(r.ot1x5Pay) + nv(r.ot2xPay) + nv(r.ot3xPay) + nv(r.coachingBonus) - nv(r.totalDeductions);
             const commission = nv(r.commissionEgp);
-            const adjNet = 0; // adjustments not shown on agent payslip
-            const trainerSal = 0; // trainer salary not shown on agent payslip
-            const finalTotal = netPay + commission + adjNet + trainerSal;
+            const adj = (r.adjustments ?? []) as Array<{ type: "bonus" | "deduction"; label: string; amount: string | number }>;
+            const adjBonuses = adj.filter(a => a.type === "bonus");
+            const adjDeductions = adj.filter(a => a.type === "deduction");
+            const adjNet = adjBonuses.reduce((s, a) => s + nv(String(a.amount)), 0) - adjDeductions.reduce((s, a) => s + nv(String(a.amount)), 0);
+            const finalTotal = netPay + commission + adjNet;
+            const hasExtras = commission > 0 || adj.length > 0;
             return (
               <div className="space-y-2">
                 {/* Net Pay box */}
@@ -919,6 +923,25 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
                   <p className="text-sm font-medium" style={{ color: theme.textMuted }}>Net Pay</p>
                   <p className="text-lg font-bold" style={{ color: theme.text }}>{fmtEGP(String(netPay.toFixed(2)))}</p>
                 </div>
+                {/* Manual adjustments — bonuses (added) and deductions (subtracted) */}
+                {adjBonuses.length > 0 && (
+                  <p className="text-xs font-semibold uppercase tracking-wider pt-1" style={{ color: theme.textFaint }}>Other Bonuses</p>
+                )}
+                {adjBonuses.map((a, i) => (
+                  <div key={`b${i}`} className="rounded-xl px-5 py-3 flex items-center justify-between" style={{ background: "oklch(0.55 0.18 145 / 0.06)", border: "1px solid oklch(0.55 0.18 145 / 0.2)" }}>
+                    <p className="text-sm font-medium" style={{ color: theme.textMuted }}>{a.label || "Bonus"}</p>
+                    <p className="text-sm font-semibold" style={{ color: "oklch(0.55 0.18 145)" }}>+ {fmtEGP(String(nv(String(a.amount)).toFixed(2)))}</p>
+                  </div>
+                ))}
+                {adjDeductions.length > 0 && (
+                  <p className="text-xs font-semibold uppercase tracking-wider pt-1" style={{ color: theme.textFaint }}>Other Deductions</p>
+                )}
+                {adjDeductions.map((a, i) => (
+                  <div key={`d${i}`} className="rounded-xl px-5 py-3 flex items-center justify-between" style={{ background: "oklch(0.55 0.18 28 / 0.06)", border: "1px solid oklch(0.55 0.18 28 / 0.2)" }}>
+                    <p className="text-sm font-medium" style={{ color: theme.textMuted }}>{a.label || "Deduction"}</p>
+                    <p className="text-sm font-semibold" style={{ color: "#ef4444" }}>- {fmtEGP(String(nv(String(a.amount)).toFixed(2)))}</p>
+                  </div>
+                ))}
                 {/* Commission box — only shown if commission was uploaded */}
                 {commission > 0 && (
                   <div className="rounded-xl px-5 py-3 flex items-center justify-between" style={{ background: "oklch(0.55 0.18 145 / 0.08)", border: "1px solid oklch(0.55 0.18 145 / 0.25)" }}>
@@ -926,8 +949,8 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
                     <p className="text-lg font-bold" style={{ color: "oklch(0.55 0.18 145)" }}>{fmtEGP(String(commission.toFixed(2)))}</p>
                   </div>
                 )}
-                {/* Final Total — only shown when commission exists, otherwise Net Pay above is the final figure */}
-                {commission > 0 && (
+                {/* Final Total — shown when there's commission or any adjustment; otherwise Net Pay above is the final figure */}
+                {hasExtras && (
                   <div className="rounded-xl px-5 py-4 flex items-center justify-between" style={{ background: "oklch(0.32 0.18 28 / 0.12)", border: "1px solid oklch(0.32 0.18 28 / 0.25)" }}>
                     <p className="font-semibold" style={{ color: theme.text }}>Final Total</p>
                     <p className="text-xl font-bold" style={{ color: BRAND_LIGHT }}>{fmtEGP(String(finalTotal.toFixed(2)))}</p>

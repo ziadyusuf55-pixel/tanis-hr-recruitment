@@ -746,6 +746,7 @@ export default function Operations() {
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | "all">("all");
   const [search, setSearch] = useState("");
   const [tlFilter, setTlFilter] = useState<string>("all");
+  const [agentStatusFilter, setAgentStatusFilter] = useState<"active" | "terminated" | "resigned" | "all">("active");
 
   // Data
   const { data: campaigns = [], isLoading: loadingCampaigns } = trpc.campaigns.list.useQuery();
@@ -947,7 +948,9 @@ export default function Operations() {
       (a.alias ?? "").toLowerCase().includes(q) ||
       (a.crdts ?? "").toLowerCase().includes(q);
     const matchesTL = tlFilter === "all" || a.teamLeader === tlFilter;
-    return matchesSearch && matchesTL;
+    const status = a.agentStatus ?? "active";
+    const matchesStatus = agentStatusFilter === "all" || status === agentStatusFilter;
+    return matchesSearch && matchesTL && matchesStatus;
   });
 
   const openEditAgent = (agent: WorkforceAgent) => {
@@ -1124,6 +1127,28 @@ export default function Operations() {
       {/* Agents Tab */}
       {activeTab === "agents" && (
         <div>
+          {/* Status filter tabs */}
+          <div className="flex gap-1 mb-3">
+            {([
+              { value: "active", label: "Active", color: "text-emerald-700 bg-emerald-50 border-emerald-200" },
+              { value: "terminated", label: "Terminated", color: "text-red-700 bg-red-50 border-red-200" },
+              { value: "resigned", label: "Resigned", color: "text-orange-700 bg-orange-50 border-orange-200" },
+              { value: "all", label: "All", color: "text-foreground bg-muted/40 border-border" },
+            ] as const).map(opt => {
+              const count = (agents as WorkforceAgent[]).filter(a => opt.value === "all" || (a.agentStatus ?? "active") === opt.value).length;
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => setAgentStatusFilter(opt.value)}
+                  className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                    agentStatusFilter === opt.value ? opt.color + " ring-1 ring-offset-1 ring-current" : "border-border text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {opt.label} <span className="ml-1 opacity-70">({count})</span>
+                </button>
+              );
+            })}
+          </div>
           <div className="flex items-center gap-3 mb-4">
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
