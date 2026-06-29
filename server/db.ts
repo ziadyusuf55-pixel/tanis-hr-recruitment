@@ -2079,7 +2079,24 @@ export async function getPayrollStatusPage(month: string) {
   const pend = await db.select({ agentCode: sepT.agentCode, effectiveAt: sepT.effectiveAt, lastWorkingDay: sepT.lastWorkingDay })
     .from(sepT).where(isNull(sepT.appliedAt));
   const pendMap = new Map(pend.map(p => [p.agentCode, p]));
-  return rows.map(r => ({ ...r, pendingLeave: r.traineeCode ? (pendMap.get(r.traineeCode) ?? null) : null }));
+  // Attach manual adjustments (bonuses / deductions) so the admin status view can
+  // fold them into each agent's adjusted total. Keyed by primary CRDTS.
+  const { payrollAdjustments: adjT } = await import("../drizzle/schema");
+  const allAdj = await db.select().from(adjT).where(eq(adjT.month, month));
+  const adjByCrdts = new Map<string, Array<typeof allAdj[number]>>();
+  for (const a of allAdj) {
+    const k = String(a.crdts).split(",")[0].trim();
+    if (!adjByCrdts.has(k)) adjByCrdts.set(k, []);
+    adjByCrdts.get(k)!.push(a);
+  }
+  return rows.map(r => {
+    const primary = String(r.crdts ?? "").split(",")[0].trim();
+    return {
+      ...r,
+      pendingLeave: r.traineeCode ? (pendMap.get(r.traineeCode) ?? null) : null,
+      adjustments: adjByCrdts.get(primary) ?? [],
+    };
+  });
 }
 
 export async function setPayrollStatus(id: number, status: "pending" | "paid") {
@@ -2095,11 +2112,20 @@ export async function setPayrollStatus(id: number, status: "pending" | "paid") {
 export async function getMyPayrollRecordByCrdts(crdts: string, month: string) {
   const db = await getDb();
   if (!db) return null;
-  const { payrollRecords } = await import("../drizzle/schema");
+  const { payrollRecords, payrollAdjustments } = await import("../drizzle/schema");
   const rows = await db.select().from(payrollRecords)
     .where(and(eq(payrollRecords.crdts, crdts), eq(payrollRecords.month, month)))
     .limit(1);
-  return rows[0] ?? null;
+  const record = rows[0] ?? null;
+  if (!record) return null;
+  // Attach this agent's manual adjustments (bonuses / deductions) for the pay cycle.
+  // Match on the full CRDTS string OR its primary part, so a record stored as
+  // "114071,114032" still picks up an adjustment saved under "114071".
+  const crdtsCandidates = Array.from(new Set([crdts, String(crdts).split(",")[0].trim()].filter(Boolean)));
+  const { inArray: inArrayOp } = await import("drizzle-orm");
+  const adjustments = await db.select().from(payrollAdjustments)
+    .where(and(inArrayOp(payrollAdjustments.crdts, crdtsCandidates), eq(payrollAdjustments.month, month)));
+  return { ...record, adjustments };
 }
 
 export async function getMyPayrollMonthsByCrdts(crdts: string) {

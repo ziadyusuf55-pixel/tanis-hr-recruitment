@@ -274,23 +274,32 @@ async function startServer() {
       // Map incoming fields to the upsertCycleStats schema
       // Accepted fields: CRDTS, Date, Login Hours, Total Calls, Revenue, Cost, Profit, Rev/Hr
       const { upsertCycleStats } = await import("../db");
-      // Helper: compute cycleKey from a date string (26th→25th cycle = named after end month)
-      const getCycleKey = (dateStr: string): string => {
-        const d = new Date(dateStr);
-        if (isNaN(d.getTime())) throw new Error(`Invalid date: ${dateStr}`);
-        const day = d.getDate();
-        // If day >= 26, cycle ends in the NEXT month
-        if (day >= 26) {
-          const next = new Date(d.getFullYear(), d.getMonth() + 1, 1);
-          return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`;
+      // Normalize to YYYY-MM-DD, accepting ISO or DD/MM/YYYY. This avoids
+      // new Date()'s US MM/DD misread, which was filing June-09 (sent as 09/06)
+      // under September and inflating a phantom September cycle.
+      const normDate = (raw: string): string => {
+        const s = String(raw).trim();
+        let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+        if (m) return `${m[1]}-${String(+m[2]).padStart(2, "0")}-${String(+m[3]).padStart(2, "0")}`;
+        m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);   // DD/MM/YYYY
+        if (m) return `${m[3]}-${String(+m[2]).padStart(2, "0")}-${String(+m[1]).padStart(2, "0")}`;
+        throw new Error(`Invalid date: ${raw}`);
+      };
+      // Cycle runs 26th→25th, named after the END month. Pure string math on ISO.
+      const getCycleKey = (iso: string): string => {
+        const [y, mo, da] = iso.split("-").map(Number);
+        if (da >= 26) {
+          const ny = mo === 12 ? y + 1 : y;
+          const nm = mo === 12 ? 1 : mo + 1;
+          return `${ny}-${String(nm).padStart(2, "0")}`;
         }
-        // Otherwise cycle ends in the current month
-        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+        return `${y}-${String(mo).padStart(2, "0")}`;
       };
       const rows = body.map((r: Record<string, unknown>, i: number) => {
         const crdts = String(r["CRDTS"] ?? r["crdts"] ?? "").trim();
-        const date = String(r["Date"] ?? r["date"] ?? "").trim();
-        if (!crdts || !date) throw new Error(`Row ${i + 1}: CRDTS and Date are required`);
+        const dateRaw = String(r["Date"] ?? r["date"] ?? "").trim();
+        if (!crdts || !dateRaw) throw new Error(`Row ${i + 1}: CRDTS and Date are required`);
+        const date = normDate(dateRaw);
         return {
           crdts,
           agentCode: String(r["agentCode"] ?? r["Agent Code"] ?? "").trim() || undefined,

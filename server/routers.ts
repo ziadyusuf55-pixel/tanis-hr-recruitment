@@ -2062,6 +2062,17 @@ const scheduleChangeRouter = router({
             title: "Schedule Change Needs Your Approval",
             content: `${req.requesterCode} and ${req.targetCode} have agreed to swap schedules. Peer approval complete — please review and approve or reject in the Request Center.`,
           }).catch(() => {});
+          // Also ping the management Slack channel so it surfaces in real time.
+          const _mgmtHook = process.env.SLACK_MANAGEMENT_WEBHOOK || process.env.SLACK_ADMIN_WEBHOOK;
+          if (_mgmtHook) {
+            fetch(_mgmtHook, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                text: `:calendar: *Schedule Change Needs Approval*\n${req.requesterCode} and ${req.targetCode} have agreed to swap schedules. Peer approval is complete — review and approve/reject in the Request Center.`,
+              }),
+            }).catch(() => {});
+          }
         }
       } else {
         await updateScheduleChangeRequest(input.id, { status: "rejected" });
@@ -2315,7 +2326,7 @@ const payrollV2Router = router({
       let commissionCycle = "";
       if (_dbComm) {
         const [py, pm] = input.month.split("-").map(Number);
-        const prev = new Date(py, pm - 2, 1);   // calendar month before the payroll month
+        const prev = new Date(py, pm - 1, 1);   // the payroll month itself = the commission's pay cycle
         commissionCycle = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
         const { commissionLeaderboard } = await import("../drizzle/schema");
         const { eq: _eqComm } = await import("drizzle-orm");
