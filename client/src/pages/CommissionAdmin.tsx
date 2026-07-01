@@ -214,6 +214,8 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
     onError: (e) => toast.error(e.message),
   });
   const [confirmClearCycle, setConfirmClearCycle] = useState(false);
+  const [moveCycleOpen, setMoveCycleOpen] = useState(false);
+  const [moveTargetMonth, setMoveTargetMonth] = useState("");
 
   const deleteRecordMutation = trpc.commission.deleteCommissionRecord.useMutation({
     onSuccess: () => {
@@ -238,6 +240,17 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
       toast.success("Commission updated and synced to payroll");
       setEditingId(null);
       utils.commission.getForMonth.invalidate({ month: viewMonth });
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const reassignCycleMutation = trpc.commission.reassignCycle.useMutation({
+    onSuccess: (r) => {
+      toast.success(`Moved ${r.moved} commission record(s) from ${formatMonthLabel(r.from)} to ${formatMonthLabel(r.to)}`);
+      setMoveCycleOpen(false);
+      const to = moveTargetMonth;
+      utils.commission.getForMonth.invalidate({ month: viewMonth });
+      if (to) { setViewMonth(to); utils.commission.getForMonth.invalidate({ month: to }); }
     },
     onError: (e) => toast.error(e.message),
   });
@@ -549,6 +562,11 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
                   <Download className="h-3.5 w-3.5" /> Export
                 </Button>
                 {records.length > 0 && (
+                  <Button variant="outline" size="sm" className="gap-1.5" onClick={() => { setMoveTargetMonth(""); setMoveCycleOpen(true); }}>
+                    <CalendarDays className="h-3.5 w-3.5" /> Move Cycle
+                  </Button>
+                )}
+                {records.length > 0 && (
                   <Button variant="outline" size="sm" className="gap-1.5 text-red-600 border-red-200 hover:bg-red-50" onClick={() => setConfirmClearCycle(true)}>
                     <Trash2 className="h-3.5 w-3.5" /> Clear Cycle
                   </Button>
@@ -556,6 +574,37 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
               </div>
             </div>
           </div>
+
+          {/* Move whole cycle dialog (#8/#10) */}
+          <Dialog open={moveCycleOpen} onOpenChange={setMoveCycleOpen}>
+            <DialogContent>
+              <DialogHeader><DialogTitle>Move entire commission cycle</DialogTitle></DialogHeader>
+              <div className="space-y-3 text-sm">
+                <p className="text-muted-foreground">
+                  Moves <strong>every</strong> commission record and leaderboard row from <strong>{formatMonthLabel(viewMonth)}</strong> to another pay cycle, and re-syncs payroll (clears the old month, applies the new). Use this to fix a commission uploaded under the wrong month.
+                </p>
+                <div className="flex items-center gap-2">
+                  <label className="font-medium">Move to pay cycle:</label>
+                  <input type="month" value={moveTargetMonth} onChange={e => setMoveTargetMonth(e.target.value)} className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" />
+                </div>
+                <p className="text-xs text-muted-foreground">Tip: the pay cycle labelled <code>2026-07</code> is the payroll paid on <strong>1 Aug</strong>.</p>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setMoveCycleOpen(false)}>Cancel</Button>
+                <Button
+                  onClick={() => {
+                    if (!moveTargetMonth) return toast.error("Pick a target pay cycle");
+                    if (moveTargetMonth === viewMonth) return toast.error("That's the same cycle");
+                    reassignCycleMutation.mutate({ fromCycle: viewMonth, toCycle: moveTargetMonth });
+                  }}
+                  disabled={reassignCycleMutation.isPending}
+                  style={{ background: "#FF6A13" }} className="text-white"
+                >
+                  {reassignCycleMutation.isPending ? "Moving…" : "Move Cycle"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           {/* Summary card */}
           {records.length > 0 && (

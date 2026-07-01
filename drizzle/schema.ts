@@ -988,3 +988,79 @@ export const apiKeys = mysqlTable("api_keys", {
 });
 export type ApiKey = typeof apiKeys.$inferSelect;
 export type InsertApiKey = typeof apiKeys.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #5 — CRDTS REUSE ARCHIVE
+// When a CRDTS that belonged to a resigned/terminated agent is reassigned to a
+// NEW agent, the handover is recorded here. Nothing is ever deleted — the
+// previous agent keeps all of their payroll/performance records; this table just
+// documents who held the CRDTS before and when it changed hands.
+// ═══════════════════════════════════════════════════════════════════════════
+export const crdtsArchive = mysqlTable("crdts_archive", {
+  id: int("id").autoincrement().primaryKey(),
+  crdts: varchar("crdts", { length: 100 }).notNull(),
+  previousAgentId: int("previousAgentId"),
+  previousAgentCode: varchar("previousAgentCode", { length: 100 }),
+  previousAgentName: varchar("previousAgentName", { length: 255 }),
+  previousAgentAlias: varchar("previousAgentAlias", { length: 100 }),
+  previousStatus: varchar("previousStatus", { length: 30 }),   // resigned / terminated
+  newAgentId: int("newAgentId"),
+  newAgentCode: varchar("newAgentCode", { length: 100 }),
+  newAgentName: varchar("newAgentName", { length: 255 }),
+  archivedBy: varchar("archivedBy", { length: 255 }),
+  archivedAt: bigint("archivedAt", { mode: "number" }).notNull(),
+});
+export type CrdtsArchive = typeof crdtsArchive.$inferSelect;
+export type InsertCrdtsArchive = typeof crdtsArchive.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #2 — BUSINESS DEVELOPMENT CRM
+// Contacts are SHARED across the BD team; each deal has an owner (You / Malak /
+// Ali) so each person sees their own pipeline while the contact database is common.
+// ═══════════════════════════════════════════════════════════════════════════
+export const bdUsers = mysqlTable("bd_users", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  role: mysqlEnum("role", ["lead", "bd", "admin"]).default("bd").notNull(),
+  openId: varchar("openId", { length: 64 }),   // linked Hub login once they sign in
+  active: boolean("active").default(true).notNull(),
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+});
+export type BdUser = typeof bdUsers.$inferSelect;
+export type InsertBdUser = typeof bdUsers.$inferInsert;
+
+export const bdContacts = mysqlTable("bd_contacts", {
+  id: int("id").autoincrement().primaryKey(),
+  company: varchar("company", { length: 255 }).notNull(),
+  contactName: varchar("contactName", { length: 255 }),
+  jobTitle: varchar("jobTitle", { length: 150 }),
+  email: varchar("email", { length: 320 }),
+  phone: varchar("phone", { length: 64 }),
+  website: varchar("website", { length: 320 }),
+  source: varchar("source", { length: 120 }),          // where the lead came from
+  notes: text("notes"),
+  createdBy: int("createdBy"),                          // bdUsers.id
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+  updatedAt: bigint("updatedAt", { mode: "number" }).notNull(),
+});
+export type BdContact = typeof bdContacts.$inferSelect;
+export type InsertBdContact = typeof bdContacts.$inferInsert;
+
+export const bdDeals = mysqlTable("bd_deals", {
+  id: int("id").autoincrement().primaryKey(),
+  title: varchar("title", { length: 255 }).notNull(),  // deal name
+  contactId: int("contactId"),                         // bdContacts.id (shared)
+  ownerId: int("ownerId").notNull(),                   // bdUsers.id — whose pipeline
+  stage: mysqlEnum("stage", ["follow_up", "negotiations", "review", "partners_consultants", "closed_won", "closed_lost"]).default("follow_up").notNull(),
+  serviceType: varchar("serviceType", { length: 150 }), // call-center service being sold
+  seats: int("seats"),                                  // e.g. number of agents/seats
+  value: varchar("value", { length: 60 }),              // monetary value (free text — currency varies)
+  notes: text("notes"),
+  expectedCloseDate: varchar("expectedCloseDate", { length: 20 }), // YYYY-MM-DD
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+  updatedAt: bigint("updatedAt", { mode: "number" }).notNull(),
+  closedAt: bigint("closedAt", { mode: "number" }),
+});
+export type BdDeal = typeof bdDeals.$inferSelect;
+export type InsertBdDeal = typeof bdDeals.$inferInsert;

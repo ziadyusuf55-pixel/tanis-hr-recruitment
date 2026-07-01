@@ -1700,8 +1700,27 @@ export async function listScheduleChangeRequestsByCode(traineeCode: string) {
 export async function listAllScheduleChangeRequests() {
   const db = await getDb();
   if (!db) return [];
-  const { scheduleChangeRequests } = await import("../drizzle/schema");
-  return db.select().from(scheduleChangeRequests).orderBy(desc(scheduleChangeRequests.createdAt));
+  const { scheduleChangeRequests, workforceAgents } = await import("../drizzle/schema");
+  const reqs = await db.select().from(scheduleChangeRequests).orderBy(desc(scheduleChangeRequests.createdAt));
+  if (!reqs.length) return reqs;
+  // Attach requester/target name, alias and CRDTS (matched by code = traineeCode)
+  const agents = await db.select({
+    traineeCode: workforceAgents.traineeCode,
+    fullName: workforceAgents.fullName,
+    alias: workforceAgents.alias,
+    crdts: workforceAgents.crdts,
+  }).from(workforceAgents);
+  const byCode: Record<string, { fullName: string | null; alias: string | null; crdts: string | null }> = {};
+  for (const a of agents) { if (a.traineeCode) byCode[a.traineeCode] = { fullName: a.fullName, alias: a.alias, crdts: a.crdts }; }
+  return reqs.map((r) => ({
+    ...r,
+    requesterName: byCode[r.requesterCode]?.fullName ?? null,
+    requesterAlias: byCode[r.requesterCode]?.alias ?? null,
+    requesterCrdts: byCode[r.requesterCode]?.crdts ?? null,
+    targetName: byCode[r.targetCode]?.fullName ?? null,
+    targetAlias: byCode[r.targetCode]?.alias ?? null,
+    targetCrdts: byCode[r.targetCode]?.crdts ?? null,
+  }));
 }
 
 export async function updateScheduleChangeRequest(id: number, data: Partial<{

@@ -26,7 +26,7 @@ import { trpc } from "@/lib/trpc";
 import {
   LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings,
   Briefcase, Banknote, CreditCard, BarChart2, AlertCircle, Star, Wallet,
-  FileText, Activity, ChevronDown, ChevronRight, TrendingUp, BookOpen, PhoneOff, DollarSign,
+  FileText, Activity, ChevronDown, ChevronRight, TrendingUp, BookOpen, PhoneOff, DollarSign, UserCog, Building2,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -40,13 +40,11 @@ const isGroup = (item: NavItem): item is NavGroup => "children" in item;
 
 const NAV: NavItem[] = [
   { icon: LayoutDashboard, label: "Dashboard",     path: "/" },
-  { icon: Users,           label: "Candidates",    path: "/candidates" },
   { icon: GraduationCap,  label: "Training",      path: "/training" },
   {
     icon: Briefcase, label: "Operations", key: "operations",
     children: [
       { icon: Briefcase,   label: "Agents",        path: "/operations" },
-      { icon: BarChart2,   label: "Performance",   path: "/performance" },
       { icon: AlertCircle, label: "Adherence Log", path: "/adherence" },
       { icon: Star,        label: "Quality Log",   path: "/quality" },
       { icon: BookOpen,    label: "Coaching",      path: "/coaching-admin" },
@@ -54,14 +52,17 @@ const NAV: NavItem[] = [
     ],
   },
   {
-    icon: Banknote, label: "Payroll", key: "payroll",
+    icon: UserCog, label: "HR", key: "hr",
     children: [
-      { icon: Banknote,    label: "Payroll",              path: "/payroll" },
-      { icon: DollarSign,  label: "Commission",            path: "/commission" },
-      { icon: Wallet,      label: "Payment Preferences",  path: "/payment-preferences" },
-      { icon: FileText,    label: "All Documents",        path: "/all-documents" },
+      { icon: Users,       label: "Recruitment",         path: "/candidates" },
+      { icon: BarChart2,   label: "Performance",         path: "/performance" },
+      { icon: Banknote,    label: "Salary",              path: "/payroll" },
+      { icon: DollarSign,  label: "Commission",          path: "/commission" },
+      { icon: Wallet,      label: "Payment Preferences", path: "/payment-preferences" },
+      { icon: FileText,    label: "Documents",           path: "/all-documents" },
     ],
   },
+  { icon: Building2, label: "Business Development", path: "/business-development" },
   { icon: Activity, label: "Cycle Tracker", path: "/cycle-tracker" },
   { icon: TrendingUp, label: "Performance Reports", path: "/performance-reports" },
   { icon: Inbox,    label: "Requests",      path: "/requests" },

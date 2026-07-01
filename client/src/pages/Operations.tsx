@@ -801,6 +801,15 @@ export default function Operations() {
     onSuccess: () => { utils.workforce.list.invalidate(); toast.success("Agent updated"); setEditDialog(false); },
     onError: (e) => toast.error(getErrorMessage(e)),
   });
+  // #5 — CRDTS reuse detection + archive
+  const [crdtsOverride, setCrdtsOverride] = useState(false);
+  const archiveHandover = trpc.crdtsArchive.archiveHandover.useMutation();
+  const crdtsChanged = !!editForm.crdts && editForm.crdts.trim() !== (editingAgent?.crdts ?? "").trim();
+  const { data: crdtsReuse } = trpc.crdtsArchive.checkReuse.useQuery(
+    { crdts: (editForm.crdts ?? "").trim(), excludeCode: editingAgent?.traineeCode },
+    { enabled: crdtsChanged }
+  );
+  const crdtsConflict = crdtsReuse && "conflict" in crdtsReuse && crdtsReuse.conflict ? crdtsReuse : null;
 
   // Add Agent to Operations
   const [addAgentDialog, setAddAgentDialog] = useState(false);
@@ -985,6 +994,17 @@ export default function Operations() {
 
   const handleSaveAgent = () => {
     if (!editingAgent) return;
+    // #5 — CRDTS reuse guard
+    if (crdtsConflict) {
+      if (!crdtsConflict.inactive) { toast.error("That CRDTS belongs to an active agent — free it up first."); return; }
+      if (!crdtsOverride) { toast.error("Tick the reassign box to take this CRDTS from the previous (departed) holder."); return; }
+      // Archive the handover + clear it off the previous holder, then save the new agent below.
+      archiveHandover.mutate({
+        crdts: (editForm.crdts ?? "").trim(),
+        previousCode: crdtsConflict.holder.traineeCode ?? undefined,
+        newCode: editingAgent.traineeCode,
+      });
+    }
     updateAgent.mutate({
       traineeCode: editingAgent.traineeCode,
       fullName: editForm.fullName || undefined,
@@ -1595,7 +1615,27 @@ export default function Operations() {
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">CRDTS</label>
-              <Input value={editForm.crdts ?? ""} onChange={e => setEditForm(f => ({ ...f, crdts: e.target.value }))} placeholder="Enter credentials" />
+              <Input value={editForm.crdts ?? ""} onChange={e => { setEditForm(f => ({ ...f, crdts: e.target.value })); setCrdtsOverride(false); }} placeholder="Enter credentials" />
+              {crdtsConflict && (
+                <div className={`mt-2 rounded-lg border p-2.5 text-xs ${crdtsConflict.inactive ? "bg-amber-50 border-amber-300 text-amber-900" : "bg-red-50 border-red-300 text-red-800"}`}>
+                  <p className="font-semibold">⚠ CRDTS already in use</p>
+                  <p className="mt-0.5">
+                    This CRDTS belongs to <strong>{crdtsConflict.holder.fullName || crdtsConflict.holder.alias || crdtsConflict.holder.traineeCode}</strong>
+                    {crdtsConflict.holder.traineeCode ? ` (${crdtsConflict.holder.traineeCode})` : ""} — status: <strong>{crdtsConflict.holder.agentStatus}</strong>.
+                  </p>
+                  {crdtsConflict.inactive ? (
+                    <>
+                      <p className="mt-1">They've left, so you can reassign it. Their records are kept and archived — nothing is deleted.</p>
+                      <label className="mt-1.5 flex items-center gap-1.5 font-medium cursor-pointer">
+                        <input type="checkbox" checked={crdtsOverride} onChange={e => setCrdtsOverride(e.target.checked)} />
+                        Reassign this CRDTS to this agent (archive the previous holder)
+                      </label>
+                    </>
+                  ) : (
+                    <p className="mt-1 font-medium">That agent is still active — reassigning is blocked. Free up the CRDTS first.</p>
+                  )}
+                </div>
+              )}
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Team Leader</label>

@@ -18,21 +18,33 @@ type ParsedRow = {
 };
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+// Parse a date that may be ISO (YYYY-MM-DD) or day-first (DD/MM/YYYY or DD-MM-YYYY).
+// We must NOT use `new Date(str)` on "01/06/2026" — JS reads that as US MM/DD (Jan 6),
+// which is what filed June logouts under January.
+function parseYMD(dateStr: string): { y: number; m: number; d: number } | null {
+  const s = String(dateStr).trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);        // ISO YYYY-MM-DD
+  if (m) return { y: +m[1], m: +m[2], d: +m[3] };
+  m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);      // DD/MM/YYYY (day first)
+  if (m) return { y: +m[3], m: +m[2], d: +m[1] };
+  return null;
+}
+function toISO(dateStr: string): string {
+  const p = parseYMD(dateStr);
+  return p ? `${p.y}-${String(p.m).padStart(2, "0")}-${String(p.d).padStart(2, "0")}` : String(dateStr).trim();
+}
 function getCycleKey(dateStr: string): string {
   // Cycle runs 26th of prev month → 25th of current month
   // If day <= 25 → cycle = current month; if day >= 26 → cycle = next month
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return dateStr.slice(0, 7);
-  const day = d.getDate();
-  const year = d.getFullYear();
-  const month = d.getMonth(); // 0-indexed
-  if (day >= 26) {
-    // Belongs to next month's cycle
-    const nextMonth = month === 11 ? 0 : month + 1;
-    const nextYear = month === 11 ? year + 1 : year;
-    return `${nextYear}-${String(nextMonth + 1).padStart(2, "0")}`;
+  const p = parseYMD(dateStr);
+  if (!p) return String(dateStr).slice(0, 7);
+  const { y, m, d } = p; // m is 1-indexed
+  if (d >= 26) {
+    const nextMonth = m === 12 ? 1 : m + 1;
+    const nextYear = m === 12 ? y + 1 : y;
+    return `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
   }
-  return `${year}-${String(month + 1).padStart(2, "0")}`;
+  return `${y}-${String(m).padStart(2, "0")}`;
 }
 
 function formatMonthLabel(m: string) {
@@ -97,7 +109,7 @@ export default function ClientLogoutsAdmin() {
               const d = XLSX.SSF.parse_date_code(rawDate as number);
               dateStr = `${d.y}-${String(d.m).padStart(2, "0")}-${String(d.d).padStart(2, "0")}`;
             } else {
-              dateStr = String(rawDate).trim();
+              dateStr = toISO(String(rawDate).trim());
             }
           }
 

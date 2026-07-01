@@ -483,6 +483,12 @@ type ScReq = {
   message: string | null;
   status: string;
   createdAt: Date;
+  requesterName?: string | null;
+  requesterAlias?: string | null;
+  requesterCrdts?: string | null;
+  targetName?: string | null;
+  targetAlias?: string | null;
+  targetCrdts?: string | null;
 };
 
 function ScheduleChangeApprovals() {
@@ -526,21 +532,27 @@ function ScheduleChangeApprovals() {
           <div key={r.id} className="rounded-lg border border-blue-200 bg-blue-50/50 p-4 space-y-2">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-foreground">{r.requesterCode}</span>
-                <span className="text-xs text-muted-foreground">↔</span>
-                <span className="text-sm font-semibold text-foreground">{r.targetCode}</span>
+              <div>
+                <span className="text-sm font-semibold text-foreground">{r.requesterName || r.requesterAlias || r.requesterCode}</span>
+                <span className="block text-[10px] text-muted-foreground">{[r.requesterAlias, r.requesterCrdts ? `CRDTS ${r.requesterCrdts}` : null, r.requesterCode].filter(Boolean).join(" · ")}</span>
               </div>
+              <span className="text-xs text-muted-foreground">↔</span>
+              <div>
+                <span className="text-sm font-semibold text-foreground">{r.targetName || r.targetAlias || r.targetCode}</span>
+                <span className="block text-[10px] text-muted-foreground">{[r.targetAlias, r.targetCrdts ? `CRDTS ${r.targetCrdts}` : null, r.targetCode].filter(Boolean).join(" · ")}</span>
+              </div>
+            </div>
               <Badge variant="outline" className={`text-xs ${SC_STATUS_LABELS[r.status]?.color}`}>
                 {SC_STATUS_LABELS[r.status]?.label ?? r.status}
               </Badge>
             </div>
             <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
               <div className="bg-white rounded px-2 py-1.5 border border-border">
-                <p className="font-medium text-foreground mb-0.5">{r.requesterCode} new off days</p>
+                <p className="font-medium text-foreground mb-0.5">{r.requesterName || r.requesterAlias || r.requesterCode} new off days</p>
                 <p>{DAY_NAMES[r.requesterNewOff1]} · {DAY_NAMES[r.requesterNewOff2]}</p>
               </div>
               <div className="bg-white rounded px-2 py-1.5 border border-border">
-                <p className="font-medium text-foreground mb-0.5">{r.targetCode} new off days</p>
+                <p className="font-medium text-foreground mb-0.5">{r.targetName || r.targetAlias || r.targetCode} new off days</p>
                 <p>{DAY_NAMES[r.targetNewOff1]} · {DAY_NAMES[r.targetNewOff2]}</p>
               </div>
             </div>

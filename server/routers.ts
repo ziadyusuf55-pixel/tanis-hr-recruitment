@@ -4358,6 +4358,45 @@ const commissionRouter = router({
       return { ok: true };
     }),
 
+  // #8 — BULK move an ENTIRE commission cycle (all records + leaderboard rows) to a
+  // different pay cycle in one action. Also re-syncs payroll: clears commissionEgp on
+  // the old cycle's payroll records and applies it to the new cycle's records.
+  reassignCycle: protectedProcedure
+    .input(z.object({
+      fromCycle: z.string().regex(/^\d{4}-\d{2}$/),
+      toCycle: z.string().regex(/^\d{4}-\d{2}$/),
+      newPerformanceMonth: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq, and } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      if (input.fromCycle === input.toCycle) throw new TRPCError({ code: "BAD_REQUEST", message: "From and To cycles are the same." });
+      const { commissions, commissionLeaderboard, payrollRecords } = await import("../drizzle/schema");
+      // 1. Records being moved
+      const recs = await db.select().from(commissions).where(eq(commissions.paymentCycle, input.fromCycle));
+      // 2. Clear commission off the OLD cycle's payroll records
+      for (const rec of recs) {
+        await db.update(payrollRecords).set({ commissionEgp: "0" })
+          .where(and(eq(payrollRecords.crdts, rec.crdts), eq(payrollRecords.month, input.fromCycle)));
+      }
+      // 3. Move the commission records to the new pay cycle
+      await db.update(commissions).set({
+        paymentCycle: input.toCycle,
+        ...(input.newPerformanceMonth ? { performanceMonth: input.newPerformanceMonth } : {}),
+      }).where(eq(commissions.paymentCycle, input.fromCycle));
+      // 4. Move the leaderboard rows too
+      await db.update(commissionLeaderboard).set({ cycleKey: input.toCycle })
+        .where(eq(commissionLeaderboard.cycleKey, input.fromCycle));
+      // 5. Apply commission onto the NEW cycle's payroll records (if that payroll exists yet)
+      for (const rec of recs) {
+        await db.update(payrollRecords).set({ commissionEgp: rec.commissionEgp ?? "0" })
+          .where(and(eq(payrollRecords.crdts, rec.crdts), eq(payrollRecords.month, input.toCycle)));
+      }
+      return { ok: true, moved: recs.length, from: input.fromCycle, to: input.toCycle };
+    }),
+
   // Get full leaderboard for a cycle (all campaigns)
   getFullLeaderboard: protectedProcedure
     .input(z.object({ cycleKey: z.string() }))
@@ -4617,6 +4656,196 @@ const apiKeysRouter = router({
     }),
 });
 
+// ─── #2 Business Development CRM Router ──────────────────────────────────────
+const bdRouter = router({
+  // Seed the BD team (Ziad / Malak / Ali). Safe to run repeatedly.
+  seedUsers: protectedProcedure.mutation(async () => {
+    const { getDb } = await import("./db");
+    const { eq } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+    const { bdUsers } = await import("../drizzle/schema");
+    const now = Date.now();
+    const seed: { name: string; role: "lead" | "bd" }[] = [
+      { name: "Ziad", role: "lead" }, { name: "Malak", role: "bd" }, { name: "Ali", role: "bd" },
+    ];
+    for (const s of seed) {
+      const ex = await db.select().from(bdUsers).where(eq(bdUsers.name, s.name)).limit(1);
+      if (!ex[0]) await db.insert(bdUsers).values({ name: s.name, role: s.role, active: true, createdAt: now });
+    }
+    return { ok: true };
+  }),
+  listUsers: publicProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return [];
+    const { bdUsers } = await import("../drizzle/schema");
+    return db.select().from(bdUsers);
+  }),
+  // ── Contacts (shared across the team) ──
+  listContacts: publicProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return [];
+    const { bdContacts } = await import("../drizzle/schema");
+    const { desc } = await import("drizzle-orm");
+    return db.select().from(bdContacts).orderBy(desc(bdContacts.updatedAt));
+  }),
+  addContact: protectedProcedure
+    .input(z.object({ company: z.string().min(1), contactName: z.string().optional(), jobTitle: z.string().optional(), email: z.string().optional(), phone: z.string().optional(), website: z.string().optional(), source: z.string().optional(), notes: z.string().optional(), createdBy: z.number().optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdContacts } = await import("../drizzle/schema");
+      const now = Date.now();
+      await db.insert(bdContacts).values({ ...input, createdAt: now, updatedAt: now });
+      return { ok: true };
+    }),
+  updateContact: protectedProcedure
+    .input(z.object({ id: z.number(), company: z.string().optional(), contactName: z.string().optional(), jobTitle: z.string().optional(), email: z.string().optional(), phone: z.string().optional(), website: z.string().optional(), source: z.string().optional(), notes: z.string().optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdContacts } = await import("../drizzle/schema");
+      const { id, ...rest } = input;
+      await db.update(bdContacts).set({ ...rest, updatedAt: Date.now() }).where(eq(bdContacts.id, id));
+      return { ok: true };
+    }),
+  deleteContact: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdContacts } = await import("../drizzle/schema");
+      await db.delete(bdContacts).where(eq(bdContacts.id, input.id));
+      return { ok: true };
+    }),
+  // ── Deals (per-owner pipeline) ──
+  listDeals: publicProcedure
+    .input(z.object({ ownerId: z.number().optional() }).optional())
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { bdDeals } = await import("../drizzle/schema");
+      const { eq, desc } = await import("drizzle-orm");
+      if (input?.ownerId) return db.select().from(bdDeals).where(eq(bdDeals.ownerId, input.ownerId)).orderBy(desc(bdDeals.updatedAt));
+      return db.select().from(bdDeals).orderBy(desc(bdDeals.updatedAt));
+    }),
+  addDeal: protectedProcedure
+    .input(z.object({ title: z.string().min(1), ownerId: z.number(), contactId: z.number().optional(), stage: z.enum(["follow_up", "negotiations", "review", "partners_consultants", "closed_won", "closed_lost"]).optional(), serviceType: z.string().optional(), seats: z.number().optional(), value: z.string().optional(), notes: z.string().optional(), expectedCloseDate: z.string().optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdDeals } = await import("../drizzle/schema");
+      const now = Date.now();
+      await db.insert(bdDeals).values({ ...input, stage: input.stage ?? "follow_up", createdAt: now, updatedAt: now });
+      return { ok: true };
+    }),
+  updateDeal: protectedProcedure
+    .input(z.object({ id: z.number(), title: z.string().optional(), ownerId: z.number().optional(), contactId: z.number().optional(), serviceType: z.string().optional(), seats: z.number().optional(), value: z.string().optional(), notes: z.string().optional(), expectedCloseDate: z.string().optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdDeals } = await import("../drizzle/schema");
+      const { id, ...rest } = input;
+      await db.update(bdDeals).set({ ...rest, updatedAt: Date.now() }).where(eq(bdDeals.id, id));
+      return { ok: true };
+    }),
+  moveStage: protectedProcedure
+    .input(z.object({ id: z.number(), stage: z.enum(["follow_up", "negotiations", "review", "partners_consultants", "closed_won", "closed_lost"]) }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdDeals } = await import("../drizzle/schema");
+      const closed = input.stage === "closed_won" || input.stage === "closed_lost";
+      await db.update(bdDeals).set({ stage: input.stage, updatedAt: Date.now(), ...(closed ? { closedAt: Date.now() } : {}) }).where(eq(bdDeals.id, input.id));
+      return { ok: true };
+    }),
+  deleteDeal: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdDeals } = await import("../drizzle/schema");
+      await db.delete(bdDeals).where(eq(bdDeals.id, input.id));
+      return { ok: true };
+    }),
+});
+
+// ─── #5 CRDTS reuse check + archive Router ───────────────────────────────────
+const crdtsArchiveRouter = router({
+  // Is this CRDTS already held by another agent? Flags if that agent is resigned/terminated.
+  checkReuse: protectedProcedure
+    .input(z.object({ crdts: z.string(), excludeCode: z.string().optional() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db || !input.crdts.trim()) return { conflict: false as const };
+      const { workforceAgents } = await import("../drizzle/schema");
+      const { sql } = await import("drizzle-orm");
+      const rows = await db.select({ id: workforceAgents.id, traineeCode: workforceAgents.traineeCode, fullName: workforceAgents.fullName, alias: workforceAgents.alias, agentStatus: workforceAgents.agentStatus }).from(workforceAgents).where(sql`${workforceAgents.crdts} = ${input.crdts.trim()}`);
+      const holder = rows.find(r => r.traineeCode !== input.excludeCode);
+      if (!holder) return { conflict: false as const };
+      const inactive = holder.agentStatus === "resigned" || holder.agentStatus === "terminated";
+      return { conflict: true as const, inactive, holder };
+    }),
+  listArchive: protectedProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return [];
+    const { crdtsArchive } = await import("../drizzle/schema");
+    const { desc } = await import("drizzle-orm");
+    return db.select().from(crdtsArchive).orderBy(desc(crdtsArchive.archivedAt));
+  }),
+  // Record a handover on override, then clear CRDTS off the previous holder so it
+  // points to the new agent going forward. Previous agent's records are untouched.
+  archiveHandover: protectedProcedure
+    .input(z.object({ crdts: z.string(), previousCode: z.string().optional(), newCode: z.string().optional(), archivedBy: z.string().optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { sql, eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { workforceAgents, crdtsArchive } = await import("../drizzle/schema");
+      const prevRows = input.previousCode
+        ? await db.select().from(workforceAgents).where(eq(workforceAgents.traineeCode, input.previousCode)).limit(1)
+        : await db.select().from(workforceAgents).where(sql`${workforceAgents.crdts} = ${input.crdts}`).limit(1);
+      const prev = prevRows[0] || null;
+      const nextRows = input.newCode ? await db.select().from(workforceAgents).where(eq(workforceAgents.traineeCode, input.newCode)).limit(1) : [];
+      const next = nextRows[0] || null;
+      await db.insert(crdtsArchive).values({
+        crdts: input.crdts,
+        previousAgentId: prev?.id ?? null,
+        previousAgentCode: prev?.traineeCode ?? input.previousCode ?? null,
+        previousAgentName: prev?.fullName ?? null,
+        previousAgentAlias: prev?.alias ?? null,
+        previousStatus: prev?.agentStatus ?? null,
+        newAgentId: next?.id ?? null,
+        newAgentCode: next?.traineeCode ?? input.newCode ?? null,
+        newAgentName: next?.fullName ?? null,
+        archivedBy: input.archivedBy ?? null,
+        archivedAt: Date.now(),
+      });
+      if (prev?.traineeCode) {
+        await db.update(workforceAgents).set({ crdts: null }).where(eq(workforceAgents.traineeCode, prev.traineeCode));
+      }
+      return { ok: true };
+    }),
+});
+
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -4657,6 +4886,8 @@ export const appRouter = router({
   trainerSalaries: trainerSalariesRouter,
   invites: invitesRouter,
   apiKeys: apiKeysRouter,
+  bd: bdRouter,
+  crdtsArchive: crdtsArchiveRouter,
 });
 export type AppRouter = typeof appRouter;
 
