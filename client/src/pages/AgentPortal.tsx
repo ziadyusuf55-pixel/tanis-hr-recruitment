@@ -2767,7 +2767,8 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
             {pendingCommissions.map(c => {
               const amount = parseFloat(c.commissionEgp ?? "0");
               const [y, mo] = c.paymentCycle.split("-");
-              const payDate = new Date(parseInt(y), parseInt(mo) - 1, 1).toLocaleString("en-US", { month: "long", year: "numeric" });
+              // Payroll month M pays on the 1st of M+1 (e.g. the July cycle pays 1 Aug), so add a month.
+              const payDate = new Date(parseInt(y), parseInt(mo), 1).toLocaleString("en-US", { month: "long", year: "numeric" });
               return (
                 <div key={c.id} className="px-4 py-3 flex items-center justify-between">
                   <div>
