@@ -2690,10 +2690,10 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
   const myCrdts = (myProfile as { crdts?: string } | null)?.crdts ?? null;
   const myTraineeCode = (myProfile as { traineeCode?: string } | null)?.traineeCode ?? null;
 
-  // Upcoming commission records for this agent
+  // Upcoming commission records for this agent — keyed by CRDTS (matches the commissions table)
   const { data: upcomingCommissions = [] } = trpc.commission.getMyUpcomingCommission.useQuery(
-    { traineeCode: myTraineeCode! },
-    { enabled: !!myTraineeCode }
+    { traineeCode: myCrdts! },
+    { enabled: !!myCrdts }
   );
   const pendingCommissions = (upcomingCommissions as Array<{ id: number; paymentCycle: string; commissionEgp: string | null; performanceMonth: string | null; paymentStatus: string | null }>)
     .filter(c => c.paymentStatus !== "paid");
