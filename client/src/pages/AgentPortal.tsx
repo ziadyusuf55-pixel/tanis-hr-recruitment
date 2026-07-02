@@ -2637,8 +2637,9 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
   const [cycleInitialized, setCycleInitialized] = useState(false);
   // Once cycles load, update selectedCycle to the latest one
   useEffect(() => {
-    if (!cycleInitialized && (leaderboardCycles as string[]).length > 0) {
-      setSelectedCycle((leaderboardCycles as string[])[0]);
+    const cyc = leaderboardCycles as { cycleKey: string; performanceMonth: string | null }[];
+    if (!cycleInitialized && cyc.length > 0) {
+      setSelectedCycle(cyc[0].cycleKey);
       setCycleInitialized(true);
     }
   }, [leaderboardCycles, cycleInitialized]);
@@ -2872,9 +2873,9 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
             className="text-xs rounded-lg px-2 py-1 border"
             style={{ background: theme.surface, borderColor: theme.surfaceBorder, color: theme.text }}
           >
-            {(leaderboardCycles as string[]).length > 0
-              ? (leaderboardCycles as string[]).map(k => (
-                  <option key={k} value={k}>{formatMonthLabel(k)}</option>
+            {(leaderboardCycles as { cycleKey: string; performanceMonth: string | null }[]).length > 0
+              ? (leaderboardCycles as { cycleKey: string; performanceMonth: string | null }[]).map(c => (
+                  <option key={c.cycleKey} value={c.cycleKey}>{c.performanceMonth || formatMonthLabel(c.cycleKey)}</option>
                 ))
               : Array.from({ length: 6 }, (_, i) => {
                   const d = new Date(); d.setMonth(d.getMonth() - i);

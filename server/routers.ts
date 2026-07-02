@@ -4454,13 +4454,17 @@ const commissionRouter = router({
     .query(async () => {
       const { getDb } = await import("./db");
       const db = await getDb();
-      if (!db) return [];
+      if (!db) return [] as { cycleKey: string; performanceMonth: string | null }[];
       const { commissionLeaderboard } = await import("../drizzle/schema");
       const { sql } = await import("drizzle-orm");
-      const rows = await db.selectDistinct({ cycleKey: commissionLeaderboard.cycleKey })
+      const rows = await db.select({
+        cycleKey: commissionLeaderboard.cycleKey,
+        performanceMonth: sql<string | null>`MAX(${commissionLeaderboard.performanceMonth})`,
+      })
         .from(commissionLeaderboard)
+        .groupBy(commissionLeaderboard.cycleKey)
         .orderBy(sql`${commissionLeaderboard.cycleKey} DESC`);
-      return rows.map(r => r.cycleKey);
+      return rows.map(r => ({ cycleKey: r.cycleKey, performanceMonth: (r.performanceMonth ?? null) as string | null }));
     }),
 
   // Delete a single commission record by id (also clears commissionEgp from matching payroll record)
