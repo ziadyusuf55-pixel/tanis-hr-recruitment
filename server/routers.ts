@@ -4703,8 +4703,9 @@ const bdRouter = router({
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { bdContacts } = await import("../drizzle/schema");
       const now = Date.now();
-      await db.insert(bdContacts).values({ ...input, createdAt: now, updatedAt: now });
-      return { ok: true };
+      const result = await db.insert(bdContacts).values({ ...input, createdAt: now, updatedAt: now });
+      const insertId = (result as unknown as { insertId: number }).insertId;
+      return { ok: true, id: insertId ?? 0 };
     }),
   updateContact: protectedProcedure
     .input(z.object({ id: z.number(), company: z.string().optional(), contactName: z.string().optional(), jobTitle: z.string().optional(), email: z.string().optional(), phone: z.string().optional(), website: z.string().optional(), source: z.string().optional(), notes: z.string().optional() }))
@@ -4765,7 +4766,7 @@ const bdRouter = router({
       return { ok: true };
     }),
   moveStage: protectedProcedure
-    .input(z.object({ id: z.number(), stage: z.enum(["follow_up", "negotiations", "review", "partners_consultants", "closed_won", "closed_lost"]) }))
+    .input(z.object({ id: z.number(), stage: z.enum(["follow_up", "negotiations", "review", "partners_consultants", "closed_won", "closed_lost"]), reason: z.string().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
@@ -4773,7 +4774,45 @@ const bdRouter = router({
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { bdDeals } = await import("../drizzle/schema");
       const closed = input.stage === "closed_won" || input.stage === "closed_lost";
-      await db.update(bdDeals).set({ stage: input.stage, updatedAt: Date.now(), ...(closed ? { closedAt: Date.now() } : {}) }).where(eq(bdDeals.id, input.id));
+      await db.update(bdDeals).set({
+        stage: input.stage, updatedAt: Date.now(),
+        ...(closed ? { closedAt: Date.now(), outcomeReason: input.reason ?? null } : {}),
+      }).where(eq(bdDeals.id, input.id));
+      return { ok: true };
+    }),
+  // Activity log — a timestamped note; also refreshes the deal's last-contacted date
+  addActivity: protectedProcedure
+    .input(z.object({ dealId: z.number(), note: z.string().min(1), createdBy: z.number().optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdDealActivity, bdDeals } = await import("../drizzle/schema");
+      const now = Date.now();
+      await db.insert(bdDealActivity).values({ dealId: input.dealId, note: input.note, createdBy: input.createdBy, createdAt: now });
+      await db.update(bdDeals).set({ lastContactedAt: now, updatedAt: now }).where(eq(bdDeals.id, input.dealId));
+      return { ok: true };
+    }),
+  listActivity: publicProcedure
+    .input(z.object({ dealId: z.number() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { bdDealActivity } = await import("../drizzle/schema");
+      const { eq, desc } = await import("drizzle-orm");
+      return db.select().from(bdDealActivity).where(eq(bdDealActivity.dealId, input.dealId)).orderBy(desc(bdDealActivity.createdAt));
+    }),
+  setReminder: protectedProcedure
+    .input(z.object({ id: z.number(), reminderDate: z.string().optional(), reminderNote: z.string().optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdDeals } = await import("../drizzle/schema");
+      await db.update(bdDeals).set({ reminderDate: input.reminderDate ?? null, reminderNote: input.reminderNote ?? null, updatedAt: Date.now() }).where(eq(bdDeals.id, input.id));
       return { ok: true };
     }),
   deleteDeal: protectedProcedure

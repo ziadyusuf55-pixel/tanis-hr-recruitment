@@ -1058,9 +1058,24 @@ export const bdDeals = mysqlTable("bd_deals", {
   value: varchar("value", { length: 60 }),              // monetary value (free text — currency varies)
   notes: text("notes"),
   expectedCloseDate: varchar("expectedCloseDate", { length: 20 }), // YYYY-MM-DD
+  lastContactedAt: bigint("lastContactedAt", { mode: "number" }),  // updated whenever an activity is logged
+  reminderDate: varchar("reminderDate", { length: 20 }),           // YYYY-MM-DD follow-up
+  reminderNote: varchar("reminderNote", { length: 255 }),
+  outcomeReason: varchar("outcomeReason", { length: 255 }),        // why won / lost
   createdAt: bigint("createdAt", { mode: "number" }).notNull(),
   updatedAt: bigint("updatedAt", { mode: "number" }).notNull(),
   closedAt: bigint("closedAt", { mode: "number" }),
 });
 export type BdDeal = typeof bdDeals.$inferSelect;
 export type InsertBdDeal = typeof bdDeals.$inferInsert;
+
+// Activity log — timestamped notes per deal ("left VM", "sent proposal", …)
+export const bdDealActivity = mysqlTable("bd_deal_activity", {
+  id: int("id").autoincrement().primaryKey(),
+  dealId: int("dealId").notNull(),
+  note: text("note").notNull(),
+  createdBy: int("createdBy"),          // bdUsers.id (optional)
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+});
+export type BdDealActivity = typeof bdDealActivity.$inferSelect;
+export type InsertBdDealActivity = typeof bdDealActivity.$inferInsert;

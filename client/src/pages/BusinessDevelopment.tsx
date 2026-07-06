@@ -6,7 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { LayoutGrid, Table2, Plus, Users, Trash2, Building2 } from "lucide-react";
+import { LayoutGrid, Table2, Plus, Users, Trash2, Building2, Clock, Bell, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
 
 const BRAND = "#FF6A13";
@@ -26,7 +26,9 @@ type Contact = { id: number; company: string; contactName: string | null; email:
 type Deal = {
   id: number; title: string; ownerId: number; contactId: number | null; stage: StageKey;
   serviceType: string | null; seats: number | null; value: string | null; notes: string | null; expectedCloseDate: string | null;
+  createdAt: number; lastContactedAt: number | null; reminderDate: string | null; reminderNote: string | null; outcomeReason: string | null;
 };
+const COLD_DAYS = 7;
 
 export default function BusinessDevelopment() {
   const utils = trpc.useUtils();
@@ -58,6 +60,26 @@ export default function BusinessDevelopment() {
 
   const ownerName = (id: number) => bdUsers.find(u => u.id === id)?.name ?? "—";
   const contactCompany = (id: number | null) => id ? (typedContacts.find(c => c.id === id)?.company ?? "") : "";
+
+  const [openDeal, setOpenDeal] = useState<Deal | null>(null);
+  const isCold = (d: Deal) => {
+    if (d.stage === "closed_won" || d.stage === "closed_lost") return false;
+    const ref = d.lastContactedAt ?? d.createdAt ?? 0;
+    return ref > 0 && (Date.now() - ref) > COLD_DAYS * 86400000;
+  };
+  const reminderOverdue = (d: Deal) => d.reminderDate ? new Date(d.reminderDate + "T23:59:59").getTime() < Date.now() : false;
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const dueReminders = typedDeals
+    .filter(d => d.reminderDate && d.stage !== "closed_won" && d.stage !== "closed_lost" && d.reminderDate <= todayISO)
+    .sort((a, b) => (a.reminderDate! < b.reminderDate! ? -1 : 1));
+  const handleStage = (d: Deal, stage: StageKey) => {
+    if ((stage === "closed_won" || stage === "closed_lost") && stage !== d.stage) {
+      const reason = window.prompt(stage === "closed_won" ? "Nice! Why did this one close? (optional)" : "What was the reason it was lost? (optional)") ?? undefined;
+      moveStage.mutate({ id: d.id, stage, reason });
+    } else {
+      moveStage.mutate({ id: d.id, stage });
+    }
+  };
 
   const byStage = useMemo(() => {
     const m: Record<string, Deal[]> = {};
@@ -112,6 +134,27 @@ export default function BusinessDevelopment() {
             </div>
           </div>
 
+          {dueReminders.length > 0 && (
+            <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 space-y-2">
+              <p className="text-xs font-semibold text-amber-900 flex items-center gap-1.5"><Bell className="w-3.5 h-3.5" /> Follow-ups due ({dueReminders.length})</p>
+              <div className="space-y-1.5">
+                {dueReminders.map(d => (
+                  <button key={d.id} onClick={() => setOpenDeal(d)} className="w-full text-left flex items-center justify-between gap-2 rounded-lg bg-background border px-2.5 py-1.5 hover:bg-muted/50">
+                    <span className="text-sm">
+                      <span className="font-medium">{d.title}</span>
+                      {contactCompany(d.contactId) && <span className="text-muted-foreground"> · {contactCompany(d.contactId)}</span>}
+                      {d.reminderNote && <span className="text-muted-foreground"> — {d.reminderNote}</span>}
+                    </span>
+                    <span className="flex items-center gap-2 shrink-0">
+                      <Badge variant="outline" className="text-[10px]">{ownerName(d.ownerId)}</Badge>
+                      <span className={`text-[10px] ${reminderOverdue(d) ? "text-red-600 font-semibold" : "text-amber-700"}`}>{reminderOverdue(d) ? "overdue" : "today"} · {d.reminderDate}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {isLoading ? (
             <p className="text-sm text-muted-foreground py-10 text-center">Loading pipeline…</p>
           ) : view === "board" ? (
@@ -127,7 +170,7 @@ export default function BusinessDevelopment() {
                       <Card key={d.id} className="border">
                         <CardContent className="p-3 space-y-1.5">
                           <div className="flex items-start justify-between gap-2">
-                            <p className="text-sm font-semibold leading-tight">{d.title}</p>
+                            <button onClick={() => setOpenDeal(d)} className="text-sm font-semibold leading-tight text-left hover:underline">{d.title}</button>
                             <button onClick={() => { if (confirm("Delete this deal?")) deleteDeal.mutate({ id: d.id }); }} className="text-muted-foreground hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
                           </div>
                           {contactCompany(d.contactId) && <p className="text-xs text-muted-foreground">{contactCompany(d.contactId)}</p>}
@@ -136,11 +179,17 @@ export default function BusinessDevelopment() {
                             {d.seats != null && <span className="text-muted-foreground">{d.seats} seats</span>}
                             {d.serviceType && <span className="text-muted-foreground">· {d.serviceType}</span>}
                           </div>
+                          {(isCold(d) || d.reminderDate) && (
+                            <div className="flex flex-wrap gap-1.5">
+                              {isCold(d) && <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 flex items-center gap-1"><Clock className="w-2.5 h-2.5" /> going cold</span>}
+                              {d.reminderDate && <span className={`text-[10px] px-1.5 py-0.5 rounded-full border flex items-center gap-1 ${reminderOverdue(d) ? "bg-red-100 text-red-700 border-red-200" : "bg-blue-100 text-blue-700 border-blue-200"}`}><Bell className="w-2.5 h-2.5" /> {d.reminderDate}</span>}
+                            </div>
+                          )}
                           <div className="flex items-center justify-between gap-2 pt-1">
                             <Badge variant="outline" className="text-[10px]">{ownerName(d.ownerId)}</Badge>
                             <select
                               value={d.stage}
-                              onChange={(e) => moveStage.mutate({ id: d.id, stage: e.target.value as StageKey })}
+                              onChange={(e) => handleStage(d, e.target.value as StageKey)}
                               className="text-[11px] border rounded px-1 py-0.5 bg-background"
                             >
                               {STAGES.map(st => <option key={st.key} value={st.key}>{st.label}</option>)}
@@ -165,11 +214,15 @@ export default function BusinessDevelopment() {
                 <tbody>
                   {typedDeals.map(d => (
                     <tr key={d.id} className="border-b last:border-0 hover:bg-muted/30">
-                      <td className="px-3 py-2 font-medium">{d.title}</td>
+                      <td className="px-3 py-2 font-medium">
+                        <button onClick={() => setOpenDeal(d)} className="hover:underline text-left">{d.title}</button>
+                        {isCold(d) && <span className="ml-1.5 text-[10px] text-amber-700">● cold</span>}
+                        {d.reminderDate && <span className={`ml-1.5 text-[10px] ${reminderOverdue(d) ? "text-red-600" : "text-blue-600"}`}>⏰ {d.reminderDate}</span>}
+                      </td>
                       <td className="px-3 py-2 text-muted-foreground">{contactCompany(d.contactId) || "—"}</td>
                       <td className="px-3 py-2">{ownerName(d.ownerId)}</td>
                       <td className="px-3 py-2">
-                        <select value={d.stage} onChange={(e) => moveStage.mutate({ id: d.id, stage: e.target.value as StageKey })} className="text-xs border rounded px-1 py-0.5 bg-background">
+                        <select value={d.stage} onChange={(e) => handleStage(d, e.target.value as StageKey)} className="text-xs border rounded px-1 py-0.5 bg-background">
                           {STAGES.map(st => <option key={st.key} value={st.key}>{st.label}</option>)}
                         </select>
                       </td>
@@ -185,8 +238,93 @@ export default function BusinessDevelopment() {
         </>
       )}
 
-      {tab === "contacts" && <ContactsPanel contacts={typedContacts} onDone={() => utils.bd.listContacts.invalidate()} />}
+      {tab === "contacts" && <ContactsPanel contacts={typedContacts} bdUsers={bdUsers} onDone={() => utils.bd.listContacts.invalidate()} />}
+
+      {openDeal && (
+        <DealDrawer
+          deal={openDeal}
+          company={contactCompany(openDeal.contactId)}
+          ownerName={ownerName(openDeal.ownerId)}
+          onClose={() => setOpenDeal(null)}
+          onChanged={() => utils.bd.listDeals.invalidate()}
+        />
+      )}
     </div>
+  );
+}
+
+// ── Deal detail drawer: activity log + reminder + outcome ──
+function DealDrawer({ deal, company, ownerName, onClose, onChanged }: { deal: Deal; company: string; ownerName: string; onClose: () => void; onChanged: () => void }) {
+  const utils = trpc.useUtils();
+  const { data: activity = [] } = trpc.bd.listActivity.useQuery({ dealId: deal.id });
+  const acts = activity as { id: number; note: string; createdAt: number }[];
+  const [note, setNote] = useState("");
+  const [rDate, setRDate] = useState(deal.reminderDate ?? "");
+  const [rNote, setRNote] = useState(deal.reminderNote ?? "");
+
+  const addActivity = trpc.bd.addActivity.useMutation({
+    onSuccess: () => { setNote(""); utils.bd.listActivity.invalidate({ dealId: deal.id }); onChanged(); toast.success("Logged"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const setReminder = trpc.bd.setReminder.useMutation({
+    onSuccess: () => { onChanged(); toast.success("Reminder saved"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const fmt = (t: number) => new Date(t).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  const stageLabel = STAGES.find(s => s.key === deal.stage)?.label ?? deal.stage;
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{deal.title}</DialogTitle>
+          <p className="text-xs text-muted-foreground">{company || "—"} · {ownerName} · {stageLabel}{deal.value ? ` · $${deal.value}` : ""}</p>
+        </DialogHeader>
+
+        <div className="space-y-4 max-h-[60vh] overflow-y-auto">
+          {deal.outcomeReason && (
+            <div className="rounded-lg border p-2.5 text-xs bg-muted/40">
+              <span className="font-semibold">Outcome:</span> {deal.outcomeReason}
+            </div>
+          )}
+
+          {/* Reminder */}
+          <div className="space-y-1.5">
+            <p className="text-xs font-semibold flex items-center gap-1.5"><Bell className="w-3.5 h-3.5" /> Follow-up reminder</p>
+            <div className="grid grid-cols-2 gap-2">
+              <Input type="date" value={rDate} onChange={e => setRDate(e.target.value)} />
+              <Input placeholder="e.g. call back re: pricing" value={rNote} onChange={e => setRNote(e.target.value)} />
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={() => setReminder.mutate({ id: deal.id, reminderDate: rDate || undefined, reminderNote: rNote || undefined })} disabled={setReminder.isPending} style={{ background: BRAND }} className="text-white">Save reminder</Button>
+              {deal.reminderDate && <Button size="sm" variant="outline" onClick={() => { setRDate(""); setRNote(""); setReminder.mutate({ id: deal.id }); }}>Clear</Button>}
+            </div>
+          </div>
+
+          {/* Activity log */}
+          <div className="space-y-1.5">
+            <p className="text-xs font-semibold flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5" /> Activity log</p>
+            <div className="flex gap-2">
+              <Input placeholder="Left VM / sent proposal / spoke to…" value={note} onChange={e => setNote(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && note.trim()) addActivity.mutate({ dealId: deal.id, note: note.trim() }); }} />
+              <Button size="sm" onClick={() => note.trim() && addActivity.mutate({ dealId: deal.id, note: note.trim() })} disabled={addActivity.isPending} style={{ background: BRAND }} className="text-white">Log</Button>
+            </div>
+            <div className="space-y-1.5 pt-1">
+              {acts.length === 0 && <p className="text-xs text-muted-foreground">No activity yet.</p>}
+              {acts.map(a => (
+                <div key={a.id} className="text-xs border-l-2 pl-2.5 py-0.5" style={{ borderColor: `${BRAND}66` }}>
+                  <p>{a.note}</p>
+                  <p className="text-[10px] text-muted-foreground">{fmt(a.createdAt)}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -247,14 +385,33 @@ function AddDealDialog({ bdUsers, contacts, defaultOwner, onDone }: { bdUsers: B
 }
 
 // ── Contacts panel (shared) ──
-function ContactsPanel({ contacts, onDone }: { contacts: Contact[]; onDone: () => void }) {
+function ContactsPanel({ contacts, bdUsers, onDone }: { contacts: Contact[]; bdUsers: BdUser[]; onDone: () => void }) {
   const utils = trpc.useUtils();
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ company: "", contactName: "", jobTitle: "", email: "", phone: "", website: "", source: "", notes: "" });
-  const add = trpc.bd.addContact.useMutation({
-    onSuccess: () => { toast.success("Contact added"); setOpen(false); setForm({ company: "", contactName: "", jobTitle: "", email: "", phone: "", website: "", source: "", notes: "" }); onDone(); },
-    onError: (e) => toast.error(e.message),
-  });
+  const blank = { company: "", contactName: "", jobTitle: "", email: "", phone: "", website: "", source: "", notes: "", stage: "", ownerId: 0 };
+  const [form, setForm] = useState(blank);
+  const add = trpc.bd.addContact.useMutation({ onError: (e) => toast.error(e.message) });
+  const addDeal = trpc.bd.addDeal.useMutation({ onError: (e) => toast.error(e.message) });
+  const submit = async () => {
+    if (!form.company.trim()) return toast.error("Company is required");
+    if (form.stage && !form.ownerId) return toast.error("Pick an owner to add this to a pipeline");
+    try {
+      const res = await add.mutateAsync({
+        company: form.company, contactName: form.contactName || undefined, jobTitle: form.jobTitle || undefined,
+        email: form.email || undefined, phone: form.phone || undefined, website: form.website || undefined,
+        source: form.source || undefined, notes: form.notes || undefined,
+      });
+      if (form.stage && form.ownerId && res?.id) {
+        await addDeal.mutateAsync({
+          title: form.company, ownerId: Number(form.ownerId), contactId: res.id,
+          stage: form.stage as "follow_up" | "negotiations" | "review" | "partners_consultants" | "closed_won" | "closed_lost",
+        });
+        utils.bd.listDeals.invalidate();
+      }
+      toast.success(form.stage ? "Contact added & placed in pipeline" : "Contact added");
+      setOpen(false); setForm(blank); onDone();
+    } catch { /* surfaced by onError */ }
+  };
   const del = trpc.bd.deleteContact.useMutation({ onSuccess: () => { utils.bd.listContacts.invalidate(); toast.success("Contact deleted"); }, onError: (e) => toast.error(e.message) });
   return (
     <div className="space-y-3">
@@ -300,10 +457,23 @@ function ContactsPanel({ contacts, onDone }: { contacts: Contact[]; onDone: () =
               <Input placeholder="Source (where lead came from)" value={form.source} onChange={e => setForm({ ...form, source: e.target.value })} />
             </div>
             <Textarea placeholder="Notes" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} />
+            <div className="rounded-lg border p-2.5 space-y-2 bg-muted/30">
+              <p className="text-xs font-medium text-muted-foreground">Add straight to a pipeline? (optional)</p>
+              <div className="grid grid-cols-2 gap-2">
+                <select className="border rounded-md px-2 py-2 text-sm bg-background" value={form.stage} onChange={e => setForm({ ...form, stage: e.target.value })}>
+                  <option value="">Don't add to pipeline</option>
+                  {STAGES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+                </select>
+                <select className="border rounded-md px-2 py-2 text-sm bg-background" value={form.ownerId} onChange={e => setForm({ ...form, ownerId: Number(e.target.value) })} disabled={!form.stage}>
+                  <option value={0}>Owner</option>
+                  {bdUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+              </div>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={() => { if (!form.company.trim()) return toast.error("Company is required"); add.mutate(form); }} disabled={add.isPending} style={{ background: BRAND }} className="text-white">{add.isPending ? "Adding…" : "Add Contact"}</Button>
+            <Button onClick={submit} disabled={add.isPending || addDeal.isPending} style={{ background: BRAND }} className="text-white">{add.isPending ? "Adding…" : "Add Contact"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
