@@ -426,6 +426,7 @@ type WorkforceAgent = {
   isActive: boolean;
   crdts?: string | null;
   agentStatus?: string | null;
+  salarySettled?: boolean | null;
   dialerCredentials?: string | null;
   nestingStatus?: "nesting" | "active" | "senior" | null;
   workLocation?: string | null;
@@ -797,6 +798,11 @@ export default function Operations() {
     profileLocked?: boolean;
   };
   const [editForm, setEditForm] = useState<EditForm>({});
+  const [exitAgent, setExitAgent] = useState<WorkforceAgent | null>(null);
+  const markSettled = trpc.hr.markSettled.useMutation({
+    onSuccess: () => { utils.workforce.list.invalidate(); toast.success("Marked as settled — agent removed from Operations."); },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
   const updateAgent = trpc.workforce.update.useMutation({
     onSuccess: () => { utils.workforce.list.invalidate(); toast.success("Agent updated"); setEditDialog(false); },
     onError: (e) => toast.error(getErrorMessage(e)),
@@ -961,6 +967,11 @@ export default function Operations() {
     const matchesStatus = agentStatusFilter === "all" || status === agentStatusFilter;
     return matchesSearch && matchesTL && matchesStatus;
   });
+
+  // Former agents (resigned/terminated/blacklisted) still visible ONLY because salary isn't settled
+  const pendingPayout = (agents as WorkforceAgent[]).filter(a =>
+    (a.agentStatus === "resigned" || a.agentStatus === "terminated" || a.agentStatus === "blacklisted") && a.salarySettled === false
+  );
 
   const openEditAgent = (agent: WorkforceAgent) => {
     setEditingAgent(agent);
@@ -1147,6 +1158,23 @@ export default function Operations() {
       {/* Agents Tab */}
       {activeTab === "agents" && (
         <div>
+          {/* Former agents awaiting final pay — stay visible until "Mark as settled" */}
+          {pendingPayout.length > 0 && (
+            <div className="rounded-xl border border-red-300 bg-red-50 p-3 mb-3 space-y-2">
+              <p className="text-xs font-semibold text-red-800">💰 Former agents pending final payout ({pendingPayout.length}) — they leave Operations once settled</p>
+              {pendingPayout.map(a => (
+                <div key={a.traineeCode} className="flex items-center justify-between gap-2 rounded-lg bg-background border px-2.5 py-1.5">
+                  <span className="text-sm"><span className="font-medium">{a.fullName}</span> <span className="text-muted-foreground">· {a.traineeCode}{a.crdts ? ` · ${a.crdts}` : ""}</span> <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200 ml-1">{a.agentStatus}</span></span>
+                  <Button size="sm" variant="outline" className="text-emerald-700 border-emerald-300 hover:bg-emerald-50" onClick={() => setExitAgent(a)}>
+                    Exit process → settle
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {exitAgent && <ExitProcessDialog agent={exitAgent} onClose={() => setExitAgent(null)} />}
+
           {/* Status filter tabs */}
           <div className="flex gap-1 mb-3">
             {([
@@ -2085,5 +2113,72 @@ export default function Operations() {
       </Dialog>
       </Dialog>
     </div>
+  );
+}
+
+
+// ── Exit Process dialog: checklist REQUIRED before settle & archive ──────────
+function ExitProcessDialog({ agent, onClose }: { agent: { traineeCode: string; fullName: string | null; agentStatus?: string | null }; onClose: () => void }) {
+  const utils = trpc.useUtils();
+  const { data: existing } = trpc.exit.get.useQuery({ traineeCode: agent.traineeCode });
+  const [f, setF] = useState<{ exitType: string; exitInterview: boolean; clearance: boolean; assetsReturned: boolean; lastWorkingDay: string; settlementDone: boolean; notes: string } | null>(null);
+  useEffect(() => {
+    if (f === null) {
+      setF({
+        exitType: (existing?.exitType as string) ?? (agent.agentStatus === "terminated" ? "termination" : "resignation"),
+        exitInterview: existing?.exitInterview ?? false,
+        clearance: existing?.clearance ?? false,
+        assetsReturned: existing?.assetsReturned ?? false,
+        lastWorkingDay: existing?.lastWorkingDay ?? "",
+        settlementDone: existing?.settlementDone ?? false,
+        notes: existing?.notes ?? "",
+      });
+    }
+  }, [existing, f, agent.agentStatus]);
+  const save = trpc.exit.upsert.useMutation({ onError: (e) => toast.error(e.message) });
+  const settle = trpc.exit.settleAndArchive.useMutation({
+    onSuccess: () => { toast.success("Exit complete — agent settled & archived to Recruitment (Former Agents)"); utils.workforce.list.invalidate(); onClose(); },
+    onError: (e) => toast.error(e.message),
+  });
+  if (!f) return null;
+  const complete = !!f.exitType && f.exitInterview && f.clearance && f.assetsReturned && !!f.lastWorkingDay && f.settlementDone;
+  const CheckRow = ({ label, k }: { label: string; k: "exitInterview" | "clearance" | "assetsReturned" | "settlementDone" }) => (
+    <label className="flex items-center gap-2 text-sm cursor-pointer">
+      <input type="checkbox" checked={f[k]} onChange={e => setF({ ...f, [k]: e.target.checked })} /> {label}
+    </label>
+  );
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader><DialogTitle>Exit process — {agent.fullName || agent.traineeCode}</DialogTitle></DialogHeader>
+        <p className="text-xs text-muted-foreground">All items are REQUIRED before the agent can be settled and archived out of Operations.</p>
+        <div className="space-y-2.5">
+          <div>
+            <label className="text-xs font-medium block mb-1">Exit type</label>
+            <select className="border rounded-md px-2 py-2 text-sm bg-background w-full" value={f.exitType} onChange={e => setF({ ...f, exitType: e.target.value })}>
+              <option value="resignation">استقالة (Resignation)</option>
+              <option value="termination">فصل (Termination)</option>
+              <option value="contract_end">انتهاء عقد (Contract end)</option>
+            </select>
+          </div>
+          <CheckRow label="Exit interview done" k="exitInterview" />
+          <CheckRow label="Clearance complete" k="clearance" />
+          <CheckRow label="استلام العهد — company property returned" k="assetsReturned" />
+          <div>
+            <label className="text-xs font-medium block mb-1">آخر يوم عمل (last working day)</label>
+            <Input type="date" value={f.lastWorkingDay} onChange={e => setF({ ...f, lastWorkingDay: e.target.value })} />
+          </div>
+          <CheckRow label="Settlement / final pay confirmed PAID" k="settlementDone" />
+          <Input placeholder="Notes (optional)" value={f.notes} onChange={e => setF({ ...f, notes: e.target.value })} />
+        </div>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={async () => { await save.mutateAsync({ traineeCode: agent.traineeCode, exitType: f.exitType as "resignation" | "termination" | "contract_end", exitInterview: f.exitInterview, clearance: f.clearance, assetsReturned: f.assetsReturned, lastWorkingDay: f.lastWorkingDay || undefined, settlementDone: f.settlementDone, notes: f.notes || undefined }); toast.success("Progress saved"); }} disabled={save.isPending}>Save progress</Button>
+          <Button style={{ background: complete ? "#059669" : "#9CA3AF" }} className="text-white" disabled={!complete || settle.isPending}
+            onClick={async () => { await save.mutateAsync({ traineeCode: agent.traineeCode, exitType: f.exitType as "resignation" | "termination" | "contract_end", exitInterview: f.exitInterview, clearance: f.clearance, assetsReturned: f.assetsReturned, lastWorkingDay: f.lastWorkingDay || undefined, settlementDone: f.settlementDone, notes: f.notes || undefined }); settle.mutate({ traineeCode: agent.traineeCode }); }}>
+            {settle.isPending ? "Archiving…" : "Complete exit — settle & archive"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

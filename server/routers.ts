@@ -1495,9 +1495,34 @@ const campaignsRouter = router({
 
 // ─── Workforce Router ─────────────────────────────────────────────────────────
 const workforceRouter = router({
+  // Manual "Mark as settled" — flips salarySettled; used when final pay is confirmed (exit checklist gates the full archive)
+  // Unified HR profile: update address + emergency contact
+  updateHrInfo: protectedProcedure
+    .input(z.object({ traineeCode: z.string(), address: z.string().optional(), emergencyContactName: z.string().optional(), emergencyContactPhone: z.string().optional(), emergencyContactRelation: z.string().optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { workforceAgents } = await import("../drizzle/schema");
+      const { traineeCode, ...rest } = input;
+      await db.update(workforceAgents).set(rest).where(eq(workforceAgents.traineeCode, traineeCode));
+      return { ok: true };
+    }),
+  markSettled: protectedProcedure
+    .input(z.object({ traineeCode: z.string(), settled: z.boolean() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { workforceAgents } = await import("../drizzle/schema");
+      await db.update(workforceAgents).set({ salarySettled: input.settled, settledAt: input.settled ? Date.now() : null }).where(eq(workforceAgents.traineeCode, input.traineeCode));
+      return { ok: true };
+    }),
   list: protectedProcedure
-    .input(z.object({ campaignId: z.number().optional(), teamLeader: z.string().optional() }))
-    .query(({ input }) => listWorkforceAgents(input.campaignId, input.teamLeader)),
+    .input(z.object({ campaignId: z.number().optional(), teamLeader: z.string().optional(), includeFormer: z.boolean().optional() }))
+    .query(({ input }) => listWorkforceAgents(input.campaignId, input.teamLeader, input.includeFormer)),
   allInTraining: protectedProcedure
     .query(() => listAllAgentsInTraining()),
   // Returns the next available T-{N} code (lowest unused sequential number)
@@ -1598,6 +1623,10 @@ const workforceRouter = router({
       militaryStatus: z.enum(["completed", "exempt", "postponed", "not_applicable"]).optional(),
       jobTitle: z.string().max(150).optional(),
       city: z.string().max(120).optional(),
+      address: z.string().max(500).optional(),
+      emergencyContactName: z.string().max(255).optional(),
+      emergencyContactPhone: z.string().max(64).optional(),
+      emergencyContactRelation: z.string().max(100).optional(),
       profileLocked: z.boolean().optional(),
     }))
      .mutation(async ({ input }) => {
@@ -4661,7 +4690,284 @@ const apiKeysRouter = router({
 });
 
 // ─── #2 Business Development CRM Router ──────────────────────────────────────
+// ─── HR Router: lifecycle (settle/archive) + exit process + leave management ──
+const hrRouter = router({
+  // Mark a former agent's salary as fully paid → they drop out of Operations.
+  markSettled: protectedProcedure
+    .input(z.object({ traineeCode: z.string(), settled: z.boolean() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { workforceAgents } = await import("../drizzle/schema");
+      await db.update(workforceAgents).set({ salarySettled: input.settled }).where(eq(workforceAgents.traineeCode, input.traineeCode));
+      return { ok: true };
+    }),
+  // Exit checklist — read (auto-creates a blank one)
+  getExit: protectedProcedure
+    .input(z.object({ traineeCode: z.string() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return null;
+      const { exitProcess } = await import("../drizzle/schema");
+      const rows = await db.select().from(exitProcess).where(eq(exitProcess.traineeCode, input.traineeCode)).limit(1);
+      return rows[0] ?? null;
+    }),
+  updateExit: protectedProcedure
+    .input(z.object({
+      traineeCode: z.string(),
+      exitType: z.enum(["resignation", "termination", "contract_end"]).optional(),
+      exitInterview: z.boolean().optional(), clearance: z.boolean().optional(),
+      assetsReturned: z.boolean().optional(), lastWorkingDay: z.string().optional(),
+      settlementDone: z.boolean().optional(), notes: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { exitProcess } = await import("../drizzle/schema");
+      const { traineeCode, ...rest } = input;
+      const now = Date.now();
+      const existing = await db.select().from(exitProcess).where(eq(exitProcess.traineeCode, traineeCode)).limit(1);
+      if (existing[0]) await db.update(exitProcess).set({ ...rest, updatedAt: now }).where(eq(exitProcess.traineeCode, traineeCode));
+      else await db.insert(exitProcess).values({ traineeCode, ...rest, updatedAt: now });
+      return { ok: true };
+    }),
+  // Archive: exit checklist must be complete → labels the linked candidate + closes out the agent.
+  archiveAgent: protectedProcedure
+    .input(z.object({ traineeCode: z.string(), status: z.enum(["resigned", "terminated", "blacklisted"]) }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { workforceAgents, exitProcess, candidates } = await import("../drizzle/schema");
+      const ex = (await db.select().from(exitProcess).where(eq(exitProcess.traineeCode, input.traineeCode)).limit(1))[0];
+      const complete = ex && ex.exitType && ex.exitInterview && ex.clearance && ex.assetsReturned && !!ex.lastWorkingDay && ex.settlementDone;
+      if (!complete) throw new TRPCError({ code: "BAD_REQUEST", message: "Exit checklist incomplete — finish all items (type, interview, clearance, assets, last day, settlement) before archiving." });
+      const ag = (await db.select().from(workforceAgents).where(eq(workforceAgents.traineeCode, input.traineeCode)).limit(1))[0];
+      if (!ag) throw new TRPCError({ code: "NOT_FOUND", message: "Agent not found" });
+      await db.update(workforceAgents).set({ agentStatus: input.status, salarySettled: true }).where(eq(workforceAgents.traineeCode, input.traineeCode));
+      await db.update(exitProcess).set({ completedAt: Date.now(), updatedAt: Date.now() }).where(eq(exitProcess.traineeCode, input.traineeCode));
+      if (ag.candidateId) {
+        try { await db.update(candidates).set({ status: input.status }).where(eq(candidates.id, ag.candidateId)); } catch (_) { /* candidate table label optional */ }
+      }
+      return { ok: true };
+    }),
+  // ── Leave ──
+  listBalances: protectedProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return [];
+    const { leaveBalances } = await import("../drizzle/schema");
+    return db.select().from(leaveBalances);
+  }),
+  // Mass-add: set/increment balances for ALL active agents for a year.
+  massSetBalances: protectedProcedure
+    .input(z.object({ year: z.number(), casualTotal: z.number(), annualTotal: z.number() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq, and } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { leaveBalances, workforceAgents } = await import("../drizzle/schema");
+      const agents = await db.select({ traineeCode: workforceAgents.traineeCode }).from(workforceAgents).where(eq(workforceAgents.agentStatus, "active"));
+      const now = Date.now();
+      let updated = 0;
+      for (const a of agents) {
+        const ex = (await db.select().from(leaveBalances).where(and(eq(leaveBalances.traineeCode, a.traineeCode), eq(leaveBalances.year, input.year))).limit(1))[0];
+        if (ex) await db.update(leaveBalances).set({ casualTotal: input.casualTotal, annualTotal: input.annualTotal, updatedAt: now }).where(eq(leaveBalances.id, ex.id));
+        else await db.insert(leaveBalances).values({ traineeCode: a.traineeCode, year: input.year, casualTotal: input.casualTotal, annualTotal: input.annualTotal, updatedAt: now });
+        updated++;
+      }
+      return { ok: true, agents: updated };
+    }),
+  setBalance: protectedProcedure
+    .input(z.object({ traineeCode: z.string(), year: z.number(), casualTotal: z.number().optional(), annualTotal: z.number().optional(), casualUsed: z.number().optional(), annualUsed: z.number().optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq, and } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { leaveBalances } = await import("../drizzle/schema");
+      const { traineeCode, year, ...rest } = input;
+      const now = Date.now();
+      const ex = (await db.select().from(leaveBalances).where(and(eq(leaveBalances.traineeCode, traineeCode), eq(leaveBalances.year, year))).limit(1))[0];
+      if (ex) await db.update(leaveBalances).set({ ...rest, updatedAt: now }).where(eq(leaveBalances.id, ex.id));
+      else await db.insert(leaveBalances).values({ traineeCode, year, casualTotal: rest.casualTotal ?? 0, annualTotal: rest.annualTotal ?? 0, casualUsed: rest.casualUsed ?? 0, annualUsed: rest.annualUsed ?? 0, updatedAt: now });
+      return { ok: true };
+    }),
+  listLeaveRequests: protectedProcedure
+    .input(z.object({ status: z.enum(["pending", "approved", "rejected"]).optional() }).optional())
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { leaveRequests } = await import("../drizzle/schema");
+      const { eq, desc } = await import("drizzle-orm");
+      if (input?.status) return db.select().from(leaveRequests).where(eq(leaveRequests.status, input.status)).orderBy(desc(leaveRequests.createdAt));
+      return db.select().from(leaveRequests).orderBy(desc(leaveRequests.createdAt));
+    }),
+  // Agent submits a request (no type — HR classifies)
+  requestLeave: publicProcedure
+    .input(z.object({ traineeCode: z.string(), startDate: z.string(), endDate: z.string(), days: z.number().min(1), reason: z.string().optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { leaveRequests } = await import("../drizzle/schema");
+      await db.insert(leaveRequests).values({ ...input, createdAt: Date.now() });
+      return { ok: true };
+    }),
+  myLeaveRequests: publicProcedure
+    .input(z.object({ traineeCode: z.string() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { leaveRequests } = await import("../drizzle/schema");
+      const { eq, desc } = await import("drizzle-orm");
+      return db.select().from(leaveRequests).where(eq(leaveRequests.traineeCode, input.traineeCode)).orderBy(desc(leaveRequests.createdAt));
+    }),
+  // HR decides: classify type + approve (deducts balance) or reject.
+  decideLeave: protectedProcedure
+    .input(z.object({ id: z.number(), decision: z.enum(["approved", "rejected"]), leaveType: z.enum(["casual", "annual"]).optional(), decidedBy: z.string().optional() }))
+    .mutation(async ({ input, ctx }) => {
+      const { getDb } = await import("./db");
+      const { eq, and } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { leaveRequests, leaveBalances } = await import("../drizzle/schema");
+      const req = (await db.select().from(leaveRequests).where(eq(leaveRequests.id, input.id)).limit(1))[0];
+      if (!req) throw new TRPCError({ code: "NOT_FOUND", message: "Request not found" });
+      if (input.decision === "approved" && !input.leaveType) throw new TRPCError({ code: "BAD_REQUEST", message: "Pick the leave type (عارضة / اعتيادية) before approving." });
+      await db.update(leaveRequests).set({ status: input.decision, leaveType: input.leaveType ?? null, decidedBy: input.decidedBy ?? ctx.user?.name ?? null, decidedAt: Date.now() }).where(eq(leaveRequests.id, input.id));
+      if (input.decision === "approved" && input.leaveType) {
+        const year = parseInt(String(req.startDate).slice(0, 4)) || new Date().getFullYear();
+        const bal = (await db.select().from(leaveBalances).where(and(eq(leaveBalances.traineeCode, req.traineeCode), eq(leaveBalances.year, year))).limit(1))[0];
+        if (bal) {
+          const upd = input.leaveType === "casual" ? { casualUsed: bal.casualUsed + req.days } : { annualUsed: bal.annualUsed + req.days };
+          await db.update(leaveBalances).set({ ...upd, updatedAt: Date.now() }).where(eq(leaveBalances.id, bal.id));
+        } else {
+          await db.insert(leaveBalances).values({ traineeCode: req.traineeCode, year, casualTotal: 0, annualTotal: 0, casualUsed: input.leaveType === "casual" ? req.days : 0, annualUsed: input.leaveType === "annual" ? req.days : 0, updatedAt: Date.now() });
+        }
+      }
+      return { ok: true };
+    }),
+});
+
 const bdRouter = router({
+  // ── Role & login linking ──
+  me: protectedProcedure.query(async ({ ctx }) => {
+    const role = (ctx.user as { role?: string })?.role;
+    const openId = (ctx.user as { openId?: string })?.openId ?? "";
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return { kind: "admin" as const };
+    const { bdUsers } = await import("../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+    if (openId) {
+      const linked = await db.select().from(bdUsers).where(eq(bdUsers.openId, openId)).limit(1);
+      if (linked[0]) return { kind: "bd" as const, bdUser: linked[0] };
+    }
+    if (role === "admin") return { kind: "admin" as const };
+    const unlinked = await db.select().from(bdUsers);
+    return { kind: "unlinked" as const, candidates: unlinked.filter(u => !u.openId) };
+  }),
+  linkLogin: protectedProcedure
+    .input(z.object({ bdUserId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      const openId = (ctx.user as { openId?: string })?.openId;
+      if (!openId) throw new TRPCError({ code: "BAD_REQUEST", message: "No login id on session" });
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdUsers } = await import("../drizzle/schema");
+      const target = await db.select().from(bdUsers).where(eq(bdUsers.id, input.bdUserId)).limit(1);
+      if (!target[0]) throw new TRPCError({ code: "NOT_FOUND", message: "BD user not found" });
+      if (target[0].openId && target[0].openId !== openId) throw new TRPCError({ code: "BAD_REQUEST", message: "That BD user is already linked to another login" });
+      await db.update(bdUsers).set({ openId }).where(eq(bdUsers.id, input.bdUserId));
+      return { ok: true };
+    }),
+  unlinkLogin: protectedProcedure
+    .input(z.object({ bdUserId: z.number() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdUsers } = await import("../drizzle/schema");
+      await db.update(bdUsers).set({ openId: null }).where(eq(bdUsers.id, input.bdUserId));
+      return { ok: true };
+    }),
+  // ── In-Hub bell: reminders due today/overdue (bd users see their own; admin sees all) ──
+  dueReminders: protectedProcedure.query(async ({ ctx }) => {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return [];
+    const { bdDeals, bdUsers } = await import("../drizzle/schema");
+    const { eq, and, lte, notInArray, isNotNull } = await import("drizzle-orm");
+    const today = new Date().toISOString().slice(0, 10);
+    const openId = (ctx.user as { openId?: string })?.openId ?? "";
+    let ownerFilter: number | null = null;
+    if (openId) {
+      const linked = await db.select().from(bdUsers).where(eq(bdUsers.openId, openId)).limit(1);
+      if (linked[0]) ownerFilter = linked[0].id;
+    }
+    const base = and(isNotNull(bdDeals.reminderDate), lte(bdDeals.reminderDate, today), notInArray(bdDeals.stage, ["closed_won", "closed_lost"]));
+    const rows = ownerFilter
+      ? await db.select().from(bdDeals).where(and(base, eq(bdDeals.ownerId, ownerFilter)))
+      : await db.select().from(bdDeals).where(base);
+    return rows.map(d => ({ id: d.id, title: d.title, reminderDate: d.reminderDate, reminderNote: d.reminderNote, ownerId: d.ownerId }));
+  }),
+  // ── Tasks per deal ──
+  listTasks: publicProcedure
+    .input(z.object({ dealId: z.number() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { bdDealTasks } = await import("../drizzle/schema");
+      const { eq, asc } = await import("drizzle-orm");
+      return db.select().from(bdDealTasks).where(eq(bdDealTasks.dealId, input.dealId)).orderBy(asc(bdDealTasks.done), asc(bdDealTasks.dueDate));
+    }),
+  addTask: protectedProcedure
+    .input(z.object({ dealId: z.number(), title: z.string().min(1), dueDate: z.string().optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdDealTasks } = await import("../drizzle/schema");
+      await db.insert(bdDealTasks).values({ ...input, done: false, createdAt: Date.now() });
+      return { ok: true };
+    }),
+  toggleTask: protectedProcedure
+    .input(z.object({ id: z.number(), done: z.boolean() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdDealTasks } = await import("../drizzle/schema");
+      await db.update(bdDealTasks).set({ done: input.done, doneAt: input.done ? Date.now() : null }).where(eq(bdDealTasks.id, input.id));
+      return { ok: true };
+    }),
+  deleteTask: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdDealTasks } = await import("../drizzle/schema");
+      await db.delete(bdDealTasks).where(eq(bdDealTasks.id, input.id));
+      return { ok: true };
+    }),
   // Seed the BD team (Ziad / Malak / Ali). Safe to run repeatedly.
   seedUsers: protectedProcedure.mutation(async () => {
     const { getDb } = await import("./db");
@@ -4775,7 +5081,7 @@ const bdRouter = router({
       const { bdDeals } = await import("../drizzle/schema");
       const closed = input.stage === "closed_won" || input.stage === "closed_lost";
       await db.update(bdDeals).set({
-        stage: input.stage, updatedAt: Date.now(),
+        stage: input.stage, updatedAt: Date.now(), stageChangedAt: Date.now(),
         ...(closed ? { closedAt: Date.now(), outcomeReason: input.reason ?? null } : {}),
       }).where(eq(bdDeals.id, input.id));
       return { ok: true };
@@ -4825,6 +5131,103 @@ const bdRouter = router({
       const { bdDeals } = await import("../drizzle/schema");
       await db.delete(bdDeals).where(eq(bdDeals.id, input.id));
       return { ok: true };
+    }),
+  // ── Tasks per deal ──
+  listTasks: publicProcedure
+    .input(z.object({ dealId: z.number().optional(), ownerId: z.number().optional() }).optional())
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { bdTasks, bdDeals } = await import("../drizzle/schema");
+      const { eq, desc } = await import("drizzle-orm");
+      if (input?.dealId) return db.select().from(bdTasks).where(eq(bdTasks.dealId, input.dealId)).orderBy(desc(bdTasks.createdAt));
+      if (input?.ownerId) {
+        return db.select({ id: bdTasks.id, dealId: bdTasks.dealId, title: bdTasks.title, dueDate: bdTasks.dueDate, done: bdTasks.done, createdAt: bdTasks.createdAt, doneAt: bdTasks.doneAt })
+          .from(bdTasks).innerJoin(bdDeals, eq(bdTasks.dealId, bdDeals.id)).where(eq(bdDeals.ownerId, input.ownerId)).orderBy(desc(bdTasks.createdAt));
+      }
+      return db.select().from(bdTasks).orderBy(desc(bdTasks.createdAt));
+    }),
+  addTask: protectedProcedure
+    .input(z.object({ dealId: z.number(), title: z.string().min(1), dueDate: z.string().optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdTasks } = await import("../drizzle/schema");
+      await db.insert(bdTasks).values({ ...input, createdAt: Date.now() });
+      return { ok: true };
+    }),
+  toggleTask: protectedProcedure
+    .input(z.object({ id: z.number(), done: z.boolean() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdTasks } = await import("../drizzle/schema");
+      await db.update(bdTasks).set({ done: input.done, doneAt: input.done ? Date.now() : null }).where(eq(bdTasks.id, input.id));
+      return { ok: true };
+    }),
+  deleteTask: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdTasks } = await import("../drizzle/schema");
+      await db.delete(bdTasks).where(eq(bdTasks.id, input.id));
+      return { ok: true };
+    }),
+  // ── Login linking + role (route gate reads this) ──
+  myRole: publicProcedure.query(async ({ ctx }) => {
+    const openId = ctx.user?.openId;
+    if (!openId) return { linked: false as const, role: null, bdUserId: null, name: null };
+    const { getDb } = await import("./db");
+    const { eq } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return { linked: false as const, role: null, bdUserId: null, name: null };
+    const { bdUsers } = await import("../drizzle/schema");
+    const rows = await db.select().from(bdUsers).where(eq(bdUsers.openId, openId)).limit(1);
+    if (!rows[0]) return { linked: false as const, role: null, bdUserId: null, name: null };
+    return { linked: true as const, role: rows[0].role, bdUserId: rows[0].id, name: rows[0].name };
+  }),
+  linkMyLogin: publicProcedure
+    .input(z.object({ bdUserId: z.number() }))
+    .mutation(async ({ input, ctx }) => {
+      const openId = ctx.user?.openId;
+      if (!openId) throw new TRPCError({ code: "UNAUTHORIZED", message: "Log in first" });
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdUsers } = await import("../drizzle/schema");
+      const target = (await db.select().from(bdUsers).where(eq(bdUsers.id, input.bdUserId)).limit(1))[0];
+      if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "BD user not found" });
+      if (target.openId && target.openId !== openId) throw new TRPCError({ code: "BAD_REQUEST", message: target.name + " is already linked to another login." });
+      await db.update(bdUsers).set({ openId }).where(eq(bdUsers.id, input.bdUserId));
+      return { ok: true, name: target.name };
+    }),
+  // Bell: count + list of due/overdue reminders and tasks for an owner (or all)
+  dueItems: publicProcedure
+    .input(z.object({ ownerId: z.number().optional() }).optional())
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return { count: 0, items: [] as { kind: string; dealId: number; title: string; due: string }[] };
+      const { bdDeals, bdTasks } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const today = new Date().toISOString().slice(0, 10);
+      const deals = input?.ownerId ? await db.select().from(bdDeals).where(eq(bdDeals.ownerId, input.ownerId)) : await db.select().from(bdDeals);
+      const dealIds = new Set(deals.map(d => d.id));
+      const open = deals.filter(d => d.stage !== "closed_won" && d.stage !== "closed_lost");
+      const items: { kind: string; dealId: number; title: string; due: string }[] = [];
+      open.forEach(d => { if (d.reminderDate && d.reminderDate <= today) items.push({ kind: "reminder", dealId: d.id, title: d.title + (d.reminderNote ? " — " + d.reminderNote : ""), due: d.reminderDate }); });
+      const tasks = await db.select().from(bdTasks).where(eq(bdTasks.done, false));
+      tasks.forEach(t => { if (dealIds.has(t.dealId) && t.dueDate && t.dueDate <= today) items.push({ kind: "task", dealId: t.dealId, title: t.title, due: t.dueDate }); });
+      items.sort((a, b) => (a.due < b.due ? -1 : 1));
+      return { count: items.length, items };
     }),
 });
 
@@ -4889,6 +5292,154 @@ const crdtsArchiveRouter = router({
     }),
 });
 
+
+// ═══ LEAVE MANAGEMENT — casual (عارضة) / annual (اعتيادية) ═══
+const leaveRouter = router({
+  // Agent: submit a request (no type — HR classifies on decision). Balances are hidden from agents.
+  request: publicProcedure
+    .input(z.object({ traineeCode: z.string(), startDate: z.string(), endDate: z.string(), days: z.number().min(1), reason: z.string().optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { leaveRequests } = await import("../drizzle/schema");
+      await db.insert(leaveRequests).values({ ...input, status: "pending", createdAt: Date.now() });
+      return { ok: true };
+    }),
+  myRequests: publicProcedure
+    .input(z.object({ traineeCode: z.string() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { leaveRequests } = await import("../drizzle/schema");
+      const { eq, desc } = await import("drizzle-orm");
+      return db.select().from(leaveRequests).where(eq(leaveRequests.traineeCode, input.traineeCode)).orderBy(desc(leaveRequests.createdAt));
+    }),
+  listRequests: protectedProcedure
+    .input(z.object({ status: z.enum(["pending", "approved", "rejected"]).optional() }).optional())
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { leaveRequests } = await import("../drizzle/schema");
+      const { eq, desc } = await import("drizzle-orm");
+      if (input?.status) return db.select().from(leaveRequests).where(eq(leaveRequests.status, input.status)).orderBy(desc(leaveRequests.createdAt));
+      return db.select().from(leaveRequests).orderBy(desc(leaveRequests.createdAt));
+    }),
+  // HR decides: classify the type + approve/reject. Approval increments the used counter.
+  decide: protectedProcedure
+    .input(z.object({ id: z.number(), status: z.enum(["approved", "rejected"]), leaveType: z.enum(["casual", "annual"]).optional() }))
+    .mutation(async ({ input, ctx }) => {
+      const { getDb } = await import("./db");
+      const { eq, and, sql } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { leaveRequests, leaveBalances } = await import("../drizzle/schema");
+      if (input.status === "approved" && !input.leaveType) throw new TRPCError({ code: "BAD_REQUEST", message: "Pick the leave type (casual/annual) before approving" });
+      const rows = await db.select().from(leaveRequests).where(eq(leaveRequests.id, input.id)).limit(1);
+      const req = rows[0];
+      if (!req) throw new TRPCError({ code: "NOT_FOUND", message: "Request not found" });
+      await db.update(leaveRequests).set({ status: input.status, leaveType: input.leaveType ?? null, decidedBy: ctx.user?.name ?? "admin", decidedAt: Date.now() }).where(eq(leaveRequests.id, input.id));
+      if (input.status === "approved" && input.leaveType) {
+        const year = String(new Date().getFullYear());
+        const bal = await db.select().from(leaveBalances).where(and(eq(leaveBalances.traineeCode, req.traineeCode), eq(leaveBalances.year, Number(year)))).limit(1);
+        if (bal[0]) {
+          const field = input.leaveType === "casual" ? { casualUsed: sql`${leaveBalances.casualUsed} + ${req.days}` } : { annualUsed: sql`${leaveBalances.annualUsed} + ${req.days}` };
+          await db.update(leaveBalances).set({ ...field, updatedAt: Date.now() }).where(eq(leaveBalances.id, bal[0].id));
+        } else {
+          await db.insert(leaveBalances).values({ traineeCode: req.traineeCode, year: Number(year), casualTotal: 0, annualTotal: 0, casualUsed: input.leaveType === "casual" ? req.days : 0, annualUsed: input.leaveType === "annual" ? req.days : 0, updatedAt: Date.now() });
+        }
+      }
+      return { ok: true };
+    }),
+  listBalances: protectedProcedure
+    .input(z.object({ year: z.number().optional() }).optional())
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { leaveBalances } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const y = input?.year ?? new Date().getFullYear();
+      return db.select().from(leaveBalances).where(eq(leaveBalances.year, y));
+    }),
+  // Admin: mass-add balances to ALL active agents (adds on top of existing totals)
+  massAdd: protectedProcedure
+    .input(z.object({ casual: z.number().min(0), annual: z.number().min(0) }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq, and, sql, notInArray } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { leaveBalances, workforceAgents } = await import("../drizzle/schema");
+      const year = new Date().getFullYear();
+      const agents = await db.select({ traineeCode: workforceAgents.traineeCode }).from(workforceAgents)
+        .where(notInArray(workforceAgents.agentStatus, ["resigned", "terminated", "blacklisted"]));
+      let created = 0, updated = 0;
+      for (const a of agents) {
+        if (!a.traineeCode) continue;
+        const ex = await db.select().from(leaveBalances).where(and(eq(leaveBalances.traineeCode, a.traineeCode), eq(leaveBalances.year, year))).limit(1);
+        if (ex[0]) { await db.update(leaveBalances).set({ casualTotal: sql`${leaveBalances.casualTotal} + ${input.casual}`, annualTotal: sql`${leaveBalances.annualTotal} + ${input.annual}`, updatedAt: Date.now() }).where(eq(leaveBalances.id, ex[0].id)); updated++; }
+        else { await db.insert(leaveBalances).values({ traineeCode: a.traineeCode, year, casualTotal: input.casual, annualTotal: input.annual, casualUsed: 0, annualUsed: 0, updatedAt: Date.now() }); created++; }
+      }
+      return { ok: true, created, updated };
+    }),
+});
+
+// ═══ EXIT PROCESS — required checklist before an agent is archived ═══
+const exitRouter = router({
+  get: protectedProcedure
+    .input(z.object({ traineeCode: z.string() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return null;
+      const { exitProcess } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const rows = await db.select().from(exitProcess).where(eq(exitProcess.traineeCode, input.traineeCode)).limit(1);
+      return rows[0] ?? null;
+    }),
+  upsert: protectedProcedure
+    .input(z.object({
+      traineeCode: z.string(),
+      exitType: z.enum(["resignation", "termination", "contract_end"]).optional(),
+      exitInterview: z.boolean().optional(), clearance: z.boolean().optional(),
+      assetsReturned: z.boolean().optional(), lastWorkingDay: z.string().optional(),
+      settlementDone: z.boolean().optional(), notes: z.string().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { exitProcess } = await import("../drizzle/schema");
+      const { traineeCode, ...rest } = input;
+      const now = Date.now();
+      const ex = await db.select().from(exitProcess).where(eq(exitProcess.traineeCode, traineeCode)).limit(1);
+      if (ex[0]) await db.update(exitProcess).set({ ...rest, updatedAt: now }).where(eq(exitProcess.traineeCode, traineeCode));
+      else await db.insert(exitProcess).values({ traineeCode, ...rest, updatedAt: now });
+      return { ok: true };
+    }),
+  // Mark settled + archive: ONLY allowed when the checklist is complete.
+  settleAndArchive: protectedProcedure
+    .input(z.object({ traineeCode: z.string() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { exitProcess, workforceAgents } = await import("../drizzle/schema");
+      const rows = await db.select().from(exitProcess).where(eq(exitProcess.traineeCode, input.traineeCode)).limit(1);
+      const ep = rows[0];
+      const complete = ep && ep.exitType && ep.exitInterview && ep.clearance && ep.assetsReturned && ep.lastWorkingDay && ep.settlementDone;
+      if (!complete) throw new TRPCError({ code: "BAD_REQUEST", message: "Exit checklist is not complete — finish all items (type, interview, clearance, assets, last day, settlement) first." });
+      await db.update(exitProcess).set({ completedAt: Date.now(), updatedAt: Date.now() }).where(eq(exitProcess.traineeCode, input.traineeCode));
+      await db.update(workforceAgents).set({ salarySettled: true, settledAt: Date.now() }).where(eq(workforceAgents.traineeCode, input.traineeCode));
+      return { ok: true };
+    }),
+});
+
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -4931,6 +5482,9 @@ export const appRouter = router({
   apiKeys: apiKeysRouter,
   bd: bdRouter,
   crdtsArchive: crdtsArchiveRouter,
+  hr: hrRouter,
+  leave: leaveRouter,
+  exit: exitRouter,
 });
 export type AppRouter = typeof appRouter;
 

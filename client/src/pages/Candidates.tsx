@@ -346,10 +346,10 @@ export default function Candidates() {
       if ((c.phone ?? "").toLowerCase().includes(q)) return true;
       return false;
     }
-    // Always hide resigned/terminated from main pipeline view
-    if (c.status === "resigned" || c.status === "terminated") return false;
-    // If showRejected is active, show rejected + blacklisted; otherwise hide both
+    // If showRejected is active, show rejected + blacklisted only
     if (showRejected) return c.status === "rejected" || c.status === "blacklisted";
+    // Main pipeline: hide all former agents (resigned / terminated / blacklisted)
+    if (c.status === "resigned" || c.status === "terminated" || c.status === "blacklisted") return false;
     const matchesSearch = !search || (() => {
       const q = search.toLowerCase();
       if (c.name.toLowerCase().includes(q)) return true;

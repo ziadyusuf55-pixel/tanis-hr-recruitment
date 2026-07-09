@@ -1213,7 +1213,7 @@ export async function deleteCampaign(id: number) {
 
 // ─── Workforce Agents ─────────────────────────────────────────────────────────
 
-export async function listWorkforceAgents(campaignId?: number, teamLeader?: string) {
+export async function listWorkforceAgents(campaignId?: number, teamLeader?: string, includeFormer?: boolean) {
   const db = await getDb();
   if (!db) return [];
   const { workforceAgents, campaigns } = await import("../drizzle/schema");
@@ -1237,6 +1237,11 @@ export async function listWorkforceAgents(campaignId?: number, teamLeader?: stri
     dialerCredentials: workforceAgents.dialerCredentials,
     crdts: workforceAgents.crdts,
     agentStatus: workforceAgents.agentStatus,
+    salarySettled: workforceAgents.salarySettled,
+    address: workforceAgents.address,
+    emergencyContactName: workforceAgents.emergencyContactName,
+    emergencyContactPhone: workforceAgents.emergencyContactPhone,
+    emergencyContactRelation: workforceAgents.emergencyContactRelation,
     nestingStatus: workforceAgents.nestingStatus,
     workLocation: workforceAgents.workLocation,
     avatarUrl: workforceAgents.avatarUrl,
@@ -1254,11 +1259,23 @@ export async function listWorkforceAgents(campaignId?: number, teamLeader?: stri
     .leftJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
     .orderBy(workforceAgents.fullName);
   if (campaignId && teamLeader) {
-    return base.where(and(eq(workforceAgents.campaignId, campaignId), eq(workforceAgents.teamLeader, teamLeader)));
+    return _wfFilterFormer(await base.where(and(eq(workforceAgents.campaignId, campaignId), eq(workforceAgents.teamLeader, teamLeader))), includeFormer);
   }
-  if (campaignId) return base.where(eq(workforceAgents.campaignId, campaignId));
-  if (teamLeader) return base.where(eq(workforceAgents.teamLeader, teamLeader));
-  return base;
+  if (campaignId) return _wfFilterFormer(await base.where(eq(workforceAgents.campaignId, campaignId)), includeFormer);
+  if (teamLeader) return _wfFilterFormer(await base.where(eq(workforceAgents.teamLeader, teamLeader)), includeFormer);
+  return _wfFilterFormer(await base, includeFormer);
+}
+
+// Lifecycle rule: resigned/terminated/blacklisted agents leave Operations and all
+// counts/plans — UNLESS their salary hasn't been settled yet (they stay visible,
+// flagged, until "Mark as settled"). Pass includeFormer=true to get everyone (HR views).
+function _wfFilterFormer<T extends { agentStatus?: string | null; salarySettled?: boolean | null }>(rows: T[], includeFormer?: boolean): T[] {
+  if (includeFormer) return rows;
+  return rows.filter(r => {
+    const former = r.agentStatus === "resigned" || r.agentStatus === "terminated" || r.agentStatus === "blacklisted";
+    if (!former) return true;
+    return r.salarySettled === false;   // unpaid former agent stays until settled
+  });
 }
 
 /**
@@ -1513,7 +1530,7 @@ export async function markAgentResignedOnSpot(agentCode: string, reason: string,
     effectiveAt: now, approvedBy: adminName, approvedAt: now, appliedAt: now,
   });
   // Mark agent as resigned — keep in workforceAgents for historical records
-  await db.update(workforceAgents).set({ agentStatus: "resigned", isActive: false, updatedAt: new Date() })
+  await db.update(workforceAgents).set({ agentStatus: "resigned", salarySettled: false, isActive: false, updatedAt: new Date() })
     .where(eq(workforceAgents.traineeCode, agentCode));
   // Remove only portal credentials — agent stays in DB indefinitely
   await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
@@ -1541,7 +1558,7 @@ export async function terminateAgent(agentCode: string, reason: string, adminNam
     effectiveAt: now, approvedBy: adminName, approvedAt: now, appliedAt: now,
   });
   // Mark agent as terminated — keep in workforceAgents for historical records
-  await db.update(workforceAgents).set({ agentStatus: "terminated", isActive: false, updatedAt: new Date() })
+  await db.update(workforceAgents).set({ agentStatus: "terminated", salarySettled: false, isActive: false, updatedAt: new Date() })
     .where(eq(workforceAgents.traineeCode, agentCode));
   // Remove only portal credentials — agent stays in DB indefinitely
   await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
@@ -1569,7 +1586,7 @@ export async function approveResignationRequest(agentCode: string, lastWorkingDa
     requestedAt, effectiveAt: now, approvedBy: adminName, approvedAt: now, appliedAt: now,
   });
   // Mark agent as resigned — keep in workforceAgents for historical records
-  await db.update(workforceAgents).set({ agentStatus: "resigned", isActive: false, updatedAt: new Date() })
+  await db.update(workforceAgents).set({ agentStatus: "resigned", salarySettled: false, isActive: false, updatedAt: new Date() })
     .where(eq(workforceAgents.traineeCode, agentCode));
   // Remove only portal credentials — agent stays in DB indefinitely
   await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));

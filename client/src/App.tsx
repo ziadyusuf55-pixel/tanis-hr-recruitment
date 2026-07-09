@@ -26,6 +26,9 @@ import PerformanceReports from "./pages/PerformanceReports";
 import CoachingAdmin from "./pages/CoachingAdmin";
 import CommissionAdmin from "./pages/CommissionAdmin";
 import BusinessDevelopment from "./pages/BusinessDevelopment";
+import AgentProfileHR from "./pages/AgentProfileHR";
+import LeaveManagement from "./pages/LeaveManagement";
+import { trpc as trpcClient } from "@/lib/trpc";
 import ClientLogoutsAdmin from "./pages/ClientLogoutsAdmin";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
 import { useAuth } from "./_core/hooks/useAuth";
@@ -36,7 +39,14 @@ import DashboardLayout from "./components/DashboardLayout";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading } = useAuth();
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
+  // Route-level lock: BD-role logins can ONLY access Business Development + Operations.
+  const { data: me } = trpcClient.bd.me.useQuery(undefined, { staleTime: 60000, enabled: isAuthenticated });
+  const isBd = me?.kind === "bd" || me?.kind === "unlinked";
+  const bdAllowed = location.startsWith("/business-development") || location.startsWith("/operations");
+  useEffect(() => {
+    if (isAuthenticated && isBd && !bdAllowed) navigate("/business-development");
+  }, [isAuthenticated, isBd, bdAllowed, navigate]);
 
   useEffect(() => {
     if (!loading && !isAuthenticated) {
@@ -77,6 +87,8 @@ function Router() {
       <Route path="/payroll" component={() => <ProtectedRoute component={Payroll} />} />
       <Route path="/commission" component={() => <ProtectedRoute component={CommissionAdmin} />} />
       <Route path="/business-development" component={() => <ProtectedRoute component={BusinessDevelopment} />} />
+      <Route path="/agent-profiles" component={() => <ProtectedRoute component={AgentProfileHR} />} />
+      <Route path="/leave-management" component={() => <ProtectedRoute component={LeaveManagement} />} />
       {/* PayrollStatus removed — use /payroll instead */}
       <Route path="/performance" component={() => <ProtectedRoute component={PerformanceDashboard} />} />
       <Route path="/adherence" component={() => <ProtectedRoute component={AdherenceLog} />} />

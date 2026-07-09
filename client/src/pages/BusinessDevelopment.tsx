@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -26,7 +26,7 @@ type Contact = { id: number; company: string; contactName: string | null; email:
 type Deal = {
   id: number; title: string; ownerId: number; contactId: number | null; stage: StageKey;
   serviceType: string | null; seats: number | null; value: string | null; notes: string | null; expectedCloseDate: string | null;
-  createdAt: number; lastContactedAt: number | null; reminderDate: string | null; reminderNote: string | null; outcomeReason: string | null;
+  createdAt: number; lastContactedAt: number | null; reminderDate: string | null; reminderNote: string | null; outcomeReason: string | null; stageChangedAt: number | null;
 };
 const COLD_DAYS = 7;
 
@@ -34,7 +34,13 @@ export default function BusinessDevelopment() {
   const utils = trpc.useUtils();
   const { data: users = [] } = trpc.bd.listUsers.useQuery();
   const bdUsers = users as BdUser[];
+  const { data: me } = trpc.bd.me.useQuery();
+  const isBdUser = me?.kind === "bd";
+  const myBdId = isBdUser && me && "bdUser" in me ? (me.bdUser as BdUser).id : null;
   const [ownerId, setOwnerId] = useState<number | "all">("all");
+  const [dragId, setDragId] = useState<number | null>(null);
+  // BD-role users are locked to their own pipeline
+  useEffect(() => { if (myBdId && ownerId !== myBdId) setOwnerId(myBdId); }, [myBdId]); // eslint-disable-line react-hooks/exhaustive-deps
   const [view, setView] = useState<"board" | "table">("board");
   const [tab, setTab] = useState<"pipeline" | "contacts">("pipeline");
 
@@ -67,6 +73,7 @@ export default function BusinessDevelopment() {
     const ref = d.lastContactedAt ?? d.createdAt ?? 0;
     return ref > 0 && (Date.now() - ref) > COLD_DAYS * 86400000;
   };
+  const daysInStage = (d: Deal) => Math.floor((Date.now() - (d.stageChangedAt ?? d.createdAt ?? Date.now())) / 86400000);
   const reminderOverdue = (d: Deal) => d.reminderDate ? new Date(d.reminderDate + "T23:59:59").getTime() < Date.now() : false;
   const todayISO = new Date().toISOString().slice(0, 10);
   const dueReminders = typedDeals
@@ -102,6 +109,10 @@ export default function BusinessDevelopment() {
     );
   }
 
+  if (me?.kind === "unlinked") {
+    return <ClaimLogin candidates={("candidates" in me ? me.candidates : []) as BdUser[]} />;
+  }
+
   return (
     <div className="p-4 sm:p-6 space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -120,8 +131,8 @@ export default function BusinessDevelopment() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             {/* Owner filter */}
             <div className="flex items-center gap-1.5 flex-wrap">
-              <button onClick={() => setOwnerId("all")} className={`text-xs px-2.5 py-1 rounded-full border ${ownerId === "all" ? "text-white" : "bg-background"}`} style={ownerId === "all" ? { background: BRAND } : {}}>All</button>
-              {bdUsers.map(u => (
+              {!isBdUser && <button onClick={() => setOwnerId("all")} className={`text-xs px-2.5 py-1 rounded-full border ${ownerId === "all" ? "text-white" : "bg-background"}`} style={ownerId === "all" ? { background: BRAND } : {}}>All</button>}
+              {(isBdUser ? bdUsers.filter(u => u.id === myBdId) : bdUsers).map(u => (
                 <button key={u.id} onClick={() => setOwnerId(u.id)} className={`text-xs px-2.5 py-1 rounded-full border ${ownerId === u.id ? "text-white" : "bg-background"}`} style={ownerId === u.id ? { background: BRAND } : {}}>{u.name}</button>
               ))}
             </div>
@@ -160,14 +171,17 @@ export default function BusinessDevelopment() {
           ) : view === "board" ? (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
               {STAGES.map(s => (
-                <div key={s.key} className="rounded-xl border bg-muted/30 p-2 min-h-[120px]">
+                <div key={s.key} className="rounded-xl border bg-muted/30 p-2 min-h-[120px]"
+                  onDragOver={(e) => { e.preventDefault(); }}
+                  onDrop={(e) => { e.preventDefault(); if (dragId != null) { const d = typedDeals.find(x => x.id === dragId); if (d && d.stage !== s.key) handleStage(d, s.key); setDragId(null); } }}>
                   <div className="flex items-center justify-between px-1 py-1.5">
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${s.color}`}>{s.label}</span>
                     <span className="text-xs text-muted-foreground">{byStage[s.key]?.length ?? 0}</span>
                   </div>
                   <div className="space-y-2">
                     {(byStage[s.key] ?? []).map(d => (
-                      <Card key={d.id} className="border">
+                      <Card key={d.id} className={`border cursor-grab active:cursor-grabbing ${dragId === d.id ? "opacity-50" : ""}`} draggable
+                        onDragStart={() => setDragId(d.id)} onDragEnd={() => setDragId(null)}>
                         <CardContent className="p-3 space-y-1.5">
                           <div className="flex items-start justify-between gap-2">
                             <button onClick={() => setOpenDeal(d)} className="text-sm font-semibold leading-tight text-left hover:underline">{d.title}</button>
@@ -186,7 +200,10 @@ export default function BusinessDevelopment() {
                             </div>
                           )}
                           <div className="flex items-center justify-between gap-2 pt-1">
-                            <Badge variant="outline" className="text-[10px]">{ownerName(d.ownerId)}</Badge>
+                            <span className="flex items-center gap-1.5">
+                              <Badge variant="outline" className="text-[10px]">{ownerName(d.ownerId)}</Badge>
+                              <span className="text-[10px] text-muted-foreground">{daysInStage(d)}d in stage</span>
+                            </span>
                             <select
                               value={d.stage}
                               onChange={(e) => handleStage(d, e.target.value as StageKey)}
@@ -301,6 +318,9 @@ function DealDrawer({ deal, company, ownerName, onClose, onChanged }: { deal: De
             </div>
           </div>
 
+          {/* Tasks */}
+          <DealTasks dealId={deal.id} />
+
           {/* Activity log */}
           <div className="space-y-1.5">
             <p className="text-xs font-semibold flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5" /> Activity log</p>
@@ -385,9 +405,55 @@ function AddDealDialog({ bdUsers, contacts, defaultOwner, onDone }: { bdUsers: B
 }
 
 // ── Contacts panel (shared) ──
+function ContactDealsRow({ contactId, ownerName }: { contactId: number; ownerName: (id: number) => string }) {
+  const { data: deals = [] } = trpc.bd.listDeals.useQuery({});
+  const mine = (deals as Deal[]).filter(d => d.contactId === contactId);
+  const stageLabel = (k: string) => STAGES.find(s => s.key === k)?.label ?? k;
+  return (
+    <tr className="bg-muted/30"><td colSpan={5} className="px-4 py-2">
+      {mine.length === 0 ? <p className="text-xs text-muted-foreground">No deals linked to this contact yet.</p> : (
+        <div className="space-y-1">
+          {mine.map(d => (
+            <p key={d.id} className="text-xs flex items-center gap-2">
+              <span className="font-medium">{d.title}</span>
+              <Badge variant="outline" className="text-[10px]">{stageLabel(d.stage)}</Badge>
+              <span className="text-muted-foreground">{ownerName(d.ownerId)}{d.value ? ` · $${d.value}` : ""}</span>
+            </p>
+          ))}
+        </div>
+      )}
+    </td></tr>
+  );
+}
+
+function ClaimLogin({ candidates }: { candidates: BdUser[] }) {
+  const utils = trpc.useUtils();
+  const link = trpc.bd.linkLogin.useMutation({
+    onSuccess: () => { toast.success("Linked! Loading your pipeline…"); utils.bd.me.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  return (
+    <div className="p-6 max-w-md mx-auto text-center space-y-4">
+      <Building2 className="w-10 h-10 mx-auto text-muted-foreground" />
+      <h1 className="text-xl font-bold">Who are you?</h1>
+      <p className="text-sm text-muted-foreground">Link this login to your BD profile — one time only.</p>
+      <div className="space-y-2">
+        {candidates.map(c => (
+          <Button key={c.id} className="w-full text-white" style={{ background: BRAND }} onClick={() => link.mutate({ bdUserId: c.id })} disabled={link.isPending}>
+            I'm {c.name}
+          </Button>
+        ))}
+        {candidates.length === 0 && <p className="text-xs text-muted-foreground">No unlinked BD profiles — ask the admin.</p>}
+      </div>
+    </div>
+  );
+}
+
 function ContactsPanel({ contacts, bdUsers, onDone }: { contacts: Contact[]; bdUsers: BdUser[]; onDone: () => void }) {
   const utils = trpc.useUtils();
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const nameOf = (id: number) => bdUsers.find(u => u.id === id)?.name ?? "—";
   const blank = { company: "", contactName: "", jobTitle: "", email: "", phone: "", website: "", source: "", notes: "", stage: "", ownerId: 0 };
   const [form, setForm] = useState(blank);
   const add = trpc.bd.addContact.useMutation({ onError: (e) => toast.error(e.message) });
@@ -426,15 +492,16 @@ function ContactsPanel({ contacts, bdUsers, onDone }: { contacts: Contact[]; bdU
             <th className="px-3 py-2 font-medium">Email</th><th className="px-3 py-2 font-medium">Phone</th><th className="px-3 py-2"></th>
           </tr></thead>
           <tbody>
-            {contacts.map(c => (
+            {contacts.map(c => (<>
               <tr key={c.id} className="border-b last:border-0 hover:bg-muted/30">
-                <td className="px-3 py-2 font-medium">{c.company}</td>
+                <td className="px-3 py-2 font-medium"><button className="hover:underline" onClick={() => setExpanded(expanded === c.id ? null : c.id)}>{c.company}</button></td>
                 <td className="px-3 py-2 text-muted-foreground">{c.contactName || "—"}</td>
                 <td className="px-3 py-2 text-muted-foreground">{c.email || "—"}</td>
                 <td className="px-3 py-2 text-muted-foreground">{c.phone || "—"}</td>
                 <td className="px-3 py-2 text-right"><button onClick={() => { if (confirm("Delete this contact?")) del.mutate({ id: c.id }); }} className="text-muted-foreground hover:text-red-600"><Trash2 className="w-4 h-4" /></button></td>
               </tr>
-            ))}
+              {expanded === c.id && <ContactDealsRow contactId={c.id} ownerName={nameOf} />}
+            </>))}
             {contacts.length === 0 && <tr><td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">No contacts yet.</td></tr>}
           </tbody>
         </table>
@@ -477,6 +544,41 @@ function ContactsPanel({ contacts, bdUsers, onDone }: { contacts: Contact[]; bdU
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+
+// ── Tasks per deal ("send proposal by Thu") ──
+function DealTasks({ dealId }: { dealId: number }) {
+  const utils = trpc.useUtils();
+  const { data: tasks = [] } = trpc.bd.listTasks.useQuery({ dealId });
+  const list = tasks as { id: number; title: string; dueDate: string | null; done: boolean }[];
+  const [title, setTitle] = useState("");
+  const [due, setDue] = useState("");
+  const add = trpc.bd.addTask.useMutation({ onSuccess: () => { setTitle(""); setDue(""); utils.bd.listTasks.invalidate({ dealId }); }, onError: (e) => toast.error(e.message) });
+  const toggle = trpc.bd.toggleTask.useMutation({ onSuccess: () => utils.bd.listTasks.invalidate({ dealId }), onError: (e) => toast.error(e.message) });
+  const del = trpc.bd.deleteTask.useMutation({ onSuccess: () => utils.bd.listTasks.invalidate({ dealId }), onError: (e) => toast.error(e.message) });
+  const today = new Date().toISOString().slice(0, 10);
+  return (
+    <div className="space-y-1.5">
+      <p className="text-xs font-semibold flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> Tasks</p>
+      <div className="flex gap-2">
+        <Input placeholder="e.g. Send proposal" value={title} onChange={e => setTitle(e.target.value)} />
+        <Input type="date" className="w-36" value={due} onChange={e => setDue(e.target.value)} />
+        <Button size="sm" onClick={() => title.trim() && add.mutate({ dealId, title: title.trim(), dueDate: due || undefined })} disabled={add.isPending} style={{ background: BRAND }} className="text-white">Add</Button>
+      </div>
+      <div className="space-y-1 pt-0.5">
+        {list.length === 0 && <p className="text-xs text-muted-foreground">No tasks.</p>}
+        {list.map(t => (
+          <div key={t.id} className="flex items-center gap-2 text-xs">
+            <input type="checkbox" checked={t.done} onChange={e => toggle.mutate({ id: t.id, done: e.target.checked })} />
+            <span className={t.done ? "line-through text-muted-foreground" : ""}>{t.title}</span>
+            {t.dueDate && <span className={`text-[10px] ${!t.done && t.dueDate < today ? "text-red-600 font-semibold" : "text-muted-foreground"}`}>due {t.dueDate}</span>}
+            <button onClick={() => del.mutate({ id: t.id })} className="ml-auto text-muted-foreground hover:text-red-600"><Trash2 className="w-3 h-3" /></button>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

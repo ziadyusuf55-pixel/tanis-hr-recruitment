@@ -453,7 +453,13 @@ export const workforceAgents = mysqlTable("workforce_agents", {
   joinDate: bigint("joinDate", { mode: "number" }),   // UTC ms — date joined operations
   dialerCredentials: varchar("dialerCredentials", { length: 500 }), // dialer/hub login credentials (admin fills manually)
   crdts: varchar("crdts", { length: 500 }),                         // CRDTS field — admin fills manually
-  agentStatus: mysqlEnum("agentStatus", ["active", "inactive", "resigned", "terminated"]).default("active").notNull(),
+  agentStatus: mysqlEnum("agentStatus", ["active", "inactive", "resigned", "terminated", "blacklisted"]).default("active").notNull(),
+  salarySettled: boolean("salarySettled").default(true).notNull(),   // false = former agent still owed pay → stays visible in Operations
+  address: varchar("address", { length: 500 }),
+  emergencyContactName: varchar("emergencyContactName", { length: 255 }),
+  emergencyContactPhone: varchar("emergencyContactPhone", { length: 64 }),
+  emergencyContactRelation: varchar("emergencyContactRelation", { length: 100 }),
+  settledAt: bigint("settledAt", { mode: "number" }),   // when salary was marked settled
   nestingStatus: mysqlEnum("nestingStatus", ["nesting", "active", "senior"]).default("nesting").notNull(),
   workLocation: mysqlEnum("workLocation", ["office", "wfh"]).default("office").notNull(),  // office vs work-from-home
   avatarUrl: varchar("avatarUrl", { length: 1024 }),                                        // agent profile picture (uploaded via portal)
@@ -472,6 +478,12 @@ export const workforceAgents = mysqlTable("workforce_agents", {
   orientationShown: boolean("orientationShown").default(false).notNull(), // true after agent completes orientation tour
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  address: text("address"),
+  emergencyName: varchar("emergencyName", { length: 255 }),
+  emergencyPhone: varchar("emergencyPhone", { length: 64 }),
+  emergencyRelation: varchar("emergencyRelation", { length: 100 }),
+  salarySettled: boolean("salarySettled").default(false),
+  settledAt: bigint("settledAt", { mode: "number" }),
 });
 export type WorkforceAgent = typeof workforceAgents.$inferSelect;
 export type InsertWorkforceAgent = typeof workforceAgents.$inferInsert;
@@ -1062,6 +1074,7 @@ export const bdDeals = mysqlTable("bd_deals", {
   reminderDate: varchar("reminderDate", { length: 20 }),           // YYYY-MM-DD follow-up
   reminderNote: varchar("reminderNote", { length: 255 }),
   outcomeReason: varchar("outcomeReason", { length: 255 }),        // why won / lost
+  stageChangedAt: bigint("stageChangedAt", { mode: "number" }),    // for time-in-stage
   createdAt: bigint("createdAt", { mode: "number" }).notNull(),
   updatedAt: bigint("updatedAt", { mode: "number" }).notNull(),
   closedAt: bigint("closedAt", { mode: "number" }),
@@ -1079,3 +1092,79 @@ export const bdDealActivity = mysqlTable("bd_deal_activity", {
 });
 export type BdDealActivity = typeof bdDealActivity.$inferSelect;
 export type InsertBdDealActivity = typeof bdDealActivity.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LEAVE MANAGEMENT — casual (عارضة) + annual (اعتيادية) only.
+// Agents never see balances; HR classifies each request on approval.
+// ═══════════════════════════════════════════════════════════════════════════
+export const leaveBalances = mysqlTable("leave_balances", {
+  id: int("id").autoincrement().primaryKey(),
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
+  year: int("year").notNull(),
+  casualTotal: int("casualTotal").default(0).notNull(),   // إجازة عارضة
+  annualTotal: int("annualTotal").default(0).notNull(),   // إجازة اعتيادية
+  casualUsed: int("casualUsed").default(0).notNull(),
+  annualUsed: int("annualUsed").default(0).notNull(),
+  updatedAt: bigint("updatedAt", { mode: "number" }).notNull(),
+});
+export type LeaveBalance = typeof leaveBalances.$inferSelect;
+
+export const leaveRequests = mysqlTable("leave_requests", {
+  id: int("id").autoincrement().primaryKey(),
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
+  startDate: varchar("startDate", { length: 20 }).notNull(),  // YYYY-MM-DD
+  endDate: varchar("endDate", { length: 20 }).notNull(),
+  days: int("days").default(1).notNull(),
+  reason: text("reason"),
+  leaveType: mysqlEnum("leaveType", ["casual", "annual"]),    // NULL until HR classifies
+  status: mysqlEnum("status", ["pending", "approved", "rejected"]).default("pending").notNull(),
+  decidedBy: varchar("decidedBy", { length: 255 }),
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+  decidedAt: bigint("decidedAt", { mode: "number" }),
+});
+export type LeaveRequest = typeof leaveRequests.$inferSelect;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXIT PROCESS — required checklist before a former agent can be archived.
+// ═══════════════════════════════════════════════════════════════════════════
+export const exitProcess = mysqlTable("exit_process", {
+  id: int("id").autoincrement().primaryKey(),
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull().unique(),
+  exitType: mysqlEnum("exitType", ["resignation", "termination", "contract_end"]),  // استقالة / فصل / انتهاء عقد
+  exitInterview: boolean("exitInterview").default(false).notNull(),
+  clearance: boolean("clearance").default(false).notNull(),
+  assetsReturned: boolean("assetsReturned").default(false).notNull(),   // استلام العهد
+  lastWorkingDay: varchar("lastWorkingDay", { length: 20 }),            // آخر يوم عمل
+  settlementDone: boolean("settlementDone").default(false).notNull(),
+  notes: text("notes"),
+  completedAt: bigint("completedAt", { mode: "number" }),
+  updatedAt: bigint("updatedAt", { mode: "number" }).notNull(),
+});
+export type ExitProcess = typeof exitProcess.$inferSelect;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BD TASKS — per-deal to-dos with due dates (HubSpot-style).
+// ═══════════════════════════════════════════════════════════════════════════
+export const bdTasks = mysqlTable("bd_tasks", {
+  id: int("id").autoincrement().primaryKey(),
+  dealId: int("dealId").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  dueDate: varchar("dueDate", { length: 20 }),               // YYYY-MM-DD
+  done: boolean("done").default(false).notNull(),
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+  doneAt: bigint("doneAt", { mode: "number" }),
+});
+export type BdTask = typeof bdTasks.$inferSelect;
+
+
+// ═══ BD deal tasks ("send proposal by Thu") ═══
+export const bdDealTasks = mysqlTable("bd_deal_tasks", {
+  id: int("id").autoincrement().primaryKey(),
+  dealId: int("dealId").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  dueDate: varchar("dueDate", { length: 20 }),
+  done: boolean("done").default(false).notNull(),
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+  doneAt: bigint("doneAt", { mode: "number" }),
+});
+export type BdDealTask = typeof bdDealTasks.$inferSelect;

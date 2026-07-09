@@ -26,7 +26,7 @@ import { trpc } from "@/lib/trpc";
 import {
   LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings,
   Briefcase, Banknote, CreditCard, BarChart2, AlertCircle, Star, Wallet,
-  FileText, Activity, ChevronDown, ChevronRight, TrendingUp, BookOpen, PhoneOff, DollarSign, UserCog, Building2,
+  FileText, Activity, ChevronDown, ChevronRight, TrendingUp, BookOpen, PhoneOff, DollarSign, UserCog, Building2, CalendarDays, Bell,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -55,6 +55,8 @@ const NAV: NavItem[] = [
     icon: UserCog, label: "HR", key: "hr",
     children: [
       { icon: Users,       label: "Recruitment",         path: "/candidates" },
+      { icon: UserCog,     label: "Agent Profiles",      path: "/agent-profiles" },
+      { icon: CalendarDays,label: "Leave Management",    path: "/leave-management" },
       { icon: BarChart2,   label: "Performance",         path: "/performance" },
       { icon: Banknote,    label: "Salary",              path: "/payroll" },
       { icon: DollarSign,  label: "Commission",          path: "/commission" },
@@ -117,6 +119,37 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   );
 }
 
+const BD_ALLOWED = ["/business-development", "/operations"];
+function useBdRole() {
+  const { data: me } = trpc.bd.me.useQuery(undefined, { staleTime: 60000 });
+  return { isBd: me?.kind === "bd" || me?.kind === "unlinked", loaded: !!me };
+}
+function BellBadge() {
+  const { data: due = [] } = trpc.bd.dueReminders.useQuery(undefined, { refetchInterval: 120000 });
+  const list = due as { id: number; title: string; reminderDate: string | null; reminderNote: string | null }[];
+  const [open, setOpen] = useState(false);
+  if (list.length === 0) return null;
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen(!open)} className="relative p-2 rounded-lg hover:bg-muted" title="Follow-ups due">
+        <Bell className="w-4 h-4" />
+        <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-600 text-white text-[10px] flex items-center justify-center font-bold">{list.length}</span>
+      </button>
+      {open && (
+        <div className="absolute right-0 top-10 z-50 w-72 rounded-xl border bg-background shadow-lg p-2 space-y-1">
+          <p className="text-xs font-semibold px-1.5 pt-1">⏰ Follow-ups due ({list.length})</p>
+          {list.slice(0, 8).map(d => (
+            <a key={d.id} href="/business-development" className="block rounded-lg px-2 py-1.5 hover:bg-muted text-xs">
+              <span className="font-medium">{d.title}</span>
+              {d.reminderNote && <span className="text-muted-foreground"> — {d.reminderNote}</span>}
+              <span className="block text-[10px] text-muted-foreground">{d.reminderDate}</span>
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 function DashboardLayoutContent({
   children,
   setSidebarWidth,
@@ -127,6 +160,8 @@ function DashboardLayoutContent({
   const { user, logout } = useAuth();
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar } = useSidebar();
+  const { isBd } = useBdRole();
+  const NAV_VISIBLE = isBd ? NAV.filter(n => n.path === "/business-development" || n.key === "operations") : NAV;
   const isCollapsed = state === "collapsed";
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -293,7 +328,7 @@ function DashboardLayoutContent({
 
           <SidebarContent className="py-3 overflow-y-auto">
             <SidebarMenu className="px-2 gap-0.5">
-              {NAV.map(item => isGroup(item) ? renderGroup(item) : renderLeaf(item))}
+              {NAV_VISIBLE.map(item => isGroup(item) ? renderGroup(item) : renderLeaf(item))}
             </SidebarMenu>
           </SidebarContent>
 
@@ -341,11 +376,13 @@ function DashboardLayoutContent({
         {isMobile && (
           <div className="flex border-b h-14 items-center gap-3 bg-background/95 px-4 backdrop-blur sticky top-0 z-40">
             <SidebarTrigger className="h-8 w-8 rounded-lg" />
+            <span className="ml-auto"><BellBadge /></span>
             <span className="text-sm font-medium">
               {allLeaves(NAV).find((m) => location === m.path || (m.path !== "/" && location.startsWith(m.path)))?.label ?? "Menu"}
             </span>
           </div>
         )}
+        {!isMobile && <div className="flex justify-end px-6 pt-3 -mb-6"><BellBadge /></div>}
         <main className="flex-1 min-h-screen p-6">{children}</main>
       </SidebarInset>
     </>

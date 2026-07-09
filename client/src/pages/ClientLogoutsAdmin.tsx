@@ -21,10 +21,17 @@ type ParsedRow = {
 // Parse a date that may be ISO (YYYY-MM-DD) or day-first (DD/MM/YYYY or DD-MM-YYYY).
 // We must NOT use `new Date(str)` on "01/06/2026" — JS reads that as US MM/DD (Jan 6),
 // which is what filed June logouts under January.
+// The logout sheet's dash format is YYYY-DD-MM (e.g. "2026-01-06" = 1 June 2026),
+// so for dashes the MIDDLE number is the DAY. If either part is >12 we can tell
+// unambiguously which is which and self-correct.
 function parseYMD(dateStr: string): { y: number; m: number; d: number } | null {
   const s = String(dateStr).trim();
-  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);        // ISO YYYY-MM-DD
-  if (m) return { y: +m[1], m: +m[2], d: +m[3] };
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);        // YYYY-DD-MM (sheet format)
+  if (m) {
+    const y = +m[1], a = +m[2], b = +m[3];
+    if (b > 12 && a <= 12) return { y, m: a, d: b };      // third can't be a month → it's YYYY-MM-DD
+    return { y, m: b, d: a };                              // default: middle = day (YYYY-DD-MM)
+  }
   m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);      // DD/MM/YYYY (day first)
   if (m) return { y: +m[3], m: +m[2], d: +m[1] };
   return null;
