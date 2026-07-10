@@ -1,0 +1,22 @@
+-- Baseline migration: records all schema changes that were applied via direct SQL
+-- (not through drizzle-kit generate) between migrations 0002 and this point.
+-- Files 0003–0007 exist on disk and were applied directly; this entry marks
+-- the current live database state as fully migrated.
+-- Tables/columns covered (all already exist in the live DB):
+--   candidates: age, location, source, voiceNoteRating, screeningNotes, activity_log
+--   candidates: wave
+--   agent_requests: sick_note type, requestedDates, attachmentUrl, isAdminRead
+--   workforce_agents, agent_payment_methods, agent_documents, schedule_change_requests, overtime_availability, campaigns
+--   payroll_adjustments
+--   workforce_agents: workLocation, avatarUrl, nationalId, nationalIdExpiry, dateOfBirth, gender,
+--     nationality, maritalStatus, militaryStatus, jobTitle, city, profileLocked,
+--     salarySettled, settledAt, address, emergencyContactName, emergencyContactPhone, emergencyContactRelation
+--   agent_separations: appliedAt
+--   agent_requests: slackMessageTs
+--   client_logouts, schedule_change_requests (extended), agent_quality_flags
+--   crdts_archive, bd_users, bd_contacts, bd_deals, bd_deal_activity, bd_deal_tasks
+--   leave_balances, leave_requests, exit_process
+--   api_keys
+--   users.role enum widened to include hr, ops_manager, team_lead, finance, bd, viewer
+-- No DDL is executed here — all changes are already live.
+SELECT 1; -- no-op sentinel
