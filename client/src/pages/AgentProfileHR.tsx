@@ -17,6 +17,8 @@ type Agent = {
   salarySettled?: boolean | null;
 };
 
+type Viol = { id: number; type?: string | null; date?: unknown; deduction?: string | number | null; hours?: string | number | null; status?: string | null };
+
 export default function AgentProfileHR() {
   const { data: agents = [] } = trpc.workforce.list.useQuery({});
   const list = agents as Agent[];
@@ -63,8 +65,10 @@ function Profile({ agent }: { agent: Agent }) {
   const crdts = agent.crdts || "";
   const code = agent.traineeCode;
 
-  const { data: adherence = [] } = trpc.adherence.list.useQuery({ agentCode: crdts || code });
-  const { data: quality = [] } = trpc.quality.list.useQuery({ agentCode: crdts || code });
+  // Deductions live in agent_violations (the payslip source), keyed by CRDTS, split by category.
+  const vKey = crdts ? { crdts } : { agentCode: code };
+  const { data: adherence = [] } = trpc.violations.list.useQuery({ ...vKey, category: "attendance" });
+  const { data: quality = [] } = trpc.violations.list.useQuery({ ...vKey, category: "quality" });
   const { data: coaching = [] } = trpc.coaching.listByCrdts.useQuery({ crdts }, { enabled: !!crdts });
   const { data: balances = [] } = trpc.leave.listBalances.useQuery({});
   const { data: leaveReqs = [] } = trpc.leave.myRequests.useQuery({ traineeCode: code });
@@ -81,6 +85,9 @@ function Profile({ agent }: { agent: Agent }) {
 
   const isFormer = ["resigned", "terminated", "blacklisted"].includes(agent.agentStatus || "");
   const fmt = (t: unknown) => { const d = new Date(String(t)); return isNaN(d.getTime()) ? String(t ?? "") : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "2-digit" }); };
+  const vSum = (arr: Viol[], k: "deduction" | "hours") => arr.reduce((s, r) => s + Number(r[k] || 0), 0);
+  const vTitle = (label: string, arr: unknown[]) => { const a = arr as Viol[]; const egp = vSum(a, "deduction"); const hrs = vSum(a, "hours"); const bits = [String(a.length)]; if (egp) bits.push(`${egp.toLocaleString()} EGP`); if (hrs) bits.push(`${hrs}h`); return `${label} (${bits.join(" · ")})`; };
+  const vSub = (v: Viol) => { const parts = [fmt(v.date)]; if (Number(v.deduction)) parts.push(`${Number(v.deduction).toLocaleString()} EGP`); if (Number(v.hours)) parts.push(`${v.hours}h`); return parts.filter(Boolean).join(" · "); };
 
   return (
     <div className="space-y-4">
@@ -157,14 +164,14 @@ function Profile({ agent }: { agent: Agent }) {
         </CardContent></Card>
       )}
 
-      {/* Quality / Adherence / Coaching mirrors */}
+      {/* Quality / Adherence / Coaching mirrors — from agent_violations (payslip) by CRDTS */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <MirrorCard icon={<Star className="w-4 h-4" style={{ color: BRAND }} />} title={`Quality (${(quality as unknown[]).length})`}
-          rows={(quality as { id: number; date?: unknown; violation?: string | null; action?: string | null; notes?: string | null }[]).map(qr => ({ id: qr.id, main: qr.violation || qr.notes || "—", sub: `${fmt(qr.date)}${qr.action ? ` → ${qr.action}` : ""}` }))} />
-        <MirrorCard icon={<AlertCircle className="w-4 h-4" style={{ color: BRAND }} />} title={`Adherence (${(adherence as unknown[]).length})`}
-          rows={(adherence as { id: number; date?: unknown; type?: string | null; reason?: string | null; notes?: string | null }[]).map(ar => ({ id: ar.id, main: ar.type || ar.reason || ar.notes || "—", sub: fmt(ar.date) }))} />
+        <MirrorCard icon={<Star className="w-4 h-4" style={{ color: BRAND }} />} title={vTitle("Quality", quality)}
+          rows={(quality as Viol[]).map(v => ({ id: v.id, main: v.type || "—", sub: vSub(v) }))} />
+        <MirrorCard icon={<AlertCircle className="w-4 h-4" style={{ color: BRAND }} />} title={vTitle("Adherence", adherence)}
+          rows={(adherence as Viol[]).map(v => ({ id: v.id, main: v.type || "—", sub: vSub(v) }))} />
         <MirrorCard icon={<BookOpen className="w-4 h-4" style={{ color: BRAND }} />} title={`Coaching (${(coaching as unknown[]).length})`}
-          rows={(coaching as { id: number; date?: unknown; topic?: string | null; notes?: string | null; coachName?: string | null }[]).map(cr => ({ id: cr.id, main: cr.topic || cr.notes || "—", sub: `${fmt(cr.date)}${cr.coachName ? ` · ${cr.coachName}` : ""}` }))} />
+          rows={(coaching as { id: number; sessionDate?: unknown; date?: unknown; topic?: string | null; notes?: string | null; coachName?: string | null }[]).map(cr => ({ id: cr.id, main: cr.topic || cr.notes || "—", sub: `${fmt(cr.sessionDate ?? cr.date)}${cr.coachName ? ` · ${cr.coachName}` : ""}` }))} />
       </div>
 
       <p className="text-xs text-muted-foreground flex items-center gap-1"><Phone className="w-3 h-3" /> Performance charts live in HR → Performance (same CRDTS).</p>

@@ -2561,6 +2561,7 @@ const violationsRouter = router({
   list: protectedProcedure
     .input(z.object({
       agentCode: z.string().optional(),
+      crdts: z.string().optional(),
       month: z.string().optional(),
       category: z.enum(["attendance", "quality"]).optional(),
     }))
@@ -5130,54 +5131,6 @@ const bdRouter = router({
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { bdDeals } = await import("../drizzle/schema");
       await db.delete(bdDeals).where(eq(bdDeals.id, input.id));
-      return { ok: true };
-    }),
-  // ── Tasks per deal ──
-  listTasks: publicProcedure
-    .input(z.object({ dealId: z.number().optional(), ownerId: z.number().optional() }).optional())
-    .query(async ({ input }) => {
-      const { getDb } = await import("./db");
-      const db = await getDb();
-      if (!db) return [];
-      const { bdTasks, bdDeals } = await import("../drizzle/schema");
-      const { eq, desc } = await import("drizzle-orm");
-      if (input?.dealId) return db.select().from(bdTasks).where(eq(bdTasks.dealId, input.dealId)).orderBy(desc(bdTasks.createdAt));
-      if (input?.ownerId) {
-        return db.select({ id: bdTasks.id, dealId: bdTasks.dealId, title: bdTasks.title, dueDate: bdTasks.dueDate, done: bdTasks.done, createdAt: bdTasks.createdAt, doneAt: bdTasks.doneAt })
-          .from(bdTasks).innerJoin(bdDeals, eq(bdTasks.dealId, bdDeals.id)).where(eq(bdDeals.ownerId, input.ownerId)).orderBy(desc(bdTasks.createdAt));
-      }
-      return db.select().from(bdTasks).orderBy(desc(bdTasks.createdAt));
-    }),
-  addTask: protectedProcedure
-    .input(z.object({ dealId: z.number(), title: z.string().min(1), dueDate: z.string().optional() }))
-    .mutation(async ({ input }) => {
-      const { getDb } = await import("./db");
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { bdTasks } = await import("../drizzle/schema");
-      await db.insert(bdTasks).values({ ...input, createdAt: Date.now() });
-      return { ok: true };
-    }),
-  toggleTask: protectedProcedure
-    .input(z.object({ id: z.number(), done: z.boolean() }))
-    .mutation(async ({ input }) => {
-      const { getDb } = await import("./db");
-      const { eq } = await import("drizzle-orm");
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { bdTasks } = await import("../drizzle/schema");
-      await db.update(bdTasks).set({ done: input.done, doneAt: input.done ? Date.now() : null }).where(eq(bdTasks.id, input.id));
-      return { ok: true };
-    }),
-  deleteTask: protectedProcedure
-    .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
-      const { getDb } = await import("./db");
-      const { eq } = await import("drizzle-orm");
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { bdTasks } = await import("../drizzle/schema");
-      await db.delete(bdTasks).where(eq(bdTasks.id, input.id));
       return { ok: true };
     }),
   // ── Login linking + role (route gate reads this) ──

@@ -366,7 +366,9 @@ export default function Candidates() {
     const matchesWave = waveFilter === "all" || (c as unknown as { wave?: number }).wave === parseInt(waveFilter);
     return matchesSearch && matchesWave;
   });
-  const rejectedCount = allCandidates.filter((c) => c.status === "rejected" || c.status === "blacklisted").length;
+  const rejectedOnly = allCandidates.filter((c) => c.status === "rejected").length;
+  const blacklistedOnly = allCandidates.filter((c) => c.status === "blacklisted").length;
+  const rejectedCount = rejectedOnly + blacklistedOnly;
   const separatedCount = allCandidates.filter((c) => c.status === "resigned" || c.status === "terminated").length;
 
   const handleAddSubmit = () => {
@@ -570,7 +572,7 @@ export default function Candidates() {
           }`}
         >
           <UserX className="h-3.5 w-3.5" />
-          Rejected / Blacklisted{rejectedCount > 0 && <span className={`ml-0.5 rounded-full px-1.5 py-0 text-[10px] font-bold ${showRejected ? "bg-white/20 text-white" : "bg-red-100 text-red-700"}`}>{rejectedCount}</span>}
+          Rejected / Blacklisted{rejectedCount > 0 && <span className={`ml-0.5 rounded-full px-1.5 py-0 text-[10px] font-bold ${showRejected ? "bg-white/20 text-white" : "bg-red-100 text-red-700"}`} title={`${rejectedOnly} rejected · ${blacklistedOnly} blacklisted`}>{rejectedOnly}<span className="opacity-60"> / {blacklistedOnly}</span></span>}
         </button>
         <button
           onClick={() => { setShowSeparated((v) => !v); setShowRejected(false); clearSelection(); }}

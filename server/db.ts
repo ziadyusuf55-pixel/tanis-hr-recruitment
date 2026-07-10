@@ -2232,12 +2232,13 @@ export async function bulkInsertViolations(rows: Array<{
   }
 }
 
-export async function listViolations(filters: { agentCode?: string; month?: string; category?: "attendance" | "quality" }) {
+export async function listViolations(filters: { agentCode?: string; crdts?: string; month?: string; category?: "attendance" | "quality" }) {
   const db = await getDb();
   if (!db) return [];
   const { agentViolations } = await import("../drizzle/schema");
   let q = db.select().from(agentViolations).$dynamic();
   const conditions = [];
+  if (filters.crdts) conditions.push(eq(agentViolations.crdts, filters.crdts));
   if (filters.agentCode) conditions.push(eq(agentViolations.agentCode, filters.agentCode));
   if (filters.month) conditions.push(eq(agentViolations.month, filters.month));
   if (filters.category) conditions.push(eq(agentViolations.category, filters.category));
