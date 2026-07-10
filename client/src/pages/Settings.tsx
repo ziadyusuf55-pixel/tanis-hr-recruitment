@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { trpc } from "@/lib/trpc";
+import { ASSIGNABLE_ROLES, ROLE_LABELS } from "@/lib/roleTabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -591,6 +592,14 @@ export default function Settings() {
 
   const { data: admins, refetch } = trpc.adminAuth.list.useQuery();
 
+  // Central permissions: Google-login users + their roles
+  const utilsRoles = trpc.useUtils();
+  const { data: appUsers = [] } = trpc.auth.listAppUsers.useQuery(undefined, { retry: false });
+  const setRoleMutation = trpc.auth.setUserRole.useMutation({
+    onSuccess: () => { utilsRoles.auth.listAppUsers.invalidate(); toast.success("Role updated"); },
+    onError: (e) => toast.error(e.message),
+  });
+
   const inviteMutation = trpc.adminAuth.invite.useMutation({
     onSuccess: (data) => {
       setGeneratedToken(data.token);
@@ -663,6 +672,48 @@ export default function Settings() {
         <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
         <p className="text-muted-foreground text-sm mt-1">Manage admin access, team leaders, and platform settings.</p>
       </div>
+
+      {/* Central permissions — tab-level roles on Google-login users */}
+      <Card>
+        <CardHeader className="pb-4">
+          <CardTitle className="text-base">Team Roles &amp; Access</CardTitle>
+          <CardDescription className="text-sm mt-0.5">
+            Control what each person can see. Set a role and everything outside it is hidden and blocked.
+            People appear here after their first sign-in.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {appUsers.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4">No users yet — they'll show up here after they sign in for the first time.</p>
+          ) : (
+            <div className="divide-y">
+              {appUsers.map((u: { openId: string; name: string | null; email: string | null; role: string }) => (
+                <div key={u.openId} className="flex items-center justify-between gap-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">{u.name || u.email || "Unknown"}</p>
+                    <p className="text-xs text-muted-foreground truncate">{u.email}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {(u.role === "user" || u.role === "viewer") && (
+                      <span className="text-[10px] font-semibold text-amber-600 bg-amber-100 rounded-full px-2 py-0.5">No access</span>
+                    )}
+                    <select
+                      className="border rounded-md px-2 py-1.5 text-sm bg-background"
+                      value={u.role}
+                      onChange={(e) => setRoleMutation.mutate({ openId: u.openId, role: e.target.value as typeof ASSIGNABLE_ROLES[number] })}
+                    >
+                      {(u.role === "user" || u.role === "viewer") && <option value={u.role}>{ROLE_LABELS[u.role]}</option>}
+                      {ASSIGNABLE_ROLES.map((r) => (
+                        <option key={r} value={r}>{ROLE_LABELS[r]}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Admin Management */}
       <Card>

@@ -221,6 +221,39 @@ const authRouter = router({
     ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });
     return { success: true } as const;
   }),
+
+  // ── Central permissions (tab-level roles on the Google-login users) ──
+  // List everyone who has signed in, with their current role — for the Settings role manager.
+  listAppUsers: protectedProcedure.query(async ({ ctx }) => {
+    if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN" });
+    const { getDb } = await import("./db");
+    const { desc } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return [];
+    const { users } = await import("../drizzle/schema");
+    const rows = await db.select({
+      openId: users.openId, name: users.name, email: users.email,
+      role: users.role, lastSignedIn: users.lastSignedIn,
+    }).from(users).orderBy(desc(users.lastSignedIn));
+    return rows;
+  }),
+
+  // Owner/admin sets another user's role. Can't demote yourself out of full access by accident.
+  setUserRole: protectedProcedure
+    .input(z.object({ openId: z.string(), role: z.enum(["owner", "admin", "hr", "ops_manager", "team_lead", "finance", "bd", "viewer", "user"]) }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN" });
+      if (input.openId === ctx.user?.openId && input.role !== "owner" && input.role !== "admin") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "You can't remove your own full access. Ask another owner to change your role." });
+      }
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { users } = await import("../drizzle/schema");
+      await db.update(users).set({ role: input.role }).where(eq(users.openId, input.openId));
+      return { ok: true } as const;
+    }),
 });
 
 
@@ -2561,7 +2594,6 @@ const violationsRouter = router({
   list: protectedProcedure
     .input(z.object({
       agentCode: z.string().optional(),
-      crdts: z.string().optional(),
       month: z.string().optional(),
       category: z.enum(["attendance", "quality"]).optional(),
     }))

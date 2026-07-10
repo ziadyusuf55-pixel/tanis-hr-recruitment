@@ -1,4 +1,5 @@
 import { Toaster } from "@/components/ui/sonner";
+import { canAccessPath, firstAllowedPath, hasAnyAccess, isFullAccess } from "@/lib/roleTabs";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
@@ -38,7 +39,7 @@ import { useLocation } from "wouter";
 import DashboardLayout from "./components/DashboardLayout";
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
-  const { isAuthenticated, loading } = useAuth();
+  const { isAuthenticated, loading, user } = useAuth();
   const [location, navigate] = useLocation();
   // Route-level lock: BD-role logins can ONLY access Business Development + Operations.
   const { data: me } = trpcClient.bd.me.useQuery(undefined, { staleTime: 60000, enabled: isAuthenticated });
@@ -47,6 +48,14 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
   useEffect(() => {
     if (isAuthenticated && isBd && !bdAllowed) navigate("/business-development");
   }, [isAuthenticated, isBd, bdAllowed, navigate]);
+
+  // Role-level lock: a user with a scoped role can't open a page outside their tabs.
+  const role = (user as { role?: string } | null)?.role;
+  useEffect(() => {
+    if (isAuthenticated && !isBd && hasAnyAccess(role) && !isFullAccess(role) && !canAccessPath(role, location)) {
+      navigate(firstAllowedPath(role));
+    }
+  }, [isAuthenticated, isBd, role, location, navigate]);
 
   useEffect(() => {
     if (!loading && !isAuthenticated) {

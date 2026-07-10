@@ -1,4 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { canAccessPath, hasAnyAccess, isFullAccess } from "@/lib/roleTabs";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -73,6 +74,21 @@ const NAV: NavItem[] = [
 
 const allLeaves = (items: NavItem[]): NavLeaf[] =>
   items.flatMap(i => isGroup(i) ? i.children : [i]);
+
+// Filter the nav to only what a role may reach (owner/admin get everything).
+function navForRole(role: string | undefined | null): NavItem[] {
+  if (isFullAccess(role)) return NAV;
+  const out: NavItem[] = [];
+  for (const item of NAV) {
+    if (isGroup(item)) {
+      const kids = item.children.filter(c => canAccessPath(role, c.path));
+      if (kids.length) out.push({ ...item, children: kids });
+    } else if (canAccessPath(role, item.path)) {
+      out.push(item);
+    }
+  }
+  return out;
+}
 
 const TANIS_LOGO_WHITE = "https://d2xsxph8kpxj0f.cloudfront.net/310419663028909162/GKQCuajYkpcdyw75NP8gmu/tanis-logo-white_d38279a7.png";
 const SIDEBAR_WIDTH_KEY = "sidebar-width";
@@ -161,7 +177,10 @@ function DashboardLayoutContent({
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar } = useSidebar();
   const { isBd } = useBdRole();
-  const NAV_VISIBLE = isBd ? NAV.filter(n => { const item = n as NavGroup & NavLeaf; return item.key === "operations" || item.path === "/business-development"; }) : NAV;
+  const userRole = (user as { role?: string } | null)?.role;
+  const NAV_VISIBLE = isBd
+    ? NAV.filter(n => { const item = n as NavGroup & NavLeaf; return item.key === "operations" || item.path === "/business-development"; })
+    : navForRole(userRole);
   const isCollapsed = state === "collapsed";
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -296,6 +315,25 @@ function DashboardLayoutContent({
       </div>
     );
   };
+
+  // No role assigned yet (and not a BD login) → hold at a waiting screen until an owner grants access.
+  if (!isBd && !hasAnyAccess(userRole)) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <div className="flex flex-col items-center gap-5 p-8 max-w-sm w-full text-center">
+          <img src={TANIS_LOGO_WHITE} alt="Tanis" className="w-14 h-14 object-contain" />
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight">Waiting for access</h1>
+            <p className="text-sm text-muted-foreground mt-2">
+              You're signed in as <span className="font-medium">{user?.email || user?.name}</span>, but you haven't been given access yet.
+              An owner needs to assign your role. Check back once they have.
+            </p>
+          </div>
+          <Button variant="outline" onClick={logout} className="w-full">Sign out</Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
