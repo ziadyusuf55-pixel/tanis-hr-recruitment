@@ -161,7 +161,7 @@ function DashboardLayoutContent({
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar } = useSidebar();
   const { isBd } = useBdRole();
-  const NAV_VISIBLE = isBd ? NAV.filter(n => n.path === "/business-development" || n.key === "operations") : NAV;
+  const NAV_VISIBLE = isBd ? NAV.filter(n => { const item = n as NavGroup & NavLeaf; return item.key === "operations" || item.path === "/business-development"; }) : NAV;
   const isCollapsed = state === "collapsed";
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);

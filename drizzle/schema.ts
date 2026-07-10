@@ -478,12 +478,6 @@ export const workforceAgents = mysqlTable("workforce_agents", {
   orientationShown: boolean("orientationShown").default(false).notNull(), // true after agent completes orientation tour
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-  address: text("address"),
-  emergencyName: varchar("emergencyName", { length: 255 }),
-  emergencyPhone: varchar("emergencyPhone", { length: 64 }),
-  emergencyRelation: varchar("emergencyRelation", { length: 100 }),
-  salarySettled: boolean("salarySettled").default(false),
-  settledAt: bigint("settledAt", { mode: "number" }),
 });
 export type WorkforceAgent = typeof workforceAgents.$inferSelect;
 export type InsertWorkforceAgent = typeof workforceAgents.$inferInsert;
