@@ -1,4 +1,4 @@
-import { and, desc, eq, getTableColumns, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, getTableColumns, gte, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
@@ -2238,8 +2238,12 @@ export async function listViolations(filters: { agentCode?: string; crdts?: stri
   const { agentViolations } = await import("../drizzle/schema");
   let q = db.select().from(agentViolations).$dynamic();
   const conditions = [];
-  if (filters.crdts) conditions.push(eq(agentViolations.crdts, filters.crdts));
-  if (filters.agentCode) conditions.push(eq(agentViolations.agentCode, filters.agentCode));
+  // Identity match: violations may be keyed under CRDTS or traineeCode inconsistently,
+  // so match ANY provided id against EITHER column.
+  const ids = [filters.crdts, filters.agentCode].filter((x): x is string => !!x);
+  if (ids.length) {
+    conditions.push(or(inArray(agentViolations.crdts, ids), inArray(agentViolations.agentCode, ids)));
+  }
   if (filters.month) conditions.push(eq(agentViolations.month, filters.month));
   if (filters.category) conditions.push(eq(agentViolations.category, filters.category));
   if (conditions.length > 0) q = q.where(and(...conditions));

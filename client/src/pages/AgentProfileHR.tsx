@@ -66,7 +66,8 @@ function Profile({ agent }: { agent: Agent }) {
   const code = agent.traineeCode;
 
   // Deductions live in agent_violations (the payslip source), keyed by CRDTS, split by category.
-  const vKey = crdts ? { crdts } : { agentCode: code };
+  // Pass both identifiers — violations may be stored under CRDTS or traineeCode.
+  const vKey = { crdts: crdts || undefined, agentCode: code || undefined };
   const { data: adherence = [] } = trpc.violations.list.useQuery({ ...vKey, category: "attendance" });
   const { data: quality = [] } = trpc.violations.list.useQuery({ ...vKey, category: "quality" });
   const { data: coaching = [] } = trpc.coaching.listByCrdts.useQuery({ crdts }, { enabled: !!crdts });
