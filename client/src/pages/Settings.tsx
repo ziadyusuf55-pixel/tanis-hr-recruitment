@@ -673,6 +673,8 @@ export default function Settings() {
         <p className="text-muted-foreground text-sm mt-1">Manage admin access, team leaders, and platform settings.</p>
       </div>
 
+      <EscalationMatrixCard />
+
       {/* Central permissions — tab-level roles on Google-login users */}
       <Card>
         <CardHeader className="pb-4">
@@ -941,5 +943,118 @@ export default function Settings() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// ── Escalation Matrix — editable penalty tiers per violation type ──
+// Offense counts reset each cycle. Used to auto-suggest the penalty when a TL
+// logs an adherence violation (they can still override the hours).
+function EscalationMatrixCard() {
+  const utils = trpc.useUtils();
+  const { data: rules = [] } = trpc.payrollWorkflow.listMatrix.useQuery();
+  const upsert = trpc.payrollWorkflow.upsertMatrixRule.useMutation({
+    onSuccess: () => { utils.payrollWorkflow.listMatrix.invalidate(); toast.success("Rule saved"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const del = trpc.payrollWorkflow.deleteMatrixRule.useMutation({
+    onSuccess: () => { utils.payrollWorkflow.listMatrix.invalidate(); toast.success("Rule deleted"); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const [vt, setVt] = useState("");
+  const [no, setNo] = useState("1");
+  const [label, setLabel] = useState("");
+  const [hours, setHours] = useState("");
+  const [egp, setEgp] = useState("");
+  const [useRate, setUseRate] = useState(true);
+
+  type Rule = { id: number; violationType: string; offenseNo: number; penaltyLabel: string | null; hours: string; egp: string; useHoursRate: boolean };
+  const list = rules as Rule[];
+
+  return (
+    <Card>
+      <CardHeader className="pb-4">
+        <CardTitle className="text-base">Escalation Matrix</CardTitle>
+        <CardDescription className="text-sm mt-0.5">
+          Penalty per violation type and offense number. Offense counts reset each cycle.
+          Team Leads can still override the hours when logging.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {/* Add / update a rule */}
+        <div className="grid sm:grid-cols-6 gap-2 items-end">
+          <div className="sm:col-span-2">
+            <p className="text-xs text-muted-foreground mb-1">Violation type</p>
+            <Input placeholder="e.g. Early Exit - No Notice" value={vt} onChange={(e) => setVt(e.target.value)} />
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground mb-1">Offense #</p>
+            <Input type="number" min="1" max="10" value={no} onChange={(e) => setNo(e.target.value)} />
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground mb-1">Penalty label</p>
+            <Input placeholder="Compensation" value={label} onChange={(e) => setLabel(e.target.value)} />
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground mb-1">Hours</p>
+            <Input type="number" step="0.25" min="0" value={hours} onChange={(e) => setHours(e.target.value)} />
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground mb-1">Fixed EGP</p>
+            <Input type="number" min="0" placeholder="0" value={egp} onChange={(e) => setEgp(e.target.value)} disabled={useRate} />
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input type="checkbox" checked={useRate} onChange={(e) => setUseRate(e.target.checked)} />
+            Calculate EGP from hours (hours × 75). Uncheck to set a fixed amount (e.g. NSNC = 1440 EGP).
+          </label>
+          <Button size="sm" disabled={!vt || upsert.isPending}
+            onClick={() => upsert.mutate({
+              violationType: vt, offenseNo: Number(no) || 1, penaltyLabel: label || undefined,
+              hours: Number(hours) || 0, egp: Number(egp) || 0, useHoursRate: useRate,
+            })}>
+            {upsert.isPending ? "Saving…" : "Add / update rule"}
+          </Button>
+        </div>
+
+        {/* Existing rules */}
+        {list.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-3">No rules yet — add your violation types and their penalty tiers above.</p>
+        ) : (
+          <div className="border rounded-lg overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/40">
+                <tr>
+                  <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Violation</th>
+                  <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Offense</th>
+                  <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Penalty</th>
+                  <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Hours</th>
+                  <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">EGP</th>
+                  <th className="px-3 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {list.map((r) => (
+                  <tr key={r.id} className="border-t">
+                    <td className="px-3 py-2">{r.violationType}</td>
+                    <td className="px-3 py-2">#{r.offenseNo}</td>
+                    <td className="px-3 py-2 text-muted-foreground">{r.penaltyLabel || "—"}</td>
+                    <td className="px-3 py-2">{Number(r.hours) || 0}</td>
+                    <td className="px-3 py-2">{r.useHoursRate ? `${(Number(r.hours) || 0) * 75} (hrs×75)` : Number(r.egp) || 0}</td>
+                    <td className="px-3 py-2 text-right">
+                      <Button size="sm" variant="ghost" className="text-destructive h-7"
+                        onClick={() => { if (confirm(`Delete "${r.violationType}" offense #${r.offenseNo}?`)) del.mutate({ id: r.id }); }}>
+                        Delete
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

@@ -633,13 +633,12 @@ export const agentViolations = mysqlTable("agent_violations", {
   approvedAt: bigint("approvedAt", { mode: "number" }),
   month: varchar("month", { length: 7 }),                       // YYYY-MM — derived from date
   uploadedAt: bigint("uploadedAt", { mode: "number" }),
-  createdAt: timestamp("createdAt").defaultNow().notNull(),
-  // Workflow fields (added 2026-07)
-  details: text("details"),
-  offenseNo: int("offenseNo"),
-  overrideHours: decimal("overrideHours", { precision: 6, scale: 2 }),
-  loggedBy: varchar("loggedBy", { length: 255 }),
+  details: text("details"),                                     // what happened (always captured)
+  offenseNo: int("offenseNo"),                                  // which offense this cycle (auto-counted)
+  overrideHours: decimal("overrideHours", { precision: 6, scale: 2 }),  // manual override of the matrix
+  loggedBy: varchar("loggedBy", { length: 255 }),               // auto: whoever is logged in
   loggedAt: bigint("loggedAt", { mode: "number" }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, (t) => ({
   uqViolationAgentDateType: uniqueIndex("uq_violation_agent_date_type").on(t.agentCode, t.date, t.type),
 }));
@@ -780,9 +779,9 @@ export const cycleOT = mysqlTable("cycle_ot", {
   uploadedAt: bigint("uploadedAt", { mode: "number" }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   // Workflow fields (added 2026-07)
-  details: text("details"),
+  details: text("details"),                                     // why the OT was worked
   status: mysqlEnum("status", ["pending", "approved", "rejected"]).notNull().default("pending"),
-  loggedBy: varchar("loggedBy", { length: 255 }),
+  loggedBy: varchar("loggedBy", { length: 255 }),               // auto: whoever is logged in
   loggedAt: bigint("loggedAt", { mode: "number" }),
   approvedBy: varchar("approvedBy", { length: 255 }),
   approvedAt: bigint("approvedAt", { mode: "number" }),
@@ -1176,26 +1175,28 @@ export const bdDealTasks = mysqlTable("bd_deal_tasks", {
 });
 export type BdDealTask = typeof bdDealTasks.$inferSelect;
 
-// ═══════════════════════════════════════════════════════════════════════════
-// ESCALATION MATRIX — penalty lookup table per violation type + offense number.
-// ═══════════════════════════════════════════════════════════════════════════
+/**
+ * escalation_matrix — editable penalty tiers per violation type.
+ * Offense count RESETS EACH CYCLE. Editable from Settings (no code change).
+ */
 export const escalationMatrix = mysqlTable("escalation_matrix", {
   id: int("id").autoincrement().primaryKey(),
   violationType: varchar("violationType", { length: 120 }).notNull(),
-  offenseNo: int("offenseNo").notNull(),
-  penaltyLabel: varchar("penaltyLabel", { length: 120 }),
-  hours: decimal("hours", { precision: 6, scale: 2 }).default("0"),
-  egp: decimal("egp", { precision: 10, scale: 2 }).default("0"),
-  useHoursRate: boolean("useHoursRate").notNull().default(true),
+  offenseNo: int("offenseNo").notNull(),                        // 1, 2, 3...
+  penaltyLabel: varchar("penaltyLabel", { length: 120 }),       // e.g. "Compensation", "Half day"
+  hours: decimal("hours", { precision: 6, scale: 2 }).default("0"),   // hours deducted
+  egp: decimal("egp", { precision: 10, scale: 2 }).default("0"),      // fixed EGP (0 = use hours x rate)
+  useHoursRate: boolean("useHoursRate").default(true).notNull(),      // true → EGP = hours x hourlyRate
   updatedAt: bigint("updatedAt", { mode: "number" }),
 });
 export type EscalationMatrix = typeof escalationMatrix.$inferSelect;
+export type EscalationRule = typeof escalationMatrix.$inferSelect;
 export type InsertEscalationMatrix = typeof escalationMatrix.$inferInsert;
 
-// ═══════════════════════════════════════════════════════════════════════════
-// AGENT BONUSES — ad-hoc bonus entries (coaching, team support, etc.).
-// Workflow: pending → approved → included in payroll; or rejected.
-// ═══════════════════════════════════════════════════════════════════════════
+/**
+ * agent_bonuses — anything that ADDS money for an agent (approval required).
+ * Lands on the payslip's coachingBonus column once approved.
+ */
 export const agentBonuses = mysqlTable("agent_bonuses", {
   id: int("id").autoincrement().primaryKey(),
   crdts: varchar("crdts", { length: 100 }).notNull(),
@@ -1204,11 +1205,11 @@ export const agentBonuses = mysqlTable("agent_bonuses", {
   date: varchar("date", { length: 10 }).notNull(),              // YYYY-MM-DD
   month: varchar("month", { length: 7 }).notNull(),             // YYYY-MM
   bonusType: mysqlEnum("bonusType", ["coaching", "team_support", "system_issues", "hr_meeting", "one_to_one", "other"]).notNull(),
-  details: text("details"),
-  hours: decimal("hours", { precision: 6, scale: 2 }),
+  details: text("details"),                                     // always shown on the form
+  hours: decimal("hours", { precision: 6, scale: 2 }),          // optional (e.g. coaching session length)
   egp: decimal("egp", { precision: 10, scale: 2 }).notNull(),
   status: mysqlEnum("status", ["pending", "approved", "rejected"]).notNull().default("pending"),
-  loggedBy: varchar("loggedBy", { length: 255 }),
+  loggedBy: varchar("loggedBy", { length: 255 }),               // auto: whoever is logged in
   loggedAt: bigint("loggedAt", { mode: "number" }),
   approvedBy: varchar("approvedBy", { length: 255 }),
   approvedAt: bigint("approvedAt", { mode: "number" }),
