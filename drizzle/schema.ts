@@ -634,6 +634,12 @@ export const agentViolations = mysqlTable("agent_violations", {
   month: varchar("month", { length: 7 }),                       // YYYY-MM — derived from date
   uploadedAt: bigint("uploadedAt", { mode: "number" }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+  // Workflow fields (added 2026-07)
+  details: text("details"),
+  offenseNo: int("offenseNo"),
+  overrideHours: decimal("overrideHours", { precision: 6, scale: 2 }),
+  loggedBy: varchar("loggedBy", { length: 255 }),
+  loggedAt: bigint("loggedAt", { mode: "number" }),
 }, (t) => ({
   uqViolationAgentDateType: uniqueIndex("uq_violation_agent_date_type").on(t.agentCode, t.date, t.type),
 }));
@@ -773,6 +779,13 @@ export const cycleOT = mysqlTable("cycle_ot", {
   egpAmount: decimal("egpAmount", { precision: 10, scale: 2 }).default("0"),
   uploadedAt: bigint("uploadedAt", { mode: "number" }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+  // Workflow fields (added 2026-07)
+  details: text("details"),
+  status: mysqlEnum("status", ["pending", "approved", "rejected"]).notNull().default("pending"),
+  loggedBy: varchar("loggedBy", { length: 255 }),
+  loggedAt: bigint("loggedAt", { mode: "number" }),
+  approvedBy: varchar("approvedBy", { length: 255 }),
+  approvedAt: bigint("approvedAt", { mode: "number" }),
 });
 export type CycleOT = typeof cycleOT.$inferSelect;
 export type InsertCycleOT = typeof cycleOT.$inferInsert;
@@ -1162,3 +1175,43 @@ export const bdDealTasks = mysqlTable("bd_deal_tasks", {
   doneAt: bigint("doneAt", { mode: "number" }),
 });
 export type BdDealTask = typeof bdDealTasks.$inferSelect;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ESCALATION MATRIX — penalty lookup table per violation type + offense number.
+// ═══════════════════════════════════════════════════════════════════════════
+export const escalationMatrix = mysqlTable("escalation_matrix", {
+  id: int("id").autoincrement().primaryKey(),
+  violationType: varchar("violationType", { length: 120 }).notNull(),
+  offenseNo: int("offenseNo").notNull(),
+  penaltyLabel: varchar("penaltyLabel", { length: 120 }),
+  hours: decimal("hours", { precision: 6, scale: 2 }).default("0"),
+  egp: decimal("egp", { precision: 10, scale: 2 }).default("0"),
+  useHoursRate: boolean("useHoursRate").notNull().default(true),
+  updatedAt: bigint("updatedAt", { mode: "number" }),
+});
+export type EscalationMatrix = typeof escalationMatrix.$inferSelect;
+export type InsertEscalationMatrix = typeof escalationMatrix.$inferInsert;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AGENT BONUSES — ad-hoc bonus entries (coaching, team support, etc.).
+// Workflow: pending → approved → included in payroll; or rejected.
+// ═══════════════════════════════════════════════════════════════════════════
+export const agentBonuses = mysqlTable("agent_bonuses", {
+  id: int("id").autoincrement().primaryKey(),
+  crdts: varchar("crdts", { length: 100 }).notNull(),
+  agentCode: varchar("agentCode", { length: 100 }),
+  alias: varchar("alias", { length: 100 }),
+  date: varchar("date", { length: 10 }).notNull(),              // YYYY-MM-DD
+  month: varchar("month", { length: 7 }).notNull(),             // YYYY-MM
+  bonusType: mysqlEnum("bonusType", ["coaching", "team_support", "system_issues", "hr_meeting", "one_to_one", "other"]).notNull(),
+  details: text("details"),
+  hours: decimal("hours", { precision: 6, scale: 2 }),
+  egp: decimal("egp", { precision: 10, scale: 2 }).notNull(),
+  status: mysqlEnum("status", ["pending", "approved", "rejected"]).notNull().default("pending"),
+  loggedBy: varchar("loggedBy", { length: 255 }),
+  loggedAt: bigint("loggedAt", { mode: "number" }),
+  approvedBy: varchar("approvedBy", { length: 255 }),
+  approvedAt: bigint("approvedAt", { mode: "number" }),
+});
+export type AgentBonus = typeof agentBonuses.$inferSelect;
+export type InsertAgentBonus = typeof agentBonuses.$inferInsert;
