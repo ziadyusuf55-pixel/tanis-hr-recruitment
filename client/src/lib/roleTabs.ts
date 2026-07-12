@@ -16,15 +16,15 @@ const ROLE_PATHS: Record<string, string[]> = {
   hr: [
     "/", "/candidates", "/performance", "/payroll", "/commission",
     "/payment-preferences", "/all-documents", "/agent-profiles",
-    "/leave-management", "/training", "/requests",
+    "/leave-management", "/payroll-workflow", "/training", "/requests",
   ],
   ops_manager: [
     "/", "/operations", "/adherence", "/quality", "/coaching-admin",
-    "/client-logouts", "/cycle-tracker", "/performance-reports", "/training",
+    "/client-logouts", "/payroll-workflow", "/cycle-tracker", "/performance-reports", "/training",
   ],
   team_lead: [
     // near-admin: Operations + Finance + HR groups
-    "/", "/operations", "/adherence", "/quality", "/coaching-admin", "/client-logouts",
+    "/", "/operations", "/adherence", "/quality", "/coaching-admin", "/client-logouts", "/payroll-workflow",
     "/payroll", "/commission", "/payment-preferences",
     "/candidates", "/performance", "/all-documents", "/agent-profiles", "/leave-management",
     "/cycle-tracker", "/performance-reports", "/training", "/requests",

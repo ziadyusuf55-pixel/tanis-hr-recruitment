@@ -633,6 +633,11 @@ export const agentViolations = mysqlTable("agent_violations", {
   approvedAt: bigint("approvedAt", { mode: "number" }),
   month: varchar("month", { length: 7 }),                       // YYYY-MM — derived from date
   uploadedAt: bigint("uploadedAt", { mode: "number" }),
+  details: text("details"),                                     // what happened (always captured)
+  offenseNo: int("offenseNo"),                                  // which offense this cycle (auto-counted)
+  overrideHours: decimal("overrideHours", { precision: 6, scale: 2 }),  // manual override of the matrix
+  loggedBy: varchar("loggedBy", { length: 255 }),               // auto: whoever is logged in
+  loggedAt: bigint("loggedAt", { mode: "number" }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, (t) => ({
   uqViolationAgentDateType: uniqueIndex("uq_violation_agent_date_type").on(t.agentCode, t.date, t.type),
@@ -773,6 +778,12 @@ export const cycleOT = mysqlTable("cycle_ot", {
   egpAmount: decimal("egpAmount", { precision: 10, scale: 2 }).default("0"),
   uploadedAt: bigint("uploadedAt", { mode: "number" }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+  details: text("details"),                                     // why the OT was worked
+  status: mysqlEnum("status", ["pending", "approved", "rejected"]).default("pending").notNull(),
+  loggedBy: varchar("loggedBy", { length: 255 }),               // auto: whoever is logged in
+  loggedAt: bigint("loggedAt", { mode: "number" }),
+  approvedBy: varchar("approvedBy", { length: 255 }),
+  approvedAt: bigint("approvedAt", { mode: "number" }),
 });
 export type CycleOT = typeof cycleOT.$inferSelect;
 export type InsertCycleOT = typeof cycleOT.$inferInsert;
@@ -1162,3 +1173,42 @@ export const bdDealTasks = mysqlTable("bd_deal_tasks", {
   doneAt: bigint("doneAt", { mode: "number" }),
 });
 export type BdDealTask = typeof bdDealTasks.$inferSelect;
+
+/**
+ * escalation_matrix — editable penalty tiers per violation type.
+ * Offense count RESETS EACH CYCLE. Editable from Settings (no code change).
+ */
+export const escalationMatrix = mysqlTable("escalation_matrix", {
+  id: int("id").autoincrement().primaryKey(),
+  violationType: varchar("violationType", { length: 120 }).notNull(),
+  offenseNo: int("offenseNo").notNull(),                        // 1, 2, 3...
+  penaltyLabel: varchar("penaltyLabel", { length: 120 }),       // e.g. "Compensation", "Half day"
+  hours: decimal("hours", { precision: 6, scale: 2 }).default("0"),   // hours deducted
+  egp: decimal("egp", { precision: 10, scale: 2 }).default("0"),      // fixed EGP (0 = use hours x rate)
+  useHoursRate: boolean("useHoursRate").default(true).notNull(),      // true → EGP = hours x hourlyRate
+  updatedAt: bigint("updatedAt", { mode: "number" }),
+});
+export type EscalationRule = typeof escalationMatrix.$inferSelect;
+
+/**
+ * agent_bonuses — anything that ADDS money for an agent (approval required).
+ * Lands on the payslip's coachingBonus column once approved.
+ */
+export const agentBonuses = mysqlTable("agent_bonuses", {
+  id: int("id").autoincrement().primaryKey(),
+  crdts: varchar("crdts", { length: 100 }).notNull(),
+  agentCode: varchar("agentCode", { length: 100 }),
+  alias: varchar("alias", { length: 100 }),
+  date: varchar("date", { length: 10 }).notNull(),              // YYYY-MM-DD
+  month: varchar("month", { length: 7 }).notNull(),             // YYYY-MM
+  bonusType: mysqlEnum("bonusType", ["coaching", "team_support", "system_issues", "hr_meeting", "one_to_one", "other"]).notNull(),
+  details: text("details"),                                     // always shown on the form
+  hours: decimal("hours", { precision: 6, scale: 2 }),          // optional (e.g. coaching session length)
+  egp: decimal("egp", { precision: 10, scale: 2 }).notNull(),
+  status: mysqlEnum("status", ["pending", "approved", "rejected"]).default("pending").notNull(),
+  loggedBy: varchar("loggedBy", { length: 255 }),               // auto: whoever is logged in
+  loggedAt: bigint("loggedAt", { mode: "number" }),
+  approvedBy: varchar("approvedBy", { length: 255 }),
+  approvedAt: bigint("approvedAt", { mode: "number" }),
+});
+export type AgentBonus = typeof agentBonuses.$inferSelect;

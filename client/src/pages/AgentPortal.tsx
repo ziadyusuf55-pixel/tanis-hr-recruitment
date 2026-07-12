@@ -3317,10 +3317,80 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
 }
 
 // ─── Unified Performance Tab (Cycle / Calendar Month / All-Time) ──────────────
+function MyPayItems({ theme }: { theme: Theme }) {
+  const { data } = trpc.agent.myPayItems.useQuery({});
+  type Row = { id: number; date: string; type?: string; otType?: string; bonusType?: string; details?: string | null; hours?: string | null; deduction?: string | null; egpAmount?: string | null; egp?: string | null };
+  const adherence = (data?.adherence ?? []) as Row[];
+  const ot = (data?.ot ?? []) as Row[];
+  const bonuses = (data?.bonuses ?? []) as Row[];
+  if (!adherence.length && !ot.length && !bonuses.length) return null;
+
+  const BONUS_LABEL: Record<string, string> = {
+    coaching: "Coaching", team_support: "Team Support", system_issues: "System Issues",
+    hr_meeting: "HR Meeting", one_to_one: "One-to-One", other: "Bonus",
+  };
+  const num = (v: unknown) => Number(v || 0);
+  const totalDed = adherence.reduce((s, r) => s + num(r.deduction), 0);
+  const totalOt = ot.reduce((s, r) => s + num(r.egpAmount), 0);
+  const totalBonus = bonuses.reduce((s, r) => s + num(r.egp), 0);
+
+  const Line = ({ label, sub, amount, positive }: { label: string; sub?: string | null; amount: number; positive: boolean }) => (
+    <div className="flex items-start justify-between gap-3 py-1.5">
+      <div className="min-w-0">
+        <p className="text-sm" style={{ color: theme.text }}>{label}</p>
+        {sub && <p className="text-xs" style={{ color: theme.textMuted }}>{sub}</p>}
+      </div>
+      <p className="text-sm font-semibold shrink-0" style={{ color: positive ? "#16a34a" : "#dc2626" }}>
+        {positive ? "+" : "−"}{Math.abs(amount).toLocaleString()} EGP
+      </p>
+    </div>
+  );
+
+  return (
+    <div className="rounded-2xl p-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+      <p className="text-sm font-semibold mb-2" style={{ color: theme.text }}>Deductions &amp; Bonuses</p>
+
+      {bonuses.length > 0 && (
+        <div className="mb-3">
+          <p className="text-xs font-medium mb-1" style={{ color: theme.textMuted }}>Bonuses · +{totalBonus.toLocaleString()} EGP</p>
+          {bonuses.map(b => (
+            <Line key={`b${b.id}`} positive amount={num(b.egp)}
+              label={BONUS_LABEL[String(b.bonusType)] || "Bonus"}
+              sub={`${b.date}${b.details ? ` — ${b.details}` : ""}`} />
+          ))}
+        </div>
+      )}
+
+      {ot.length > 0 && (
+        <div className="mb-3">
+          <p className="text-xs font-medium mb-1" style={{ color: theme.textMuted }}>Overtime · +{totalOt.toLocaleString()} EGP</p>
+          {ot.map(o => (
+            <Line key={`o${o.id}`} positive amount={num(o.egpAmount)}
+              label={`Overtime ${o.otType}`}
+              sub={`${o.date}${o.hours ? ` — ${num(o.hours)} hrs` : ""}${o.details ? ` · ${o.details}` : ""}`} />
+          ))}
+        </div>
+      )}
+
+      {adherence.length > 0 && (
+        <div>
+          <p className="text-xs font-medium mb-1" style={{ color: theme.textMuted }}>Deductions · −{totalDed.toLocaleString()} EGP</p>
+          {adherence.map(a => (
+            <Line key={`a${a.id}`} positive={false} amount={num(a.deduction)}
+              label={String(a.type || "Deduction")}
+              sub={`${a.date}${a.hours ? ` — ${num(a.hours)} hrs` : ""}${a.details ? ` · ${a.details}` : ""}`} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PerformanceTab({ theme }: { theme: Theme }) {
   const [view, setView] = useState<"cycle" | "month" | "all">("cycle");
   return (
     <div className="space-y-5">
+      <MyPayItems theme={theme} />
       {/* Time-range toggle: This Cycle (salary basis) · This Month (commission basis) · All-Time */}
       <div className="inline-flex rounded-xl p-1 flex-wrap" style={{ background: theme.inputBg, border: `1px solid ${theme.cardBorder}` }}>
         {([["cycle", "This Cycle"], ["month", "This Month"], ["all", "All-Time"]] as const).map(([id, label]) => (

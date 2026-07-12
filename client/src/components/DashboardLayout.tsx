@@ -27,7 +27,7 @@ import { trpc } from "@/lib/trpc";
 import {
   LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings,
   Briefcase, Banknote, CreditCard, BarChart2, AlertCircle, Star, Wallet,
-  FileText, Activity, ChevronDown, ChevronRight, TrendingUp, BookOpen, PhoneOff, DollarSign, UserCog, Building2, CalendarDays, Bell,
+  FileText, Activity, ChevronDown, ChevronRight, TrendingUp, BookOpen, PhoneOff, DollarSign, UserCog, Building2, ClipboardList, CalendarDays, Bell,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -50,6 +50,7 @@ const NAV: NavItem[] = [
       { icon: Star,        label: "Quality Log",   path: "/quality" },
       { icon: BookOpen,    label: "Coaching",      path: "/coaching-admin" },
       { icon: PhoneOff,    label: "Client Logouts", path: "/client-logouts" },
+      { icon: ClipboardList, label: "Deductions & Bonuses", path: "/payroll-workflow" },
     ],
   },
   {
@@ -142,18 +143,29 @@ function useBdRole() {
 }
 function BellBadge() {
   const { data: due = [] } = trpc.bd.dueReminders.useQuery(undefined, { refetchInterval: 120000 });
+  // Pending approvals — the endpoint returns 0 for anyone who can't approve,
+  // so only Ops Manager / HR / Owner ever see this.
+  const { data: approvals = 0 } = trpc.payrollWorkflow.pendingCount.useQuery(undefined, { refetchInterval: 60000 });
   const list = due as { id: number; title: string; reminderDate: string | null; reminderNote: string | null }[];
   const [open, setOpen] = useState(false);
-  if (list.length === 0) return null;
+  const nApprovals = Number(approvals) || 0;
+  const count = list.length + nApprovals;
+  if (count === 0) return null;
   return (
     <div className="relative">
-      <button onClick={() => setOpen(!open)} className="relative p-2 rounded-lg hover:bg-muted" title="Follow-ups due">
+      <button onClick={() => setOpen(!open)} className="relative p-2 rounded-lg hover:bg-muted" title="Notifications">
         <Bell className="w-4 h-4" />
-        <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-600 text-white text-[10px] flex items-center justify-center font-bold">{list.length}</span>
+        <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-600 text-white text-[10px] flex items-center justify-center font-bold">{count}</span>
       </button>
       {open && (
         <div className="absolute right-0 top-10 z-50 w-72 rounded-xl border bg-background shadow-lg p-2 space-y-1">
-          <p className="text-xs font-semibold px-1.5 pt-1">⏰ Follow-ups due ({list.length})</p>
+          {nApprovals > 0 && (
+            <a href="/payroll-workflow" className="block rounded-lg px-2 py-2 hover:bg-muted text-xs border-b mb-1">
+              <span className="font-semibold">✅ {nApprovals} item{nApprovals === 1 ? "" : "s"} awaiting approval</span>
+              <span className="block text-[10px] text-muted-foreground">Deductions, OT &amp; bonuses</span>
+            </a>
+          )}
+          {list.length > 0 && <p className="text-xs font-semibold px-1.5 pt-1">⏰ Follow-ups due ({list.length})</p>}
           {list.slice(0, 8).map(d => (
             <a key={d.id} href="/business-development" className="block rounded-lg px-2 py-1.5 hover:bg-muted text-xs">
               <span className="font-medium">{d.title}</span>

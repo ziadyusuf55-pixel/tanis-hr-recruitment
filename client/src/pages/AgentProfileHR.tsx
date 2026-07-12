@@ -70,6 +70,7 @@ function Profile({ agent }: { agent: Agent }) {
   const vKey = { crdts: crdts || undefined, agentCode: code || undefined };
   const { data: adherence = [] } = trpc.violations.list.useQuery({ ...vKey, category: "attendance" });
   const { data: quality = [] } = trpc.violations.list.useQuery({ ...vKey, category: "quality" });
+  const { data: payItems } = trpc.payrollWorkflow.byAgent.useQuery({ crdts }, { enabled: !!crdts });
   const { data: coaching = [] } = trpc.coaching.listByCrdts.useQuery({ crdts }, { enabled: !!crdts });
   const { data: balances = [] } = trpc.leave.listBalances.useQuery({});
   const { data: leaveReqs = [] } = trpc.leave.myRequests.useQuery({ traineeCode: code });
@@ -173,6 +174,24 @@ function Profile({ agent }: { agent: Agent }) {
           rows={(adherence as Viol[]).map(v => ({ id: v.id, main: v.type || "—", sub: vSub(v) }))} />
         <MirrorCard icon={<BookOpen className="w-4 h-4" style={{ color: BRAND }} />} title={`Coaching (${(coaching as unknown[]).length})`}
           rows={(coaching as { id: number; sessionDate?: unknown; date?: unknown; topic?: string | null; notes?: string | null; coachName?: string | null }[]).map(cr => ({ id: cr.id, main: cr.topic || cr.notes || "—", sub: `${fmt(cr.sessionDate ?? cr.date)}${cr.coachName ? ` · ${cr.coachName}` : ""}` }))} />
+      </div>
+
+      {/* OT + Bonuses (approval workflow) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <MirrorCard icon={<CalendarDays className="w-4 h-4" style={{ color: BRAND }} />}
+          title={`Overtime (${((payItems?.ot ?? []) as { egpAmount?: string }[]).length})`}
+          rows={((payItems?.ot ?? []) as { id: number; date: string; otType?: string; hours?: string | null; egpAmount?: string | null; status: string; details?: string | null }[]).map(o => ({
+            id: o.id,
+            main: `OT ${o.otType} · +${Number(o.egpAmount || 0).toLocaleString()} EGP${o.status !== "approved" ? ` (${o.status})` : ""}`,
+            sub: `${o.date}${o.hours ? ` · ${Number(o.hours)}h` : ""}${o.details ? ` · ${o.details}` : ""}`,
+          }))} />
+        <MirrorCard icon={<Star className="w-4 h-4" style={{ color: BRAND }} />}
+          title={`Bonuses (${((payItems?.bonuses ?? []) as unknown[]).length})`}
+          rows={((payItems?.bonuses ?? []) as { id: number; date: string; bonusType?: string; egp?: string | null; status: string; details?: string | null }[]).map(b => ({
+            id: b.id,
+            main: `${String(b.bonusType || "").replace(/_/g, " ")} · +${Number(b.egp || 0).toLocaleString()} EGP${b.status !== "approved" ? ` (${b.status})` : ""}`,
+            sub: `${b.date}${b.details ? ` · ${b.details}` : ""}`,
+          }))} />
       </div>
 
       <p className="text-xs text-muted-foreground flex items-center gap-1"><Phone className="w-3 h-3" /> Performance charts live in HR → Performance (same CRDTS).</p>

@@ -9,9 +9,11 @@ import {
 import {
   Users, UserCheck, CalendarClock, TrendingUp,
   MessageCircle, Mic, Video, Send, UserX, Timer, ArrowRight,
-  Briefcase, Activity, Inbox, CalendarDays, Building2, Wallet, CheckCircle2, ChevronRight,
+  Briefcase, Activity, Inbox, CalendarDays, Building2, Wallet, CheckCircle2, ChevronRight, ClipboardCheck,
 } from "lucide-react";
 import { useLocation } from "wouter";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { canAccessPath } from "@/lib/roleTabs";
 
 type Period = "week" | "month" | "all";
 
@@ -35,6 +37,8 @@ const FUNNEL_COLORS: Record<string, string> = {
 
 export default function Dashboard() {
   const [, navigate] = useLocation();
+  const { user } = useAuth();
+  const role = (user as { role?: string } | null)?.role;
   const [period, setPeriod] = useState<Period>("month");
   const periodInput = useMemo(() => ({ period }), [period]);
 
@@ -47,18 +51,21 @@ export default function Dashboard() {
   const { data: pendingLeave = [] } = trpc.leave.listRequests.useQuery({ status: "pending" }, { refetchInterval: 120000 });
   const { data: bdDue = [] } = trpc.bd.dueReminders.useQuery(undefined, { refetchInterval: 120000 });
   const { data: bdDeals = [] } = trpc.bd.listDeals.useQuery({});
+  const { data: pendingApprovals = 0 } = trpc.payrollWorkflow.pendingCount.useQuery(undefined, { refetchInterval: 60000 });
 
   const pendingDeletion = overview?.pendingDeletionCount ?? 0;
 
   const openDeals = (bdDeals as Array<{ stage: string }>).filter(d => d.stage !== "closed_won" && d.stage !== "closed_lost");
   const wonDeals = (bdDeals as Array<{ stage: string }>).filter(d => d.stage === "closed_won");
 
+  // Only show cards for pages this role can actually open.
   const attention = [
+    { count: Number(pendingApprovals), label: "Awaiting your approval", sub: "Deductions, OT & bonuses", icon: ClipboardCheck, tint: "red", path: "/payroll-workflow" },
     { count: Number(unreadRequests), label: "Requests to review", sub: "Agent requests waiting", icon: Inbox, tint: "amber", path: "/requests" },
     { count: (pendingLeave as unknown[]).length, label: "Leave approvals", sub: "Awaiting HR classification", icon: CalendarDays, tint: "violet", path: "/leave-management" },
     { count: (bdDue as unknown[]).length, label: "BD follow-ups due", sub: "Deals to chase today", icon: Building2, tint: "blue", path: "/business-development" },
     { count: pendingDeletion, label: "Former agents pending payout", sub: "Still owed final pay", icon: Wallet, tint: "red", path: "/operations" },
-  ].filter(a => a.count > 0);
+  ].filter(a => a.count > 0 && canAccessPath(role, a.path));
 
   const funnelData = kpis
     ? ACTIVE_STAGES.map((stage) => ({

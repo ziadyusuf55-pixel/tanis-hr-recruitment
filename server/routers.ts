@@ -702,7 +702,49 @@ function generatePassword(traineeCode: string): string {
   return `${traineeCode}-${digits}`;
 }
 
+/** Agent-facing: an agent sees ONLY their own APPROVED deductions, OT and bonuses. */
+export const agentPayItemsProcedure = publicProcedure
+  .input(z.object({ month: z.string().optional() }).optional())
+  .query(async ({ ctx, input }) => {
+    const token = getAgentCookieFromReq(ctx.req);
+    const empty = { adherence: [], ot: [], bonuses: [] };
+    if (!token) return empty;
+    let traineeCode = "";
+    try {
+      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+      if (payload.type !== "agent") return empty;
+      traineeCode = payload.traineeCode;
+    } catch { return empty; }
+
+    const { getDb } = await import("./db");
+    const { eq, desc } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return empty;
+    const { workforceAgents, agentViolations, cycleOT, agentBonuses } = await import("../drizzle/schema");
+
+    const [wf] = await db.select().from(workforceAgents).where(eq(workforceAgents.traineeCode, traineeCode));
+    const crdts = wf?.crdts || traineeCode;
+
+    const [adherence, ot, bonuses] = await Promise.all([
+      db.select().from(agentViolations).where(eq(agentViolations.crdts, crdts)).orderBy(desc(agentViolations.date)),
+      db.select().from(cycleOT).where(eq(cycleOT.crdts, crdts)).orderBy(desc(cycleOT.date)),
+      db.select().from(agentBonuses).where(eq(agentBonuses.crdts, crdts)).orderBy(desc(agentBonuses.date)),
+    ]);
+    const m = input?.month;
+    // Approved only — an agent never sees a pending accusation.
+    const keep = <T extends { status: string; month?: string | null; cycleKey?: string | null }>(rows: T[]) =>
+      rows.filter(r => r.status === "approved" && (!m || (r.month ?? r.cycleKey) === m));
+    return {
+      adherence: keep(adherence as never[]),
+      ot: keep(ot as never[]),
+      bonuses: keep(bonuses as never[]),
+    };
+  });
+
+
 const agentRouter = router({
+  // Agent's own approved deductions / OT / bonuses (shown in their Performance tab)
+  myPayItems: agentPayItemsProcedure,
   // Generate credentials for a candidate — called by admin from CandidateDetail
   generateCredentials: protectedProcedure
     .input(z.object({ candidateId: z.number(), traineeCode: z.string().min(1) }))
@@ -2544,6 +2586,342 @@ const payrollV2Router = router({
       return { deleted: (result as { rowsAffected?: number }).rowsAffected ?? 0 };
     }),
 });
+// ════════════════════════════════════════════════════════════════════════════
+// PAYROLL WORKFLOW — Adherence · OT · Bonuses
+// Flow: TL/QA logs → PENDING → Ops Manager/HR/Owner approves or rejects.
+// On APPROVE the amount is pushed onto that agent's payslip for the cycle.
+// Offense counts for escalation RESET EACH CYCLE.
+// (Quality violations are still pushed from the sheet — untouched here.)
+// ════════════════════════════════════════════════════════════════════════════
+const HOURLY_RATE = 75;   // EGP per hour — used when a matrix rule is hours-based
+
+const APPROVER_ROLES = ["owner", "admin", "ops_manager", "hr"];
+const LOGGER_ROLES = ["owner", "admin", "ops_manager", "hr", "team_lead"];
+
+function pwWho(ctx: { user?: { name?: string | null; email?: string | null; role?: string | null } | null }) {
+  return ctx.user?.name || ctx.user?.email || "unknown";
+}
+function pwCanApprove(ctx: { user?: { role?: string | null } | null }) {
+  return APPROVER_ROLES.indexOf(String(ctx.user?.role || "")) !== -1;
+}
+function pwCanLog(ctx: { user?: { role?: string | null } | null }) {
+  return LOGGER_ROLES.indexOf(String(ctx.user?.role || "")) !== -1;
+}
+function pwMonth(date: string) { return String(date || "").slice(0, 7); }
+
+const payrollWorkflowRouter = router({
+  // ── Escalation matrix (editable in Settings) ──
+  listMatrix: protectedProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const { asc } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return [];
+    const { escalationMatrix } = await import("../drizzle/schema");
+    return db.select().from(escalationMatrix)
+      .orderBy(asc(escalationMatrix.violationType), asc(escalationMatrix.offenseNo));
+  }),
+
+  upsertMatrixRule: protectedProcedure
+    .input(z.object({
+      id: z.number().optional(),
+      violationType: z.string().min(1).max(120),
+      offenseNo: z.number().int().min(1).max(10),
+      penaltyLabel: z.string().max(120).optional(),
+      hours: z.number().min(0).default(0),
+      egp: z.number().min(0).default(0),
+      useHoursRate: z.boolean().default(true),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      if (!pwCanApprove(ctx)) throw new TRPCError({ code: "FORBIDDEN", message: "Only Ops Manager / HR / Owner can edit the matrix." });
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { escalationMatrix } = await import("../drizzle/schema");
+      const row = {
+        violationType: input.violationType, offenseNo: input.offenseNo,
+        penaltyLabel: input.penaltyLabel ?? null,
+        hours: String(input.hours), egp: String(input.egp),
+        useHoursRate: input.useHoursRate, updatedAt: Date.now(),
+      };
+      if (input.id) await db.update(escalationMatrix).set(row).where(eq(escalationMatrix.id, input.id));
+      else await db.insert(escalationMatrix).values(row);
+      return { ok: true } as const;
+    }),
+
+  deleteMatrixRule: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      if (!pwCanApprove(ctx)) throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { escalationMatrix } = await import("../drizzle/schema");
+      await db.delete(escalationMatrix).where(eq(escalationMatrix.id, input.id));
+      return { ok: true } as const;
+    }),
+
+  /** How many APPROVED offenses of this type does the agent already have THIS CYCLE?
+   *  Returns the next offense number + the matching matrix rule (so the UI can pre-fill). */
+  nextOffense: protectedProcedure
+    .input(z.object({ crdts: z.string(), violationType: z.string(), month: z.string() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { and, eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return { offenseNo: 1, rule: null };
+      const { agentViolations, escalationMatrix } = await import("../drizzle/schema");
+      const prior = await db.select().from(agentViolations).where(and(
+        eq(agentViolations.crdts, input.crdts),
+        eq(agentViolations.type, input.violationType),
+        eq(agentViolations.category, "attendance"),
+        eq(agentViolations.status, "approved"),
+        eq(agentViolations.month, input.month),   // resets each cycle
+      ));
+      const offenseNo = prior.length + 1;
+      const rules = await db.select().from(escalationMatrix).where(and(
+        eq(escalationMatrix.violationType, input.violationType),
+        eq(escalationMatrix.offenseNo, offenseNo),
+      ));
+      // If they've blown past the last tier, fall back to the highest rule we have.
+      let rule = rules[0] ?? null;
+      if (!rule) {
+        const all = await db.select().from(escalationMatrix).where(eq(escalationMatrix.violationType, input.violationType));
+        rule = all.sort((a, b) => b.offenseNo - a.offenseNo)[0] ?? null;
+      }
+      return { offenseNo, rule };
+    }),
+
+  // ── Log an ADHERENCE violation (goes in as pending) ──
+  logAdherence: protectedProcedure
+    .input(z.object({
+      crdts: z.string().min(1), agentCode: z.string().optional(),
+      date: z.string().min(8), type: z.string().min(1),
+      details: z.string().optional(),
+      hours: z.number().min(0).default(0),
+      overrideHours: z.number().min(0).optional(),
+      deduction: z.number().min(0).default(0),
+      offenseNo: z.number().int().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      if (!pwCanLog(ctx)) throw new TRPCError({ code: "FORBIDDEN", message: "You don't have permission to log violations." });
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { agentViolations } = await import("../drizzle/schema");
+      const effHours = input.overrideHours != null ? input.overrideHours : input.hours;
+      await db.insert(agentViolations).values({
+        crdts: input.crdts, agentCode: input.agentCode ?? input.crdts,
+        date: input.date, month: pwMonth(input.date),
+        type: input.type, category: "attendance",
+        details: input.details ?? null,
+        hours: String(effHours),
+        overrideHours: input.overrideHours != null ? String(input.overrideHours) : null,
+        deduction: String(input.deduction),
+        offenseNo: input.offenseNo ?? null,
+        status: "pending",
+        loggedBy: pwWho(ctx), loggedAt: Date.now(), uploadedAt: Date.now(),
+      });
+      return { ok: true } as const;
+    }),
+
+  // ── Log OVERTIME (pending) ──
+  logOT: protectedProcedure
+    .input(z.object({
+      crdts: z.string().min(1), agentCode: z.string().optional(), alias: z.string().optional(),
+      date: z.string().min(8), otType: z.enum(["1.5x", "2x", "3x"]),
+      hours: z.number().min(0), egpAmount: z.number().min(0),
+      details: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      if (!pwCanLog(ctx)) throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { cycleOT } = await import("../drizzle/schema");
+      await db.insert(cycleOT).values({
+        crdts: input.crdts, agentCode: input.agentCode ?? input.crdts, alias: input.alias ?? null,
+        date: input.date, cycleKey: pwMonth(input.date),
+        otType: input.otType, hours: String(input.hours), egpAmount: String(input.egpAmount),
+        details: input.details ?? null, status: "pending",
+        loggedBy: pwWho(ctx), loggedAt: Date.now(), uploadedAt: Date.now(),
+      });
+      return { ok: true } as const;
+    }),
+
+  // ── Log a BONUS (pending) ──
+  logBonus: protectedProcedure
+    .input(z.object({
+      crdts: z.string().min(1), agentCode: z.string().optional(), alias: z.string().optional(),
+      date: z.string().min(8),
+      bonusType: z.enum(["coaching", "team_support", "system_issues", "hr_meeting", "one_to_one", "other"]),
+      details: z.string().optional(),
+      hours: z.number().min(0).optional(),
+      egp: z.number().min(0),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      if (!pwCanLog(ctx)) throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { agentBonuses } = await import("../drizzle/schema");
+      await db.insert(agentBonuses).values({
+        crdts: input.crdts, agentCode: input.agentCode ?? input.crdts, alias: input.alias ?? null,
+        date: input.date, month: pwMonth(input.date),
+        bonusType: input.bonusType, details: input.details ?? null,
+        hours: input.hours != null ? String(input.hours) : null,
+        egp: String(input.egp), status: "pending",
+        loggedBy: pwWho(ctx), loggedAt: Date.now(),
+      });
+      return { ok: true } as const;
+    }),
+
+  // ── The approvals queue (everything pending, all three types) ──
+  pending: protectedProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const { eq, desc } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return { adherence: [], ot: [], bonuses: [], total: 0 };
+    const { agentViolations, cycleOT, agentBonuses } = await import("../drizzle/schema");
+    const [adherence, ot, bonuses] = await Promise.all([
+      db.select().from(agentViolations)
+        .where(eq(agentViolations.status, "pending")).orderBy(desc(agentViolations.date))
+        .then(rows => rows.filter(r => r.category === "attendance")),
+      db.select().from(cycleOT).where(eq(cycleOT.status, "pending")).orderBy(desc(cycleOT.date)),
+      db.select().from(agentBonuses).where(eq(agentBonuses.status, "pending")).orderBy(desc(agentBonuses.date)),
+    ]);
+    return { adherence, ot, bonuses, total: adherence.length + ot.length + bonuses.length };
+  }),
+
+  /** Just the count — for the bell + the Ops Manager's dashboard card. */
+  pendingCount: protectedProcedure.query(async ({ ctx }) => {
+    if (!pwCanApprove(ctx)) return 0;
+    const { getDb } = await import("./db");
+    const { eq } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return 0;
+    const { agentViolations, cycleOT, agentBonuses } = await import("../drizzle/schema");
+    const [a, o, b] = await Promise.all([
+      db.select().from(agentViolations).where(eq(agentViolations.status, "pending")).then(r => r.filter(x => x.category === "attendance").length),
+      db.select().from(cycleOT).where(eq(cycleOT.status, "pending")).then(r => r.length),
+      db.select().from(agentBonuses).where(eq(agentBonuses.status, "pending")).then(r => r.length),
+    ]);
+    return a + o + b;
+  }),
+
+  /** Approve or reject. On APPROVE, the amount is pushed onto the payslip. */
+  decide: protectedProcedure
+    .input(z.object({
+      kind: z.enum(["adherence", "ot", "bonus"]),
+      id: z.number(),
+      decision: z.enum(["approved", "rejected"]),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      if (!pwCanApprove(ctx)) throw new TRPCError({ code: "FORBIDDEN", message: "Only Ops Manager / HR / Owner can approve." });
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { agentViolations, cycleOT, agentBonuses } = await import("../drizzle/schema");
+      const who = pwWho(ctx), now = Date.now();
+      const stamp = { status: input.decision, approvedBy: who, approvedAt: now };
+
+      if (input.kind === "adherence") {
+        const [row] = await db.select().from(agentViolations).where(eq(agentViolations.id, input.id));
+        if (!row) throw new TRPCError({ code: "NOT_FOUND" });
+        await db.update(agentViolations).set(stamp).where(eq(agentViolations.id, input.id));
+        if (input.decision === "approved") {
+          await pwApplyToPayslip(db, String(row.crdts || row.agentCode), String(row.month || pwMonth(row.date)), { attendance: Number(row.deduction || 0) });
+        }
+      } else if (input.kind === "ot") {
+        const [row] = await db.select().from(cycleOT).where(eq(cycleOT.id, input.id));
+        if (!row) throw new TRPCError({ code: "NOT_FOUND" });
+        await db.update(cycleOT).set(stamp).where(eq(cycleOT.id, input.id));
+        if (input.decision === "approved") {
+          await pwApplyToPayslip(db, String(row.crdts), String(row.cycleKey), {
+            otType: String(row.otType), otHours: Number(row.hours || 0), otPay: Number(row.egpAmount || 0),
+          });
+        }
+      } else {
+        const [row] = await db.select().from(agentBonuses).where(eq(agentBonuses.id, input.id));
+        if (!row) throw new TRPCError({ code: "NOT_FOUND" });
+        await db.update(agentBonuses).set(stamp).where(eq(agentBonuses.id, input.id));
+        if (input.decision === "approved") {
+          await pwApplyToPayslip(db, String(row.crdts), String(row.month), { bonus: Number(row.egp || 0) });
+        }
+      }
+      return { ok: true } as const;
+    }),
+
+  /** Everything for one agent (used by the Employee Profile + the agent's own portal). */
+  byAgent: protectedProcedure
+    .input(z.object({ crdts: z.string(), month: z.string().optional(), approvedOnly: z.boolean().default(false) }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { and, eq, desc } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return { adherence: [], ot: [], bonuses: [] };
+      const { agentViolations, cycleOT, agentBonuses } = await import("../drizzle/schema");
+      const [adherence, ot, bonuses] = await Promise.all([
+        db.select().from(agentViolations).where(eq(agentViolations.crdts, input.crdts)).orderBy(desc(agentViolations.date)),
+        db.select().from(cycleOT).where(eq(cycleOT.crdts, input.crdts)).orderBy(desc(cycleOT.date)),
+        db.select().from(agentBonuses).where(eq(agentBonuses.crdts, input.crdts)).orderBy(desc(agentBonuses.date)),
+      ]);
+      const f = <T extends { status: string; month?: string | null; cycleKey?: string | null }>(rows: T[]) =>
+        rows.filter(r => (!input.approvedOnly || r.status === "approved")
+          && (!input.month || (r.month ?? r.cycleKey) === input.month));
+      return { adherence: f(adherence as never[]), ot: f(ot as never[]), bonuses: f(bonuses as never[]) };
+    }),
+});
+
+/** Push an approved item onto the agent's payslip for that cycle (additive). */
+async function pwApplyToPayslip(
+  db: NonNullable<Awaited<ReturnType<typeof import("./db").getDb>>>,
+  crdts: string,
+  month: string,
+  add: { attendance?: number; bonus?: number; otType?: string; otHours?: number; otPay?: number },
+) {
+  const { and, eq } = await import("drizzle-orm");
+  const { payrollRecords } = await import("../drizzle/schema");
+  const [rec] = await db.select().from(payrollRecords)
+    .where(and(eq(payrollRecords.crdts, crdts), eq(payrollRecords.month, month)));
+  if (!rec) return;   // no payslip for that cycle yet — it'll pick these up when generated
+
+  const n = (v: unknown) => Number(v || 0);
+  const patch: Record<string, string> = {};
+
+  if (add.attendance) {
+    const attendance = n(rec.attendanceDeductions) + add.attendance;
+    const totalDed = n(rec.qualityDeductions) + attendance;
+    patch.attendanceDeductions = String(attendance);
+    patch.totalDeductions = String(totalDed);
+  }
+  if (add.bonus) patch.coachingBonus = String(n(rec.coachingBonus) + add.bonus);
+  if (add.otType && add.otPay) {
+    if (add.otType === "1.5x") {
+      patch.ot1x5Hours = String(n(rec.ot1x5Hours) + (add.otHours || 0));
+      patch.ot1x5Pay = String(n(rec.ot1x5Pay) + add.otPay);
+    } else if (add.otType === "2x") {
+      patch.ot2xHours = String(n(rec.ot2xHours) + (add.otHours || 0));
+      patch.ot2xPay = String(n(rec.ot2xPay) + add.otPay);
+    } else if (add.otType === "3x") {
+      patch.ot3xHours = String(n(rec.ot3xHours) + (add.otHours || 0));
+      patch.ot3xPay = String(n(rec.ot3xPay) + add.otPay);
+    }
+  }
+  if (!Object.keys(patch).length) return;
+
+  // Recompute net pay from the patched values
+  const merged = { ...rec, ...patch };
+  const net = n(merged.baseSalary) + n(merged.ot1x5Pay) + n(merged.ot2xPay) + n(merged.ot3xPay)
+    + n(merged.coachingBonus) + n(merged.commissionEgp) - n(merged.totalDeductions);
+  patch.netPay = String(net);
+
+  await db.update(payrollRecords).set(patch)
+    .where(and(eq(payrollRecords.crdts, crdts), eq(payrollRecords.month, month)));
+}
+
 // ─── Orientation Router ────────────────────────────────────────────────────────
 const orientationRouter = router({
   getStatus: publicProcedure.query(async ({ ctx }) => {
@@ -5451,6 +5829,7 @@ export const appRouter = router({
   payrollV2: payrollV2Router,
   orientation: orientationRouter,
   violations: violationsRouter,
+  payrollWorkflow: payrollWorkflowRouter,
   performanceV2: performanceV2Router,
   adherence: adherenceRouter,
   quality: qualityRouter,

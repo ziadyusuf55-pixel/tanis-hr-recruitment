@@ -29,6 +29,7 @@ import CommissionAdmin from "./pages/CommissionAdmin";
 import BusinessDevelopment from "./pages/BusinessDevelopment";
 import AgentProfileHR from "./pages/AgentProfileHR";
 import LeaveManagement from "./pages/LeaveManagement";
+import PayrollWorkflow from "./pages/PayrollWorkflow";
 import { trpc as trpcClient } from "@/lib/trpc";
 import ClientLogoutsAdmin from "./pages/ClientLogoutsAdmin";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
@@ -98,6 +99,7 @@ function Router() {
       <Route path="/business-development" component={() => <ProtectedRoute component={BusinessDevelopment} />} />
       <Route path="/agent-profiles" component={() => <ProtectedRoute component={AgentProfileHR} />} />
       <Route path="/leave-management" component={() => <ProtectedRoute component={LeaveManagement} />} />
+      <Route path="/payroll-workflow" component={() => <ProtectedRoute component={PayrollWorkflow} />} />
       {/* PayrollStatus removed — use /payroll instead */}
       <Route path="/performance" component={() => <ProtectedRoute component={PerformanceDashboard} />} />
       <Route path="/adherence" component={() => <ProtectedRoute component={AdherenceLog} />} />
