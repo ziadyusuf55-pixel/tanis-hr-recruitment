@@ -778,8 +778,9 @@ export const cycleOT = mysqlTable("cycle_ot", {
   egpAmount: decimal("egpAmount", { precision: 10, scale: 2 }).default("0"),
   uploadedAt: bigint("uploadedAt", { mode: "number" }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+  // Workflow fields (added 2026-07)
   details: text("details"),                                     // why the OT was worked
-  status: mysqlEnum("status", ["pending", "approved", "rejected"]).default("pending").notNull(),
+  status: mysqlEnum("status", ["pending", "approved", "rejected"]).notNull().default("pending"),
   loggedBy: varchar("loggedBy", { length: 255 }),               // auto: whoever is logged in
   loggedAt: bigint("loggedAt", { mode: "number" }),
   approvedBy: varchar("approvedBy", { length: 255 }),
@@ -1188,7 +1189,9 @@ export const escalationMatrix = mysqlTable("escalation_matrix", {
   useHoursRate: boolean("useHoursRate").default(true).notNull(),      // true → EGP = hours x hourlyRate
   updatedAt: bigint("updatedAt", { mode: "number" }),
 });
+export type EscalationMatrix = typeof escalationMatrix.$inferSelect;
 export type EscalationRule = typeof escalationMatrix.$inferSelect;
+export type InsertEscalationMatrix = typeof escalationMatrix.$inferInsert;
 
 /**
  * agent_bonuses — anything that ADDS money for an agent (approval required).
@@ -1205,10 +1208,11 @@ export const agentBonuses = mysqlTable("agent_bonuses", {
   details: text("details"),                                     // always shown on the form
   hours: decimal("hours", { precision: 6, scale: 2 }),          // optional (e.g. coaching session length)
   egp: decimal("egp", { precision: 10, scale: 2 }).notNull(),
-  status: mysqlEnum("status", ["pending", "approved", "rejected"]).default("pending").notNull(),
+  status: mysqlEnum("status", ["pending", "approved", "rejected"]).notNull().default("pending"),
   loggedBy: varchar("loggedBy", { length: 255 }),               // auto: whoever is logged in
   loggedAt: bigint("loggedAt", { mode: "number" }),
   approvedBy: varchar("approvedBy", { length: 255 }),
   approvedAt: bigint("approvedAt", { mode: "number" }),
 });
 export type AgentBonus = typeof agentBonuses.$inferSelect;
+export type InsertAgentBonus = typeof agentBonuses.$inferInsert;
