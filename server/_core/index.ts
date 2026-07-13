@@ -243,8 +243,8 @@ async function startServer() {
   // payroll is calculated externally in Python from the same sheets. Writing here
   // as well would double-count.
   //
-  // Body: { kind: "adherence" | "ot" | "coaching", rows: [...] }
-  // Duplicates are skipped (matched on crdts + date + type), so it's safe to
+  // Body: { kind: "adherence" | "ot" | "quality" | "coaching", rows: [...] }
+  // Duplicates are skipped (matched on crdts + date + type + category), so it's safe to
   // re-run daily.
   app.post("/api/upload/logs", async (req, res) => {
     try {
@@ -263,8 +263,8 @@ async function startServer() {
       await db.update(apiKeys).set({ lastUsedAt: Date.now() }).where(eq(apiKeys.id, keyRow.id));
       const kind = String(req.body?.kind || "");
       const rows = req.body?.rows;
-      if (!["adherence", "ot", "coaching"].includes(kind)) {
-        res.status(400).json({ error: 'kind must be "adherence", "ot" or "coaching"' }); return;
+      if (!["adherence", "ot", "quality", "coaching"].includes(kind)) {
+        res.status(400).json({ error: 'kind must be "adherence", "ot", "quality" or "coaching"' }); return;
       }
       if (!Array.isArray(rows)) { res.status(400).json({ error: "rows must be an array" }); return; }
       const now = Date.now();
@@ -276,22 +276,25 @@ async function startServer() {
         const crdts = s(r.crdts).replace(/\.0+$/, "");
         const date = s(r.date);
         if (!crdts || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { invalid++; continue; }
-        if (kind === "adherence") {
+        if (kind === "adherence" || kind === "quality") {
+          const category = kind === "quality" ? "quality" : "attendance";
           const type = s(r.type) || "Other";
           const existing = await db.select().from(agentViolations).where(and(
             eq(agentViolations.crdts, crdts),
             eq(agentViolations.date, date),
             eq(agentViolations.type, type),
+            eq(agentViolations.category, category),
           )).limit(1);
           if (existing.length) { skipped++; continue; }
           const bits = [s(r.details)];
           if (s(r.offenseNo)) bits.push(`offense #${s(r.offenseNo)}`);
           if (s(r.penalty)) bits.push(s(r.penalty));
           if (s(r.loggedBy)) bits.push(`logged by ${s(r.loggedBy)}`);
+          if (s(r.recording)) bits.push(`recording: ${s(r.recording)}`);
           const st = s(r.status).toLowerCase();
           await db.insert(agentViolations).values({
             crdts, agentCode: crdts,
-            date, month: mon(date), type, category: "attendance",
+            date, month: mon(date), type, category,
             hours: String(n(r.hours)), deduction: String(n(r.deduction)),
             description: bits.filter(Boolean).join(" · ") || null,
             status: st === "approved" ? "approved" : st === "rejected" ? "rejected" : "pending",
