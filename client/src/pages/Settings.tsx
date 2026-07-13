@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { trpc } from "@/lib/trpc";
-import { ASSIGNABLE_ROLES, ROLE_LABELS } from "@/lib/roleTabs";
+import { ASSIGNABLE_ROLES, ROLE_LABELS, ROLE_SUMMARY } from "@/lib/roleTabs";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -700,6 +700,7 @@ export default function Settings() {
                     <select
                       className="border rounded-md px-2 py-1.5 text-sm bg-background"
                       value={u.role}
+                      title={ROLE_SUMMARY[u.role] || ""}
                       onChange={(e) => setRoleMutation.mutate({ openId: u.openId, role: e.target.value as typeof ASSIGNABLE_ROLES[number] })}
                     >
                       {(u.role === "user" || u.role === "viewer") && <option value={u.role}>{ROLE_LABELS[u.role]}</option>}
@@ -712,8 +713,18 @@ export default function Settings() {
               ))}
             </div>
           )}
+          <div className="mt-4 pt-3 border-t space-y-1">
+            <p className="text-xs font-semibold text-muted-foreground mb-1.5">What each role can open</p>
+            {ASSIGNABLE_ROLES.map((r) => (
+              <p key={r} className="text-[11px] text-muted-foreground">
+                <span className="font-medium text-foreground">{ROLE_LABELS[r]}</span> — {ROLE_SUMMARY[r]}
+              </p>
+            ))}
+          </div>
         </CardContent>
       </Card>
+
+      <ManagementCard />
 
       {/* Admin Management */}
       <Card>
@@ -941,5 +952,109 @@ export default function Settings() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+// ── Management — create employee records for managers/TLs/HR and link their logins ──
+// Once linked, that person can edit their own details in "My Profile", and they
+// appear in Employee Profiles alongside agents.
+function ManagementCard() {
+  const utils = trpc.useUtils();
+  const { data: staff = [] } = trpc.employees.list.useQuery({});
+  const { data: appUsers = [] } = trpc.auth.listAppUsers.useQuery(undefined, { retry: false });
+
+  const add = trpc.employees.addManagement.useMutation({
+    onSuccess: () => { utils.employees.list.invalidate(); toast.success("Employee added"); setForm({ fullName: "", email: "", phone: "", jobTitle: "", employeeType: "manager" }); },
+    onError: (e) => toast.error(e.message),
+  });
+  const link = trpc.employees.linkLogin.useMutation({
+    onSuccess: () => { utils.employees.list.invalidate(); toast.success("Login linked"); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const [form, setForm] = useState({ fullName: "", email: "", phone: "", jobTitle: "", employeeType: "manager" });
+
+  type Emp = { traineeCode: string; fullName: string | null; alias: string | null; email: string | null; jobTitle: string | null; employeeType: string; openId: string | null };
+  const management = (staff as Emp[]).filter(e => e.employeeType && e.employeeType !== "agent");
+
+  const TYPES = ["manager", "team_lead", "hr", "ops_manager", "finance", "admin"];
+
+  return (
+    <Card>
+      <CardHeader className="pb-4">
+        <CardTitle className="text-base">Management</CardTitle>
+        <CardDescription className="text-sm mt-0.5">
+          Add managers and team leads as employees, then link their Hub login so they can edit their own profile.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="grid sm:grid-cols-5 gap-2 items-end">
+          <div className="sm:col-span-2">
+            <p className="text-xs text-muted-foreground mb-1">Full name</p>
+            <Input value={form.fullName} onChange={(e) => setForm({ ...form, fullName: e.target.value })} placeholder="Ahmed Hassan" />
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground mb-1">Email</p>
+            <Input value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} placeholder="name@tanis-eg.com" />
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground mb-1">Job title</p>
+            <Input value={form.jobTitle} onChange={(e) => setForm({ ...form, jobTitle: e.target.value })} placeholder="Ops Manager" />
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground mb-1">Type</p>
+            <select className="border rounded-md px-2 py-2 text-sm bg-background w-full"
+              value={form.employeeType} onChange={(e) => setForm({ ...form, employeeType: e.target.value })}>
+              {TYPES.map(t => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
+            </select>
+          </div>
+        </div>
+        <Button size="sm" disabled={!form.fullName || add.isPending}
+          onClick={() => add.mutate({
+            fullName: form.fullName,
+            email: form.email || undefined,
+            jobTitle: form.jobTitle || undefined,
+            employeeType: form.employeeType as "manager",
+          })}>
+          {add.isPending ? "Adding…" : "Add employee"}
+        </Button>
+
+        {management.length === 0 ? (
+          <p className="text-sm text-muted-foreground py-2">No management records yet.</p>
+        ) : (
+          <div className="border rounded-lg divide-y">
+            {management.map((e) => (
+              <div key={e.traineeCode} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2.5">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium">{e.fullName || e.alias}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {e.jobTitle || e.employeeType.replace(/_/g, " ")}{e.email ? ` · ${e.email}` : ""}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {e.openId ? (
+                    <span className="text-[10px] font-semibold text-emerald-700 bg-emerald-100 rounded-full px-2 py-0.5">Login linked</span>
+                  ) : (
+                    <select
+                      className="border rounded-md px-2 py-1.5 text-xs bg-background"
+                      defaultValue=""
+                      onChange={(ev) => { if (ev.target.value) link.mutate({ traineeCode: e.traineeCode, openId: ev.target.value }); }}
+                    >
+                      <option value="">Link a login…</option>
+                      {(appUsers as { openId: string; name: string | null; email: string | null }[]).map(u => (
+                        <option key={u.openId} value={u.openId}>{u.name || u.email}</option>
+                      ))}
+                    </select>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        <p className="text-[11px] text-muted-foreground">
+          They must sign in to the Hub once before they appear in the "Link a login" list.
+        </p>
+      </CardContent>
+    </Card>
   );
 }

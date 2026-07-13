@@ -702,7 +702,47 @@ function generatePassword(traineeCode: string): string {
   return `${traineeCode}-${digits}`;
 }
 
+/** Agent-facing: an agent's OWN adherence / quality / coaching / OT records.
+ *  Pushed nightly from the sheets — DISPLAY ONLY, no payroll effect. */
+const agentMyRecordsProcedure = publicProcedure.query(async ({ ctx }) => {
+  const empty = { adherence: [], quality: [], coaching: [], ot: [] };
+  const token = getAgentCookieFromReq(ctx.req);
+  if (!token) return empty;
+  let traineeCode = "";
+  try {
+    const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+    if (payload.type !== "agent") return empty;
+    traineeCode = payload.traineeCode;
+  } catch { return empty; }
+
+  const { getDb } = await import("./db");
+  const { eq, or, desc } = await import("drizzle-orm");
+  const db = await getDb();
+  if (!db) return empty;
+  const { workforceAgents, agentViolations, cycleOT, coachingSessions } = await import("../drizzle/schema");
+
+  const [wf] = await db.select().from(workforceAgents).where(eq(workforceAgents.traineeCode, traineeCode));
+  const crdts = wf?.crdts || traineeCode;
+
+  const [viol, ot, coaching] = await Promise.all([
+    db.select().from(agentViolations)
+      .where(or(eq(agentViolations.crdts, crdts), eq(agentViolations.agentCode, traineeCode)))
+      .orderBy(desc(agentViolations.date)),
+    db.select().from(cycleOT).where(eq(cycleOT.crdts, crdts)).orderBy(desc(cycleOT.date)),
+    db.select().from(coachingSessions).where(eq(coachingSessions.crdts, crdts)).orderBy(desc(coachingSessions.sessionDate)),
+  ]);
+
+  return {
+    adherence: viol.filter(v => v.category === "attendance"),
+    quality: viol.filter(v => v.category === "quality"),
+    coaching,
+    ot,
+  };
+});
+
 const agentRouter = router({
+  // The agent's own adherence / quality / coaching / OT (synced from the sheets)
+  myRecords: agentMyRecordsProcedure,
   // Generate credentials for a candidate — called by admin from CandidateDetail
   generateCredentials: protectedProcedure
     .input(z.object({ candidateId: z.number(), traineeCode: z.string().min(1) }))
@@ -2571,6 +2611,136 @@ const orientationRouter = router({
 });
 
 // ─── Violations Router ────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
+// OT (read-only) — data is pushed nightly from the sheets. DISPLAY ONLY:
+// payroll is calculated in Python from the same sheets, so the Hub never
+// writes any of this to a payslip.
+// ════════════════════════════════════════════════════════════════════════════
+const otRouter = router({
+  list: protectedProcedure
+    .input(z.object({ crdts: z.string().optional(), month: z.string().optional() }).optional())
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { and, eq, desc } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      const { cycleOT } = await import("../drizzle/schema");
+      const conds = [];
+      if (input?.crdts) conds.push(eq(cycleOT.crdts, input.crdts));
+      if (input?.month) conds.push(eq(cycleOT.cycleKey, input.month));
+      const q = db.select().from(cycleOT).$dynamic();
+      if (conds.length) q.where(and(...conds));
+      return q.orderBy(desc(cycleOT.date));
+    }),
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// EMPLOYEES — managers/admins as people, not just logins.
+// Managers get an employee record, link their Hub login to it, and can edit
+// their own profile ("My Profile").
+// ════════════════════════════════════════════════════════════════════════════
+const NON_AGENT_TYPES = ["team_lead", "manager", "hr", "ops_manager", "finance", "admin"] as const;
+
+const employeesRouter = router({
+  /** Everyone — agents AND management. Used by the Employee Profiles tab. */
+  list: protectedProcedure
+    .input(z.object({ type: z.string().optional() }).optional())
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq, desc } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      const { workforceAgents } = await import("../drizzle/schema");
+      const q = db.select().from(workforceAgents).$dynamic();
+      if (input?.type) q.where(eq(workforceAgents.employeeType, input.type as "agent"));
+      return q.orderBy(desc(workforceAgents.createdAt));
+    }),
+
+  /** Create a management employee record (Settings → Management). */
+  addManagement: protectedProcedure
+    .input(z.object({
+      fullName: z.string().min(1).max(255),
+      alias: z.string().max(100).optional(),
+      email: z.string().email().optional(),
+      phone: z.string().max(50).optional(),
+      jobTitle: z.string().max(100).optional(),
+      employeeType: z.enum(NON_AGENT_TYPES),
+      joinDate: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user?.role !== "owner" && ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { workforceAgents } = await import("../drizzle/schema");
+      // Management records get a synthetic staff code — they have no dialer CRDTS.
+      const code = "MGMT-" + Date.now().toString().slice(-6);
+      await db.insert(workforceAgents).values({
+        traineeCode: code,
+        fullName: input.fullName,
+        alias: input.alias ?? input.fullName,
+        email: input.email ?? null,
+        phone: input.phone ?? null,
+        jobTitle: input.jobTitle ?? null,
+        employeeType: input.employeeType,
+        joinDate: input.joinDate ?? null,
+        agentStatus: "active",
+      } as never);
+      return { ok: true, traineeCode: code } as const;
+    }),
+
+  /** Link a Hub login to an employee record, so they can edit their own profile. */
+  linkLogin: protectedProcedure
+    .input(z.object({ traineeCode: z.string(), openId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user?.role !== "owner" && ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { workforceAgents } = await import("../drizzle/schema");
+      await db.update(workforceAgents).set({ openId: input.openId })
+        .where(eq(workforceAgents.traineeCode, input.traineeCode));
+      return { ok: true } as const;
+    }),
+
+  /** The logged-in person's OWN employee record (null if their login isn't linked). */
+  myProfile: protectedProcedure.query(async ({ ctx }) => {
+    const openId = ctx.user?.openId;
+    if (!openId) return null;
+    const { getDb } = await import("./db");
+    const { eq } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return null;
+    const { workforceAgents } = await import("../drizzle/schema");
+    const [row] = await db.select().from(workforceAgents).where(eq(workforceAgents.openId, openId));
+    return row ?? null;
+  }),
+
+  /** Edit your OWN profile — personal details only. Can't touch salary/status/role. */
+  updateMyProfile: protectedProcedure
+    .input(z.object({
+      phone: z.string().max(50).optional(),
+      address: z.string().max(500).optional(),
+      emergencyContactName: z.string().max(255).optional(),
+      emergencyContactPhone: z.string().max(64).optional(),
+      emergencyContactRelation: z.string().max(100).optional(),
+      dateOfBirth: z.string().optional(),
+      city: z.string().max(100).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const openId = ctx.user?.openId;
+      if (!openId) throw new TRPCError({ code: "FORBIDDEN", message: "Your login isn't linked to an employee record yet." });
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { workforceAgents } = await import("../drizzle/schema");
+      await db.update(workforceAgents).set(input).where(eq(workforceAgents.openId, openId));
+      return { ok: true } as const;
+    }),
+});
+
 const violationsRouter = router({
   bulkInsert: protectedProcedure
     .input(z.array(z.object({
@@ -2594,6 +2764,7 @@ const violationsRouter = router({
   list: protectedProcedure
     .input(z.object({
       agentCode: z.string().optional(),
+      crdts: z.string().optional(),
       month: z.string().optional(),
       category: z.enum(["attendance", "quality"]).optional(),
     }))
@@ -5451,6 +5622,8 @@ export const appRouter = router({
   payrollV2: payrollV2Router,
   orientation: orientationRouter,
   violations: violationsRouter,
+  ot: otRouter,
+  employees: employeesRouter,
   performanceV2: performanceV2Router,
   adherence: adherenceRouter,
   quality: qualityRouter,

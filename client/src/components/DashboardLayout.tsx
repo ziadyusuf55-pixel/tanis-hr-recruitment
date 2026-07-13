@@ -27,7 +27,7 @@ import { trpc } from "@/lib/trpc";
 import {
   LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings,
   Briefcase, Banknote, CreditCard, BarChart2, AlertCircle, Star, Wallet,
-  FileText, Activity, ChevronDown, ChevronRight, TrendingUp, BookOpen, PhoneOff, DollarSign, UserCog, Building2, CalendarDays, Bell,
+  FileText, Activity, ChevronDown, ChevronRight, TrendingUp, BookOpen, PhoneOff, DollarSign, UserCog, Building2, Zap, UserCircle, CalendarDays, Bell,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -50,6 +50,7 @@ const NAV: NavItem[] = [
       { icon: Star,        label: "Quality Log",   path: "/quality" },
       { icon: BookOpen,    label: "Coaching",      path: "/coaching-admin" },
       { icon: PhoneOff,    label: "Client Logouts", path: "/client-logouts" },
+      { icon: Zap,         label: "Overtime",       path: "/ot" },
     ],
   },
   {
@@ -58,7 +59,6 @@ const NAV: NavItem[] = [
       { icon: Users,       label: "Recruitment",         path: "/candidates" },
       { icon: UserCog,     label: "Agent Profiles",      path: "/agent-profiles" },
       { icon: CalendarDays,label: "Leave Management",    path: "/leave-management" },
-      { icon: BarChart2,   label: "Performance",         path: "/performance" },
       { icon: Banknote,    label: "Salary",              path: "/payroll" },
       { icon: DollarSign,  label: "Commission",          path: "/commission" },
       { icon: Wallet,      label: "Payment Preferences", path: "/payment-preferences" },
@@ -69,6 +69,7 @@ const NAV: NavItem[] = [
   { icon: Activity, label: "Cycle Tracker", path: "/cycle-tracker" },
   { icon: TrendingUp, label: "Performance Reports", path: "/performance-reports" },
   { icon: Inbox,    label: "Requests",      path: "/requests" },
+  { icon: UserCircle, label: "My Profile",   path: "/my-profile" },
   { icon: Settings, label: "Settings",      path: "/settings" },
 ];
 

@@ -66,10 +66,12 @@ function Profile({ agent }: { agent: Agent }) {
   const code = agent.traineeCode;
 
   // Deductions live in agent_violations (the payslip source), keyed by CRDTS, split by category.
-  const vKey = crdts ? { crdts } : { agentCode: code };
+  // Pass both identifiers — violations may be stored under CRDTS or traineeCode.
+  const vKey = { crdts: crdts || undefined, agentCode: code || undefined };
   const { data: adherence = [] } = trpc.violations.list.useQuery({ ...vKey, category: "attendance" });
   const { data: quality = [] } = trpc.violations.list.useQuery({ ...vKey, category: "quality" });
   const { data: coaching = [] } = trpc.coaching.listByCrdts.useQuery({ crdts }, { enabled: !!crdts });
+  const { data: otRows = [] } = trpc.ot.list.useQuery({ crdts }, { enabled: !!crdts });
   const { data: balances = [] } = trpc.leave.listBalances.useQuery({});
   const { data: leaveReqs = [] } = trpc.leave.myRequests.useQuery({ traineeCode: code });
   const { data: exitData } = trpc.exit.get.useQuery({ traineeCode: code });
@@ -174,7 +176,16 @@ function Profile({ agent }: { agent: Agent }) {
           rows={(coaching as { id: number; sessionDate?: unknown; date?: unknown; topic?: string | null; notes?: string | null; coachName?: string | null }[]).map(cr => ({ id: cr.id, main: cr.topic || cr.notes || "—", sub: `${fmt(cr.sessionDate ?? cr.date)}${cr.coachName ? ` · ${cr.coachName}` : ""}` }))} />
       </div>
 
-      <p className="text-xs text-muted-foreground flex items-center gap-1"><Phone className="w-3 h-3" /> Performance charts live in HR → Performance (same CRDTS).</p>
+      {/* Overtime — pushed nightly from the OT sheet (display only) */}
+      <MirrorCard icon={<CalendarDays className="w-4 h-4" style={{ color: BRAND }} />}
+        title={`Overtime (${(otRows as unknown[]).length})`}
+        rows={(otRows as { id: number; date: string; otType: string; hours: string | null; egpAmount: string | null }[]).map(o => ({
+          id: o.id,
+          main: `OT ${o.otType} · +${Number(o.egpAmount || 0).toLocaleString()} EGP`,
+          sub: `${o.date} · ${Number(o.hours || 0)} hrs`,
+        }))} />
+
+      <p className="text-xs text-muted-foreground flex items-center gap-1"><Phone className="w-3 h-3" /> Adherence, quality, coaching and OT sync nightly from the sheets. Payroll is calculated separately.</p>
     </div>
   );
 }

@@ -21,7 +21,7 @@ export const users = mysqlTable("users", {
   name: text("name"),
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
-  role: mysqlEnum("role", ["user", "admin", "owner", "hr", "ops_manager", "team_lead", "finance", "bd", "viewer"]).default("user").notNull(),
+  role: mysqlEnum("role", ["user", "admin", "owner", "manager", "hr", "ops_manager", "team_lead", "finance", "bd", "viewer"]).default("user").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
@@ -454,6 +454,8 @@ export const workforceAgents = mysqlTable("workforce_agents", {
   dialerCredentials: varchar("dialerCredentials", { length: 500 }), // dialer/hub login credentials (admin fills manually)
   crdts: varchar("crdts", { length: 500 }),                         // CRDTS field — admin fills manually
   agentStatus: mysqlEnum("agentStatus", ["active", "inactive", "resigned", "terminated", "blacklisted"]).default("active").notNull(),
+  employeeType: mysqlEnum("employeeType", ["agent", "team_lead", "manager", "hr", "ops_manager", "finance", "admin"]).default("agent").notNull(),
+  openId: varchar("openId", { length: 255 }),   // links a Hub login to this employee record
   salarySettled: boolean("salarySettled").default(true).notNull(),   // false = former agent still owed pay → stays visible in Operations
   address: varchar("address", { length: 500 }),
   emergencyContactName: varchar("emergencyContactName", { length: 255 }),

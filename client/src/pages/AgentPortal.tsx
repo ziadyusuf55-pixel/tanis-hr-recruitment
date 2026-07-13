@@ -3317,10 +3317,90 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
 }
 
 // ─── Unified Performance Tab (Cycle / Calendar Month / All-Time) ──────────────
+/**
+ * MyRecords — the agent's own adherence / quality / coaching / OT, synced
+ * nightly from the sheets. DISPLAY ONLY: their payslip is calculated separately,
+ * so nothing here changes their pay.
+ */
+function MyRecords({ theme }: { theme: Theme }) {
+  const { data } = trpc.agent.myRecords.useQuery();
+  type V = { id: number; date: string; type: string; hours: string | null; deduction: string | null; description: string | null };
+  type O = { id: number; date: string; otType: string; hours: string | null; egpAmount: string | null };
+  type C = { id: number; sessionDate: string; sessionType: string | null; coachingHours: string | null; bonusAmount: string | null; notes: string | null };
+
+  const adherence = (data?.adherence ?? []) as V[];
+  const quality = (data?.quality ?? []) as V[];
+  const coaching = (data?.coaching ?? []) as C[];
+  const ot = (data?.ot ?? []) as O[];
+  if (!adherence.length && !quality.length && !coaching.length && !ot.length) return null;
+
+  const n = (v: unknown) => Number(v || 0);
+  const Row = ({ label, sub, amount, positive }: { label: string; sub?: string | null; amount: number; positive: boolean }) => (
+    <div className="flex items-start justify-between gap-3 py-1.5">
+      <div className="min-w-0">
+        <p className="text-sm" style={{ color: theme.text }}>{label}</p>
+        {sub && <p className="text-xs" style={{ color: theme.textMuted }}>{sub}</p>}
+      </div>
+      {amount > 0 && (
+        <p className="text-sm font-semibold shrink-0" style={{ color: positive ? "#16a34a" : "#dc2626" }}>
+          {positive ? "+" : "−"}{amount.toLocaleString()} EGP
+        </p>
+      )}
+    </div>
+  );
+
+  const Section = ({ title, count, children }: { title: string; count: number; children: React.ReactNode }) =>
+    count === 0 ? null : (
+      <div className="mb-3">
+        <p className="text-xs font-medium mb-1" style={{ color: theme.textMuted }}>{title} ({count})</p>
+        {children}
+      </div>
+    );
+
+  return (
+    <div className="rounded-2xl p-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+      <p className="text-sm font-semibold mb-1" style={{ color: theme.text }}>My Records</p>
+      <p className="text-xs mb-3" style={{ color: theme.textMuted }}>
+        Your adherence, quality, coaching and overtime history.
+      </p>
+
+      <Section title="Overtime" count={ot.length}>
+        {ot.slice(0, 10).map(o => (
+          <Row key={`o${o.id}`} positive amount={n(o.egpAmount)}
+            label={`Overtime ${o.otType}`} sub={`${o.date} · ${n(o.hours)} hrs`} />
+        ))}
+      </Section>
+
+      <Section title="Coaching" count={coaching.length}>
+        {coaching.slice(0, 10).map(c => (
+          <Row key={`c${c.id}`} positive amount={n(c.bonusAmount)}
+            label={c.sessionType || "Coaching"}
+            sub={`${c.sessionDate}${c.coachingHours ? ` · ${n(c.coachingHours)} hrs` : ""}${c.notes ? ` · ${c.notes}` : ""}`} />
+        ))}
+      </Section>
+
+      <Section title="Quality" count={quality.length}>
+        {quality.slice(0, 10).map(v => (
+          <Row key={`q${v.id}`} positive={false} amount={n(v.deduction)}
+            label={v.type} sub={`${v.date}${v.hours ? ` · ${n(v.hours)} hrs` : ""}`} />
+        ))}
+      </Section>
+
+      <Section title="Adherence" count={adherence.length}>
+        {adherence.slice(0, 10).map(v => (
+          <Row key={`a${v.id}`} positive={false} amount={n(v.deduction)}
+            label={v.type} sub={`${v.date}${v.hours ? ` · ${n(v.hours)} hrs` : ""}`} />
+        ))}
+      </Section>
+    </div>
+  );
+}
+
 function PerformanceTab({ theme }: { theme: Theme }) {
   const [view, setView] = useState<"cycle" | "month" | "all">("cycle");
   return (
     <div className="space-y-5">
+      <MyRecords theme={theme} />
       {/* Time-range toggle: This Cycle (salary basis) · This Month (commission basis) · All-Time */}
       <div className="inline-flex rounded-xl p-1 flex-wrap" style={{ background: theme.inputBg, border: `1px solid ${theme.cardBorder}` }}>
         {([["cycle", "This Cycle"], ["month", "This Month"], ["all", "All-Time"]] as const).map(([id, label]) => (

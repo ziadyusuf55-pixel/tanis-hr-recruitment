@@ -1,41 +1,35 @@
-// Central tab-level permissions — single source of truth for BOTH the sidebar
-// (what's shown) and the router (what's reachable). Keep this file identical in intent
-// on client and server. Place at: client/src/lib/roleTabs.ts
+// Central tab-level permissions — the single source of truth for BOTH the sidebar
+// (what's visible) and the router (what's reachable).  → client/src/lib/roleTabs.ts
 //
-// A user's role lives on the Google-login `users` record (auth.me → user.role).
-// "owner" and "admin" see everything. New logins default to "user" → no access
+// A user's role lives on their Hub login (auth.me → user.role).
+// "owner"/"admin" see everything. New logins default to "user" → no access
 // (a "waiting for access" screen) until an owner assigns a role in Settings.
 
 export type AppRole =
-  | "owner" | "admin"        // full access
+  | "owner" | "admin"          // full access, including Settings
+  | "manager"                  // everything EXCEPT Settings
   | "hr" | "ops_manager" | "team_lead" | "finance" | "bd"
-  | "user" | "viewer";       // no access until assigned
+  | "user" | "viewer";         // no access until assigned
 
-// Path prefixes each role may reach. Owner/admin handled separately (all access).
+// Every page in the app, grouped the way the sidebar groups them.
+const OPERATIONS = ["/operations", "/adherence", "/quality", "/coaching-admin", "/client-logouts", "/cycle-tracker"];
+const HR_TABS    = ["/candidates", "/performance-reports", "/payroll", "/commission", "/payment-preferences", "/all-documents", "/agent-profiles", "/leave-management"];
+const FINANCE    = ["/payroll", "/commission", "/payment-preferences"];
+const EXTRAS     = ["/requests", "/training"];
+
+// A "manager" can reach everything except /settings.
+const EVERYTHING_BUT_SETTINGS = [
+  "/", ...OPERATIONS, ...HR_TABS, ...EXTRAS, "/business-development", "/my-profile",
+];
+
 const ROLE_PATHS: Record<string, string[]> = {
-  hr: [
-    "/", "/candidates", "/performance", "/payroll", "/commission",
-    "/payment-preferences", "/all-documents", "/agent-profiles",
-    "/leave-management", "/training", "/requests",
-  ],
-  ops_manager: [
-    "/", "/operations", "/adherence", "/quality", "/coaching-admin",
-    "/client-logouts", "/cycle-tracker", "/performance-reports", "/training",
-  ],
-  team_lead: [
-    // near-admin: Operations + Finance + HR groups
-    "/", "/operations", "/adherence", "/quality", "/coaching-admin", "/client-logouts",
-    "/payroll", "/commission", "/payment-preferences",
-    "/candidates", "/performance", "/all-documents", "/agent-profiles", "/leave-management",
-    "/cycle-tracker", "/performance-reports", "/training", "/requests",
-  ],
-  finance: [
-    "/", "/payroll", "/commission", "/payment-preferences",
-  ],
-  bd: [
-    "/business-development", "/operations", "/adherence", "/quality",
-    "/coaching-admin", "/client-logouts",
-  ],
+  manager: EVERYTHING_BUT_SETTINGS,
+  hr: ["/", ...HR_TABS, "/requests", "/training", "/my-profile"],
+  ops_manager: ["/", ...OPERATIONS, "/performance-reports", "/training", "/requests", "/my-profile"],
+  // Near-admin: Operations + HR + Finance (no Settings, no BD)
+  team_lead: ["/", ...OPERATIONS, ...HR_TABS, ...FINANCE, ...EXTRAS, "/my-profile"],
+  finance: ["/", ...FINANCE, "/my-profile"],
+  bd: ["/business-development", ...OPERATIONS, "/my-profile"],
 };
 
 export function isFullAccess(role?: string | null): boolean {
@@ -44,28 +38,53 @@ export function isFullAccess(role?: string | null): boolean {
 
 export function hasAnyAccess(role?: string | null): boolean {
   if (isFullAccess(role)) return true;
-  return !!role && !!ROLE_PATHS[role] && ROLE_PATHS[role].length > 0;
+  return !!role && Array.isArray(ROLE_PATHS[role]) && ROLE_PATHS[role].length > 0;
 }
 
-// Does this role reach this path? (prefix match; "/" only matches exactly)
+/** Can this role open this path? ("/" matches only the dashboard itself.) */
 export function canAccessPath(role: string | null | undefined, path: string): boolean {
   if (isFullAccess(role)) return true;
   const allowed = (role && ROLE_PATHS[role]) || [];
-  return allowed.some((p) => (p === "/" ? path === "/" : path === p || path.startsWith(p + "/") || path.startsWith(p)));
+  return allowed.some((p) =>
+    p === "/" ? path === "/" : path === p || path.startsWith(p + "/"),
+  );
 }
 
-// First page this role should land on (for redirects after a blocked route).
+/** Where to send someone who lands on a page they can't open. */
 export function firstAllowedPath(role?: string | null): string {
   if (isFullAccess(role)) return "/";
   const allowed = (role && ROLE_PATHS[role]) || [];
-  return allowed[0] ?? "/no-access";
+  return allowed[0] ?? "/";
 }
 
 export const ROLE_LABELS: Record<string, string> = {
-  owner: "Owner", admin: "Admin", hr: "HR", ops_manager: "Ops Manager",
-  team_lead: "Team Lead", finance: "Finance", bd: "Business Dev",
-  user: "No access (unassigned)", viewer: "No access",
+  owner: "Owner — everything",
+  admin: "Admin — everything",
+  manager: "Manager — everything except Settings",
+  hr: "HR",
+  ops_manager: "Ops Manager",
+  team_lead: "Team Lead",
+  finance: "Finance",
+  bd: "Business Dev",
+  user: "No access (unassigned)",
+  viewer: "No access",
 };
 
-// Roles an owner can assign from Settings (excludes the raw "user" default).
-export const ASSIGNABLE_ROLES: AppRole[] = ["owner", "hr", "ops_manager", "team_lead", "finance", "bd", "viewer"];
+/** Roles an owner can assign from Settings (excludes the raw "user" default). */
+export const ASSIGNABLE_ROLES: AppRole[] = [
+  "owner", "manager", "hr", "ops_manager", "team_lead", "finance", "bd", "viewer",
+];
+
+/** Plain-English summary of what each role can open — shown in Settings. */
+export const ROLE_SUMMARY: Record<string, string> = {
+  owner: "Everything, including Settings",
+  admin: "Everything, including Settings",
+  manager: "Everything except Settings",
+  hr: "Recruitment, Performance Reports, Salary, Commission, Payment Preferences, Documents, Employee Profiles, Leave, Requests, Training",
+  ops_manager: "Operations, Adherence, Quality, Coaching, Client Logouts, Cycle Tracker, Performance Reports, Requests, Training",
+  team_lead: "Operations + HR + Finance (no Settings, no BD)",
+  finance: "Salary, Commission, Payment Preferences",
+  bd: "Business Development + Operations",
+  viewer: "Nothing — waiting for access",
+  user: "Nothing — waiting for access",
+};
