@@ -800,8 +800,8 @@ export default function Operations() {
   };
   const [editForm, setEditForm] = useState<EditForm>({});
   const [exitAgent, setExitAgent] = useState<WorkforceAgent | null>(null);
-  const markSettled = trpc.hr.markSettled.useMutation({
-    onSuccess: () => { utils.workforce.list.invalidate(); toast.success("Marked as settled — agent removed from Operations."); },
+  const markSettled = trpc.exit.markSettled.useMutation({
+    onSuccess: () => { utils.workforce.list.invalidate(); toast.success("Salary marked as settled."); },
     onError: (e) => toast.error(getErrorMessage(e)),
   });
   const updateAgent = trpc.workforce.update.useMutation({
@@ -1166,9 +1166,14 @@ export default function Operations() {
               {pendingPayout.map(a => (
                 <div key={a.traineeCode} className="flex items-center justify-between gap-2 rounded-lg bg-background border px-2.5 py-1.5">
                   <span className="text-sm"><span className="font-medium">{a.fullName}</span> <span className="text-muted-foreground">· {a.traineeCode}{a.crdts ? ` · ${a.crdts}` : ""}</span> <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 border border-red-200 ml-1">{a.agentStatus}</span></span>
-                  <Button size="sm" variant="outline" className="text-emerald-700 border-emerald-300 hover:bg-emerald-50" onClick={() => setExitAgent(a)}>
-                    Exit process → settle
-                  </Button>
+                  <div className="flex gap-1.5">
+                    <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700 text-white" onClick={() => markSettled.mutate({ traineeCode: a.traineeCode, settled: true })} disabled={markSettled.isPending}>
+                      ✔ Mark settled
+                    </Button>
+                    <Button size="sm" variant="outline" className="text-blue-700 border-blue-300 hover:bg-blue-50" onClick={() => setExitAgent(a)}>
+                      Exit checklist →
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -2122,28 +2127,29 @@ export default function Operations() {
 function ExitProcessDialog({ agent, onClose }: { agent: { traineeCode: string; fullName: string | null; agentStatus?: string | null }; onClose: () => void }) {
   const utils = trpc.useUtils();
   const { data: existing } = trpc.exit.get.useQuery({ traineeCode: agent.traineeCode });
-  const [f, setF] = useState<{ exitType: string; exitInterview: boolean; clearance: boolean; assetsReturned: boolean; lastWorkingDay: string; settlementDone: boolean; notes: string } | null>(null);
+  const [f, setF] = useState<{ exitType: string; exitInterview: boolean; clearance: boolean; assetsReturned: boolean; lastWorkingDay: string; notes: string } | null>(null);
   useEffect(() => {
-    if (f === null) {
+    if (f === null && existing !== undefined) {
       setF({
         exitType: (existing?.exitType as string) ?? (agent.agentStatus === "terminated" ? "termination" : "resignation"),
         exitInterview: existing?.exitInterview ?? false,
         clearance: existing?.clearance ?? false,
         assetsReturned: existing?.assetsReturned ?? false,
         lastWorkingDay: existing?.lastWorkingDay ?? "",
-        settlementDone: existing?.settlementDone ?? false,
         notes: existing?.notes ?? "",
       });
     }
   }, [existing, f, agent.agentStatus]);
   const save = trpc.exit.upsert.useMutation({ onError: (e) => toast.error(e.message) });
-  const settle = trpc.exit.settleAndArchive.useMutation({
-    onSuccess: () => { toast.success("Exit complete — agent settled & archived to Recruitment (Former Agents)"); utils.workforce.list.invalidate(); onClose(); },
+  const archive = trpc.exit.archive.useMutation({
+    onSuccess: () => { toast.success("Agent archived — exit checklist complete"); utils.workforce.list.invalidate(); onClose(); },
     onError: (e) => toast.error(e.message),
   });
-  if (!f) return null;
-  const complete = !!f.exitType && f.exitInterview && f.clearance && f.assetsReturned && !!f.lastWorkingDay && f.settlementDone;
-  const CheckRow = ({ label, k }: { label: string; k: "exitInterview" | "clearance" | "assetsReturned" | "settlementDone" }) => (
+  if (!f) return <Dialog open onOpenChange={onClose}><DialogContent className="max-w-md"><p className="text-sm text-muted-foreground p-4">Loading…</p></DialogContent></Dialog>;
+  const isSettled = existing?.settlementDone ?? false;
+  const checklistComplete = !!f.exitType && f.exitInterview && f.clearance && f.assetsReturned && !!f.lastWorkingDay;
+  const canArchive = isSettled && checklistComplete;
+  const CheckRow = ({ label, k }: { label: string; k: "exitInterview" | "clearance" | "assetsReturned" }) => (
     <label className="flex items-center gap-2 text-sm cursor-pointer">
       <input type="checkbox" checked={f[k]} onChange={e => setF({ ...f, [k]: e.target.checked })} /> {label}
     </label>
@@ -2151,8 +2157,13 @@ function ExitProcessDialog({ agent, onClose }: { agent: { traineeCode: string; f
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>Exit process — {agent.fullName || agent.traineeCode}</DialogTitle></DialogHeader>
-        <p className="text-xs text-muted-foreground">All items are REQUIRED before the agent can be settled and archived out of Operations.</p>
+        <DialogHeader><DialogTitle>Exit checklist — {agent.fullName || agent.traineeCode}</DialogTitle></DialogHeader>
+        {/* Step 1 status: settlement (done via Mark Settled in the pending list) */}
+        <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-sm ${isSettled ? "bg-emerald-50 border-emerald-200 text-emerald-800" : "bg-amber-50 border-amber-200 text-amber-800"}`}>
+          <span className="text-base">{isSettled ? "✅" : "⏳"}</span>
+          <span className="font-medium">{isSettled ? "Salary settled" : "Salary not yet settled — use “Mark settled” in the pending list first"}</span>
+        </div>
+        <p className="text-xs text-muted-foreground">Complete the checklist below. Archiving requires salary settled + all items done.</p>
         <div className="space-y-2.5">
           <div>
             <label className="text-xs font-medium block mb-1">Exit type</label>
@@ -2169,14 +2180,13 @@ function ExitProcessDialog({ agent, onClose }: { agent: { traineeCode: string; f
             <label className="text-xs font-medium block mb-1">آخر يوم عمل (last working day)</label>
             <Input type="date" value={f.lastWorkingDay} onChange={e => setF({ ...f, lastWorkingDay: e.target.value })} />
           </div>
-          <CheckRow label="Settlement / final pay confirmed PAID" k="settlementDone" />
           <Input placeholder="Notes (optional)" value={f.notes} onChange={e => setF({ ...f, notes: e.target.value })} />
         </div>
         <DialogFooter className="gap-2">
-          <Button variant="outline" onClick={async () => { await save.mutateAsync({ traineeCode: agent.traineeCode, exitType: f.exitType as "resignation" | "termination" | "contract_end", exitInterview: f.exitInterview, clearance: f.clearance, assetsReturned: f.assetsReturned, lastWorkingDay: f.lastWorkingDay || undefined, settlementDone: f.settlementDone, notes: f.notes || undefined }); toast.success("Progress saved"); }} disabled={save.isPending}>Save progress</Button>
-          <Button style={{ background: complete ? "#059669" : "#9CA3AF" }} className="text-white" disabled={!complete || settle.isPending}
-            onClick={async () => { await save.mutateAsync({ traineeCode: agent.traineeCode, exitType: f.exitType as "resignation" | "termination" | "contract_end", exitInterview: f.exitInterview, clearance: f.clearance, assetsReturned: f.assetsReturned, lastWorkingDay: f.lastWorkingDay || undefined, settlementDone: f.settlementDone, notes: f.notes || undefined }); settle.mutate({ traineeCode: agent.traineeCode }); }}>
-            {settle.isPending ? "Archiving…" : "Complete exit — settle & archive"}
+          <Button variant="outline" onClick={async () => { await save.mutateAsync({ traineeCode: agent.traineeCode, exitType: f.exitType as "resignation" | "termination" | "contract_end", exitInterview: f.exitInterview, clearance: f.clearance, assetsReturned: f.assetsReturned, lastWorkingDay: f.lastWorkingDay || undefined, notes: f.notes || undefined }); toast.success("Progress saved"); }} disabled={save.isPending}>Save progress</Button>
+          <Button style={{ background: canArchive ? "#059669" : "#9CA3AF" }} className="text-white" disabled={!canArchive || archive.isPending}
+            onClick={async () => { await save.mutateAsync({ traineeCode: agent.traineeCode, exitType: f.exitType as "resignation" | "termination" | "contract_end", exitInterview: f.exitInterview, clearance: f.clearance, assetsReturned: f.assetsReturned, lastWorkingDay: f.lastWorkingDay || undefined, notes: f.notes || undefined }); archive.mutate({ traineeCode: agent.traineeCode }); }}>
+            {archive.isPending ? "Archiving…" : "Archive agent"}
           </Button>
         </DialogFooter>
       </DialogContent>

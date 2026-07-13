@@ -1518,7 +1518,7 @@ export async function getSeparationsByAgent(agentCode: string) {
 export async function markAgentResignedOnSpot(agentCode: string, reason: string, adminName: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const { workforceAgents, agentSeparations, agentCredentials } = await import("../drizzle/schema");
+  const { workforceAgents, agentSeparations, agentCredentials, exitProcess } = await import("../drizzle/schema");
   // Get agent to find candidateId
   const agent = await db.select({ candidateId: workforceAgents.candidateId })
     .from(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode)).limit(1);
@@ -1536,6 +1536,11 @@ export async function markAgentResignedOnSpot(agentCode: string, reason: string,
   await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
   // Mark candidate as resigned — ID permanently retired, never reusable
   await db.update(candidates).set({ status: "resigned", updatedAt: new Date() }).where(eq(candidates.id, agent[0].candidateId));
+  // Auto-create exit_process row so agent appears in Settle & Exit flow
+  const epExist1 = await db.select({ id: exitProcess.id }).from(exitProcess).where(eq(exitProcess.traineeCode, agentCode)).limit(1);
+  if (!epExist1[0]) {
+    await db.insert(exitProcess).values({ traineeCode: agentCode, exitType: "resignation", settlementDone: false, updatedAt: now });
+  }
 }
 
 /**
@@ -1546,7 +1551,7 @@ export async function markAgentResignedOnSpot(agentCode: string, reason: string,
 export async function terminateAgent(agentCode: string, reason: string, adminName: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const { workforceAgents, agentSeparations, agentCredentials } = await import("../drizzle/schema");
+  const { workforceAgents, agentSeparations, agentCredentials, exitProcess } = await import("../drizzle/schema");
   const now = Date.now();
   // Fetch candidateId
   const agent = await db.select({ candidateId: workforceAgents.candidateId })
@@ -1564,6 +1569,11 @@ export async function terminateAgent(agentCode: string, reason: string, adminNam
   await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
   // Mark candidate as terminated — ID permanently retired, never reusable
   await db.update(candidates).set({ status: "terminated", updatedAt: new Date() }).where(eq(candidates.id, agent[0].candidateId));
+  // Auto-create exit_process row so agent appears in Settle & Exit flow
+  const epExist2 = await db.select({ id: exitProcess.id }).from(exitProcess).where(eq(exitProcess.traineeCode, agentCode)).limit(1);
+  if (!epExist2[0]) {
+    await db.insert(exitProcess).values({ traineeCode: agentCode, exitType: "termination", settlementDone: false, updatedAt: now });
+  }
 }
 
 /**
@@ -1574,7 +1584,7 @@ export async function terminateAgent(agentCode: string, reason: string, adminNam
 export async function approveResignationRequest(agentCode: string, lastWorkingDay: string, reason: string, adminName: string, requestedAt: number) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const { workforceAgents, agentSeparations, agentCredentials } = await import("../drizzle/schema");
+  const { workforceAgents, agentSeparations, agentCredentials, exitProcess } = await import("../drizzle/schema");
   const now = Date.now();
   // Fetch candidateId
   const agent = await db.select({ candidateId: workforceAgents.candidateId })
@@ -1592,6 +1602,14 @@ export async function approveResignationRequest(agentCode: string, lastWorkingDa
   await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
   // Mark candidate as resigned — ID permanently retired, never reusable
   await db.update(candidates).set({ status: "resigned", updatedAt: new Date() }).where(eq(candidates.id, agent[0].candidateId));
+  // Auto-create exit_process row so agent appears in Settle & Exit flow
+  const epExist3 = await db.select({ id: exitProcess.id }).from(exitProcess).where(eq(exitProcess.traineeCode, agentCode)).limit(1);
+  if (!epExist3[0]) {
+    await db.insert(exitProcess).values({ traineeCode: agentCode, exitType: "resignation", lastWorkingDay, settlementDone: false, updatedAt: now });
+  } else {
+    // Update lastWorkingDay if admin set one
+    await db.update(exitProcess).set({ lastWorkingDay, updatedAt: now }).where(eq(exitProcess.traineeCode, agentCode));
+  }
 }
 
 // ─── Agent Payment Methods ────────────────────────────────────────────────────

@@ -5561,6 +5561,42 @@ const exitRouter = router({
       const rows = await db.select().from(exitProcess).where(eq(exitProcess.traineeCode, input.traineeCode)).limit(1);
       return rows[0] ?? null;
     }),
+  // List all agents pending settlement (separated but not yet salary-settled)
+  pendingSettlement: protectedProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return [];
+    const { workforceAgents, exitProcess } = await import("../drizzle/schema");
+    const { eq, inArray, or, isNull } = await import("drizzle-orm");
+    const agents = await db.select({
+      traineeCode: workforceAgents.traineeCode,
+      fullName: workforceAgents.fullName,
+      agentStatus: workforceAgents.agentStatus,
+      salarySettled: workforceAgents.salarySettled,
+    }).from(workforceAgents)
+      .where(inArray(workforceAgents.agentStatus, ["resigned", "terminated"]));
+    if (!agents.length) return [];
+    const codes = agents.map(a => a.traineeCode);
+    const eps = await db.select().from(exitProcess).where(inArray(exitProcess.traineeCode, codes));
+    const epMap = new Map(eps.map(e => [e.traineeCode, e]));
+    return agents
+      .filter(a => !a.salarySettled)
+      .map(a => ({ ...a, exitProcess: epMap.get(a.traineeCode) ?? null }));
+  }),
+  // Mark salary settled (BEFORE checklist — step 2 in lifecycle)
+  markSettled: protectedProcedure
+    .input(z.object({ traineeCode: z.string(), settled: z.boolean() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { workforceAgents, exitProcess } = await import("../drizzle/schema");
+      await db.update(workforceAgents).set({ salarySettled: input.settled }).where(eq(workforceAgents.traineeCode, input.traineeCode));
+      // Mirror into exit_process.settlementDone for the checklist display
+      await db.update(exitProcess).set({ settlementDone: input.settled, updatedAt: Date.now() }).where(eq(exitProcess.traineeCode, input.traineeCode));
+      return { ok: true };
+    }),
   upsert: protectedProcedure
     .input(z.object({
       traineeCode: z.string(),
@@ -5582,7 +5618,29 @@ const exitRouter = router({
       else await db.insert(exitProcess).values({ traineeCode, ...rest, updatedAt: now });
       return { ok: true };
     }),
-  // Mark settled + archive: ONLY allowed when the checklist is complete.
+  // Archive: requires salary settled AND checklist complete (interview, clearance, assets, last day)
+  archive: protectedProcedure
+    .input(z.object({ traineeCode: z.string() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { exitProcess, workforceAgents, candidates } = await import("../drizzle/schema");
+      const rows = await db.select().from(exitProcess).where(eq(exitProcess.traineeCode, input.traineeCode)).limit(1);
+      const ep = rows[0];
+      if (!ep?.settlementDone) throw new TRPCError({ code: "BAD_REQUEST", message: "Salary must be settled before archiving." });
+      const checklistComplete = ep.exitType && ep.exitInterview && ep.clearance && ep.assetsReturned && ep.lastWorkingDay;
+      if (!checklistComplete) throw new TRPCError({ code: "BAD_REQUEST", message: "Exit checklist incomplete — finish all items (type, interview, clearance, assets, last day) before archiving." });
+      await db.update(exitProcess).set({ completedAt: Date.now(), updatedAt: Date.now() }).where(eq(exitProcess.traineeCode, input.traineeCode));
+      // Mark agent as archived in workforce (keep row, just mark completedAt)
+      const ag = (await db.select().from(workforceAgents).where(eq(workforceAgents.traineeCode, input.traineeCode)).limit(1))[0];
+      if (ag?.candidateId) {
+        try { await db.update(candidates).set({ status: ag.agentStatus as "resigned" | "terminated" }).where(eq(candidates.id, ag.candidateId)); } catch (_) {}
+      }
+      return { ok: true };
+    }),
+  // Legacy alias kept for backward compat with any existing UI calls
   settleAndArchive: protectedProcedure
     .input(z.object({ traineeCode: z.string() }))
     .mutation(async ({ input }) => {
@@ -5591,12 +5649,16 @@ const exitRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { exitProcess, workforceAgents } = await import("../drizzle/schema");
+      // Mark settled first
+      await db.update(workforceAgents).set({ salarySettled: true }).where(eq(workforceAgents.traineeCode, input.traineeCode));
+      await db.update(exitProcess).set({ settlementDone: true, updatedAt: Date.now() }).where(eq(exitProcess.traineeCode, input.traineeCode));
+      // Then archive if checklist complete
       const rows = await db.select().from(exitProcess).where(eq(exitProcess.traineeCode, input.traineeCode)).limit(1);
       const ep = rows[0];
-      const complete = ep && ep.exitType && ep.exitInterview && ep.clearance && ep.assetsReturned && ep.lastWorkingDay && ep.settlementDone;
-      if (!complete) throw new TRPCError({ code: "BAD_REQUEST", message: "Exit checklist is not complete — finish all items (type, interview, clearance, assets, last day, settlement) first." });
-      await db.update(exitProcess).set({ completedAt: Date.now(), updatedAt: Date.now() }).where(eq(exitProcess.traineeCode, input.traineeCode));
-      await db.update(workforceAgents).set({ salarySettled: true, settledAt: Date.now() }).where(eq(workforceAgents.traineeCode, input.traineeCode));
+      const checklistComplete = ep && ep.exitType && ep.exitInterview && ep.clearance && ep.assetsReturned && ep.lastWorkingDay;
+      if (checklistComplete) {
+        await db.update(exitProcess).set({ completedAt: Date.now(), updatedAt: Date.now() }).where(eq(exitProcess.traineeCode, input.traineeCode));
+      }
       return { ok: true };
     }),
 });
