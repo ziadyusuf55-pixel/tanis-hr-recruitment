@@ -2829,6 +2829,8 @@ export async function getPendingDeletionAgents() {
   const db = await getDb();
   if (!db) return [];
   const { workforceAgents } = await import("../drizzle/schema");
+  const { and, eq, isNull, or } = await import("drizzle-orm");
+  // Only count agents who have left AND salary is not yet settled
   return db.select({
     traineeCode: workforceAgents.traineeCode,
     fullName: workforceAgents.fullName,
@@ -2836,7 +2838,10 @@ export async function getPendingDeletionAgents() {
     agentStatus: workforceAgents.agentStatus,
     updatedAt: workforceAgents.updatedAt,
   }).from(workforceAgents)
-    .where(sql`${workforceAgents.agentStatus} IN ('resigned', 'terminated')`);
+    .where(and(
+      sql`${workforceAgents.agentStatus} IN ('resigned', 'terminated')`,
+      or(eq(workforceAgents.salarySettled, false), isNull(workforceAgents.salarySettled))
+    ));
 }
 
 // ─── Full Leaderboard (all campaigns) ─────────────────────────────────────────

@@ -800,6 +800,7 @@ export default function Operations() {
   };
   const [editForm, setEditForm] = useState<EditForm>({});
   const [exitAgent, setExitAgent] = useState<WorkforceAgent | null>(null);
+  const { data: pendingChecklistAgents = [] } = trpc.exit.pendingChecklist.useQuery();
   const markSettled = trpc.exit.markSettled.useMutation({
     onSuccess: () => { utils.workforce.list.invalidate(); toast.success("Salary marked as settled."); },
     onError: (e) => toast.error(getErrorMessage(e)),
@@ -1179,8 +1180,21 @@ export default function Operations() {
             </div>
           )}
 
-          {exitAgent && <ExitProcessDialog agent={exitAgent} onClose={() => setExitAgent(null)} />}
-
+          {/* Exit checklist banner — settled but not yet archived */}
+          {pendingChecklistAgents.length > 0 && (
+            <div className="rounded-xl border border-blue-300 bg-blue-50 p-3 mb-3 space-y-2">
+              <p className="text-xs font-semibold text-blue-800">📋 Exit checklist pending ({pendingChecklistAgents.length}) — salary settled, complete checklist to archive</p>
+              {pendingChecklistAgents.map(a => (
+                <div key={a.traineeCode} className="flex items-center justify-between gap-2 rounded-lg bg-background border px-2.5 py-1.5">
+                  <span className="text-sm"><span className="font-medium">{a.fullName}</span> <span className="text-muted-foreground">· {a.traineeCode}{a.crdts ? ` · ${a.crdts}` : ""}</span> <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 border border-blue-200 ml-1">{a.agentStatus}</span></span>
+                  <Button size="sm" variant="outline" className="text-blue-700 border-blue-300 hover:bg-blue-50" onClick={() => setExitAgent(a as unknown as WorkforceAgent)}>
+                    Exit checklist →
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+          {exitAgent && <ExitProcessDialog agent={exitAgent} onClose={() => { setExitAgent(null); utils.exit.pendingChecklist.invalidate(); }} />}
           {/* Status filter tabs */}
           <div className="flex gap-1 mb-3">
             {([

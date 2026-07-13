@@ -5561,6 +5561,34 @@ const exitRouter = router({
       const rows = await db.select().from(exitProcess).where(eq(exitProcess.traineeCode, input.traineeCode)).limit(1);
       return rows[0] ?? null;
     }),
+  // List all agents settled but not yet archived (exit checklist pending)
+  pendingChecklist: protectedProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return [];
+    const { workforceAgents, exitProcess } = await import("../drizzle/schema");
+    const { inArray } = await import("drizzle-orm");
+    const agents = await db.select({
+      traineeCode: workforceAgents.traineeCode,
+      fullName: workforceAgents.fullName,
+      agentStatus: workforceAgents.agentStatus,
+      salarySettled: workforceAgents.salarySettled,
+      crdts: workforceAgents.crdts,
+    }).from(workforceAgents)
+      .where(inArray(workforceAgents.agentStatus, ["resigned", "terminated"]));
+    if (!agents.length) return [];
+    const settled = agents.filter(a => a.salarySettled);
+    if (!settled.length) return [];
+    const codes = settled.map(a => a.traineeCode);
+    const eps = await db.select().from(exitProcess).where(inArray(exitProcess.traineeCode, codes));
+    const epMap = new Map(eps.map(e => [e.traineeCode, e]));
+    return settled
+      .filter(a => {
+        const ep = epMap.get(a.traineeCode);
+        return !ep || !ep.completedAt;
+      })
+      .map(a => ({ ...a, exitProcess: epMap.get(a.traineeCode) ?? null }));
+  }),
   // List all agents pending settlement (separated but not yet salary-settled)
   pendingSettlement: protectedProcedure.query(async () => {
     const { getDb } = await import("./db");
