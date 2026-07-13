@@ -145,16 +145,17 @@ function BellBadge() {
   const { data: due = [] } = trpc.bd.dueReminders.useQuery(undefined, { refetchInterval: 120000 });
   const list = due as { id: number; title: string; reminderDate: string | null; reminderNote: string | null }[];
   const [open, setOpen] = useState(false);
-  if (list.length === 0) return null;
+  const count = list.length;
+  if (count === 0) return null;
   return (
     <div className="relative">
-      <button onClick={() => setOpen(!open)} className="relative p-2 rounded-lg hover:bg-muted" title="Follow-ups due">
+      <button onClick={() => setOpen(!open)} className="relative p-2 rounded-lg hover:bg-muted" title="Notifications">
         <Bell className="w-4 h-4" />
-        <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-600 text-white text-[10px] flex items-center justify-center font-bold">{list.length}</span>
+        <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 rounded-full bg-red-600 text-white text-[10px] flex items-center justify-center font-bold">{count}</span>
       </button>
       {open && (
         <div className="absolute right-0 top-10 z-50 w-72 rounded-xl border bg-background shadow-lg p-2 space-y-1">
-          <p className="text-xs font-semibold px-1.5 pt-1">⏰ Follow-ups due ({list.length})</p>
+          {list.length > 0 && <p className="text-xs font-semibold px-1.5 pt-1">⏰ Follow-ups due ({list.length})</p>}
           {list.slice(0, 8).map(d => (
             <a key={d.id} href="/business-development" className="block rounded-lg px-2 py-1.5 hover:bg-muted text-xs">
               <span className="font-medium">{d.title}</span>

@@ -243,58 +243,64 @@ async function startServer() {
   // payroll is calculated externally in Python from the same sheets. Writing here
   // as well would double-count.
   //
-  // Body: { kind: "adherence" | "ot" | "quality" | "coaching", rows: [...] }
-  // Duplicates are skipped (matched on crdts + date + type + category), so it's safe to
+  // Body: { kind: "adherence" | "ot" | "coaching", rows: [...] }
+  // Duplicates are skipped (matched on crdts + date + type), so it's safe to
   // re-run daily.
   app.post("/api/upload/logs", async (req, res) => {
     try {
       const apiKey = req.headers["x-api-key"] as string | undefined;
       if (!apiKey) { res.status(401).json({ error: "Missing X-API-Key header" }); return; }
+
       const { getDb } = await import("../db");
       const db = await getDb();
       if (!db) { res.status(503).json({ error: "Database unavailable" }); return; }
       const { apiKeys, agentViolations, cycleOT, coachingSessions } = await import("../../drizzle/schema");
       const { eq, and } = await import("drizzle-orm");
       const { createHash } = await import("crypto");
+
       const keyHash = createHash("sha256").update(apiKey).digest("hex");
       const [keyRow] = await db.select().from(apiKeys).where(eq(apiKeys.keyHash, keyHash)).limit(1);
       if (!keyRow) { res.status(401).json({ error: "Invalid API key" }); return; }
       if (keyRow.revokedAt) { res.status(401).json({ error: "API key has been revoked" }); return; }
       await db.update(apiKeys).set({ lastUsedAt: Date.now() }).where(eq(apiKeys.id, keyRow.id));
+
       const kind = String(req.body?.kind || "");
       const rows = req.body?.rows;
-      if (!["adherence", "ot", "quality", "coaching"].includes(kind)) {
-        res.status(400).json({ error: 'kind must be "adherence", "ot", "quality" or "coaching"' }); return;
+      if (!["adherence", "ot", "coaching"].includes(kind)) {
+        res.status(400).json({ error: 'kind must be "adherence", "ot" or "coaching"' }); return;
       }
       if (!Array.isArray(rows)) { res.status(400).json({ error: "rows must be an array" }); return; }
+
       const now = Date.now();
       const s = (v: unknown) => (v === undefined || v === null ? "" : String(v).trim());
       const n = (v: unknown) => { const x = Number(String(v ?? "").replace(/,/g, "")); return isNaN(x) ? 0 : x; };
-      const mon = (d: string) => d.slice(0, 7);
+      const mon = (d: string) => d.slice(0, 7);   // rows arrive as YYYY-MM-DD
+
       let inserted = 0, skipped = 0, invalid = 0;
+
       for (const r of rows) {
         const crdts = s(r.crdts).replace(/\.0+$/, "");
-        const date = s(r.date);
+        const date = s(r.date);                                   // YYYY-MM-DD
         if (!crdts || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { invalid++; continue; }
-        if (kind === "adherence" || kind === "quality") {
-          const category = kind === "quality" ? "quality" : "attendance";
+
+        if (kind === "adherence") {
           const type = s(r.type) || "Other";
           const existing = await db.select().from(agentViolations).where(and(
             eq(agentViolations.crdts, crdts),
             eq(agentViolations.date, date),
             eq(agentViolations.type, type),
-            eq(agentViolations.category, category),
           )).limit(1);
           if (existing.length) { skipped++; continue; }
+          // Fold details/offense/logged-by into `description` — the table has no
+          // dedicated columns for them, and this keeps the context visible in the UI.
           const bits = [s(r.details)];
           if (s(r.offenseNo)) bits.push(`offense #${s(r.offenseNo)}`);
           if (s(r.penalty)) bits.push(s(r.penalty));
           if (s(r.loggedBy)) bits.push(`logged by ${s(r.loggedBy)}`);
-          if (s(r.recording)) bits.push(`recording: ${s(r.recording)}`);
           const st = s(r.status).toLowerCase();
           await db.insert(agentViolations).values({
             crdts, agentCode: crdts,
-            date, month: mon(date), type, category,
+            date, month: mon(date), type, category: "attendance",
             hours: String(n(r.hours)), deduction: String(n(r.deduction)),
             description: bits.filter(Boolean).join(" · ") || null,
             status: st === "approved" ? "approved" : st === "rejected" ? "rejected" : "pending",
@@ -338,6 +344,7 @@ async function startServer() {
           inserted++;
         }
       }
+
       res.json({ ok: true, kind, received: rows.length, inserted, skipped, invalid });
     } catch (err) {
       console.error("[/api/upload/logs] error:", err);
@@ -345,9 +352,9 @@ async function startServer() {
     }
   });
 
-  // Same upsert logic as the UI upload (calls upsertCycleStats from db.ts).
   // ─── REST API: POST /api/upload/cycle-stats ───────────────────────────────
   // Accepts JSON array of cycle stats records, authenticated via X-API-Key header.
+  // Same upsert logic as the UI upload (calls upsertCycleStats from db.ts).
   app.post("/api/upload/cycle-stats", async (req, res) => {
     try {
       const apiKey = req.headers["x-api-key"] as string | undefined;

@@ -12,6 +12,8 @@ import {
   Briefcase, Activity, Inbox, CalendarDays, Building2, Wallet, CheckCircle2, ChevronRight,
 } from "lucide-react";
 import { useLocation } from "wouter";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { canAccessPath } from "@/lib/roleTabs";
 
 type Period = "week" | "month" | "all";
 
@@ -35,6 +37,8 @@ const FUNNEL_COLORS: Record<string, string> = {
 
 export default function Dashboard() {
   const [, navigate] = useLocation();
+  const { user } = useAuth();
+  const role = (user as { role?: string } | null)?.role;
   const [period, setPeriod] = useState<Period>("month");
   const periodInput = useMemo(() => ({ period }), [period]);
 
@@ -53,12 +57,13 @@ export default function Dashboard() {
   const openDeals = (bdDeals as Array<{ stage: string }>).filter(d => d.stage !== "closed_won" && d.stage !== "closed_lost");
   const wonDeals = (bdDeals as Array<{ stage: string }>).filter(d => d.stage === "closed_won");
 
+  // Only show cards for pages this role can actually open.
   const attention = [
     { count: Number(unreadRequests), label: "Requests to review", sub: "Agent requests waiting", icon: Inbox, tint: "amber", path: "/requests" },
     { count: (pendingLeave as unknown[]).length, label: "Leave approvals", sub: "Awaiting HR classification", icon: CalendarDays, tint: "violet", path: "/leave-management" },
     { count: (bdDue as unknown[]).length, label: "BD follow-ups due", sub: "Deals to chase today", icon: Building2, tint: "blue", path: "/business-development" },
     { count: pendingDeletion, label: "Former agents pending payout", sub: "Still owed final pay", icon: Wallet, tint: "red", path: "/operations" },
-  ].filter(a => a.count > 0);
+  ].filter(a => a.count > 0 && canAccessPath(role, a.path));
 
   const funnelData = kpis
     ? ACTIVE_STAGES.map((stage) => ({
