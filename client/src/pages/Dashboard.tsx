@@ -9,7 +9,7 @@ import {
 import {
   Users, UserCheck, CalendarClock, TrendingUp,
   MessageCircle, Mic, Video, Send, UserX, Timer, ArrowRight,
-  Briefcase, Activity, Inbox, CalendarDays, Building2, Wallet, CheckCircle2, ChevronRight, ClipboardCheck,
+  Briefcase, Activity, Inbox, CalendarDays, Building2, Wallet, CheckCircle2, ChevronRight,
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -51,7 +51,6 @@ export default function Dashboard() {
   const { data: pendingLeave = [] } = trpc.leave.listRequests.useQuery({ status: "pending" }, { refetchInterval: 120000 });
   const { data: bdDue = [] } = trpc.bd.dueReminders.useQuery(undefined, { refetchInterval: 120000 });
   const { data: bdDeals = [] } = trpc.bd.listDeals.useQuery({});
-  const { data: pendingApprovals = 0 } = trpc.payrollWorkflow.pendingCount.useQuery(undefined, { refetchInterval: 60000 });
 
   const pendingDeletion = overview?.pendingDeletionCount ?? 0;
 
@@ -60,7 +59,6 @@ export default function Dashboard() {
 
   // Only show cards for pages this role can actually open.
   const attention = [
-    { count: Number(pendingApprovals), label: "Awaiting your approval", sub: "Deductions, OT & bonuses", icon: ClipboardCheck, tint: "red", path: "/payroll-workflow" },
     { count: Number(unreadRequests), label: "Requests to review", sub: "Agent requests waiting", icon: Inbox, tint: "amber", path: "/requests" },
     { count: (pendingLeave as unknown[]).length, label: "Leave approvals", sub: "Awaiting HR classification", icon: CalendarDays, tint: "violet", path: "/leave-management" },
     { count: (bdDue as unknown[]).length, label: "BD follow-ups due", sub: "Deals to chase today", icon: Building2, tint: "blue", path: "/business-development" },
