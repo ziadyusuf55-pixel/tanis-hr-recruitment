@@ -240,7 +240,7 @@ const authRouter = router({
 
   // Owner/admin sets another user's role. Can't demote yourself out of full access by accident.
   setUserRole: protectedProcedure
-    .input(z.object({ openId: z.string(), role: z.enum(["owner", "admin", "hr", "ops_manager", "team_lead", "finance", "bd", "viewer", "user"]) }))
+    .input(z.object({ openId: z.string(), role: z.enum(["owner", "admin", "manager", "hr", "ops_manager", "team_lead", "finance", "bd", "viewer", "user"]) }))
     .mutation(async ({ ctx, input }) => {
       if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN" });
       if (input.openId === ctx.user?.openId && input.role !== "owner" && input.role !== "admin") {

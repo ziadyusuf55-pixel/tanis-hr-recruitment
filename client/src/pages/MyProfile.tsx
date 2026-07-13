@@ -25,7 +25,7 @@ export default function MyProfile() {
 
   useEffect(() => {
     if (!me) return;
-    const m = me as Record<string, string | null>;
+    const m = me as unknown as Record<string, string | null>;
     setF({
       phone: m.phone ?? "", address: m.address ?? "",
       emergencyContactName: m.emergencyContactName ?? "",
@@ -56,7 +56,7 @@ export default function MyProfile() {
     );
   }
 
-  const m = me as Record<string, string | null>;
+  const m = me as unknown as Record<string, string | null>;
   const F = ({ label, k, type = "text" }: { label: string; k: keyof typeof f; type?: string }) => (
     <div>
       <p className="text-xs text-muted-foreground mb-1">{label}</p>
