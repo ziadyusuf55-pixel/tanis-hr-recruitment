@@ -5078,7 +5078,12 @@ const bdRouter = router({
       const linked = await db.select().from(bdUsers).where(eq(bdUsers.openId, openId)).limit(1);
       if (linked[0]) return { kind: "bd" as const, bdUser: linked[0] };
     }
-    if (role === "admin") return { kind: "admin" as const };
+    if (role === "admin" || role === "owner") return { kind: "admin" as const };
+    // Only users whose Hub role is explicitly "bd" should see the link-login screen.
+    // All other roles (manager, hr, ops_manager, team_lead, finance, viewer, user)
+    // get read-only admin-style access so they can view the BD pipeline without
+    // being prompted to claim a BD identity.
+    if (role !== "bd") return { kind: "admin" as const };
     const unlinked = await db.select().from(bdUsers);
     return { kind: "unlinked" as const, candidates: unlinked.filter(u => !u.openId) };
   }),
