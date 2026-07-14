@@ -108,22 +108,6 @@ function Profile({ agent }: { agent: Agent }) {
       </CardContent></Card>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Personal / HR info */}
-        <Card><CardContent className="p-4 space-y-2.5">
-          <p className="text-sm font-semibold flex items-center gap-1.5"><MapPin className="w-4 h-4" style={{ color: BRAND }} /> Personal &amp; emergency (جهة اتصال للطوارئ)</p>
-          <div className="space-y-2">
-            <Input placeholder="Address / العنوان" value={hr.address} onChange={e => setHr({ ...hr, address: e.target.value })} />
-            <div className="grid grid-cols-3 gap-2">
-              <Input placeholder="Emergency name" value={hr.emergencyContactName} onChange={e => setHr({ ...hr, emergencyContactName: e.target.value })} />
-              <Input placeholder="Phone" value={hr.emergencyContactPhone} onChange={e => setHr({ ...hr, emergencyContactPhone: e.target.value })} />
-              <Input placeholder="صلة القرابة" value={hr.emergencyContactRelation} onChange={e => setHr({ ...hr, emergencyContactRelation: e.target.value })} />
-            </div>
-            <Button size="sm" onClick={() => saveHr.mutate({ traineeCode: code, ...hr })} disabled={saveHr.isPending} style={{ background: BRAND }} className="text-white">
-              <Save className="w-3.5 h-3.5 mr-1" /> {saveHr.isPending ? "Saving…" : "Save"}
-            </Button>
-          </div>
-        </CardContent></Card>
-
         {/* Leave */}
         <Card><CardContent className="p-4 space-y-2">
           <p className="text-sm font-semibold flex items-center gap-1.5"><CalendarDays className="w-4 h-4" style={{ color: BRAND }} /> Leave — {new Date().getFullYear()}</p>

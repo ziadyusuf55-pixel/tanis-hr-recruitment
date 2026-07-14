@@ -1290,7 +1290,6 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
                 <SelectValue placeholder="Select type..." />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="leave">Leave</SelectItem>
                 <SelectItem value="paid_leave">Paid Leave</SelectItem>
                 <SelectItem value="day_off">Unpaid Day Off</SelectItem>
                 <SelectItem value="sick_note">Sick Note</SelectItem>
@@ -3322,16 +3321,19 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
  * nightly from the sheets. DISPLAY ONLY: their payslip is calculated separately,
  * so nothing here changes their pay.
  */
-function MyRecords({ theme }: { theme: Theme }) {
+function MyRecords({ theme, view }: { theme: Theme; view: "cycle" | "month" | "all" }) {
   const { data } = trpc.agent.myRecords.useQuery();
+  // Match the range toggle above: "all" shows everything, otherwise this month.
+  const thisMonth = new Date().toISOString().slice(0, 7);
+  const inRange = (d: string) => view === "all" || (d || "").slice(0, 7) === thisMonth;
   type V = { id: number; date: string; type: string; hours: string | null; deduction: string | null; description: string | null };
   type O = { id: number; date: string; otType: string; hours: string | null; egpAmount: string | null };
   type C = { id: number; sessionDate: string; sessionType: string | null; coachingHours: string | null; bonusAmount: string | null; notes: string | null };
 
-  const adherence = (data?.adherence ?? []) as V[];
-  const quality = (data?.quality ?? []) as V[];
-  const coaching = (data?.coaching ?? []) as C[];
-  const ot = (data?.ot ?? []) as O[];
+  const adherence = ((data?.adherence ?? []) as V[]).filter(r => inRange(r.date));
+  const quality = ((data?.quality ?? []) as V[]).filter(r => inRange(r.date));
+  const coaching = ((data?.coaching ?? []) as C[]).filter(r => inRange(r.sessionDate));
+  const ot = ((data?.ot ?? []) as O[]).filter(r => inRange(r.date));
   if (!adherence.length && !quality.length && !coaching.length && !ot.length) return null;
 
   const n = (v: unknown) => Number(v || 0);
@@ -3361,7 +3363,7 @@ function MyRecords({ theme }: { theme: Theme }) {
     <div className="rounded-2xl p-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
       <p className="text-sm font-semibold mb-1" style={{ color: theme.text }}>My Records</p>
       <p className="text-xs mb-3" style={{ color: theme.textMuted }}>
-        Your adherence, quality, coaching and overtime history.
+        {view === "all" ? "Your full history." : "This month."} Adherence, quality, coaching and overtime.
       </p>
 
       <Section title="Overtime" count={ot.length}>
@@ -3400,7 +3402,6 @@ function PerformanceTab({ theme }: { theme: Theme }) {
   const [view, setView] = useState<"cycle" | "month" | "all">("cycle");
   return (
     <div className="space-y-5">
-      <MyRecords theme={theme} />
       {/* Time-range toggle: This Cycle (salary basis) · This Month (commission basis) · All-Time */}
       <div className="inline-flex rounded-xl p-1 flex-wrap" style={{ background: theme.inputBg, border: `1px solid ${theme.cardBorder}` }}>
         {([["cycle", "This Cycle"], ["month", "This Month"], ["all", "All-Time"]] as const).map(([id, label]) => (
@@ -3421,6 +3422,9 @@ function PerformanceTab({ theme }: { theme: Theme }) {
       {view === "cycle" && <CycleTrackerTab theme={theme} />}
       {view === "month" && <ThisMonthView theme={theme} />}
       {view === "all" && <PerformanceHistoryTab theme={theme} />}
+
+      {/* Records sit BELOW the performance cards, filtered by the same range toggle */}
+      <MyRecords theme={theme} view={view} />
     </div>
   );
 }
