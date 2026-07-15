@@ -1500,7 +1500,11 @@ const campaignsRouter = router({
   getOperationPlanMonth: publicProcedure
     .input(z.object({ campaignId: z.number(), year: z.number().int(), month: z.number().int().min(1).max(12) }))
     .query(async ({ input }) => {
-      const agents = await listWorkforceAgents(input.campaignId);
+      const allAgentsMonth = await listWorkforceAgents(input.campaignId);
+      const agents = allAgentsMonth.filter((a: { agentStatus?: string | null }) => {
+        const st = a.agentStatus;
+        return st !== "resigned" && st !== "terminated" && st !== "blacklisted" && st !== "frozen";
+      });
       const campaign = await getCampaignById(input.campaignId);
       const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
       // Build all days in the month
