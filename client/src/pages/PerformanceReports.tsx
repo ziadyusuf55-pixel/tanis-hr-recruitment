@@ -87,6 +87,19 @@ function AgentDetailChart({ crdts, cycleKey }: { crdts: string; cycleKey: string
             </LineChart>
           </ResponsiveContainer>
         </div>
+        <div>
+          <p className="text-[10px] text-muted-foreground mb-1 font-medium uppercase tracking-wide">Profit / Day</p>
+          <ResponsiveContainer width="100%" height={100}>
+            <LineChart data={chartData} margin={{ top: 4, right: 4, bottom: 4, left: -20 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.5} />
+              <XAxis dataKey="label" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
+              <YAxis tick={{ fontSize: 9 }} />
+              <Tooltip contentStyle={{ fontSize: 11, padding: "4px 8px" }} formatter={(v: number) => [`$${v.toFixed(2)}`, "Profit"]} />
+              {data.logoutDates.map((d: string) => <ReferenceLine key={d} x={d.slice(5)} stroke="#ef4444" strokeWidth={1.5} strokeDasharray="3 3" />)}
+              <Line type="monotone" dataKey="profit" stroke="#6366f1" strokeWidth={1.5} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
       </div>
       {data.logoutDates.length > 0 && <p className="text-[10px] text-muted-foreground">Red dashed lines = client logout dates.</p>}
     </div>
@@ -234,6 +247,7 @@ export default function PerformanceReports() {
                       </div>
                       <div className="text-right">
                         <p className="text-xs font-bold text-emerald-600">{fmt$(s.totalRevenue)}</p>
+                        <p className="text-[10px] font-semibold text-indigo-600">{fmt$(s.totalProfit)} profit</p>
                         <p className="text-[10px] text-muted-foreground">{fmt$(s.avgRevPerHr)}/hr</p>
                       </div>
                     </div>

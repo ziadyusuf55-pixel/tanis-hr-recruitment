@@ -11,7 +11,7 @@ import { CalendarDays, Plus, Check, X } from "lucide-react";
 const BRAND = "#FF6A13";
 
 type LeaveReq = { id: number; traineeCode: string; startDate: string; endDate: string; days: number; reason: string | null; leaveType: "casual" | "annual" | null; status: string; createdAt: number };
-type Bal = { id: number; traineeCode: string; casualTotal: number; annualTotal: number; casualUsed: number; annualUsed: number };
+type Bal = { id: number; traineeCode: string; year?: number; casualTotal: number; annualTotal: number; casualUsed: number; annualUsed: number };
 type Agent = { traineeCode: string; fullName: string | null; alias: string | null; agentStatus: string | null };
 
 export default function LeaveManagement() {
@@ -38,6 +38,25 @@ export default function LeaveManagement() {
   // Mass add
   const [massOpen, setMassOpen] = useState(false);
   const [mass, setMass] = useState({ casual: "", annual: "" });
+  const [editRow, setEditRow] = useState<number | null>(null);   // which balance id is being edited
+  const [draft, setDraft] = useState<{ casualTotal: string; casualUsed: string; annualTotal: string; annualUsed: string }>({ casualTotal: "", casualUsed: "", annualTotal: "", annualUsed: "" });
+  const setBalance = trpc.hr.setBalance.useMutation({
+    onSuccess: () => { toast.success("تم تحديث الرصيد"); setEditRow(null); utils.leave.listBalances.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const startEdit = (b: Bal) => {
+    setEditRow(b.id);
+    setDraft({ casualTotal: String(b.casualTotal), casualUsed: String(b.casualUsed), annualTotal: String(b.annualTotal), annualUsed: String(b.annualUsed) });
+  };
+  const saveEdit = (b: Bal & { year?: number }) => {
+    setBalance.mutate({
+      traineeCode: b.traineeCode,
+      year: (b as { year?: number }).year ?? new Date().getFullYear(),
+      casualTotal: Number(draft.casualTotal || 0), casualUsed: Number(draft.casualUsed || 0),
+      annualTotal: Number(draft.annualTotal || 0), annualUsed: Number(draft.annualUsed || 0),
+    });
+  };
+
   const massAdd = trpc.leave.massAdd.useMutation({
     onSuccess: (r) => { toast.success(`Balances added — ${r.created} created, ${r.updated} updated`); setMassOpen(false); utils.leave.listBalances.invalidate(); },
     onError: (e) => toast.error(e.message),
@@ -121,18 +140,39 @@ export default function LeaveManagement() {
                 <th className="px-3 py-2 font-medium">Agent</th>
                 <th className="px-3 py-2 font-medium">عارضة — الرصيد</th><th className="px-3 py-2 font-medium">المستخدم</th><th className="px-3 py-2 font-medium">المتبقي</th>
                 <th className="px-3 py-2 font-medium">اعتيادية — الرصيد</th><th className="px-3 py-2 font-medium">المستخدم</th><th className="px-3 py-2 font-medium">المتبقي</th>
+                <th className="px-3 py-2 font-medium text-right">تعديل</th>
               </tr></thead>
               <tbody>
-                {bals.map(b => (
-                  <tr key={b.id} className="border-b last:border-0 hover:bg-muted/30">
-                    <td className="px-3 py-2 font-medium">{agentName(b.traineeCode)} <span className="text-xs text-muted-foreground">({b.traineeCode})</span></td>
-                    <td className="px-3 py-2">{b.casualTotal}</td><td className="px-3 py-2">{b.casualUsed}</td>
-                    <td className="px-3 py-2 font-semibold">{Math.max(0, b.casualTotal - b.casualUsed)}</td>
-                    <td className="px-3 py-2">{b.annualTotal}</td><td className="px-3 py-2">{b.annualUsed}</td>
-                    <td className="px-3 py-2 font-semibold">{Math.max(0, b.annualTotal - b.annualUsed)}</td>
-                  </tr>
-                ))}
-                {bals.length === 0 && <tr><td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">No balances yet — use "Mass add balances" to set the year's allowance for all agents.</td></tr>}
+                {bals.map(b => {
+                  const editing = editRow === b.id;
+                  const nInput = (k: keyof typeof draft) => (
+                    <Input type="number" min={0} value={draft[k]} onChange={e => setDraft({ ...draft, [k]: e.target.value })} className="h-8 w-16 text-sm" />
+                  );
+                  const casRemain = editing ? Math.max(0, Number(draft.casualTotal || 0) - Number(draft.casualUsed || 0)) : Math.max(0, b.casualTotal - b.casualUsed);
+                  const annRemain = editing ? Math.max(0, Number(draft.annualTotal || 0) - Number(draft.annualUsed || 0)) : Math.max(0, b.annualTotal - b.annualUsed);
+                  return (
+                    <tr key={b.id} className="border-b last:border-0 hover:bg-muted/30">
+                      <td className="px-3 py-2 font-medium">{agentName(b.traineeCode)} <span className="text-xs text-muted-foreground">({b.traineeCode})</span></td>
+                      <td className="px-3 py-2">{editing ? nInput("casualTotal") : b.casualTotal}</td>
+                      <td className="px-3 py-2">{editing ? nInput("casualUsed") : b.casualUsed}</td>
+                      <td className="px-3 py-2 font-semibold">{casRemain}</td>
+                      <td className="px-3 py-2">{editing ? nInput("annualTotal") : b.annualTotal}</td>
+                      <td className="px-3 py-2">{editing ? nInput("annualUsed") : b.annualUsed}</td>
+                      <td className="px-3 py-2 font-semibold">{annRemain}</td>
+                      <td className="px-3 py-2 text-right whitespace-nowrap">
+                        {editing ? (
+                          <span className="space-x-1.5">
+                            <Button size="sm" className="h-7 text-white" style={{ background: "#059669" }} disabled={setBalance.isPending} onClick={() => saveEdit(b)}><Check className="w-3.5 h-3.5" /></Button>
+                            <Button size="sm" variant="outline" className="h-7" onClick={() => setEditRow(null)}><X className="w-3.5 h-3.5" /></Button>
+                          </span>
+                        ) : (
+                          <Button size="sm" variant="outline" className="h-7" onClick={() => startEdit(b)}>تعديل</Button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+                {bals.length === 0 && <tr><td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">No balances yet — use "Mass add balances" to set the year's allowance for all agents.</td></tr>}
               </tbody>
             </table>
           </CardContent></Card>

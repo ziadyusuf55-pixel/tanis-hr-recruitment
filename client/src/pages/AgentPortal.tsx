@@ -2314,8 +2314,7 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
     );
   }
 
-  const { stats, todayStats, deductions, ot, cycleKey, dateRange } = data;
-  const adjustments = (((data as any).adjustments) ?? []) as Array<{ type: string; label: string; amount: string | number }>;
+  const { stats, todayStats, ot, cycleKey, dateRange } = data;
 
   // Today section
   const todayLoginHours = todayStats?.reduce((s, r) => s + parseFloat(String(r.loginHours ?? 0)), 0) ?? 0;
@@ -2328,16 +2327,9 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
   const cycleProfit = stats.reduce((s, r) => s + parseFloat(String(r.profit ?? 0)), 0);
   const revenuePerHour = cycleLoginHours > 0 ? cycleRevenue / cycleLoginHours : 0;
 
-  // Deductions total
-  const totalDeductions = deductions.reduce((s, r) => s + parseFloat(String(r.deductionAmount ?? 0)), 0);
-
   // OT totals
   const totalOTHours = ot.reduce((s, r) => s + parseFloat(String(r.hours ?? 0)), 0);
   const totalOTEgp = ot.reduce((s, r) => s + parseFloat(String(r.egpAmount ?? 0)), 0);
-  const otherBonuses = adjustments.filter(a => a.type === "bonus");
-  const otherDeductionsAdj = adjustments.filter(a => a.type === "deduction");
-  const totalOtherBonus = otherBonuses.reduce((s, a) => s + parseFloat(String(a.amount ?? 0)), 0);
-  const totalOtherDed = otherDeductionsAdj.reduce((s, a) => s + parseFloat(String(a.amount ?? 0)), 0);
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -2414,44 +2406,6 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
         </div>
       </div>
 
-      {/* Section 3 — Deductions */}
-      <div className="rounded-xl p-5 space-y-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <XCircle className="w-4 h-4" style={{ color: "oklch(0.55 0.22 25)" }} />
-            <h3 className="font-semibold text-sm" style={{ color: theme.text }}>Deductions This Cycle</h3>
-          </div>
-          {totalDeductions > 0 && (
-            <span className="text-sm font-bold" style={{ color: "oklch(0.55 0.22 25)" }}>-EGP {totalDeductions.toLocaleString()}</span>
-          )}
-        </div>
-        {deductions.length === 0 ? (
-          <p className="text-sm text-center py-4" style={{ color: theme.textFaint }}>No approved deductions this cycle.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
-                  {["Date", "Violation", "Hours", "Amount"].map(h => (
-                    <th key={h} className="text-left py-2 px-2 font-semibold" style={{ color: theme.textFaint }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {deductions.map((d, i) => (
-                  <tr key={i} style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
-                    <td className="py-2 px-2" style={{ color: theme.textMuted }}>{d.date}</td>
-                    <td className="py-2 px-2" style={{ color: theme.text }}>{d.violationType}</td>
-                    <td className="py-2 px-2" style={{ color: theme.textMuted }}>{fmtHM(parseFloat(String(d.hours ?? 0)))}</td>
-                    <td className="py-2 px-2 font-medium" style={{ color: "oklch(0.55 0.22 25)" }}>-EGP {parseFloat(String(d.deductionAmount ?? 0)).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
       {/* Section 4 — OT */}
       <div className="rounded-xl p-5 space-y-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
         <div className="flex items-center justify-between">
@@ -2484,78 +2438,6 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
                     </td>
                     <td className="py-2 px-2" style={{ color: theme.textMuted }}>{fmtHM(parseFloat(String(o.hours ?? 0)))}</td>
                     <td className="py-2 px-2 font-medium" style={{ color: "oklch(0.55 0.18 145)" }}>+EGP {parseFloat(String(o.egpAmount ?? 0)).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Section 5 — Other Bonuses (admin manual adjustments) */}
-      <div className="rounded-xl p-5 space-y-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <CheckCircle className="w-4 h-4" style={{ color: "oklch(0.55 0.18 145)" }} />
-            <h3 className="font-semibold text-sm" style={{ color: theme.text }}>Other Bonuses</h3>
-          </div>
-          {totalOtherBonus > 0 && (
-            <span className="text-sm font-bold" style={{ color: "oklch(0.55 0.18 145)" }}>+EGP {totalOtherBonus.toLocaleString()}</span>
-          )}
-        </div>
-        {otherBonuses.length === 0 ? (
-          <p className="text-sm text-center py-4" style={{ color: theme.textFaint }}>No other bonuses this cycle.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
-                  {["Description", "Amount"].map(h => (
-                    <th key={h} className="text-left py-2 px-2 font-semibold" style={{ color: theme.textFaint }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {otherBonuses.map((a, i) => (
-                  <tr key={i} style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
-                    <td className="py-2 px-2" style={{ color: theme.text }}>{a.label}</td>
-                    <td className="py-2 px-2 font-medium" style={{ color: "oklch(0.55 0.18 145)" }}>+EGP {parseFloat(String(a.amount ?? 0)).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-
-      {/* Section 6 — Other Deductions (admin manual adjustments) */}
-      <div className="rounded-xl p-5 space-y-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <XCircle className="w-4 h-4" style={{ color: "oklch(0.55 0.22 25)" }} />
-            <h3 className="font-semibold text-sm" style={{ color: theme.text }}>Other Deductions</h3>
-          </div>
-          {totalOtherDed > 0 && (
-            <span className="text-sm font-bold" style={{ color: "oklch(0.55 0.22 25)" }}>-EGP {totalOtherDed.toLocaleString()}</span>
-          )}
-        </div>
-        {otherDeductionsAdj.length === 0 ? (
-          <p className="text-sm text-center py-4" style={{ color: theme.textFaint }}>No other deductions this cycle.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
-                  {["Description", "Amount"].map(h => (
-                    <th key={h} className="text-left py-2 px-2 font-semibold" style={{ color: theme.textFaint }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {otherDeductionsAdj.map((a, i) => (
-                  <tr key={i} style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
-                    <td className="py-2 px-2" style={{ color: theme.text }}>{a.label}</td>
-                    <td className="py-2 px-2 font-medium" style={{ color: "oklch(0.55 0.22 25)" }}>-EGP {parseFloat(String(a.amount ?? 0)).toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>
