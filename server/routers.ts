@@ -1708,6 +1708,7 @@ const workforceRouter = router({
       emergencyContactPhone: z.string().max(64).optional(),
       emergencyContactRelation: z.string().max(100).optional(),
       profileLocked: z.boolean().optional(),
+      agentStatus: z.enum(["active", "inactive", "frozen", "resigned", "terminated", "blacklisted"]).optional(),
     }))
      .mutation(async ({ input }) => {
       const { traineeCode, ...rest } = input;

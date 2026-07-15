@@ -1471,7 +1471,7 @@ export async function createWorkforceAgent(data: {
 export async function updateWorkforceAgent(traineeCode: string, data: Partial<{
   fullName: string; alias: string; email: string; phone: string; campaignId: number;
   shiftHours: string; teamLeader: string; offDay1: number; offDay2: number; joinDate: number; isActive: boolean;
-  dialerCredentials: string; crdts: string; agentStatus: "active" | "inactive" | "resigned" | "terminated";
+  dialerCredentials: string; crdts: string; agentStatus: "active" | "inactive" | "frozen" | "resigned" | "terminated" | "blacklisted";
   workLocation: "office" | "wfh"; avatarUrl: string;
   nationalId: string; nationalIdExpiry: string; dateOfBirth: string; gender: "male" | "female";
   nationality: string; maritalStatus: "single" | "married" | "divorced" | "widowed";
