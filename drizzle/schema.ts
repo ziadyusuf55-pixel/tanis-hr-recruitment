@@ -453,7 +453,7 @@ export const workforceAgents = mysqlTable("workforce_agents", {
   joinDate: bigint("joinDate", { mode: "number" }),   // UTC ms — date joined operations
   dialerCredentials: varchar("dialerCredentials", { length: 500 }), // dialer/hub login credentials (admin fills manually)
   crdts: varchar("crdts", { length: 500 }),                         // CRDTS field — admin fills manually
-  agentStatus: mysqlEnum("agentStatus", ["active", "inactive", "resigned", "terminated", "blacklisted"]).default("active").notNull(),
+  agentStatus: mysqlEnum("agentStatus", ["active", "inactive", "frozen", "resigned", "terminated", "blacklisted"]).default("active").notNull(),
   employeeType: mysqlEnum("employeeType", ["agent", "team_lead", "manager", "hr", "ops_manager", "finance", "admin"]).default("agent").notNull(),
   openId: varchar("openId", { length: 255 }),   // links a Hub login to this employee record
   salarySettled: boolean("salarySettled").default(true).notNull(),   // false = former agent still owed pay → stays visible in Operations
