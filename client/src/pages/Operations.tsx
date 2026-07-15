@@ -38,6 +38,7 @@ import {
   ShieldOff,
   Download,
   KeyRound,
+  Snowflake,
   Copy,
   Check,
   Shuffle,
@@ -58,6 +59,17 @@ const DOC_LABELS: Record<string, string> = {
 
 function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose: () => void }) {
   const utils = trpc.useUtils();
+  // Freeze / unfreeze — a frozen agent is pulled off the Operation Plan without
+  // being separated. Reuses workforce.update (no new endpoint needed).
+  const freezeAgent = trpc.workforce.update.useMutation({
+    onSuccess: () => {
+      utils.workforce.list.invalidate();
+      utils.campaigns.getOperationPlan.invalidate();
+      toast.success(agent.agentStatus === "frozen" ? "Agent unfrozen" : "Agent frozen");
+      onClose();
+    },
+    onError: (e) => toast.error(e.message),
+  });
   const { data: docs = [] } = trpc.documents.listByAgent.useQuery({ traineeCode: agent.traineeCode });
   const { data: allPayments = [] } = trpc.paymentMethods.listAll.useQuery();
   const payments = (allPayments as Array<{ traineeCode?: string } & Record<string, unknown>>).filter(p => p.traineeCode === agent.traineeCode);
@@ -193,6 +205,18 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
               onClick={() => { setNewPwResult(null); setCopied(false); setResetPwDialog(true); }}
             >
               <KeyRound className="h-3.5 w-3.5" /> Reset Password
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-cyan-700 border-cyan-200 hover:bg-cyan-50"
+              disabled={freezeAgent.isPending}
+              onClick={() => freezeAgent.mutate({
+                traineeCode: agent.traineeCode,
+                agentStatus: agent.agentStatus === "frozen" ? "active" : "frozen",
+              })}
+            >
+              <Snowflake className="h-3.5 w-3.5" /> {agent.agentStatus === "frozen" ? "Unfreeze" : "Freeze"}
             </Button>
           </div>
         )}

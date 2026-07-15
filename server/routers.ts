@@ -1526,7 +1526,14 @@ const campaignsRouter = router({
   getOperationPlan: publicProcedure
     .input(z.object({ campaignId: z.number(), weekOffset: z.number().int().optional() }))
     .query(async ({ input }) => {
-      const agents = await listWorkforceAgents(input.campaignId);
+      const allAgents = await listWorkforceAgents(input.campaignId);
+      // The Operation Plan is a live shift schedule — anyone who has LEFT the floor
+      // (resigned / terminated / blacklisted / frozen) does not belong here, even if
+      // their final pay is still being settled. Settlement is tracked in the exit flow.
+      const agents = allAgents.filter((a: { agentStatus?: string | null }) => {
+        const st = a.agentStatus;
+        return st !== "resigned" && st !== "terminated" && st !== "blacklisted" && st !== "frozen";
+      });
       const campaign = await getCampaignById(input.campaignId);
       // Build the Mon-Sun week starting from weekOffset weeks from current Monday
       const now = new Date();
