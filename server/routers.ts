@@ -2671,7 +2671,7 @@ const employeesRouter = router({
         db.select().from(payrollRecords).where(eq(payrollRecords.crdts, crdts)).orderBy(desc(payrollRecords.month)),
         db.select().from(commissions).where(eq(commissions.crdts, crdts)).orderBy(desc(commissions.performanceMonth)),
         db.select().from(commissionLeaderboard).where(eq(commissionLeaderboard.crdts, crdts)).orderBy(desc(commissionLeaderboard.cycleKey)),
-        db.select().from(cycleStats).where(eq(cycleStats.crdts, crdts)).orderBy(asc(cycleStats.month)),
+        db.select().from(cycleStats).where(eq(cycleStats.crdts, crdts)).orderBy(asc(cycleStats.cycleKey)),
         db.select().from(workforceAgents).where(eq(workforceAgents.crdts, crdts)).limit(1),
       ]);
 

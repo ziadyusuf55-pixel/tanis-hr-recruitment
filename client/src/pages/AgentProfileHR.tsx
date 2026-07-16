@@ -196,7 +196,7 @@ function Profile({ agent }: { agent: Agent }) {
         <Card><CardContent className="p-4">
           <p className="text-sm font-semibold flex items-center gap-1.5 mb-3"><TrendingUp className="w-4 h-4" style={{ color: BRAND }} /> Performance</p>
           <ResponsiveContainer width="100%" height={160}>
-            <LineChart data={(full!.performance as PerfRow[]).map(p => ({ month: p.month, revenue: Number(p.revenue || 0), profit: Number(p.profit || 0) }))} margin={{ top: 4, right: 8, bottom: 4, left: -18 }}>
+            <LineChart data={(full!.performance as PerfRow[]).map(p => ({ month: p.cycleKey, revenue: Number(p.revenue || 0), profit: Number(p.profit || 0) }))} margin={{ top: 4, right: 8, bottom: 4, left: -18 }}>
               <CartesianGrid strokeDasharray="3 3" opacity={0.4} />
               <XAxis dataKey="month" tick={{ fontSize: 9 }} />
               <YAxis tick={{ fontSize: 9 }} />
@@ -311,6 +311,6 @@ function fmtFull(t: unknown): string {
   return isNaN(d.getTime()) ? String(t) : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
 
-type PerfRow = { month: string; revenue: string | number | null; profit: string | number | null };
+type PerfRow = { cycleKey: string; revenue: string | number | null; profit: string | number | null };
 type PayrollRow = { id: number; month: string; baseSalary: string | number | null; commissionEgp: string | number | null; commission: string | number | null; totalDeductions: string | number | null; netPay: string | number | null; paymentStatus: string | null; status: string | null };
 type LeaderRow = { id: number; cycleKey: string; campaignName: string | null; rank: number | null; revenue: string | number | null; profit: string | number | null; commissionEgp: string | number | null };
