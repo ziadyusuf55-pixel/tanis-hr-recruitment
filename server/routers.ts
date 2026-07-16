@@ -1503,7 +1503,7 @@ const campaignsRouter = router({
       const allAgentsMonth = await listWorkforceAgents(input.campaignId);
       const agents = allAgentsMonth.filter((a: { agentStatus?: string | null }) => {
         const st = a.agentStatus;
-        return st !== "resigned" && st !== "terminated" && st !== "blacklisted" && st !== "frozen";
+        return st !== "resigned" && st !== "terminated" && st !== "blacklisted" && st !== "frozen" && st !== "inactive";
       });
       const campaign = await getCampaignById(input.campaignId);
       const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -1536,7 +1536,7 @@ const campaignsRouter = router({
       // their final pay is still being settled. Settlement is tracked in the exit flow.
       const agents = allAgents.filter((a: { agentStatus?: string | null }) => {
         const st = a.agentStatus;
-        return st !== "resigned" && st !== "terminated" && st !== "blacklisted" && st !== "frozen";
+        return st !== "resigned" && st !== "terminated" && st !== "blacklisted" && st !== "frozen" && st !== "inactive";
       });
       const campaign = await getCampaignById(input.campaignId);
       // Build the Mon-Sun week starting from weekOffset weeks from current Monday

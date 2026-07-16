@@ -138,8 +138,9 @@ export default function LeaveManagement() {
             <table className="w-full text-sm">
               <thead><tr className="border-b text-left text-muted-foreground">
                 <th className="px-3 py-2 font-medium">Agent</th>
-                <th className="px-3 py-2 font-medium">عارضة — الرصيد</th><th className="px-3 py-2 font-medium">المستخدم</th><th className="px-3 py-2 font-medium">المتبقي</th>
-                <th className="px-3 py-2 font-medium">اعتيادية — الرصيد</th><th className="px-3 py-2 font-medium">المستخدم</th><th className="px-3 py-2 font-medium">المتبقي</th>
+                <th className="px-3 py-2 font-medium">عارضة — الرصيد (Casual — Total)</th><th className="px-3 py-2 font-medium">المستخدم (Used)</th>
+                <th className="px-3 py-2 font-medium">اعتيادية — الرصيد (Annual — Total)</th><th className="px-3 py-2 font-medium">المستخدم (Used)</th>
+                <th className="px-3 py-2 font-medium">المتبقي (Remaining)</th>
                 <th className="px-3 py-2 font-medium text-right">تعديل</th>
               </tr></thead>
               <tbody>
@@ -150,15 +151,15 @@ export default function LeaveManagement() {
                   );
                   const casRemain = editing ? Math.max(0, Number(draft.casualTotal || 0) - Number(draft.casualUsed || 0)) : Math.max(0, b.casualTotal - b.casualUsed);
                   const annRemain = editing ? Math.max(0, Number(draft.annualTotal || 0) - Number(draft.annualUsed || 0)) : Math.max(0, b.annualTotal - b.annualUsed);
+                  const totalRemain = casRemain + annRemain;
                   return (
                     <tr key={b.id} className="border-b last:border-0 hover:bg-muted/30">
                       <td className="px-3 py-2 font-medium">{agentName(b.traineeCode)} <span className="text-xs text-muted-foreground">({b.traineeCode})</span></td>
                       <td className="px-3 py-2">{editing ? nInput("casualTotal") : b.casualTotal}</td>
                       <td className="px-3 py-2">{editing ? nInput("casualUsed") : b.casualUsed}</td>
-                      <td className="px-3 py-2 font-semibold">{casRemain}</td>
                       <td className="px-3 py-2">{editing ? nInput("annualTotal") : b.annualTotal}</td>
                       <td className="px-3 py-2">{editing ? nInput("annualUsed") : b.annualUsed}</td>
-                      <td className="px-3 py-2 font-semibold">{annRemain}</td>
+                      <td className="px-3 py-2 font-semibold text-emerald-700">{totalRemain}</td>
                       <td className="px-3 py-2 text-right whitespace-nowrap">
                         {editing ? (
                           <span className="space-x-1.5">
@@ -172,7 +173,7 @@ export default function LeaveManagement() {
                     </tr>
                   );
                 })}
-                {bals.length === 0 && <tr><td colSpan={8} className="px-3 py-8 text-center text-muted-foreground">No balances yet — use "Mass add balances" to set the year's allowance for all agents.</td></tr>}
+                {bals.length === 0 && <tr><td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">No balances yet — use "Mass add balances" to set the year's allowance for all agents.</td></tr>}
               </tbody>
             </table>
           </CardContent></Card>
