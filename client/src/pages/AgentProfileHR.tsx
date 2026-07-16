@@ -1,11 +1,13 @@
 import { useState, useMemo } from "react";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { UserCog, Phone, MapPin, Star, AlertCircle, BookOpen, CalendarDays, LogOut, Save } from "lucide-react";
+import { UserCog, Phone, MapPin, Star, AlertCircle, BookOpen, CalendarDays, LogOut, Save, ChevronDown, ChevronRight, DollarSign, TrendingUp, Award, Clock } from "lucide-react";
 
 const BRAND = "#FF6A13";
 
@@ -75,6 +77,11 @@ function Profile({ agent }: { agent: Agent }) {
   const { data: balances = [] } = trpc.leave.listBalances.useQuery({});
   const { data: leaveReqs = [] } = trpc.leave.myRequests.useQuery({ traineeCode: code });
   const { data: exitData } = trpc.exit.get.useQuery({ traineeCode: code });
+  const { data: full } = trpc.employees.profileFull.useQuery({ crdts, traineeCode: code }, { enabled: !!crdts });
+
+  // Money sections (salary + commission) visible to everyone EXCEPT BD.
+  const { user } = useAuth();
+  const canSeeMoney = user?.role !== "bd";
 
   const bal = (balances as { traineeCode: string; casualTotal: number; annualTotal: number; casualUsed: number; annualUsed: number }[]).find(b => b.traineeCode === code);
 
@@ -169,6 +176,89 @@ function Profile({ agent }: { agent: Agent }) {
           sub: `${o.date} · ${Number(o.hours || 0)} hrs`,
         }))} />
 
+      {/* ── Joining & training timeline ── */}
+      <Card><CardContent className="p-4">
+        <p className="text-sm font-semibold flex items-center gap-1.5 mb-3"><Clock className="w-4 h-4" style={{ color: BRAND }} /> Timeline</p>
+        <div className="grid sm:grid-cols-3 gap-3 text-sm">
+          <TimelineItem label="Joined training" value={fmtFull((full?.candidate as { createdAt?: number } | null)?.createdAt)} />
+          <TimelineItem label="Joined operations" value={fmtFull(full?.joinDate)} />
+          <TimelineItem label="Status" value={agent.agentStatus || "active"} />
+        </div>
+        {exitData && (exitData as { lastWorkingDay?: string | null }).lastWorkingDay && (
+          <div className="mt-3 pt-3 border-t">
+            <TimelineItem label="Last working day" value={fmtFull((exitData as { lastWorkingDay?: string }).lastWorkingDay)} />
+          </div>
+        )}
+      </CardContent></Card>
+
+      {/* ── Performance trend (from cycle_stats) ── */}
+      {(full?.performance as unknown[])?.length > 0 && (
+        <Card><CardContent className="p-4">
+          <p className="text-sm font-semibold flex items-center gap-1.5 mb-3"><TrendingUp className="w-4 h-4" style={{ color: BRAND }} /> Performance</p>
+          <ResponsiveContainer width="100%" height={160}>
+            <LineChart data={(full!.performance as PerfRow[]).map(p => ({ month: p.month, revenue: Number(p.revenue || 0), profit: Number(p.profit || 0) }))} margin={{ top: 4, right: 8, bottom: 4, left: -18 }}>
+              <CartesianGrid strokeDasharray="3 3" opacity={0.4} />
+              <XAxis dataKey="month" tick={{ fontSize: 9 }} />
+              <YAxis tick={{ fontSize: 9 }} />
+              <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v: number) => `$${v.toFixed(0)}`} />
+              <Line type="monotone" dataKey="revenue" stroke="#10b981" strokeWidth={1.5} dot={false} name="Revenue" />
+              <Line type="monotone" dataKey="profit" stroke="#6366f1" strokeWidth={1.5} dot={false} name="Profit" />
+            </LineChart>
+          </ResponsiveContainer>
+        </CardContent></Card>
+      )}
+
+      {/* ── Salary history (money — hidden from BD) ── */}
+      {canSeeMoney && (
+        <Collapsible icon={<DollarSign className="w-4 h-4" style={{ color: BRAND }} />} title={`Salary history (${(full?.payroll as unknown[] ?? []).length})`} defaultOpen={false}>
+          {(full?.payroll as unknown[] ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground py-2">No salary records yet.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {(full!.payroll as PayrollRow[]).map(p => (
+                <div key={p.id} className="flex items-center justify-between gap-3 py-1.5 border-b last:border-0">
+                  <div>
+                    <p className="text-sm font-medium">{p.month}</p>
+                    <p className="text-xs text-muted-foreground">
+                      Base {Number(p.baseSalary || 0).toLocaleString()}
+                      {Number(p.commissionEgp || p.commission || 0) ? ` · Comm ${Number(p.commissionEgp || p.commission).toLocaleString()}` : ""}
+                      {Number(p.totalDeductions || 0) ? ` · −${Number(p.totalDeductions).toLocaleString()}` : ""}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-sm font-bold text-emerald-600">{Number(p.netPay || 0).toLocaleString()} EGP</p>
+                    <p className="text-[10px] text-muted-foreground">{p.paymentStatus || p.status || ""}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Collapsible>
+      )}
+
+      {/* ── Commission history (money — hidden from BD) ── */}
+      {canSeeMoney && (
+        <Collapsible icon={<Award className="w-4 h-4" style={{ color: BRAND }} />} title={`Commission history (${(full?.leaderboard as unknown[] ?? []).length})`} defaultOpen={false}>
+          {(full?.leaderboard as unknown[] ?? []).length === 0 ? (
+            <p className="text-sm text-muted-foreground py-2">No commission records yet.</p>
+          ) : (
+            <div className="space-y-1.5">
+              {(full!.leaderboard as LeaderRow[]).map(c => (
+                <div key={c.id} className="flex items-center justify-between gap-3 py-1.5 border-b last:border-0">
+                  <div>
+                    <p className="text-sm font-medium">{c.cycleKey} {c.campaignName ? `· ${c.campaignName}` : ""}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {c.rank ? `Rank #${c.rank} · ` : ""}Rev {Number(c.revenue || 0).toLocaleString()} · Profit {Number(c.profit || 0).toLocaleString()}
+                    </p>
+                  </div>
+                  <p className="text-sm font-bold text-indigo-600">{Number(c.commissionEgp || 0).toLocaleString()} EGP</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </Collapsible>
+      )}
+
       <p className="text-xs text-muted-foreground flex items-center gap-1"><Phone className="w-3 h-3" /> Adherence, quality, coaching and OT sync nightly from the sheets. Payroll is calculated separately.</p>
     </div>
   );
@@ -190,3 +280,37 @@ function MirrorCard({ icon, title, rows }: { icon: React.ReactNode; title: strin
     </CardContent></Card>
   );
 }
+
+// ── Profile helper components ──
+function Collapsible({ icon, title, defaultOpen, children }: { icon: React.ReactNode; title: string; defaultOpen?: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(!!defaultOpen);
+  return (
+    <Card><CardContent className="p-4">
+      <button onClick={() => setOpen(o => !o)} className="w-full flex items-center gap-1.5 text-sm font-semibold">
+        {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+        {icon} {title}
+      </button>
+      {open && <div className="mt-3">{children}</div>}
+    </CardContent></Card>
+  );
+}
+
+function TimelineItem({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border p-2.5">
+      <p className="text-[11px] text-muted-foreground">{label}</p>
+      <p className="text-sm font-medium capitalize">{value || "—"}</p>
+    </div>
+  );
+}
+
+// dd Mon yyyy for a ms timestamp or date string
+function fmtFull(t: unknown): string {
+  if (t === null || t === undefined || t === "") return "—";
+  const d = new Date(typeof t === "number" ? t : String(t));
+  return isNaN(d.getTime()) ? String(t) : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+type PerfRow = { month: string; revenue: string | number | null; profit: string | number | null };
+type PayrollRow = { id: number; month: string; baseSalary: string | number | null; commissionEgp: string | number | null; commission: string | number | null; totalDeductions: string | number | null; netPay: string | number | null; paymentStatus: string | null; status: string | null };
+type LeaderRow = { id: number; cycleKey: string; campaignName: string | null; rank: number | null; revenue: string | number | null; profit: string | number | null; commissionEgp: string | number | null };

@@ -1500,7 +1500,11 @@ const campaignsRouter = router({
   getOperationPlanMonth: publicProcedure
     .input(z.object({ campaignId: z.number(), year: z.number().int(), month: z.number().int().min(1).max(12) }))
     .query(async ({ input }) => {
-      const agents = await listWorkforceAgents(input.campaignId);
+      const allAgentsMonth = await listWorkforceAgents(input.campaignId);
+      const agents = allAgentsMonth.filter((a: { agentStatus?: string | null }) => {
+        const st = a.agentStatus;
+        return st !== "resigned" && st !== "terminated" && st !== "blacklisted" && st !== "frozen";
+      });
       const campaign = await getCampaignById(input.campaignId);
       const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
       // Build all days in the month
@@ -1708,6 +1712,7 @@ const workforceRouter = router({
       emergencyContactPhone: z.string().max(64).optional(),
       emergencyContactRelation: z.string().max(100).optional(),
       profileLocked: z.boolean().optional(),
+      agentStatus: z.enum(["active", "inactive", "frozen", "resigned", "terminated", "blacklisted"]).optional(),
     }))
      .mutation(async ({ input }) => {
       const { traineeCode, ...rest } = input;
@@ -2649,6 +2654,41 @@ const otRouter = router({
 const NON_AGENT_TYPES = ["team_lead", "manager", "hr", "ops_manager", "finance", "admin"] as const;
 
 const employeesRouter = router({
+  /** Complete profile bundle for one agent — everything in one call:
+   *  salary history, commission history, performance, joining/training dates.
+   *  Money sections are visible to all roles EXCEPT bd (checked on the client too). */
+  profileFull: protectedProcedure
+    .input(z.object({ crdts: z.string(), traineeCode: z.string().optional() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq, or, desc, asc } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return null;
+      const { payrollRecords, commissions, commissionLeaderboard, cycleStats, candidates, workforceAgents } = await import("../drizzle/schema");
+      const crdts = input.crdts;
+
+      const [payroll, commissionRows, leaderboard, perf, wf] = await Promise.all([
+        db.select().from(payrollRecords).where(eq(payrollRecords.crdts, crdts)).orderBy(desc(payrollRecords.month)),
+        db.select().from(commissions).where(eq(commissions.crdts, crdts)).orderBy(desc(commissions.performanceMonth)),
+        db.select().from(commissionLeaderboard).where(eq(commissionLeaderboard.crdts, crdts)).orderBy(desc(commissionLeaderboard.cycleKey)),
+        db.select().from(cycleStats).where(eq(cycleStats.crdts, crdts)).orderBy(asc(cycleStats.month)),
+        db.select().from(workforceAgents).where(eq(workforceAgents.crdts, crdts)).limit(1),
+      ]);
+
+      // Recruitment dates: joined-training (candidate.createdAt) + joined-ops (workforce.joinDate)
+      let candidate = null as unknown;
+      const wfRow = wf[0];
+      if (wfRow?.candidateId) {
+        const cand = await db.select().from(candidates).where(eq(candidates.id, wfRow.candidateId)).limit(1);
+        candidate = cand[0] ?? null;
+      }
+
+      return {
+        payroll, commissions: commissionRows, leaderboard, performance: perf,
+        candidate, joinDate: wfRow?.joinDate ?? null,
+      };
+    }),
+
   /** Everyone — agents AND management. Used by the Employee Profiles tab. */
   list: protectedProcedure
     .input(z.object({ type: z.string().optional() }).optional())
