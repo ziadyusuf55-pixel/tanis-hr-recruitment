@@ -1501,9 +1501,9 @@ const campaignsRouter = router({
     .input(z.object({ campaignId: z.number(), year: z.number().int(), month: z.number().int().min(1).max(12) }))
     .query(async ({ input }) => {
       const allAgentsMonth = await listWorkforceAgents(input.campaignId);
-      const agents = allAgentsMonth.filter((a: { agentStatus?: string | null }) => {
+      const agents = allAgentsMonth.filter((a: { agentStatus?: string | null; isActive?: boolean | null }) => {
         const st = a.agentStatus;
-        return st !== "resigned" && st !== "terminated" && st !== "blacklisted" && st !== "frozen" && st !== "inactive";
+        return st !== "resigned" && st !== "terminated" && st !== "blacklisted" && st !== "frozen" && st !== "inactive" && a.isActive !== false;
       });
       const campaign = await getCampaignById(input.campaignId);
       const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -1534,9 +1534,9 @@ const campaignsRouter = router({
       // The Operation Plan is a live shift schedule — anyone who has LEFT the floor
       // (resigned / terminated / blacklisted / frozen) does not belong here, even if
       // their final pay is still being settled. Settlement is tracked in the exit flow.
-      const agents = allAgents.filter((a: { agentStatus?: string | null }) => {
+      const agents = allAgents.filter((a: { agentStatus?: string | null; isActive?: boolean | null }) => {
         const st = a.agentStatus;
-        return st !== "resigned" && st !== "terminated" && st !== "blacklisted" && st !== "frozen" && st !== "inactive";
+        return st !== "resigned" && st !== "terminated" && st !== "blacklisted" && st !== "frozen" && st !== "inactive" && a.isActive !== false;
       });
       const campaign = await getCampaignById(input.campaignId);
       // Build the Mon-Sun week starting from weekOffset weeks from current Monday
