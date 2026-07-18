@@ -3205,9 +3205,21 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
  */
 function MyRecords({ theme, view }: { theme: Theme; view: "cycle" | "month" | "all" }) {
   const { data } = trpc.agent.myRecords.useQuery();
-  // Match the range toggle above: "all" shows everything, otherwise this month.
-  const thisMonth = new Date().toISOString().slice(0, 7);
-  const inRange = (d: string) => view === "all" || (d || "").slice(0, 7) === thisMonth;
+  // Match the range toggle above exactly:
+  //   cycle = the 26th→25th payroll cycle we're currently in
+  //   month = the calendar month
+  //   all   = everything
+  const now = new Date();
+  const cycleStart = new Date(now.getFullYear(), now.getMonth() - (now.getDate() >= 26 ? 0 : 1), 26);
+  const cycleEnd = new Date(cycleStart.getFullYear(), cycleStart.getMonth() + 1, 25);
+  const thisMonth = now.toISOString().slice(0, 7);
+  const inRange = (d: string) => {
+    if (!d) return false;
+    if (view === "all") return true;
+    if (view === "month") return d.slice(0, 7) === thisMonth;
+    const dt = new Date(d);
+    return dt >= cycleStart && dt <= cycleEnd;
+  };
   type V = { id: number; date: string; type: string; hours: string | null; deduction: string | null; description: string | null };
   type O = { id: number; date: string; otType: string; hours: string | null; egpAmount: string | null };
   type C = { id: number; sessionDate: string; sessionType: string | null; coachingHours: string | null; bonusAmount: string | null; notes: string | null };
@@ -3245,7 +3257,7 @@ function MyRecords({ theme, view }: { theme: Theme; view: "cycle" | "month" | "a
     <div className="rounded-2xl p-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
       <p className="text-sm font-semibold mb-1" style={{ color: theme.text }}>My Records</p>
       <p className="text-xs mb-3" style={{ color: theme.textMuted }}>
-        {view === "all" ? "Your full history." : "This month."} Adherence, quality, coaching and overtime.
+        {view === "all" ? "All time." : view === "month" ? "This month." : "This cycle."} Adherence, quality, coaching and overtime.
       </p>
 
       <Section title="Overtime" count={ot.length}>
