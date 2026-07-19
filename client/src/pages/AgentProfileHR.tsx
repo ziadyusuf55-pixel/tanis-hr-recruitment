@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from "recharts";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -25,7 +25,11 @@ export default function AgentProfileHR() {
   const { data: agents = [] } = trpc.workforce.list.useQuery({});
   const list = agents as Agent[];
   const [search, setSearch] = useState("");
-  const [selectedCode, setSelectedCode] = useState<string>("");
+  // Supports deep-linking from Operations: /agent-profiles?code=T-42
+  const [selectedCode, setSelectedCode] = useState<string>(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("code") ?? "";
+  });
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim();
@@ -202,7 +206,13 @@ function Profile({ agent }: { agent: Agent }) {
               <YAxis tick={{ fontSize: 9 }} />
               <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v: number) => `$${v.toFixed(0)}`} />
               <Line type="monotone" dataKey="revenue" stroke="#10b981" strokeWidth={1.5} dot={false} name="Revenue" />
-              <Line type="monotone" dataKey="profit" stroke="#6366f1" strokeWidth={1.5} dot={false} name="Profit" />
+              {/* Zero line + red dots so loss cycles stand out at a glance */}
+              <ReferenceLine y={0} stroke="#94a3b8" strokeWidth={1} />
+              <Line type="monotone" dataKey="profit" stroke="#6366f1" strokeWidth={1.5} name="Profit"
+                dot={(p: { cx?: number; cy?: number; payload?: { profit?: number }; index?: number }) =>
+                  (p.payload?.profit ?? 0) < 0
+                    ? <circle key={`n${p.index}`} cx={p.cx} cy={p.cy} r={3} fill="#dc2626" />
+                    : <g key={`p${p.index}`} />} />
             </LineChart>
           </ResponsiveContainer>
         </CardContent></Card>

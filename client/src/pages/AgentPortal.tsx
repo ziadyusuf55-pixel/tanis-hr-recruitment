@@ -3325,6 +3325,9 @@ function PerformanceTab({ theme }: { theme: Theme }) {
 
 // ─── This Month (calendar month — the basis used for commission) ──────────────
 function ThisMonthView({ theme }: { theme: Theme }) {
+  // "This Cycle" shows an OT card, so this view gets one too — scoped to the
+  // calendar month rather than the pay-cycle.
+  const { data: myRec } = trpc.agent.myRecords.useQuery();
   const now = new Date();
   const [offset, setOffset] = useState(0); // 0 = current month, -1 = previous, etc.
   const sel = new Date(now.getFullYear(), now.getMonth() + offset, 1);
@@ -3361,6 +3364,31 @@ function ThisMonthView({ theme }: { theme: Theme }) {
           <p className="text-xs mt-0.5" style={{ color: theme.textMuted }}>Full calendar month totals — this is the basis used for commission.</p>
         </div>
       </div>
+
+      {/* OT — this calendar month */}
+      {(() => {
+        const otM = ((myRec?.ot ?? []) as { id: number; date: string; otType: string; hours: string | null; egpAmount: string | null }[])
+          .filter(o => (o.date || "").slice(0, 7) === monthPrefix);
+        if (otM.length === 0) return null;
+        const hrs = otM.reduce((a, o) => a + Number(o.hours || 0), 0);
+        const egp = otM.reduce((a, o) => a + Number(o.egpAmount || 0), 0);
+        return (
+          <div className="rounded-2xl p-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-sm font-semibold" style={{ color: theme.text }}>OT This Month</p>
+              <p className="text-sm font-bold" style={{ color: "#16a34a" }}>+{hrs.toFixed(2)} hrs &middot; EGP {egp.toLocaleString()}</p>
+            </div>
+            <div className="space-y-1">
+              {otM.map(o => (
+                <div key={o.id} className="flex items-center justify-between text-xs">
+                  <span style={{ color: theme.textMuted }}>{o.date} &middot; OT {o.otType}</span>
+                  <span style={{ color: theme.text }}>{Number(o.hours || 0).toFixed(2)} hrs &middot; +{Number(o.egpAmount || 0).toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Month selector */}
       <div className="flex items-center gap-3">

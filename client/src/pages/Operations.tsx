@@ -39,6 +39,7 @@ import {
   Download,
   KeyRound,
   Snowflake,
+  UserCog,
   Copy,
   Check,
   Shuffle,
@@ -217,6 +218,16 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
               })}
             >
               <Snowflake className="h-3.5 w-3.5" /> {agent.agentStatus === "frozen" ? "Unfreeze" : "Freeze"}
+            </Button>
+            {/* Everything about this agent — personal info, performance, salary,
+                commission, leave, violations — lives on the HR profile page. */}
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={() => { window.location.href = `/agent-profiles?code=${encodeURIComponent(agent.traineeCode)}`; }}
+            >
+              <UserCog className="h-3.5 w-3.5" /> Full profile
             </Button>
           </div>
         )}

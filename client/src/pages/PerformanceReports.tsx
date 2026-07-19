@@ -96,7 +96,13 @@ function AgentDetailChart({ crdts, cycleKey }: { crdts: string; cycleKey: string
               <YAxis tick={{ fontSize: 9 }} />
               <Tooltip contentStyle={{ fontSize: 11, padding: "4px 8px" }} formatter={(v: number) => [`$${v.toFixed(2)}`, "Profit"]} />
               {data.logoutDates.map((d: string) => <ReferenceLine key={d} x={d.slice(5)} stroke="#ef4444" strokeWidth={1.5} strokeDasharray="3 3" />)}
-              <Line type="monotone" dataKey="profit" stroke="#6366f1" strokeWidth={1.5} dot={false} />
+              {/* Zero line + red dots make loss days obvious without hovering */}
+              <ReferenceLine y={0} stroke="#94a3b8" strokeWidth={1} />
+              <Line type="monotone" dataKey="profit" stroke="#6366f1" strokeWidth={1.5}
+                dot={(p: { cx?: number; cy?: number; payload?: { profit?: number }; index?: number }) =>
+                  (p.payload?.profit ?? 0) < 0
+                    ? <circle key={`n${p.index}`} cx={p.cx} cy={p.cy} r={3} fill="#dc2626" />
+                    : <g key={`p${p.index}`} />} />
             </LineChart>
           </ResponsiveContainer>
         </div>
