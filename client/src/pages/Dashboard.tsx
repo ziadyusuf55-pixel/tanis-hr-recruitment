@@ -36,6 +36,7 @@ const FUNNEL_COLORS: Record<string, string> = {
 };
 
 export default function Dashboard() {
+  const { data: ops } = trpc.dashboard.opsSnapshot.useQuery();
   const [, navigate] = useLocation();
   const { user } = useAuth();
   const role = (user as { role?: string } | null)?.role;
@@ -87,6 +88,19 @@ export default function Dashboard() {
         </div>
       </div>
 
+      {/* ═══ MONEY — this cycle vs last ═══ */}
+      {ops && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-foreground">This cycle · {ops.cycleKey}</h2>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <MoneyCard label="Revenue" value={ops.revenue} prev={ops.prevRevenue} prefix="$" />
+            <MoneyCard label="Profit" value={ops.profit} prev={ops.prevProfit} prefix="$" />
+            <MoneyCard label="OT spend" value={ops.otEgp} suffix=" EGP" sub={`${ops.otHours.toFixed(1)} hrs`} invert />
+            <MoneyCard label="Coaching spend" value={ops.coachingEgp} suffix=" EGP" sub={`${ops.coachingHours.toFixed(1)} hrs`} invert />
+          </div>
+        </section>
+      )}
+
       {/* ═══ NEEDS YOUR ATTENTION ═══ */}
       <section className="space-y-3">
         <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
@@ -105,6 +119,59 @@ export default function Dashboard() {
           </div>
         )}
       </section>
+
+      {/* ═══ FLAGS — quality/adherence + logouts ═══ */}
+      {ops && (ops.repeatOffenders.length > 0 || ops.logoutFlags.length > 0 || ops.violationsCycle > 0) && (
+        <section className="space-y-3">
+          <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-amber-500" /> Flags this cycle
+          </h2>
+          <div className="grid md:grid-cols-2 gap-3">
+            <div className="rounded-xl border bg-card p-4">
+              <div className="flex items-baseline justify-between mb-2">
+                <p className="text-sm font-medium">Violations</p>
+                <p className="text-xs text-muted-foreground">{ops.violationsToday} today · {ops.violationsCycle} this cycle</p>
+              </div>
+              {ops.repeatOffenders.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-2">No repeat offenders — nobody flagged 3+ times.</p>
+              ) : (
+                <>
+                  <p className="text-[11px] text-muted-foreground mb-1.5">Flagged 3+ times — consider coaching:</p>
+                  <div className="space-y-1">
+                    {ops.repeatOffenders.slice(0, 5).map(a => (
+                      <div key={a.crdts} className="flex items-center justify-between text-xs">
+                        <span className="truncate">{a.alias || "—"} <span className="text-muted-foreground">· {a.crdts}</span></span>
+                        <span className="font-semibold text-red-600">{a.n}×</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <div className="rounded-xl border bg-card p-4">
+              <p className="text-sm font-medium mb-2">Client logouts</p>
+              {ops.logoutFlags.length === 0 ? (
+                <p className="text-xs text-muted-foreground py-2">Nobody at 3+ logouts this cycle.</p>
+              ) : (
+                <>
+                  <p className="text-[11px] text-muted-foreground mb-1.5">4+ is critical · 3 is a warning</p>
+                  <div className="space-y-1">
+                    {ops.logoutFlags.slice(0, 6).map(a => (
+                      <div key={a.crdts} className="flex items-center justify-between text-xs">
+                        <span className="truncate">{a.alias || "—"} <span className="text-muted-foreground">· {a.crdts}</span></span>
+                        <span className={`font-semibold px-1.5 py-0.5 rounded ${a.level === "danger" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+                          {a.n} logout{a.n === 1 ? "" : "s"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
 
       {/* ═══ BUSINESS AT A GLANCE ═══ */}
       <section className="space-y-3">
@@ -366,6 +433,33 @@ function RateCard({ title, value, icon, isLoading, description, color, bgColor }
       <div className="mt-2 h-1.5 bg-muted rounded-full overflow-hidden">
         <div className={`h-full rounded-full ${bgColor.replace("-100", "-400")}`} style={{ width: `${Math.min(value ?? 0, 100)}%` }} />
       </div>
+    </div>
+  );
+}
+
+/** Money tile with a comparison against the previous cycle.
+ *  `invert` = for spend, where "up" is bad (OT/coaching cost more). */
+function MoneyCard({ label, value, prev, prefix = "", suffix = "", sub, invert }: {
+  label: string; value: number; prev?: number; prefix?: string; suffix?: string; sub?: string; invert?: boolean;
+}) {
+  const has = typeof prev === "number" && prev !== 0;
+  const pct = has ? ((value - prev!) / Math.abs(prev!)) * 100 : 0;
+  const up = pct >= 0;
+  const good = invert ? !up : up;
+  return (
+    <div className="rounded-xl border bg-card p-4">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className="text-2xl font-bold mt-0.5">
+        {prefix}{Math.round(value).toLocaleString()}{suffix}
+      </p>
+      {has ? (
+        <p className={`text-[11px] mt-1 font-medium ${good ? "text-emerald-600" : "text-red-600"}`}>
+          {up ? "▲" : "▼"} {Math.abs(pct).toFixed(0)}% vs last cycle
+        </p>
+      ) : (
+        <p className="text-[11px] mt-1 text-muted-foreground">{sub ?? "No prior cycle"}</p>
+      )}
+      {has && sub && <p className="text-[11px] text-muted-foreground">{sub}</p>}
     </div>
   );
 }

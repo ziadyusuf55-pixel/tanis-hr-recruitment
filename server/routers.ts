@@ -676,6 +676,76 @@ const dashboardRouter = router({
           turnoverHeadcount: turnoverData.currentHeadcount,
         };
       }),
+  /** Operational snapshot for the dashboard: money this cycle vs last, quality/
+   *  adherence flags, OT + coaching spend, and logout repeat-offenders.
+   *  Cycle runs the 26th → 25th, matching payroll. */
+  opsSnapshot: protectedProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const { and, gte, lte, eq } = await import("drizzle-orm");
+    const db = await getDb();
+    const empty = {
+      cycleKey: "", prevCycleKey: "",
+      revenue: 0, profit: 0, prevRevenue: 0, prevProfit: 0,
+      violationsToday: 0, violationsCycle: 0, repeatOffenders: [] as { crdts: string; alias: string | null; n: number }[],
+      otHours: 0, otEgp: 0, coachingHours: 0, coachingEgp: 0,
+      logoutFlags: [] as { crdts: string; alias: string | null; n: number; level: "warn" | "danger" }[],
+    };
+    if (!db) return empty;
+    const { cycleStats, agentViolations, cycleOT, coachingSessions, clientLogouts, workforceAgents } = await import("../drizzle/schema");
+
+    // Cycle key = the month the cycle ENDS in (26 Jun–25 Jul → "2026-07").
+    const now = new Date();
+    const endMonth = new Date(now.getFullYear(), now.getMonth() + (now.getDate() >= 26 ? 1 : 0), 1);
+    const key = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    const cycleKey = key(endMonth);
+    const prevCycleKey = key(new Date(endMonth.getFullYear(), endMonth.getMonth() - 1, 1));
+    const cycleStart = new Date(endMonth.getFullYear(), endMonth.getMonth() - 1, 26);
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    const todayIso = iso(now);
+
+    const [stats, prevStats, viol, ot, coaching, logouts, agents] = await Promise.all([
+      db.select().from(cycleStats).where(eq(cycleStats.cycleKey, cycleKey)),
+      db.select().from(cycleStats).where(eq(cycleStats.cycleKey, prevCycleKey)),
+      db.select().from(agentViolations).where(and(gte(agentViolations.date, iso(cycleStart)), lte(agentViolations.date, todayIso))),
+      db.select().from(cycleOT).where(eq(cycleOT.cycleKey, cycleKey)),
+      db.select().from(coachingSessions).where(eq(coachingSessions.cycleKey, cycleKey)),
+      db.select().from(clientLogouts).where(eq(clientLogouts.cycleKey, cycleKey)),
+      db.select().from(workforceAgents),
+    ]);
+
+    const n = (v: unknown) => Number(v || 0);
+    const sum = <T,>(rows: T[], f: (r: T) => number) => rows.reduce((s, r) => s + f(r), 0);
+    const aliasOf = new Map(agents.map(a => [a.crdts ?? "", a.alias || a.fullName || a.crdts]));
+
+    // Agents flagged 3+ times this cycle — the ones worth coaching.
+    const byAgent = new Map<string, number>();
+    viol.forEach(v => byAgent.set(v.crdts, (byAgent.get(v.crdts) ?? 0) + 1));
+    const repeatOffenders = Array.from(byAgent.entries())
+      .filter(([, c]) => c >= 3)
+      .sort((a, b) => b[1] - a[1])
+      .map(([crdts, c]) => ({ crdts, alias: aliasOf.get(crdts) ?? null, n: c }));
+
+    // Logouts: 4+ in a cycle is the danger line, 3 is the early warning.
+    const byLogout = new Map<string, number>();
+    logouts.forEach(l => byLogout.set(l.crdts, (byLogout.get(l.crdts) ?? 0) + 1));
+    const logoutFlags = Array.from(byLogout.entries())
+      .filter(([, c]) => c >= 3)
+      .sort((a, b) => b[1] - a[1])
+      .map(([crdts, c]) => ({ crdts, alias: aliasOf.get(crdts) ?? null, n: c, level: (c >= 4 ? "danger" : "warn") as "warn" | "danger" }));
+
+    return {
+      cycleKey, prevCycleKey,
+      revenue: sum(stats, s => n(s.revenue)), profit: sum(stats, s => n(s.profit)),
+      prevRevenue: sum(prevStats, s => n(s.revenue)), prevProfit: sum(prevStats, s => n(s.profit)),
+      violationsToday: viol.filter(v => v.date === todayIso).length,
+      violationsCycle: viol.length,
+      repeatOffenders,
+      otHours: sum(ot, o => n(o.hours)), otEgp: sum(ot, o => n(o.egpAmount)),
+      coachingHours: sum(coaching, c => n(c.coachingHours)), coachingEgp: sum(coaching, c => n(c.bonusAmount)),
+      logoutFlags,
+    };
+  }),
+
   // Overview: pending deletion count + recent separations
   overview: protectedProcedure
     .query(async () => {
