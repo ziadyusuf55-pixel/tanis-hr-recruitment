@@ -719,7 +719,7 @@ const dashboardRouter = router({
 
     // Agents flagged 3+ times this cycle — the ones worth coaching.
     const byAgent = new Map<string, number>();
-    viol.forEach(v => byAgent.set(v.crdts, (byAgent.get(v.crdts) ?? 0) + 1));
+    viol.forEach(v => { if (v.crdts) byAgent.set(v.crdts, (byAgent.get(v.crdts) ?? 0) + 1); });
     const repeatOffenders = Array.from(byAgent.entries())
       .filter(([, c]) => c >= 3)
       .sort((a, b) => b[1] - a[1])
