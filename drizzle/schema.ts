@@ -1218,3 +1218,62 @@ export const agentBonuses = mysqlTable("agent_bonuses", {
 });
 export type AgentBonus = typeof agentBonuses.$inferSelect;
 export type InsertAgentBonus = typeof agentBonuses.$inferInsert;
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * TANIS ACADEMY — internal L&D
+ * Courses hold modules; modules hold the actual material (video/PDF/text).
+ * Agents are assigned courses (individually or in bulk) and their progress is
+ * tracked per module so "70% complete" is real, not guessed.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export const academyCourses = mysqlTable("academy_courses", {
+  id: int("id").autoincrement().primaryKey(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  category: varchar("category", { length: 100 }),        // e.g. "Compliance", "Sales", "Systems"
+  coverUrl: text("coverUrl"),
+  // Links a course to the violation type it remedies, so the Hub can suggest it
+  // automatically (e.g. 3× "Skipping Script" → suggest the script course).
+  remediesViolation: varchar("remediesViolation", { length: 150 }),
+  isMandatory: boolean("isMandatory").default(false).notNull(),
+  isPublished: boolean("isPublished").default(false).notNull(),
+  passMark: int("passMark").default(0),                  // % needed, 0 = no quiz
+  createdBy: varchar("createdBy", { length: 255 }),
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+  updatedAt: bigint("updatedAt", { mode: "number" }),
+});
+
+export const academyModules = mysqlTable("academy_modules", {
+  id: int("id").autoincrement().primaryKey(),
+  courseId: int("courseId").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  contentType: mysqlEnum("contentType", ["video", "pdf", "link", "text"]).default("text").notNull(),
+  contentUrl: text("contentUrl"),                        // video/PDF/link target
+  body: text("body"),                                    // for plain-text lessons
+  durationMins: int("durationMins").default(0),
+  sortOrder: int("sortOrder").default(0).notNull(),
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+});
+
+export const academyAssignments = mysqlTable("academy_assignments", {
+  id: int("id").autoincrement().primaryKey(),
+  courseId: int("courseId").notNull(),
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
+  crdts: varchar("crdts", { length: 100 }),
+  dueDate: varchar("dueDate", { length: 10 }),           // YYYY-MM-DD
+  assignedBy: varchar("assignedBy", { length: 255 }),
+  // "suggested" = raised automatically from violations/logouts, not yet assigned
+  status: mysqlEnum("status", ["suggested", "assigned", "in_progress", "completed"]).default("assigned").notNull(),
+  reason: varchar("reason", { length: 255 }),            // why it was suggested
+  assignedAt: bigint("assignedAt", { mode: "number" }).notNull(),
+  completedAt: bigint("completedAt", { mode: "number" }),
+  score: int("score"),
+});
+
+export const academyProgress = mysqlTable("academy_progress", {
+  id: int("id").autoincrement().primaryKey(),
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
+  courseId: int("courseId").notNull(),
+  moduleId: int("moduleId").notNull(),
+  completedAt: bigint("completedAt", { mode: "number" }).notNull(),
+});

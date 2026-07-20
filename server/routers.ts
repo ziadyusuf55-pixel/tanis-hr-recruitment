@@ -2723,6 +2723,299 @@ const otRouter = router({
 // ════════════════════════════════════════════════════════════════════════════
 const NON_AGENT_TYPES = ["team_lead", "manager", "hr", "ops_manager", "finance", "admin"] as const;
 
+/* ══════════════════════════════════════════════════════════════════════════
+ * TANIS ACADEMY — courses, assignments, progress, and data-driven suggestions.
+ * ══════════════════════════════════════════════════════════════════════════ */
+const academyRouter = router({
+  // ---- Courses -----------------------------------------------------------
+  listCourses: protectedProcedure
+    .input(z.object({ publishedOnly: z.boolean().optional() }).optional())
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq, desc } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      const { academyCourses } = await import("../drizzle/schema");
+      const q = db.select().from(academyCourses).$dynamic();
+      if (input?.publishedOnly) q.where(eq(academyCourses.isPublished, true));
+      return q.orderBy(desc(academyCourses.createdAt));
+    }),
+
+  createCourse: protectedProcedure
+    .input(z.object({
+      title: z.string().min(1).max(255),
+      description: z.string().optional(),
+      category: z.string().max(100).optional(),
+      remediesViolation: z.string().max(150).optional(),
+      isMandatory: z.boolean().optional(),
+      passMark: z.number().int().min(0).max(100).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { academyCourses } = await import("../drizzle/schema");
+      await db.insert(academyCourses).values({
+        title: input.title,
+        description: input.description ?? null,
+        category: input.category ?? null,
+        remediesViolation: input.remediesViolation ?? null,
+        isMandatory: input.isMandatory ?? false,
+        passMark: input.passMark ?? 0,
+        isPublished: false,
+        createdBy: ctx.user?.email ?? ctx.user?.openId ?? null,
+        createdAt: Date.now(),
+      } as never);
+      return { ok: true } as const;
+    }),
+
+  publishCourse: protectedProcedure
+    .input(z.object({ id: z.number(), isPublished: z.boolean() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { academyCourses } = await import("../drizzle/schema");
+      await db.update(academyCourses).set({ isPublished: input.isPublished, updatedAt: Date.now() })
+        .where(eq(academyCourses.id, input.id));
+      return { ok: true } as const;
+    }),
+
+  // ---- Modules -----------------------------------------------------------
+  listModules: protectedProcedure
+    .input(z.object({ courseId: z.number() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq, asc } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      const { academyModules } = await import("../drizzle/schema");
+      return db.select().from(academyModules)
+        .where(eq(academyModules.courseId, input.courseId))
+        .orderBy(asc(academyModules.sortOrder));
+    }),
+
+  addModule: protectedProcedure
+    .input(z.object({
+      courseId: z.number(),
+      title: z.string().min(1).max(255),
+      contentType: z.enum(["video", "pdf", "link", "text"]),
+      contentUrl: z.string().optional(),
+      body: z.string().optional(),
+      durationMins: z.number().int().min(0).optional(),
+      sortOrder: z.number().int().optional(),
+    }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { academyModules } = await import("../drizzle/schema");
+      await db.insert(academyModules).values({
+        courseId: input.courseId,
+        title: input.title,
+        contentType: input.contentType,
+        contentUrl: input.contentUrl ?? null,
+        body: input.body ?? null,
+        durationMins: input.durationMins ?? 0,
+        sortOrder: input.sortOrder ?? 0,
+        createdAt: Date.now(),
+      } as never);
+      return { ok: true } as const;
+    }),
+
+  // ---- Assignments -------------------------------------------------------
+  listAssignments: protectedProcedure
+    .input(z.object({ courseId: z.number().optional(), traineeCode: z.string().optional() }).optional())
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq, and, desc } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      const { academyAssignments } = await import("../drizzle/schema");
+      const conds = [];
+      if (input?.courseId) conds.push(eq(academyAssignments.courseId, input.courseId));
+      if (input?.traineeCode) conds.push(eq(academyAssignments.traineeCode, input.traineeCode));
+      const q = db.select().from(academyAssignments).$dynamic();
+      if (conds.length) q.where(and(...conds));
+      return q.orderBy(desc(academyAssignments.assignedAt));
+    }),
+
+  assign: protectedProcedure
+    .input(z.object({
+      courseId: z.number(),
+      traineeCodes: z.array(z.string()).min(1),
+      dueDate: z.string().optional(),
+      reason: z.string().max(255).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { getDb } = await import("./db");
+      const { and, eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { academyAssignments } = await import("../drizzle/schema");
+      let created = 0;
+      for (const code of input.traineeCodes) {
+        // Don't double-assign the same course to the same person.
+        const existing = await db.select().from(academyAssignments).where(and(
+          eq(academyAssignments.courseId, input.courseId),
+          eq(academyAssignments.traineeCode, code),
+        )).limit(1);
+        if (existing.length) continue;
+        await db.insert(academyAssignments).values({
+          courseId: input.courseId, traineeCode: code,
+          dueDate: input.dueDate ?? null,
+          assignedBy: ctx.user?.email ?? null,
+          status: "assigned", reason: input.reason ?? null,
+          assignedAt: Date.now(),
+        } as never);
+        created++;
+      }
+      return { ok: true, created } as const;
+    }),
+
+  /** Suggestions — driven by the Hub's own data rather than guesswork:
+   *  repeat violations, repeat client logouts, and repeat coaching sessions all
+   *  point at agents who need training, matched to a course where possible. */
+  suggestions: protectedProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const { gte } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return [];
+    const { agentViolations, clientLogouts, coachingSessions, workforceAgents, academyCourses } = await import("../drizzle/schema");
+
+    // Look back over the last 60 days — recent enough to be actionable.
+    const since = new Date(Date.now() - 60 * 864e5).toISOString().slice(0, 10);
+    const [viol, logouts, coaching, agents, courses] = await Promise.all([
+      db.select().from(agentViolations).where(gte(agentViolations.date, since)),
+      db.select().from(clientLogouts).where(gte(clientLogouts.date, since)),
+      db.select().from(coachingSessions).where(gte(coachingSessions.sessionDate, since)),
+      db.select().from(workforceAgents),
+      db.select().from(academyCourses),
+    ]);
+
+    const byCrdts = new Map(agents.filter(a => a.crdts).map(a => [a.crdts as string, a]));
+    const out: { traineeCode: string; crdts: string; alias: string | null; reason: string; courseId: number | null; courseTitle: string | null; count: number }[] = [];
+
+    // 3+ of the SAME violation type → suggest the course that remedies it.
+    const vKey = new Map<string, number>();
+    viol.forEach(v => { if (v.crdts) vKey.set(`${v.crdts}||${v.type}`, (vKey.get(`${v.crdts}||${v.type}`) ?? 0) + 1); });
+    vKey.forEach((count, k) => {
+      if (count < 3) return;
+      const [crdts, type] = k.split("||");
+      const a = byCrdts.get(crdts);
+      if (!a) return;
+      const course = courses.find(c => c.remediesViolation && c.remediesViolation.toLowerCase() === (type || "").toLowerCase());
+      out.push({
+        traineeCode: a.traineeCode, crdts, alias: a.alias ?? a.fullName ?? null,
+        reason: `${count}× ${type}`, courseId: course?.id ?? null, courseTitle: course?.title ?? null, count,
+      });
+    });
+
+    // 3+ client logouts → reliability/performance training.
+    const lKey = new Map<string, number>();
+    logouts.forEach(l => { if (l.crdts) lKey.set(l.crdts, (lKey.get(l.crdts) ?? 0) + 1); });
+    lKey.forEach((count, crdts) => {
+      if (count < 3) return;
+      const a = byCrdts.get(crdts);
+      if (!a) return;
+      out.push({
+        traineeCode: a.traineeCode, crdts, alias: a.alias ?? a.fullName ?? null,
+        reason: `${count} client logouts`, courseId: null, courseTitle: null, count,
+      });
+    });
+
+    // 3+ coaching sessions → the floor already flagged them; formalise it.
+    const cKey = new Map<string, number>();
+    coaching.forEach(c => { if (c.crdts) cKey.set(c.crdts, (cKey.get(c.crdts) ?? 0) + 1); });
+    cKey.forEach((count, crdts) => {
+      if (count < 3) return;
+      const a = byCrdts.get(crdts);
+      if (!a) return;
+      out.push({
+        traineeCode: a.traineeCode, crdts, alias: a.alias ?? a.fullName ?? null,
+        reason: `${count} coaching sessions`, courseId: null, courseTitle: null, count,
+      });
+    });
+
+    return out.sort((a, b) => b.count - a.count);
+  }),
+
+  // ---- Agent-facing ------------------------------------------------------
+  /** The logged-in agent's own courses + per-module progress. */
+  myCourses: publicProcedure.query(async ({ ctx }) => {
+    const token = getAgentCookieFromReq(ctx.req);
+    if (!token) return { assignments: [], courses: [], modules: [], progress: [] };
+    let traineeCode = "";
+    try {
+      const p = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+      if (p.type !== "agent") return { assignments: [], courses: [], modules: [], progress: [] };
+      traineeCode = p.traineeCode;
+    } catch { return { assignments: [], courses: [], modules: [], progress: [] }; }
+
+    const { getDb } = await import("./db");
+    const { eq } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return { assignments: [], courses: [], modules: [], progress: [] };
+    const { academyAssignments, academyCourses, academyModules, academyProgress } = await import("../drizzle/schema");
+
+    const assignments = await db.select().from(academyAssignments).where(eq(academyAssignments.traineeCode, traineeCode));
+    const [courses, modules, progress] = await Promise.all([
+      db.select().from(academyCourses).where(eq(academyCourses.isPublished, true)),
+      db.select().from(academyModules),
+      db.select().from(academyProgress).where(eq(academyProgress.traineeCode, traineeCode)),
+    ]);
+    return { assignments, courses, modules, progress };
+  }),
+
+  /** Agent marks one module done; the course auto-completes when all are done. */
+  completeModule: publicProcedure
+    .input(z.object({ courseId: z.number(), moduleId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) throw new TRPCError({ code: "UNAUTHORIZED" });
+      let traineeCode = "";
+      try {
+        const p = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+        if (p.type !== "agent") throw new Error("not agent");
+        traineeCode = p.traineeCode;
+      } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+
+      const { getDb } = await import("./db");
+      const { and, eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { academyProgress, academyModules, academyAssignments } = await import("../drizzle/schema");
+
+      const already = await db.select().from(academyProgress).where(and(
+        eq(academyProgress.traineeCode, traineeCode),
+        eq(academyProgress.moduleId, input.moduleId),
+      )).limit(1);
+      if (!already.length) {
+        await db.insert(academyProgress).values({
+          traineeCode, courseId: input.courseId, moduleId: input.moduleId, completedAt: Date.now(),
+        } as never);
+      }
+
+      const [mods, done] = await Promise.all([
+        db.select().from(academyModules).where(eq(academyModules.courseId, input.courseId)),
+        db.select().from(academyProgress).where(and(
+          eq(academyProgress.traineeCode, traineeCode),
+          eq(academyProgress.courseId, input.courseId),
+        )),
+      ]);
+      if (mods.length > 0 && done.length >= mods.length) {
+        await db.update(academyAssignments)
+          .set({ status: "completed", completedAt: Date.now() })
+          .where(and(
+            eq(academyAssignments.traineeCode, traineeCode),
+            eq(academyAssignments.courseId, input.courseId),
+          ));
+      }
+      return { ok: true } as const;
+    }),
+});
+
 const employeesRouter = router({
   /** Complete profile bundle for one agent — everything in one call:
    *  salary history, commission history, performance, joining/training dates.
@@ -5836,6 +6129,7 @@ export const appRouter = router({
   violations: violationsRouter,
   ot: otRouter,
   employees: employeesRouter,
+  academy: academyRouter,
   performanceV2: performanceV2Router,
   adherence: adherenceRouter,
   quality: qualityRouter,

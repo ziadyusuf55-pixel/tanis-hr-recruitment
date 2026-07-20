@@ -13,7 +13,7 @@ export type AppRole =
 
 // Every page in the app, grouped the way the sidebar groups them.
 const OPERATIONS = ["/operations", "/adherence", "/quality", "/coaching-admin", "/client-logouts", "/cycle-tracker"];
-const HR_TABS    = ["/candidates", "/performance-reports", "/payroll", "/commission", "/payment-preferences", "/all-documents", "/agent-profiles", "/leave-management"];
+const HR_TABS    = ["/candidates", "/performance-reports", "/payroll", "/commission", "/payment-preferences", "/all-documents", "/agent-profiles", "/leave-management", "/academy"];
 const FINANCE    = ["/payroll", "/commission", "/payment-preferences"];
 const EXTRAS     = ["/requests", "/training"];
 

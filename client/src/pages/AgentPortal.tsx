@@ -3203,6 +3203,94 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
  * nightly from the sheets. DISPLAY ONLY: their payslip is calculated separately,
  * so nothing here changes their pay.
  */
+/** Tanis Academy — the agent's assigned courses and their progress. */
+function MyCourses({ theme }: { theme: Theme }) {
+  const utils = trpc.useUtils();
+  const { data } = trpc.academy.myCourses.useQuery();
+  const complete = trpc.academy.completeModule.useMutation({
+    onSuccess: () => utils.academy.myCourses.invalidate(),
+  });
+  const [openId, setOpenId] = useState<number | null>(null);
+
+  type A = { id: number; courseId: number; status: string; dueDate: string | null };
+  type C = { id: number; title: string; description: string | null; category: string | null; isMandatory: boolean };
+  type M = { id: number; courseId: number; title: string; contentType: string; contentUrl: string | null; body: string | null };
+  type P = { moduleId: number };
+
+  const assignments = (data?.assignments ?? []) as A[];
+  const courses = (data?.courses ?? []) as C[];
+  const modules = (data?.modules ?? []) as M[];
+  const doneIds = new Set(((data?.progress ?? []) as P[]).map(p => p.moduleId));
+  if (assignments.length === 0) return null;
+
+  return (
+    <div className="rounded-2xl p-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+      <p className="text-sm font-semibold mb-1" style={{ color: theme.text }}>My Courses</p>
+      <p className="text-xs mb-3" style={{ color: theme.textMuted }}>Training assigned to you.</p>
+
+      <div className="space-y-2">
+        {assignments.map(a => {
+          const course = courses.find(c => c.id === a.courseId);
+          if (!course) return null;
+          const mods = modules.filter(m => m.courseId === course.id).sort((x, y) => x.id - y.id);
+          const done = mods.filter(m => doneIds.has(m.id)).length;
+          const pct = mods.length ? Math.round((done / mods.length) * 100) : 0;
+          const open = openId === course.id;
+          return (
+            <div key={a.id} className="rounded-xl p-3" style={{ border: `1px solid ${theme.cardBorder}` }}>
+              <button className="w-full text-left" onClick={() => setOpenId(open ? null : course.id)}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium" style={{ color: theme.text }}>
+                      {course.title}
+                      {course.isMandatory && <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded-full" style={{ background: "#fee2e2", color: "#b91c1c" }}>Required</span>}
+                    </p>
+                    <p className="text-xs" style={{ color: theme.textMuted }}>
+                      {done}/{mods.length} modules{a.dueDate ? ` · due ${a.dueDate}` : ""}
+                    </p>
+                  </div>
+                  <span className="text-xs font-bold shrink-0" style={{ color: pct === 100 ? "#16a34a" : theme.text }}>{pct}%</span>
+                </div>
+                <div className="h-1.5 rounded-full mt-2 overflow-hidden" style={{ background: theme.inputBg }}>
+                  <div className="h-full rounded-full" style={{ width: `${pct}%`, background: pct === 100 ? "#16a34a" : BRAND }} />
+                </div>
+              </button>
+
+              {open && (
+                <div className="mt-3 pt-2 space-y-1.5" style={{ borderTop: `1px solid ${theme.cardBorder}` }}>
+                  {mods.length === 0 && <p className="text-xs" style={{ color: theme.textMuted }}>No modules yet.</p>}
+                  {mods.map(m => {
+                    const isDone = doneIds.has(m.id);
+                    return (
+                      <div key={m.id} className="flex items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-xs" style={{ color: theme.text }}>{m.title}</p>
+                          {m.contentUrl && (
+                            <a href={m.contentUrl} target="_blank" rel="noreferrer" className="text-[11px] underline" style={{ color: BRAND }}>
+                              Open {m.contentType}
+                            </a>
+                          )}
+                        </div>
+                        <button
+                          disabled={isDone || complete.isPending}
+                          onClick={() => complete.mutate({ courseId: course.id, moduleId: m.id })}
+                          className="text-[11px] px-2 py-1 rounded-lg shrink-0"
+                          style={{ background: isDone ? "#dcfce7" : BRAND, color: isDone ? "#166534" : "#fff" }}>
+                          {isDone ? "Done" : "Mark done"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function MyRecords({ theme, view }: { theme: Theme; view: "cycle" | "month" | "all" }) {
   const { data } = trpc.agent.myRecords.useQuery();
   // Match the range toggle above exactly:
@@ -3318,6 +3406,7 @@ function PerformanceTab({ theme }: { theme: Theme }) {
       {view === "all" && <PerformanceHistoryTab theme={theme} />}
 
       {/* Records sit BELOW the performance cards, filtered by the same range toggle */}
+      <MyCourses theme={theme} />
       <MyRecords theme={theme} view={view} />
     </div>
   );

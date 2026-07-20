@@ -31,6 +31,7 @@ import AgentProfileHR from "./pages/AgentProfileHR";
 import LeaveManagement from "./pages/LeaveManagement";
 import OTLog from "./pages/OTLog";
 import MyProfile from "./pages/MyProfile";
+import Academy from "./pages/Academy";
 import { trpc as trpcClient } from "@/lib/trpc";
 import ClientLogoutsAdmin from "./pages/ClientLogoutsAdmin";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
@@ -102,6 +103,7 @@ function Router() {
       <Route path="/leave-management" component={() => <ProtectedRoute component={LeaveManagement} />} />
       <Route path="/ot" component={() => <ProtectedRoute component={OTLog} />} />
       <Route path="/my-profile" component={() => <ProtectedRoute component={MyProfile} />} />
+      <Route path="/academy" component={() => <ProtectedRoute component={Academy} />} />
       {/* PayrollStatus removed — use /payroll instead */}
       <Route path="/performance" component={() => <ProtectedRoute component={PerformanceDashboard} />} />
       <Route path="/adherence" component={() => <ProtectedRoute component={AdherenceLog} />} />

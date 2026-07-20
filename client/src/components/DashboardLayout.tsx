@@ -63,6 +63,7 @@ const NAV: NavItem[] = [
       { icon: DollarSign,  label: "Commission",          path: "/commission" },
       { icon: Wallet,      label: "Payment Preferences", path: "/payment-preferences" },
       { icon: FileText,    label: "Documents",           path: "/all-documents" },
+      { icon: GraduationCap, label: "Tanis Academy",    path: "/academy" },
     ],
   },
   { icon: Building2, label: "Business Development", path: "/business-development" },
