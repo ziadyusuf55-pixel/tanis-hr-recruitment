@@ -17,6 +17,9 @@ type Agent = {
   phone?: string | null; email?: string | null; address?: string | null;
   emergencyContactName?: string | null; emergencyContactPhone?: string | null; emergencyContactRelation?: string | null;
   salarySettled?: boolean | null;
+  jobTitle?: string | null; dateOfBirth?: string | null; nationalId?: string | null; nationalIdExpiry?: string | null;
+  nationality?: string | null; gender?: string | null; maritalStatus?: string | null; militaryStatus?: string | null;
+  city?: string | null; workLocation?: string | null;
 };
 
 type Viol = { id: number; type?: string | null; date?: unknown; deduction?: string | number | null; hours?: string | number | null; status?: string | null };
