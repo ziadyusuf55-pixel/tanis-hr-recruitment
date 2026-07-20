@@ -180,6 +180,36 @@ function Profile({ agent }: { agent: Agent }) {
           sub: `${o.date} · ${Number(o.hours || 0)} hrs`,
         }))} />
 
+      {/* ── Personal details (identity & contact — no emergency contact) ── */}
+      <Card><CardContent className="p-4">
+        <p className="text-sm font-semibold flex items-center gap-1.5 mb-3">
+          <UserCog className="w-4 h-4" style={{ color: BRAND }} /> Personal details
+        </p>
+        <div className="grid sm:grid-cols-3 gap-3 text-sm">
+          <TimelineItem label="Full name" value={agent.fullName || "—"} />
+          <TimelineItem label="Alias" value={agent.alias || "—"} />
+          <TimelineItem label="Job title" value={agent.jobTitle || "—"} />
+          <TimelineItem label="Phone" value={agent.phone || "—"} />
+          <TimelineItem label="Email" value={agent.email || "—"} />
+          <TimelineItem label="Date of birth" value={fmtFull(agent.dateOfBirth)} />
+          <TimelineItem label="National ID" value={agent.nationalId || "—"} />
+          <TimelineItem label="ID expiry" value={fmtFull(agent.nationalIdExpiry)} />
+          <TimelineItem label="Nationality" value={agent.nationality || "—"} />
+          <TimelineItem label="Gender" value={agent.gender || "—"} />
+          <TimelineItem label="Marital status" value={agent.maritalStatus || "—"} />
+          <TimelineItem label="Military status" value={agent.militaryStatus || "—"} />
+          <TimelineItem label="City" value={agent.city || "—"} />
+          <TimelineItem label="Work location" value={agent.workLocation || "—"} />
+          <TimelineItem label="Shift hours" value={agent.shiftHours || "—"} />
+        </div>
+        {agent.address && (
+          <div className="mt-3 pt-3 border-t">
+            <p className="text-[11px] text-muted-foreground">Address</p>
+            <p className="text-sm">{agent.address}</p>
+          </div>
+        )}
+      </CardContent></Card>
+
       {/* ── Joining & training timeline ── */}
       <Card><CardContent className="p-4">
         <p className="text-sm font-semibold flex items-center gap-1.5 mb-3"><Clock className="w-4 h-4" style={{ color: BRAND }} /> Timeline</p>

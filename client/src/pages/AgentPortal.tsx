@@ -38,6 +38,7 @@ import {
   Clock,
   Star,
   TrendingUp,
+  GraduationCap,
   Activity,
   AlertCircle,
   BarChart2,
@@ -164,7 +165,7 @@ function fmtHM(decimalHours: number | string | null | undefined): string {
   return `${sign}${h}:${m.toString().padStart(2, "0")}`;
 }
 
-type Tab = "profile" | "opplan" | "performance" | "payroll" | "commission" | "requests" | "referrals" | "documents" | "payment" | "comments";
+type Tab = "profile" | "opplan" | "performance" | "academy" | "payroll" | "commission" | "requests" | "referrals" | "documents" | "payment" | "comments";
 
 export default function AgentPortal() {
   const [, navigate] = useLocation();
@@ -230,6 +231,7 @@ export default function AgentPortal() {
     { id: "profile", label: "Profile", icon: <User className="w-4 h-4" /> },
     { id: "opplan", label: "Op Plan", icon: <LayoutGrid className="w-4 h-4" /> },
     { id: "performance", label: "Performance", icon: <TrendingUp className="w-4 h-4" /> },
+    { id: "academy", label: "Tanis Academy", icon: <GraduationCap className="w-4 h-4" /> },
     { id: "payroll", label: "Payroll", icon: <CreditCard className="w-4 h-4" /> },
     { id: "commission", label: "Commission", icon: <BarChart2 className="w-4 h-4" /> },
     { id: "requests", label: "Requests", icon: <MessageSquare className="w-4 h-4" /> },
@@ -358,6 +360,7 @@ export default function AgentPortal() {
         {activeTab === "profile" && <ProfileTab agent={agent} theme={theme} />}
         {activeTab === "opplan" && <OperationPlanTab theme={theme} />}
         {activeTab === "performance" && <PerformanceTab theme={theme} />}
+        {activeTab === "academy" && <AcademyTab theme={theme} />}
         {activeTab === "payroll" && <PayrollTab theme={theme} />}
         {activeTab === "commission" && <CommissionTrackerTab theme={theme} />}
         {activeTab === "requests" && <RequestCenterTab candidateId={agent.candidateId} theme={theme} />}
@@ -3204,6 +3207,22 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
  * so nothing here changes their pay.
  */
 /** Tanis Academy — the agent's assigned courses and their progress. */
+/** Tanis Academy — the agent's own training home. */
+function AcademyTab({ theme }: { theme: Theme }) {
+  return (
+    <div className="space-y-5">
+      <div className="rounded-xl p-4 flex items-start gap-3" style={{ background: `${BRAND}12`, border: `1px solid ${BRAND}33` }}>
+        <GraduationCap className="w-4 h-4 mt-0.5 shrink-0" style={{ color: BRAND }} />
+        <div>
+          <p className="text-xs font-semibold" style={{ color: BRAND }}>Tanis Academy</p>
+          <p className="text-xs mt-0.5" style={{ color: theme.textMuted }}>Your training courses and progress.</p>
+        </div>
+      </div>
+      <MyCourses theme={theme} />
+    </div>
+  );
+}
+
 function MyCourses({ theme }: { theme: Theme }) {
   const utils = trpc.useUtils();
   const { data } = trpc.academy.myCourses.useQuery();
@@ -3221,7 +3240,14 @@ function MyCourses({ theme }: { theme: Theme }) {
   const courses = (data?.courses ?? []) as C[];
   const modules = (data?.modules ?? []) as M[];
   const doneIds = new Set(((data?.progress ?? []) as P[]).map(p => p.moduleId));
-  if (assignments.length === 0) return null;
+  if (assignments.length === 0) {
+    return (
+      <div className="rounded-2xl p-8 text-center" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+        <p className="text-sm font-medium" style={{ color: theme.text }}>No courses assigned yet.</p>
+        <p className="text-xs mt-1" style={{ color: theme.textMuted }}>Training assigned to you will appear here.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="rounded-2xl p-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
@@ -3406,7 +3432,6 @@ function PerformanceTab({ theme }: { theme: Theme }) {
       {view === "all" && <PerformanceHistoryTab theme={theme} />}
 
       {/* Records sit BELOW the performance cards, filtered by the same range toggle */}
-      <MyCourses theme={theme} />
       <MyRecords theme={theme} view={view} />
     </div>
   );
