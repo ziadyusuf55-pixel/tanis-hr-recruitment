@@ -6101,6 +6101,26 @@ const exitRouter = router({
     }),
 });
 
+const sessionRouter = router({
+  list: protectedProcedure.query(async ({ ctx }) => {
+    if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") {
+      throw new TRPCError({ code: "FORBIDDEN" });
+    }
+    const { listSessionLogs } = await import("./sessionLog");
+    return listSessionLogs();
+  }),
+  revoke: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") {
+        throw new TRPCError({ code: "FORBIDDEN" });
+      }
+      const { revokeSessionLog } = await import("./sessionLog");
+      await revokeSessionLog(input.id, ctx.user.name || ctx.user.openId);
+      return { ok: true } as const;
+    }),
+});
+
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -6149,6 +6169,7 @@ export const appRouter = router({
   hr: hrRouter,
   leave: leaveRouter,
   exit: exitRouter,
+  session: sessionRouter,
 });
 export type AppRouter = typeof appRouter;
 

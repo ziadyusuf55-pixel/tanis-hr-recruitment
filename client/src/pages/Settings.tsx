@@ -32,7 +32,121 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { UserPlus, Copy, Check, ShieldOff, ShieldCheck, Mail, Users, Trash2, Pencil, Link2, Link2Off, RefreshCw, Calendar, Building2, Key, Plus, Eye, EyeOff, Ban } from "lucide-react";
+import { UserPlus, Copy, Check, ShieldOff, ShieldCheck, Mail, Users, Trash2, Pencil, Link2, Link2Off, RefreshCw, Calendar, Building2, Key, Plus, Eye, EyeOff, Ban, Monitor, Smartphone, Tablet, Globe } from "lucide-react";
+
+// ─── Session Logs Section ───────────────────────────────────────────────────
+function SessionLogsSection() {
+  const utils = trpc.useUtils();
+  const { data: sessions = [], isLoading } = trpc.session.list.useQuery();
+
+  const revokeMutation = trpc.session.revoke.useMutation({
+    onSuccess: () => { utils.session.list.invalidate(); toast.success("Session revoked"); },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+
+  const DeviceIcon = ({ type }: { type: string | null }) => {
+    if (type === "mobile") return <Smartphone className="h-3.5 w-3.5 text-muted-foreground" />;
+    if (type === "tablet") return <Tablet className="h-3.5 w-3.5 text-muted-foreground" />;
+    return <Monitor className="h-3.5 w-3.5 text-muted-foreground" />;
+  };
+
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base flex items-center gap-2"><Globe className="h-4 w-4" /> Login History</CardTitle>
+        <CardDescription className="mt-1">All Hub logins — IP address, location, device, and browser. Revoke any session to flag it.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        ) : sessions.length === 0 ? (
+          <div className="text-center py-6 text-muted-foreground">
+            <Globe className="h-8 w-8 mx-auto mb-2 opacity-30" />
+            <p className="text-sm">No login records yet.</p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b text-muted-foreground">
+                  <th className="text-left py-2 pr-3 font-medium">Time</th>
+                  <th className="text-left py-2 pr-3 font-medium">User</th>
+                  <th className="text-left py-2 pr-3 font-medium">IP</th>
+                  <th className="text-left py-2 pr-3 font-medium">Location</th>
+                  <th className="text-left py-2 pr-3 font-medium">Device</th>
+                  <th className="text-left py-2 pr-3 font-medium">Browser / OS</th>
+                  <th className="text-left py-2 pr-3 font-medium">Status</th>
+                  <th className="py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {sessions.map((s) => (
+                  <tr key={s.id} className={`border-b last:border-0 ${s.revokedAt ? "opacity-50" : ""}`}>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      {new Date(s.loggedInAt).toLocaleString()}
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      <span className="font-medium">{s.userName ?? s.userId}</span>
+                      {s.userRole && <span className="ml-1 text-muted-foreground">({s.userRole})</span>}
+                    </td>
+                    <td className="py-2 pr-3 font-mono whitespace-nowrap">{s.ip ?? "—"}</td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      {[s.city, s.country].filter(Boolean).join(", ") || "—"}
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span className="flex items-center gap-1">
+                        <DeviceIcon type={s.deviceType} />
+                        <span className="capitalize">{s.deviceType}</span>
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      {[s.browser, s.os].filter(Boolean).join(" / ") || "—"}
+                    </td>
+                    <td className="py-2 pr-3">
+                      {s.revokedAt ? (
+                        <Badge variant="destructive" className="text-[10px]">Revoked</Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px] text-green-600 border-green-300">Active</Badge>
+                      )}
+                    </td>
+                    <td className="py-2">
+                      {!s.revokedAt && (
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button variant="ghost" size="icon" className="h-6 w-6" title="Revoke session">
+                              <Ban className="h-3 w-3 text-amber-500" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Revoke this session?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This marks the session as revoked. The user's cookie will remain valid until they log out, but the record will be flagged.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => revokeMutation.mutate({ id: s.id })}
+                                className="bg-amber-500 hover:bg-amber-600"
+                              >
+                                Revoke
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
 
 // ─── API Keys Section ───────────────────────────────────────────────────────
 function ApiKeysSection() {
@@ -925,6 +1039,9 @@ export default function Settings() {
 
       {/* API Keys */}
       <ApiKeysSection />
+
+      {/* Login History */}
+      <SessionLogsSection />
 
       {/* Security */}
       <Card>

@@ -1277,3 +1277,24 @@ export const academyProgress = mysqlTable("academy_progress", {
   moduleId: int("moduleId").notNull(),
   completedAt: bigint("completedAt", { mode: "number" }).notNull(),
 });
+
+// ─── Session Logs ────────────────────────────────────────────────────────────
+export const sessionLogs = mysqlTable("session_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  userId: varchar("userId", { length: 255 }).notNull(),
+  userName: varchar("userName", { length: 255 }),
+  userRole: varchar("userRole", { length: 100 }),
+  ip: varchar("ip", { length: 64 }),
+  country: varchar("country", { length: 100 }),
+  city: varchar("city", { length: 100 }),
+  lat: decimal("lat", { precision: 9, scale: 6 }),
+  lng: decimal("lng", { precision: 9, scale: 6 }),
+  deviceType: mysqlEnum("deviceType", ["desktop", "mobile", "tablet", "unknown"]).default("unknown").notNull(),
+  browser: varchar("browser", { length: 100 }),
+  os: varchar("os", { length: 100 }),
+  userAgent: text("userAgent"),
+  loggedInAt: bigint("loggedInAt", { mode: "number" }).notNull(),
+  lastSeenAt: bigint("lastSeenAt", { mode: "number" }),
+  revokedAt: bigint("revokedAt", { mode: "number" }),
+  revokedBy: varchar("revokedBy", { length: 255 }),
+});
