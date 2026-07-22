@@ -1278,6 +1278,20 @@ export const academyProgress = mysqlTable("academy_progress", {
   completedAt: bigint("completedAt", { mode: "number" }).notNull(),
 });
 
+/** Multiple-choice quiz questions attached to a course (used when passMark > 0).
+ *  Options are stored as a JSON array of strings; correctIndex points into it.
+ *  Grading happens server-side only — correct answers are never sent to agents. */
+export const academyQuizQuestions = mysqlTable("academy_quiz_questions", {
+  id: int("id").autoincrement().primaryKey(),
+  courseId: int("courseId").notNull(),
+  question: text("question").notNull(),
+  options: text("options").notNull(),                    // JSON string[] (2–6 choices)
+  correctIndex: int("correctIndex").notNull(),           // 0-based index into options
+  sortOrder: int("sortOrder").default(0).notNull(),
+  createdBy: varchar("createdBy", { length: 255 }),
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+});
+
 // ─── Session Logs ────────────────────────────────────────────────────────────
 export const sessionLogs = mysqlTable("session_logs", {
   id: int("id").autoincrement().primaryKey(),
