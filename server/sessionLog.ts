@@ -1,5 +1,5 @@
 import type { Request } from "express";
-import { db as drizzleDb } from "./_core/db";
+import { getDb } from "./db";
 import { sessionLogs } from "../drizzle/schema";
 import { eq } from "drizzle-orm";
 
@@ -83,12 +83,14 @@ async function geolocate(ip: string): Promise<GeoResult> {
 // ─── Main export ─────────────────────────────────────────────────────────────
 
 export async function logSession(req: Request, userId: string, userName: string | null): Promise<void> {
+  const db = await getDb();
+  if (!db) return;
   const ua = req.headers["user-agent"] ?? "";
   const ip = extractIp(req);
   const { browser, os, deviceType } = parseUA(ua);
   const geo = await geolocate(ip);
 
-  await drizzleDb.insert(sessionLogs).values({
+  await db.insert(sessionLogs).values({
     userId,
     userName,
     ip,
@@ -107,18 +109,21 @@ export async function logSession(req: Request, userId: string, userName: string 
 
 // ─── DB helpers for the router ───────────────────────────────────────────────
 
-export async function listSessionLogs(userId?: string) {
-  const rows = await drizzleDb
+export async function listSessionLogs() {
+  const db = await getDb();
+  if (!db) return [];
+  const rows = await db
     .select()
     .from(sessionLogs)
-    .orderBy(sessionLogs.loggedInAt)
     .limit(200);
-  // Sort newest first (drizzle desc import not always available)
-  return rows.reverse();
+  // Sort newest first
+  return rows.sort((a, b) => (b.loggedInAt ?? 0) - (a.loggedInAt ?? 0));
 }
 
 export async function revokeSessionLog(id: number, revokedBy: string) {
-  await drizzleDb
+  const db = await getDb();
+  if (!db) return;
+  await db
     .update(sessionLogs)
     .set({ revokedAt: Date.now(), revokedBy })
     .where(eq(sessionLogs.id, id));
