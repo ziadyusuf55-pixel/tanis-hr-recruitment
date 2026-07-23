@@ -3005,14 +3005,180 @@ const academyRouter = router({
         )),
       ]);
       if (mods.length > 0 && done.length >= mods.length) {
-        await db.update(academyAssignments)
-          .set({ status: "completed", completedAt: Date.now() })
-          .where(and(
-            eq(academyAssignments.traineeCode, traineeCode),
-            eq(academyAssignments.courseId, input.courseId),
-          ));
+        // If the course has a quiz (passMark > 0 AND questions exist), finishing
+        // modules only unlocks the assessment — completion happens in submitQuiz.
+        const { academyCourses, academyQuizQuestions } = await import("../drizzle/schema");
+        const [courseRow] = await db.select().from(academyCourses).where(eq(academyCourses.id, input.courseId)).limit(1);
+        const questions = await db.select({ id: academyQuizQuestions.id }).from(academyQuizQuestions)
+          .where(eq(academyQuizQuestions.courseId, input.courseId));
+        const hasQuiz = (courseRow?.passMark ?? 0) > 0 && questions.length > 0;
+        if (!hasQuiz) {
+          await db.update(academyAssignments)
+            .set({ status: "completed", completedAt: Date.now() })
+            .where(and(
+              eq(academyAssignments.traineeCode, traineeCode),
+              eq(academyAssignments.courseId, input.courseId),
+            ));
+        }
       }
       return { ok: true } as const;
+    }),
+
+  // ---- Quiz (assessment) -------------------------------------------------
+  /** Admin: list a course's questions WITH correct answers (builder view). */
+  listQuizQuestions: protectedProcedure
+    .input(z.object({ courseId: z.number() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq, asc } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      const { academyQuizQuestions } = await import("../drizzle/schema");
+      const rows = await db.select().from(academyQuizQuestions)
+        .where(eq(academyQuizQuestions.courseId, input.courseId))
+        .orderBy(asc(academyQuizQuestions.sortOrder), asc(academyQuizQuestions.id));
+      return rows.map(r => ({ ...r, options: JSON.parse(r.options) as string[] }));
+    }),
+
+  addQuizQuestion: protectedProcedure
+    .input(z.object({
+      courseId: z.number(),
+      question: z.string().min(1).max(2000),
+      options: z.array(z.string().min(1).max(500)).min(2).max(6),
+      correctIndex: z.number().int().min(0),
+      sortOrder: z.number().int().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      if (input.correctIndex >= input.options.length) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "correctIndex out of range" });
+      }
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { academyQuizQuestions } = await import("../drizzle/schema");
+      await db.insert(academyQuizQuestions).values({
+        courseId: input.courseId,
+        question: input.question,
+        options: JSON.stringify(input.options),
+        correctIndex: input.correctIndex,
+        sortOrder: input.sortOrder ?? 0,
+        createdBy: ctx.user?.email ?? ctx.user?.openId ?? null,
+        createdAt: Date.now(),
+      } as never);
+      return { ok: true } as const;
+    }),
+
+  deleteQuizQuestion: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { academyQuizQuestions } = await import("../drizzle/schema");
+      await db.delete(academyQuizQuestions).where(eq(academyQuizQuestions.id, input.id));
+      return { ok: true } as const;
+    }),
+
+  /** Admin: set/change a course's pass mark (0 disables the quiz gate). */
+  setPassMark: protectedProcedure
+    .input(z.object({ courseId: z.number(), passMark: z.number().int().min(0).max(100) }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { academyCourses } = await import("../drizzle/schema");
+      await db.update(academyCourses).set({ passMark: input.passMark, updatedAt: Date.now() })
+        .where(eq(academyCourses.id, input.courseId));
+      return { ok: true } as const;
+    }),
+
+  /** Agent: fetch quiz questions for a course — correct answers stripped. */
+  getQuiz: publicProcedure
+    .input(z.object({ courseId: z.number() }))
+    .query(async ({ ctx, input }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) throw new TRPCError({ code: "UNAUTHORIZED" });
+      try {
+        const p = jwt.verify(token, ENV.cookieSecret) as { type: string };
+        if (p.type !== "agent") throw new Error("not agent");
+      } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+
+      const { getDb } = await import("./db");
+      const { eq, asc } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return { passMark: 0, questions: [] as { id: number; question: string; options: string[] }[] };
+      const { academyCourses, academyQuizQuestions } = await import("../drizzle/schema");
+      const [courseRow] = await db.select().from(academyCourses).where(eq(academyCourses.id, input.courseId)).limit(1);
+      const rows = await db.select().from(academyQuizQuestions)
+        .where(eq(academyQuizQuestions.courseId, input.courseId))
+        .orderBy(asc(academyQuizQuestions.sortOrder), asc(academyQuizQuestions.id));
+      return {
+        passMark: courseRow?.passMark ?? 0,
+        questions: rows.map(r => ({ id: r.id, question: r.question, options: JSON.parse(r.options) as string[] })),
+      };
+    }),
+
+  /** Agent: submit answers — graded server-side. Writes score to the assignment;
+   *  marks it completed only when score >= passMark. Retakes allowed until pass. */
+  submitQuiz: publicProcedure
+    .input(z.object({
+      courseId: z.number(),
+      answers: z.array(z.object({ questionId: z.number(), answerIndex: z.number().int().min(0) })),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) throw new TRPCError({ code: "UNAUTHORIZED" });
+      let traineeCode = "";
+      try {
+        const p = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+        if (p.type !== "agent") throw new Error("not agent");
+        traineeCode = p.traineeCode;
+      } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+
+      const { getDb } = await import("./db");
+      const { and, eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { academyCourses, academyQuizQuestions, academyModules, academyProgress, academyAssignments } = await import("../drizzle/schema");
+
+      // Assessment unlocks only after all modules are done (also enforced in UI).
+      const [mods, done] = await Promise.all([
+        db.select({ id: academyModules.id }).from(academyModules).where(eq(academyModules.courseId, input.courseId)),
+        db.select({ id: academyProgress.id }).from(academyProgress).where(and(
+          eq(academyProgress.traineeCode, traineeCode),
+          eq(academyProgress.courseId, input.courseId),
+        )),
+      ]);
+      if (mods.length > 0 && done.length < mods.length) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Finish all modules before taking the assessment" });
+      }
+
+      const [courseRow] = await db.select().from(academyCourses).where(eq(academyCourses.id, input.courseId)).limit(1);
+      const questions = await db.select().from(academyQuizQuestions)
+        .where(eq(academyQuizQuestions.courseId, input.courseId));
+      if (!questions.length) throw new TRPCError({ code: "NOT_FOUND", message: "This course has no assessment" });
+
+      const answerMap = new Map(input.answers.map(a => [a.questionId, a.answerIndex]));
+      let correct = 0;
+      for (const q of questions) {
+        if (answerMap.get(q.id) === q.correctIndex) correct++;
+      }
+      const score = Math.round((correct / questions.length) * 100);
+      const passMark = courseRow?.passMark ?? 0;
+      const passed = score >= passMark;
+
+      await db.update(academyAssignments)
+        .set(passed
+          ? { score, status: "completed" as const, completedAt: Date.now() }
+          : { score, status: "in_progress" as const })
+        .where(and(
+          eq(academyAssignments.traineeCode, traineeCode),
+          eq(academyAssignments.courseId, input.courseId),
+        ));
+
+      return { score, passed, passMark, correctCount: correct, totalQuestions: questions.length } as const;
     }),
 });
 
