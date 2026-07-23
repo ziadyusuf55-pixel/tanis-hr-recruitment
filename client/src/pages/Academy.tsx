@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { GraduationCap, Plus, Lightbulb, ChevronDown, ChevronRight, Users, CheckCircle2 } from "lucide-react";
+import { GraduationCap, Plus, Lightbulb, ChevronDown, ChevronRight, Users, CheckCircle2, ClipboardCheck, Trash2, Check } from "lucide-react";
 
 const BRAND = "#FF6A13";
 
@@ -193,6 +193,8 @@ function CourseRow({ course, onPublish }: { course: Course; onPublish: (v: { id:
             </div>
           </div>
 
+          <QuizBuilder courseId={course.id} passMark={course.passMark ?? 0} />
+
           <div>
             <p className="text-xs font-semibold mb-2 flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> Assign</p>
             <div className="flex flex-wrap gap-2 items-center">
@@ -216,6 +218,126 @@ function CourseRow({ course, onPublish }: { course: Course; onPublish: (v: { id:
         </div>
       )}
     </CardContent></Card>
+  );
+}
+
+/** Assessment builder — pass mark + multiple-choice questions for one course.
+ *  Agents must score >= pass mark (after finishing all modules) to complete
+ *  the course. Pass mark 0 = no assessment, course completes on modules alone. */
+function QuizBuilder({ courseId, passMark }: { courseId: number; passMark: number }) {
+  const utils = trpc.useUtils();
+  const { data: questions = [], isLoading } = trpc.academy.listQuizQuestions.useQuery({ courseId });
+  const [mark, setMark] = useState(String(passMark));
+  const [q, setQ] = useState({ question: "", options: ["", "", "", ""], correctIndex: 0 });
+
+  const invalidate = () => { utils.academy.listQuizQuestions.invalidate({ courseId }); utils.academy.listCourses.invalidate(); };
+  const setPass = trpc.academy.setPassMark.useMutation({
+    onSuccess: () => { invalidate(); toast.success("Pass mark saved"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const addQ = trpc.academy.addQuizQuestion.useMutation({
+    onSuccess: () => { invalidate(); toast.success("Question added"); setQ({ question: "", options: ["", "", "", ""], correctIndex: 0 }); },
+    onError: (e) => toast.error(e.message),
+  });
+  const delQ = trpc.academy.deleteQuizQuestion.useMutation({
+    onSuccess: () => { invalidate(); toast.success("Question removed"); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const filledOptions = q.options.map(o => o.trim()).filter(Boolean);
+  const canAdd = q.question.trim().length > 0 && filledOptions.length >= 2 && q.options[q.correctIndex]?.trim();
+
+  type Question = { id: number; question: string; options: string[]; correctIndex: number };
+
+  return (
+    <div>
+      <p className="text-xs font-semibold mb-2 flex items-center gap-1.5">
+        <ClipboardCheck className="w-3.5 h-3.5" /> Assessment ({questions.length} question{questions.length === 1 ? "" : "s"})
+      </p>
+
+      <div className="flex flex-wrap items-center gap-2 mb-3">
+        <span className="text-xs text-muted-foreground">Pass mark</span>
+        <Input className="h-8 w-20" type="number" min={0} max={100} value={mark} onChange={e => setMark(e.target.value)} />
+        <span className="text-xs text-muted-foreground">%</span>
+        <Button size="sm" variant="outline" className="h-8 text-xs" disabled={setPass.isPending}
+          onClick={() => {
+            const v = Math.max(0, Math.min(100, Number(mark) || 0));
+            setMark(String(v));
+            setPass.mutate({ courseId, passMark: v });
+          }}>
+          Save
+        </Button>
+        {(Number(mark) || 0) === 0 && (
+          <span className="text-[11px] text-muted-foreground">0 = no assessment — course completes on modules alone</span>
+        )}
+      </div>
+
+      {isLoading ? (
+        <p className="text-xs text-muted-foreground mb-2">Loading questions…</p>
+      ) : questions.length > 0 && (
+        <div className="space-y-2 mb-3">
+          {(questions as Question[]).map((question, qi) => (
+            <div key={question.id} className="rounded-md border p-2.5">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-xs font-medium flex-1">{qi + 1}. {question.question}</p>
+                <Button size="sm" variant="ghost" className="h-6 w-6 p-0 shrink-0 text-muted-foreground hover:text-red-600"
+                  disabled={delQ.isPending} onClick={() => delQ.mutate({ id: question.id })}>
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              </div>
+              <div className="mt-1.5 grid sm:grid-cols-2 gap-1">
+                {question.options.map((opt, oi) => (
+                  <div key={oi} className={`text-[11px] flex items-center gap-1.5 px-2 py-1 rounded ${oi === question.correctIndex ? "bg-green-50 text-green-700 font-medium" : "text-muted-foreground"}`}>
+                    {oi === question.correctIndex ? <Check className="w-3 h-3 shrink-0" /> : <span className="w-3 shrink-0" />}
+                    <span className="truncate">{String.fromCharCode(65 + oi)}. {opt}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="rounded-md border border-dashed p-2.5 space-y-2">
+        <Input className="h-8" placeholder="New question…" value={q.question}
+          onChange={e => setQ({ ...q, question: e.target.value })} />
+        <div className="grid sm:grid-cols-2 gap-2">
+          {q.options.map((opt, oi) => (
+            <div key={oi} className="flex items-center gap-1.5">
+              <button type="button" title="Mark as correct answer"
+                onClick={() => setQ({ ...q, correctIndex: oi })}
+                className={`h-8 w-8 shrink-0 rounded-md border flex items-center justify-center ${q.correctIndex === oi ? "bg-green-600 border-green-600 text-white" : "text-muted-foreground"}`}>
+                <Check className="w-3.5 h-3.5" />
+              </button>
+              <Input className="h-8" placeholder={`Option ${String.fromCharCode(65 + oi)}${oi < 2 ? "" : " (optional)"}`}
+                value={opt}
+                onChange={e => {
+                  const options = [...q.options];
+                  options[oi] = e.target.value;
+                  setQ({ ...q, options });
+                }} />
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[11px] text-muted-foreground">Tick the green box next to the correct answer. Min 2 options.</p>
+          <Button size="sm" className="h-8 text-xs" disabled={!canAdd || addQ.isPending}
+            onClick={() => {
+              // Keep only filled options; remap correctIndex to the compacted list
+              const kept: string[] = [];
+              let newCorrect = -1;
+              q.options.forEach((o, oi) => {
+                const t = o.trim();
+                if (t) { if (oi === q.correctIndex) newCorrect = kept.length; kept.push(t); }
+              });
+              if (newCorrect < 0) { toast.error("Correct answer can't be empty"); return; }
+              addQ.mutate({ courseId, question: q.question.trim(), options: kept, correctIndex: newCorrect });
+            }}>
+            {addQ.isPending ? "Adding…" : "Add question"}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
