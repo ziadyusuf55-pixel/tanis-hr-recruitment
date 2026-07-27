@@ -22,13 +22,15 @@ const STAGES = [
 type StageKey = typeof STAGES[number]["key"];
 
 type BdUser = { id: number; name: string; role: string };
-type Contact = { id: number; company: string; contactName: string | null; email: string | null; phone: string | null };
+type Company = { id: number; name: string; website: string | null; industry: string | null; country: string | null; source: string | null; notes: string | null };
+type Contact = { id: number; company: string; companyId: number | null; contactName: string | null; jobTitle: string | null; email: string | null; phone: string | null };
 type Deal = {
-  id: number; title: string; ownerId: number; contactId: number | null; stage: StageKey;
+  id: number; title: string; ownerId: number; companyId: number | null; contactId: number | null; stage: StageKey;
   serviceType: string | null; seats: number | null; value: string | null; notes: string | null; expectedCloseDate: string | null;
   createdAt: number; lastContactedAt: number | null; reminderDate: string | null; reminderNote: string | null; outcomeReason: string | null; stageChangedAt: number | null;
 };
-const COLD_DAYS = 7;
+// A deal is "going cold" after this many days with no logged activity
+const COLD_DAYS = 14;
 
 export default function BusinessDevelopment() {
   const utils = trpc.useUtils();
@@ -42,14 +44,19 @@ export default function BusinessDevelopment() {
   // BD-role users are locked to their own pipeline
   useEffect(() => { if (myBdId && ownerId !== myBdId) setOwnerId(myBdId); }, [myBdId]); // eslint-disable-line react-hooks/exhaustive-deps
   const [view, setView] = useState<"board" | "table">("board");
-  const [tab, setTab] = useState<"pipeline" | "contacts">("pipeline");
+  const [tab, setTab] = useState<"pipeline" | "companies">("pipeline");
 
   const { data: deals = [], isLoading } = trpc.bd.listDeals.useQuery(
     ownerId === "all" ? {} : { ownerId }
   );
   const { data: contacts = [] } = trpc.bd.listContacts.useQuery();
+  // listCompanies also auto-backfills companies from legacy contact rows on first call
+  const { data: companies = [] } = trpc.bd.listCompanies.useQuery();
+  const { data: stale = [] } = trpc.bd.staleDeals.useQuery();
   const typedDeals = deals as Deal[];
   const typedContacts = contacts as Contact[];
+  const typedCompanies = companies as Company[];
+  const staleDeals = (stale as (Deal & { daysStale: number })[]).filter(d => ownerId === "all" || d.ownerId === ownerId);
 
   const seedUsers = trpc.bd.seedUsers.useMutation({
     onSuccess: () => { utils.bd.listUsers.invalidate(); toast.success("BD team ready"); },
@@ -66,6 +73,8 @@ export default function BusinessDevelopment() {
 
   const ownerName = (id: number) => bdUsers.find(u => u.id === id)?.name ?? "—";
   const contactCompany = (id: number | null) => id ? (typedContacts.find(c => c.id === id)?.company ?? "") : "";
+  // Company shown on a deal: linked company first, contact's company as fallback
+  const dealCompany = (d: Deal) => (d.companyId ? (typedCompanies.find(c => c.id === d.companyId)?.name ?? "") : "") || contactCompany(d.contactId);
 
   const [openDeal, setOpenDeal] = useState<Deal | null>(null);
   const isCold = (d: Deal) => {
@@ -122,7 +131,7 @@ export default function BusinessDevelopment() {
         </div>
         <div className="flex items-center gap-2">
           <button onClick={() => setTab("pipeline")} className={`text-sm px-3 py-1.5 rounded-lg border ${tab === "pipeline" ? "bg-foreground text-background" : "bg-background"}`}>Pipeline</button>
-          <button onClick={() => setTab("contacts")} className={`text-sm px-3 py-1.5 rounded-lg border ${tab === "contacts" ? "bg-foreground text-background" : "bg-background"}`}>Contacts</button>
+          <button onClick={() => setTab("companies")} className={`text-sm px-3 py-1.5 rounded-lg border ${tab === "companies" ? "bg-foreground text-background" : "bg-background"}`}>Companies</button>
         </div>
       </div>
 
@@ -141,7 +150,7 @@ export default function BusinessDevelopment() {
                 <button onClick={() => setView("board")} className={`px-2.5 py-1.5 ${view === "board" ? "bg-muted" : ""}`} title="Board"><LayoutGrid className="w-4 h-4" /></button>
                 <button onClick={() => setView("table")} className={`px-2.5 py-1.5 ${view === "table" ? "bg-muted" : ""}`} title="Table"><Table2 className="w-4 h-4" /></button>
               </div>
-              <AddDealDialog bdUsers={bdUsers} contacts={typedContacts} defaultOwner={ownerId === "all" ? bdUsers[0]?.id : ownerId} onDone={() => utils.bd.listDeals.invalidate()} />
+              <AddDealDialog bdUsers={bdUsers} companies={typedCompanies} contacts={typedContacts} defaultOwner={ownerId === "all" ? bdUsers[0]?.id : ownerId} onDone={() => utils.bd.listDeals.invalidate()} />
             </div>
           </div>
 
@@ -159,6 +168,26 @@ export default function BusinessDevelopment() {
                     <span className="flex items-center gap-2 shrink-0">
                       <Badge variant="outline" className="text-[10px]">{ownerName(d.ownerId)}</Badge>
                       <span className={`text-[10px] ${reminderOverdue(d) ? "text-red-600 font-semibold" : "text-amber-700"}`}>{reminderOverdue(d) ? "overdue" : "today"} · {d.reminderDate}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {staleDeals.length > 0 && (
+            <div className="rounded-xl border border-red-300 bg-red-50 p-3 space-y-2">
+              <p className="text-xs font-semibold text-red-900 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> Going cold — no activity for {COLD_DAYS}+ days ({staleDeals.length})</p>
+              <div className="space-y-1.5">
+                {staleDeals.map(d => (
+                  <button key={d.id} onClick={() => { const full = typedDeals.find(x => x.id === d.id); if (full) setOpenDeal(full); }} className="w-full text-left flex items-center justify-between gap-2 rounded-lg bg-background border px-2.5 py-1.5 hover:bg-muted/50">
+                    <span className="text-sm">
+                      <span className="font-medium">{d.title}</span>
+                      {dealCompany(d) && <span className="text-muted-foreground"> · {dealCompany(d)}</span>}
+                    </span>
+                    <span className="flex items-center gap-2 shrink-0">
+                      <Badge variant="outline" className="text-[10px]">{ownerName(d.ownerId)}</Badge>
+                      <span className="text-[10px] text-red-600 font-semibold">{d.daysStale}d silent</span>
                     </span>
                   </button>
                 ))}
@@ -187,7 +216,7 @@ export default function BusinessDevelopment() {
                             <button onClick={() => setOpenDeal(d)} className="text-sm font-semibold leading-tight text-left hover:underline">{d.title}</button>
                             <button onClick={() => { if (confirm("Delete this deal?")) deleteDeal.mutate({ id: d.id }); }} className="text-muted-foreground hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
                           </div>
-                          {contactCompany(d.contactId) && <p className="text-xs text-muted-foreground">{contactCompany(d.contactId)}</p>}
+                          {dealCompany(d) && <p className="text-xs text-muted-foreground">{dealCompany(d)}</p>}
                           <div className="flex flex-wrap gap-1.5 text-[11px]">
                             {d.value && <span className="font-semibold text-emerald-700">${d.value}</span>}
                             {d.seats != null && <span className="text-muted-foreground">{d.seats} seats</span>}
@@ -236,7 +265,7 @@ export default function BusinessDevelopment() {
                         {isCold(d) && <span className="ml-1.5 text-[10px] text-amber-700">● cold</span>}
                         {d.reminderDate && <span className={`ml-1.5 text-[10px] ${reminderOverdue(d) ? "text-red-600" : "text-blue-600"}`}>⏰ {d.reminderDate}</span>}
                       </td>
-                      <td className="px-3 py-2 text-muted-foreground">{contactCompany(d.contactId) || "—"}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{dealCompany(d) || "—"}</td>
                       <td className="px-3 py-2">{ownerName(d.ownerId)}</td>
                       <td className="px-3 py-2">
                         <select value={d.stage} onChange={(e) => handleStage(d, e.target.value as StageKey)} className="text-xs border rounded px-1 py-0.5 bg-background">
@@ -255,12 +284,12 @@ export default function BusinessDevelopment() {
         </>
       )}
 
-      {tab === "contacts" && <ContactsPanel contacts={typedContacts} bdUsers={bdUsers} onDone={() => utils.bd.listContacts.invalidate()} />}
+      {tab === "companies" && <CompaniesPanel companies={typedCompanies} contacts={typedContacts} deals={typedDeals} ownerName={ownerName} onOpenDeal={(d) => setOpenDeal(d)} />}
 
       {openDeal && (
         <DealDrawer
           deal={openDeal}
-          company={contactCompany(openDeal.contactId)}
+          company={dealCompany(openDeal)}
           ownerName={ownerName(openDeal.ownerId)}
           onClose={() => setOpenDeal(null)}
           onChanged={() => utils.bd.listDeals.invalidate()}
@@ -349,18 +378,20 @@ function DealDrawer({ deal, company, ownerName, onClose, onChanged }: { deal: De
 }
 
 // ── Add Deal dialog ──
-function AddDealDialog({ bdUsers, contacts, defaultOwner, onDone }: { bdUsers: BdUser[]; contacts: Contact[]; defaultOwner?: number; onDone: () => void }) {
+function AddDealDialog({ bdUsers, companies, contacts, defaultOwner, onDone }: { bdUsers: BdUser[]; companies: Company[]; contacts: Contact[]; defaultOwner?: number; onDone: () => void }) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ title: "", ownerId: defaultOwner ?? 0, contactId: 0, serviceType: "", seats: "", value: "", notes: "", expectedCloseDate: "" });
+  const [form, setForm] = useState({ title: "", ownerId: defaultOwner ?? 0, companyId: 0, contactId: 0, serviceType: "", seats: "", value: "", notes: "", expectedCloseDate: "" });
   const add = trpc.bd.addDeal.useMutation({
-    onSuccess: () => { toast.success("Deal added"); setOpen(false); setForm({ title: "", ownerId: defaultOwner ?? 0, contactId: 0, serviceType: "", seats: "", value: "", notes: "", expectedCloseDate: "" }); onDone(); },
+    onSuccess: () => { toast.success("Deal added"); setOpen(false); setForm({ title: "", ownerId: defaultOwner ?? 0, companyId: 0, contactId: 0, serviceType: "", seats: "", value: "", notes: "", expectedCloseDate: "" }); onDone(); },
     onError: (e) => toast.error(e.message),
   });
+  const companyContacts = form.companyId ? contacts.filter(c => c.companyId === form.companyId) : contacts;
   const submit = () => {
     if (!form.title.trim()) return toast.error("Deal name is required");
     if (!form.ownerId) return toast.error("Pick an owner");
     add.mutate({
       title: form.title.trim(), ownerId: Number(form.ownerId),
+      companyId: form.companyId ? Number(form.companyId) : undefined,
       contactId: form.contactId ? Number(form.contactId) : undefined,
       serviceType: form.serviceType || undefined,
       seats: form.seats ? Number(form.seats) : undefined,
@@ -381,11 +412,15 @@ function AddDealDialog({ bdUsers, contacts, defaultOwner, onDone }: { bdUsers: B
                 <option value={0}>Owner *</option>
                 {bdUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
-              <select className="border rounded-md px-2 py-2 text-sm bg-background" value={form.contactId} onChange={e => setForm({ ...form, contactId: Number(e.target.value) })}>
-                <option value={0}>Company / contact</option>
-                {contacts.map(c => <option key={c.id} value={c.id}>{c.company}</option>)}
+              <select className="border rounded-md px-2 py-2 text-sm bg-background" value={form.companyId} onChange={e => setForm({ ...form, companyId: Number(e.target.value), contactId: 0 })}>
+                <option value={0}>Company</option>
+                {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
+            <select className="w-full border rounded-md px-2 py-2 text-sm bg-background" value={form.contactId} onChange={e => setForm({ ...form, contactId: Number(e.target.value) })}>
+              <option value={0}>Primary contact (optional)</option>
+              {companyContacts.map(c => <option key={c.id} value={c.id}>{c.contactName || c.company}{c.jobTitle ? ` — ${c.jobTitle}` : ""}</option>)}
+            </select>
             <Input placeholder="Service being sold (e.g. inbound support, lead gen)" value={form.serviceType} onChange={e => setForm({ ...form, serviceType: e.target.value })} />
             <div className="grid grid-cols-2 gap-2">
               <Input placeholder="Value (USD)" value={form.value} onChange={e => setForm({ ...form, value: e.target.value })} />
@@ -404,25 +439,199 @@ function AddDealDialog({ bdUsers, contacts, defaultOwner, onDone }: { bdUsers: B
   );
 }
 
-// ── Contacts panel (shared) ──
-function ContactDealsRow({ contactId, ownerName }: { contactId: number; ownerName: (id: number) => string }) {
-  const { data: deals = [] } = trpc.bd.listDeals.useQuery({});
-  const mine = (deals as Deal[]).filter(d => d.contactId === contactId);
+// ── Companies panel: company → contacts → deals tree ──
+function CompaniesPanel({ companies, contacts, deals, ownerName, onOpenDeal }: {
+  companies: Company[]; contacts: Contact[]; deals: Deal[]; ownerName: (id: number) => string; onOpenDeal: (d: Deal) => void;
+}) {
+  const utils = trpc.useUtils();
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const [newOpen, setNewOpen] = useState(false);
+  const [editCo, setEditCo] = useState<Company | null>(null);
+  const refresh = () => { utils.bd.listCompanies.invalidate(); utils.bd.listContacts.invalidate(); utils.bd.listDeals.invalidate(); };
+
+  const delCompany = trpc.bd.deleteCompany.useMutation({
+    onSuccess: () => { refresh(); toast.success("Company deleted"); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const contactsOf = (id: number) => contacts.filter(c => c.companyId === id);
+  const dealsOf = (id: number) => deals.filter(d => d.companyId === id || (d.contactId && contacts.find(c => c.id === d.contactId)?.companyId === id));
   const stageLabel = (k: string) => STAGES.find(s => s.key === k)?.label ?? k;
+
   return (
-    <tr className="bg-muted/30"><td colSpan={5} className="px-4 py-2">
-      {mine.length === 0 ? <p className="text-xs text-muted-foreground">No deals linked to this contact yet.</p> : (
-        <div className="space-y-1">
-          {mine.map(d => (
-            <p key={d.id} className="text-xs flex items-center gap-2">
-              <span className="font-medium">{d.title}</span>
-              <Badge variant="outline" className="text-[10px]">{stageLabel(d.stage)}</Badge>
-              <span className="text-muted-foreground">{ownerName(d.ownerId)}{d.value ? ` · $${d.value}` : ""}</span>
-            </p>
-          ))}
+    <div className="space-y-3">
+      <div className="flex justify-between items-center">
+        <p className="text-sm text-muted-foreground flex items-center gap-1.5"><Building2 className="w-4 h-4" /> {companies.length} companies · shared across the BD team</p>
+        <Button onClick={() => setNewOpen(true)} style={{ background: BRAND }} className="text-white"><Plus className="w-4 h-4 mr-1" /> New Company</Button>
+      </div>
+
+      <div className="space-y-2">
+        {companies.map(co => {
+          const cts = contactsOf(co.id);
+          const ds = dealsOf(co.id);
+          const open = expanded === co.id;
+          const openDeals = ds.filter(d => d.stage !== "closed_won" && d.stage !== "closed_lost");
+          return (
+            <Card key={co.id}>
+              <CardContent className="p-3">
+                <button className="w-full text-left" onClick={() => setExpanded(open ? null : co.id)}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold">{co.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {[co.industry, co.country].filter(Boolean).join(" · ") || "—"}
+                        {" · "}{cts.length} contact{cts.length === 1 ? "" : "s"} · {ds.length} deal{ds.length === 1 ? "" : "s"}
+                        {openDeals.length > 0 && <span className="text-emerald-700 font-medium"> ({openDeals.length} open)</span>}
+                      </p>
+                    </div>
+                    <span className="text-xs text-muted-foreground shrink-0">{open ? "▾" : "▸"}</span>
+                  </div>
+                </button>
+
+                {open && (
+                  <div className="mt-3 pt-3 border-t space-y-4">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {co.website && <a href={co.website.startsWith("http") ? co.website : `https://${co.website}`} target="_blank" rel="noreferrer" className="text-xs underline" style={{ color: BRAND }}>{co.website}</a>}
+                      <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setEditCo(co)}>Edit</Button>
+                      <Button size="sm" variant="outline" className="h-7 text-xs text-red-600" disabled={delCompany.isPending}
+                        onClick={() => { if (confirm(`Delete ${co.name}? Only possible when it has no contacts or deals.`)) delCompany.mutate({ id: co.id }); }}>
+                        Delete
+                      </Button>
+                    </div>
+                    {co.notes && <p className="text-xs text-muted-foreground whitespace-pre-wrap">{co.notes}</p>}
+
+                    {/* Contacts under this company */}
+                    <div>
+                      <p className="text-xs font-semibold mb-1.5 flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> Contacts</p>
+                      {cts.length === 0 && <p className="text-xs text-muted-foreground mb-1.5">No contacts yet.</p>}
+                      <div className="space-y-1 mb-2">
+                        {cts.map(c => <ContactRow key={c.id} contact={c} onChanged={refresh} />)}
+                      </div>
+                      <AddContactInline companyId={co.id} onDone={refresh} />
+                    </div>
+
+                    {/* Deals under this company */}
+                    <div>
+                      <p className="text-xs font-semibold mb-1.5 flex items-center gap-1.5"><LayoutGrid className="w-3.5 h-3.5" /> Deals</p>
+                      {ds.length === 0 ? <p className="text-xs text-muted-foreground">No deals yet — add one from the Pipeline tab.</p> : (
+                        <div className="space-y-1">
+                          {ds.map(d => (
+                            <button key={d.id} onClick={() => onOpenDeal(d)} className="w-full text-left flex items-center gap-2 rounded-lg border px-2.5 py-1.5 hover:bg-muted/50">
+                              <span className="text-xs font-medium flex-1 min-w-0 truncate">{d.title}</span>
+                              <Badge variant="outline" className="text-[10px] shrink-0">{stageLabel(d.stage)}</Badge>
+                              <span className="text-[10px] text-muted-foreground shrink-0">{ownerName(d.ownerId)}{d.value ? ` · $${d.value}` : ""}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })}
+        {companies.length === 0 && (
+          <Card><CardContent className="p-8 text-center text-sm text-muted-foreground">No companies yet — add one to start building the tree.</CardContent></Card>
+        )}
+      </div>
+
+      <CompanyDialog open={newOpen} onClose={() => setNewOpen(false)} onDone={refresh} />
+      {editCo && <CompanyDialog open company={editCo} onClose={() => setEditCo(null)} onDone={refresh} />}
+    </div>
+  );
+}
+
+function ContactRow({ contact, onChanged }: { contact: Contact; onChanged: () => void }) {
+  const del = trpc.bd.deleteContact.useMutation({
+    onSuccess: () => { onChanged(); toast.success("Contact deleted"); },
+    onError: (e) => toast.error(e.message),
+  });
+  return (
+    <div className="flex items-center gap-2 rounded-lg border px-2.5 py-1.5">
+      <div className="min-w-0 flex-1">
+        <p className="text-xs font-medium">{contact.contactName || "—"}{contact.jobTitle && <span className="font-normal text-muted-foreground"> · {contact.jobTitle}</span>}</p>
+        <p className="text-[11px] text-muted-foreground truncate">{[contact.email, contact.phone].filter(Boolean).join(" · ") || "no email / phone"}</p>
+      </div>
+      <button onClick={() => { if (confirm("Delete this contact?")) del.mutate({ id: contact.id }); }} className="text-muted-foreground hover:text-red-600 shrink-0"><Trash2 className="w-3.5 h-3.5" /></button>
+    </div>
+  );
+}
+
+function AddContactInline({ companyId, onDone }: { companyId: number; onDone: () => void }) {
+  const [show, setShow] = useState(false);
+  const blank = { contactName: "", jobTitle: "", email: "", phone: "" };
+  const [f, setF] = useState(blank);
+  const add = trpc.bd.addContact.useMutation({
+    onSuccess: () => { toast.success("Contact added"); setF(blank); setShow(false); onDone(); },
+    onError: (e) => toast.error(e.message),
+  });
+  if (!show) return <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShow(true)}><Plus className="w-3 h-3 mr-1" /> Add contact</Button>;
+  return (
+    <div className="rounded-lg border border-dashed p-2.5 space-y-2">
+      <div className="grid grid-cols-2 gap-2">
+        <Input className="h-8" placeholder="Name *" value={f.contactName} onChange={e => setF({ ...f, contactName: e.target.value })} />
+        <Input className="h-8" placeholder="Job title" value={f.jobTitle} onChange={e => setF({ ...f, jobTitle: e.target.value })} />
+        <Input className="h-8" placeholder="Email" value={f.email} onChange={e => setF({ ...f, email: e.target.value })} />
+        <Input className="h-8" placeholder="Phone" value={f.phone} onChange={e => setF({ ...f, phone: e.target.value })} />
+      </div>
+      <div className="flex gap-2 justify-end">
+        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShow(false)}>Cancel</Button>
+        <Button size="sm" className="h-7 text-xs text-white" style={{ background: BRAND }} disabled={add.isPending}
+          onClick={() => {
+            if (!f.contactName.trim()) return toast.error("Name is required");
+            add.mutate({ companyId, contactName: f.contactName.trim(), jobTitle: f.jobTitle || undefined, email: f.email || undefined, phone: f.phone || undefined });
+          }}>
+          {add.isPending ? "Adding…" : "Add"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function CompanyDialog({ open, company, onClose, onDone }: { open: boolean; company?: Company; onClose: () => void; onDone: () => void }) {
+  const [f, setF] = useState({
+    name: company?.name ?? "", website: company?.website ?? "", industry: company?.industry ?? "",
+    country: company?.country ?? "", source: company?.source ?? "", notes: company?.notes ?? "",
+  });
+  const add = trpc.bd.addCompany.useMutation({
+    onSuccess: () => { toast.success("Company added"); onClose(); onDone(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const upd = trpc.bd.updateCompany.useMutation({
+    onSuccess: () => { toast.success("Company updated"); onClose(); onDone(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const submit = () => {
+    if (!f.name.trim()) return toast.error("Company name is required");
+    const payload = { name: f.name.trim(), website: f.website || undefined, industry: f.industry || undefined, country: f.country || undefined, source: f.source || undefined, notes: f.notes || undefined };
+    if (company) upd.mutate({ id: company.id, ...payload });
+    else add.mutate(payload);
+  };
+  return (
+    <Dialog open={open} onOpenChange={onClose}>
+      <DialogContent>
+        <DialogHeader><DialogTitle>{company ? "Edit Company" : "New Company"}</DialogTitle></DialogHeader>
+        <div className="space-y-2.5">
+          <Input placeholder="Company name *" value={f.name} onChange={e => setF({ ...f, name: e.target.value })} />
+          <div className="grid grid-cols-2 gap-2">
+            <Input placeholder="Industry / vertical" value={f.industry} onChange={e => setF({ ...f, industry: e.target.value })} />
+            <Input placeholder="Country" value={f.country} onChange={e => setF({ ...f, country: e.target.value })} />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <Input placeholder="Website" value={f.website} onChange={e => setF({ ...f, website: e.target.value })} />
+            <Input placeholder="Source (where lead came from)" value={f.source} onChange={e => setF({ ...f, source: e.target.value })} />
+          </div>
+          <Textarea placeholder="Notes" value={f.notes} onChange={e => setF({ ...f, notes: e.target.value })} />
         </div>
-      )}
-    </td></tr>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={submit} disabled={add.isPending || upd.isPending} style={{ background: BRAND }} className="text-white">
+            {company ? (upd.isPending ? "Saving…" : "Save") : (add.isPending ? "Adding…" : "Add Company")}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -448,106 +657,6 @@ function ClaimLogin({ candidates }: { candidates: BdUser[] }) {
     </div>
   );
 }
-
-function ContactsPanel({ contacts, bdUsers, onDone }: { contacts: Contact[]; bdUsers: BdUser[]; onDone: () => void }) {
-  const utils = trpc.useUtils();
-  const [open, setOpen] = useState(false);
-  const [expanded, setExpanded] = useState<number | null>(null);
-  const nameOf = (id: number) => bdUsers.find(u => u.id === id)?.name ?? "—";
-  const blank = { company: "", contactName: "", jobTitle: "", email: "", phone: "", website: "", source: "", notes: "", stage: "", ownerId: 0 };
-  const [form, setForm] = useState(blank);
-  const add = trpc.bd.addContact.useMutation({ onError: (e) => toast.error(e.message) });
-  const addDeal = trpc.bd.addDeal.useMutation({ onError: (e) => toast.error(e.message) });
-  const submit = async () => {
-    if (!form.company.trim()) return toast.error("Company is required");
-    if (form.stage && !form.ownerId) return toast.error("Pick an owner to add this to a pipeline");
-    try {
-      const res = await add.mutateAsync({
-        company: form.company, contactName: form.contactName || undefined, jobTitle: form.jobTitle || undefined,
-        email: form.email || undefined, phone: form.phone || undefined, website: form.website || undefined,
-        source: form.source || undefined, notes: form.notes || undefined,
-      });
-      if (form.stage && form.ownerId && res?.id) {
-        await addDeal.mutateAsync({
-          title: form.company, ownerId: Number(form.ownerId), contactId: res.id,
-          stage: form.stage as "follow_up" | "negotiations" | "review" | "partners_consultants" | "closed_won" | "closed_lost",
-        });
-        utils.bd.listDeals.invalidate();
-      }
-      toast.success(form.stage ? "Contact added & placed in pipeline" : "Contact added");
-      setOpen(false); setForm(blank); onDone();
-    } catch { /* surfaced by onError */ }
-  };
-  const del = trpc.bd.deleteContact.useMutation({ onSuccess: () => { utils.bd.listContacts.invalidate(); toast.success("Contact deleted"); }, onError: (e) => toast.error(e.message) });
-  return (
-    <div className="space-y-3">
-      <div className="flex justify-between items-center">
-        <p className="text-sm text-muted-foreground flex items-center gap-1.5"><Users className="w-4 h-4" /> Shared across the BD team</p>
-        <Button onClick={() => setOpen(true)} style={{ background: BRAND }} className="text-white"><Plus className="w-4 h-4 mr-1" /> New Contact</Button>
-      </div>
-      <Card><CardContent className="p-0 overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead><tr className="border-b text-left text-muted-foreground">
-            <th className="px-3 py-2 font-medium">Company</th><th className="px-3 py-2 font-medium">Contact</th>
-            <th className="px-3 py-2 font-medium">Email</th><th className="px-3 py-2 font-medium">Phone</th><th className="px-3 py-2"></th>
-          </tr></thead>
-          <tbody>
-            {contacts.map(c => (<>
-              <tr key={c.id} className="border-b last:border-0 hover:bg-muted/30">
-                <td className="px-3 py-2 font-medium"><button className="hover:underline" onClick={() => setExpanded(expanded === c.id ? null : c.id)}>{c.company}</button></td>
-                <td className="px-3 py-2 text-muted-foreground">{c.contactName || "—"}</td>
-                <td className="px-3 py-2 text-muted-foreground">{c.email || "—"}</td>
-                <td className="px-3 py-2 text-muted-foreground">{c.phone || "—"}</td>
-                <td className="px-3 py-2 text-right"><button onClick={() => { if (confirm("Delete this contact?")) del.mutate({ id: c.id }); }} className="text-muted-foreground hover:text-red-600"><Trash2 className="w-4 h-4" /></button></td>
-              </tr>
-              {expanded === c.id && <ContactDealsRow contactId={c.id} ownerName={nameOf} />}
-            </>))}
-            {contacts.length === 0 && <tr><td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">No contacts yet.</td></tr>}
-          </tbody>
-        </table>
-      </CardContent></Card>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>New Contact</DialogTitle></DialogHeader>
-          <div className="space-y-2.5">
-            <Input placeholder="Company *" value={form.company} onChange={e => setForm({ ...form, company: e.target.value })} />
-            <div className="grid grid-cols-2 gap-2">
-              <Input placeholder="Contact name" value={form.contactName} onChange={e => setForm({ ...form, contactName: e.target.value })} />
-              <Input placeholder="Job title" value={form.jobTitle} onChange={e => setForm({ ...form, jobTitle: e.target.value })} />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <Input placeholder="Email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} />
-              <Input placeholder="Phone" value={form.phone} onChange={e => setForm({ ...form, phone: e.target.value })} />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <Input placeholder="Website" value={form.website} onChange={e => setForm({ ...form, website: e.target.value })} />
-              <Input placeholder="Source (where lead came from)" value={form.source} onChange={e => setForm({ ...form, source: e.target.value })} />
-            </div>
-            <Textarea placeholder="Notes" value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} />
-            <div className="rounded-lg border p-2.5 space-y-2 bg-muted/30">
-              <p className="text-xs font-medium text-muted-foreground">Add straight to a pipeline? (optional)</p>
-              <div className="grid grid-cols-2 gap-2">
-                <select className="border rounded-md px-2 py-2 text-sm bg-background" value={form.stage} onChange={e => setForm({ ...form, stage: e.target.value })}>
-                  <option value="">Don't add to pipeline</option>
-                  {STAGES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
-                </select>
-                <select className="border rounded-md px-2 py-2 text-sm bg-background" value={form.ownerId} onChange={e => setForm({ ...form, ownerId: Number(e.target.value) })} disabled={!form.stage}>
-                  <option value={0}>Owner</option>
-                  {bdUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                </select>
-              </div>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={submit} disabled={add.isPending || addDeal.isPending} style={{ background: BRAND }} className="text-white">{add.isPending ? "Adding…" : "Add Contact"}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </div>
-  );
-}
-
 
 // ── Tasks per deal ("send proposal by Thu") ──
 function DealTasks({ dealId }: { dealId: number }) {
