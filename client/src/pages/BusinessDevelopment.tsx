@@ -41,8 +41,11 @@ export default function BusinessDevelopment() {
   const myBdId = isBdUser && me && "bdUser" in me ? (me.bdUser as BdUser).id : null;
   const [ownerId, setOwnerId] = useState<number | "all">("all");
   const [dragId, setDragId] = useState<number | null>(null);
-  // BD-role users are locked to their own pipeline
-  useEffect(() => { if (myBdId && ownerId !== myBdId) setOwnerId(myBdId); }, [myBdId]); // eslint-disable-line react-hooks/exhaustive-deps
+  // BD-role users open on their own pipeline but may browse everyone's (view-only)
+  const [defaulted, setDefaulted] = useState(false);
+  useEffect(() => { if (myBdId && !defaulted) { setOwnerId(myBdId); setDefaulted(true); } }, [myBdId, defaulted]);
+  // A BD user can only edit deals they own; everyone else edits everything
+  const canEdit = (d: Deal) => !isBdUser || d.ownerId === myBdId;
   const [view, setView] = useState<"board" | "table">("board");
   const [tab, setTab] = useState<"pipeline" | "companies">("pipeline");
 
@@ -140,8 +143,8 @@ export default function BusinessDevelopment() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             {/* Owner filter */}
             <div className="flex items-center gap-1.5 flex-wrap">
-              {!isBdUser && <button onClick={() => setOwnerId("all")} className={`text-xs px-2.5 py-1 rounded-full border ${ownerId === "all" ? "text-white" : "bg-background"}`} style={ownerId === "all" ? { background: BRAND } : {}}>All</button>}
-              {(isBdUser ? bdUsers.filter(u => u.id === myBdId) : bdUsers).map(u => (
+              <button onClick={() => setOwnerId("all")} className={`text-xs px-2.5 py-1 rounded-full border ${ownerId === "all" ? "text-white" : "bg-background"}`} style={ownerId === "all" ? { background: BRAND } : {}}>All</button>
+              {bdUsers.map(u => (
                 <button key={u.id} onClick={() => setOwnerId(u.id)} className={`text-xs px-2.5 py-1 rounded-full border ${ownerId === u.id ? "text-white" : "bg-background"}`} style={ownerId === u.id ? { background: BRAND } : {}}>{u.name}</button>
               ))}
             </div>
@@ -209,12 +212,12 @@ export default function BusinessDevelopment() {
                   </div>
                   <div className="space-y-2">
                     {(byStage[s.key] ?? []).map(d => (
-                      <Card key={d.id} className={`border cursor-grab active:cursor-grabbing ${dragId === d.id ? "opacity-50" : ""}`} draggable
-                        onDragStart={() => setDragId(d.id)} onDragEnd={() => setDragId(null)}>
+                      <Card key={d.id} className={`border ${canEdit(d) ? "cursor-grab active:cursor-grabbing" : ""} ${dragId === d.id ? "opacity-50" : ""}`} draggable={canEdit(d)}
+                        onDragStart={() => canEdit(d) && setDragId(d.id)} onDragEnd={() => setDragId(null)}>
                         <CardContent className="p-3 space-y-1.5">
                           <div className="flex items-start justify-between gap-2">
                             <button onClick={() => setOpenDeal(d)} className="text-sm font-semibold leading-tight text-left hover:underline">{d.title}</button>
-                            <button onClick={() => { if (confirm("Delete this deal?")) deleteDeal.mutate({ id: d.id }); }} className="text-muted-foreground hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>
+                            {canEdit(d) && <button onClick={() => { if (confirm("Delete this deal?")) deleteDeal.mutate({ id: d.id }); }} className="text-muted-foreground hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>}
                           </div>
                           {dealCompany(d) && <p className="text-xs text-muted-foreground">{dealCompany(d)}</p>}
                           <div className="flex flex-wrap gap-1.5 text-[11px]">
@@ -233,13 +236,17 @@ export default function BusinessDevelopment() {
                               <Badge variant="outline" className="text-[10px]">{ownerName(d.ownerId)}</Badge>
                               <span className="text-[10px] text-muted-foreground">{daysInStage(d)}d in stage</span>
                             </span>
-                            <select
-                              value={d.stage}
-                              onChange={(e) => handleStage(d, e.target.value as StageKey)}
-                              className="text-[11px] border rounded px-1 py-0.5 bg-background"
-                            >
-                              {STAGES.map(st => <option key={st.key} value={st.key}>{st.label}</option>)}
-                            </select>
+                            {canEdit(d) ? (
+                              <select
+                                value={d.stage}
+                                onChange={(e) => handleStage(d, e.target.value as StageKey)}
+                                className="text-[11px] border rounded px-1 py-0.5 bg-background"
+                              >
+                                {STAGES.map(st => <option key={st.key} value={st.key}>{st.label}</option>)}
+                              </select>
+                            ) : (
+                              <span className="text-[10px] text-muted-foreground border rounded px-1.5 py-0.5" title="View-only — not your deal">view-only</span>
+                            )}
                           </div>
                         </CardContent>
                       </Card>
@@ -268,12 +275,16 @@ export default function BusinessDevelopment() {
                       <td className="px-3 py-2 text-muted-foreground">{dealCompany(d) || "—"}</td>
                       <td className="px-3 py-2">{ownerName(d.ownerId)}</td>
                       <td className="px-3 py-2">
-                        <select value={d.stage} onChange={(e) => handleStage(d, e.target.value as StageKey)} className="text-xs border rounded px-1 py-0.5 bg-background">
-                          {STAGES.map(st => <option key={st.key} value={st.key}>{st.label}</option>)}
-                        </select>
+                        {canEdit(d) ? (
+                          <select value={d.stage} onChange={(e) => handleStage(d, e.target.value as StageKey)} className="text-xs border rounded px-1 py-0.5 bg-background">
+                            {STAGES.map(st => <option key={st.key} value={st.key}>{st.label}</option>)}
+                          </select>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px]">{STAGES.find(s => s.key === d.stage)?.label ?? d.stage}</Badge>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-right">{d.value ? `$${d.value}` : "—"}</td>
-                      <td className="px-3 py-2 text-right"><button onClick={() => { if (confirm("Delete this deal?")) deleteDeal.mutate({ id: d.id }); }} className="text-muted-foreground hover:text-red-600"><Trash2 className="w-4 h-4" /></button></td>
+                      <td className="px-3 py-2 text-right">{canEdit(d) && <button onClick={() => { if (confirm("Delete this deal?")) deleteDeal.mutate({ id: d.id }); }} className="text-muted-foreground hover:text-red-600"><Trash2 className="w-4 h-4" /></button>}</td>
                     </tr>
                   ))}
                   {typedDeals.length === 0 && <tr><td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">No deals yet.</td></tr>}
@@ -291,6 +302,7 @@ export default function BusinessDevelopment() {
           deal={openDeal}
           company={dealCompany(openDeal)}
           ownerName={ownerName(openDeal.ownerId)}
+          readOnly={!canEdit(openDeal)}
           onClose={() => setOpenDeal(null)}
           onChanged={() => utils.bd.listDeals.invalidate()}
         />
@@ -300,7 +312,7 @@ export default function BusinessDevelopment() {
 }
 
 // ── Deal detail drawer: activity log + reminder + outcome ──
-function DealDrawer({ deal, company, ownerName, onClose, onChanged }: { deal: Deal; company: string; ownerName: string; onClose: () => void; onChanged: () => void }) {
+function DealDrawer({ deal, company, ownerName, readOnly = false, onClose, onChanged }: { deal: Deal; company: string; ownerName: string; readOnly?: boolean; onClose: () => void; onChanged: () => void }) {
   const utils = trpc.useUtils();
   const { data: activity = [] } = trpc.bd.listActivity.useQuery({ dealId: deal.id });
   const acts = activity as { id: number; note: string; createdAt: number }[];
@@ -334,7 +346,14 @@ function DealDrawer({ deal, company, ownerName, onClose, onChanged }: { deal: De
             </div>
           )}
 
+          {readOnly && (
+            <div className="rounded-lg border p-2 text-[11px] text-muted-foreground bg-muted/40">
+              👁 View-only — this deal belongs to {ownerName}. You can read everything but not change it.
+            </div>
+          )}
+
           {/* Reminder */}
+          {!readOnly && (
           <div className="space-y-1.5">
             <p className="text-xs font-semibold flex items-center gap-1.5"><Bell className="w-3.5 h-3.5" /> Follow-up reminder</p>
             <div className="grid grid-cols-2 gap-2">
@@ -346,17 +365,20 @@ function DealDrawer({ deal, company, ownerName, onClose, onChanged }: { deal: De
               {deal.reminderDate && <Button size="sm" variant="outline" onClick={() => { setRDate(""); setRNote(""); setReminder.mutate({ id: deal.id }); }}>Clear</Button>}
             </div>
           </div>
+          )}
 
           {/* Tasks */}
-          <DealTasks dealId={deal.id} />
+          {!readOnly && <DealTasks dealId={deal.id} />}
 
           {/* Activity log */}
           <div className="space-y-1.5">
             <p className="text-xs font-semibold flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5" /> Activity log</p>
+            {!readOnly && (
             <div className="flex gap-2">
               <Input placeholder="Left VM / sent proposal / spoke to…" value={note} onChange={e => setNote(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && note.trim()) addActivity.mutate({ dealId: deal.id, note: note.trim() }); }} />
               <Button size="sm" onClick={() => note.trim() && addActivity.mutate({ dealId: deal.id, note: note.trim() })} disabled={addActivity.isPending} style={{ background: BRAND }} className="text-white">Log</Button>
             </div>
+            )}
             <div className="space-y-1.5 pt-1">
               {acts.length === 0 && <p className="text-xs text-muted-foreground">No activity yet.</p>}
               {acts.map(a => (
@@ -510,6 +532,9 @@ function CompaniesPanel({ companies, contacts, deals, ownerName, onOpenDeal }: {
                       <AddContactInline companyId={co.id} onDone={refresh} />
                     </div>
 
+                    {/* Activity timeline: company notes + all its deals' activity */}
+                    <CompanyTimeline companyId={co.id} />
+
                     {/* Deals under this company */}
                     <div>
                       <p className="text-xs font-semibold mb-1.5 flex items-center gap-1.5"><LayoutGrid className="w-3.5 h-3.5" /> Deals</p>
@@ -585,6 +610,44 @@ function AddContactInline({ companyId, onDone }: { companyId: number; onDone: ()
           {add.isPending ? "Adding…" : "Add"}
         </Button>
       </div>
+    </div>
+  );
+}
+
+function CompanyTimeline({ companyId }: { companyId: number }) {
+  const utils = trpc.useUtils();
+  const { data: activity = [] } = trpc.bd.listCompanyActivity.useQuery({ companyId });
+  const acts = activity as { id: number; note: string; createdAt: number; dealTitle: string | null }[];
+  const [note, setNote] = useState("");
+  const [showAll, setShowAll] = useState(false);
+  const add = trpc.bd.addCompanyActivity.useMutation({
+    onSuccess: () => { setNote(""); utils.bd.listCompanyActivity.invalidate({ companyId }); toast.success("Logged"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const fmt = (t: number) => new Date(t).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  const shown = showAll ? acts : acts.slice(0, 5);
+  return (
+    <div>
+      <p className="text-xs font-semibold mb-1.5 flex items-center gap-1.5"><MessageSquare className="w-3.5 h-3.5" /> Activity</p>
+      <div className="flex gap-2 mb-1.5">
+        <Input className="h-8" placeholder="Company-level note (call, email, meeting…)" value={note} onChange={e => setNote(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && note.trim()) add.mutate({ companyId, note: note.trim() }); }} />
+        <Button size="sm" className="h-8 text-xs text-white" style={{ background: BRAND }} disabled={add.isPending} onClick={() => note.trim() && add.mutate({ companyId, note: note.trim() })}>Log</Button>
+      </div>
+      {acts.length === 0 ? <p className="text-xs text-muted-foreground">No activity yet.</p> : (
+        <div className="space-y-1.5">
+          {shown.map(a => (
+            <div key={a.id} className="text-xs border-l-2 pl-2.5 py-0.5" style={{ borderColor: `${BRAND}66` }}>
+              <p>{a.dealTitle && <span className="font-medium text-muted-foreground">[{a.dealTitle}] </span>}{a.note}</p>
+              <p className="text-[10px] text-muted-foreground">{fmt(a.createdAt)}</p>
+            </div>
+          ))}
+          {acts.length > 5 && (
+            <button className="text-[11px] underline text-muted-foreground" onClick={() => setShowAll(!showAll)}>
+              {showAll ? "Show less" : `Show all ${acts.length}`}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

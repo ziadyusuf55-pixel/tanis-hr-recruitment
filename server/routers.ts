@@ -5640,6 +5640,28 @@ const hrRouter = router({
     }),
 });
 
+/** BD view-only enforcement: Hub users with role "bd" may VIEW every pipeline
+ *  but can only modify deals they own. Admin/owner/other roles are unaffected.
+ *  Throws FORBIDDEN when a bd-role user touches someone else's deal. */
+async function assertBdDealOwnership(ctx: { user?: { role?: string; openId?: string } | null }, dealId: number) {
+  const hubRole = ctx.user?.role;
+  if (hubRole !== "bd") return; // admins & staff roles keep full control
+  const openId = ctx.user?.openId;
+  const { getDb } = await import("./db");
+  const { eq } = await import("drizzle-orm");
+  const db = await getDb();
+  if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+  const { bdUsers, bdDeals } = await import("../drizzle/schema");
+  const linked = openId ? await db.select().from(bdUsers).where(eq(bdUsers.openId, openId)).limit(1) : [];
+  if (!linked[0]) throw new TRPCError({ code: "FORBIDDEN", message: "Link your BD profile first" });
+  const [deal] = await db.select().from(bdDeals).where(eq(bdDeals.id, dealId)).limit(1);
+  if (!deal) throw new TRPCError({ code: "NOT_FOUND", message: "Deal not found" });
+  if (deal.ownerId !== linked[0].id) {
+    const [owner] = await db.select().from(bdUsers).where(eq(bdUsers.id, deal.ownerId)).limit(1);
+    throw new TRPCError({ code: "FORBIDDEN", message: `View-only: this deal belongs to ${owner?.name ?? "another BD user"}` });
+  }
+}
+
 const bdRouter = router({
   // ── Role & login linking ──
   me: protectedProcedure.query(async ({ ctx }) => {
@@ -5723,7 +5745,8 @@ const bdRouter = router({
     }),
   addTask: protectedProcedure
     .input(z.object({ dealId: z.number(), title: z.string().min(1), dueDate: z.string().optional() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      await assertBdDealOwnership(ctx, input.dealId);
       const { getDb } = await import("./db");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
@@ -5733,23 +5756,29 @@ const bdRouter = router({
     }),
   toggleTask: protectedProcedure
     .input(z.object({ id: z.number(), done: z.boolean() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { bdDealTasks } = await import("../drizzle/schema");
+      const [task] = await db.select().from(bdDealTasks).where(eq(bdDealTasks.id, input.id)).limit(1);
+      if (!task) throw new TRPCError({ code: "NOT_FOUND", message: "Task not found" });
+      await assertBdDealOwnership(ctx, task.dealId);
       await db.update(bdDealTasks).set({ done: input.done, doneAt: input.done ? Date.now() : null }).where(eq(bdDealTasks.id, input.id));
       return { ok: true };
     }),
   deleteTask: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { bdDealTasks } = await import("../drizzle/schema");
+      const [task] = await db.select().from(bdDealTasks).where(eq(bdDealTasks.id, input.id)).limit(1);
+      if (!task) throw new TRPCError({ code: "NOT_FOUND", message: "Task not found" });
+      await assertBdDealOwnership(ctx, task.dealId);
       await db.delete(bdDealTasks).where(eq(bdDealTasks.id, input.id));
       return { ok: true };
     }),
@@ -5880,6 +5909,36 @@ const bdRouter = router({
       .filter(d => d.lastTouch < cutoff)
       .sort((a, b) => a.lastTouch - b.lastTouch);
   }),
+  /** Full company timeline: its own notes + every activity on its deals. */
+  listCompanyActivity: publicProcedure
+    .input(z.object({ companyId: z.number() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { bdDealActivity, bdDeals } = await import("../drizzle/schema");
+      const { eq, inArray } = await import("drizzle-orm");
+      const companyDeals = await db.select().from(bdDeals).where(eq(bdDeals.companyId, input.companyId));
+      const dealIds = companyDeals.map(d => d.id);
+      const dealTitle = new Map(companyDeals.map(d => [d.id, d.title]));
+      const [companyNotes, dealNotes] = await Promise.all([
+        db.select().from(bdDealActivity).where(eq(bdDealActivity.companyId, input.companyId)),
+        dealIds.length ? db.select().from(bdDealActivity).where(inArray(bdDealActivity.dealId, dealIds)) : Promise.resolve([]),
+      ]);
+      return [...companyNotes, ...dealNotes]
+        .map(a => ({ ...a, dealTitle: a.dealId ? (dealTitle.get(a.dealId) ?? null) : null }))
+        .sort((a, b) => b.createdAt - a.createdAt);
+    }),
+  addCompanyActivity: protectedProcedure
+    .input(z.object({ companyId: z.number(), note: z.string().min(1), createdBy: z.number().optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdDealActivity } = await import("../drizzle/schema");
+      await db.insert(bdDealActivity).values({ companyId: input.companyId, note: input.note, createdBy: input.createdBy, createdAt: Date.now() } as never);
+      return { ok: true };
+    }),
   // ── Contacts (shared across the team) ──
   listContacts: publicProcedure.query(async () => {
     const { getDb } = await import("./db");
@@ -5958,7 +6017,8 @@ const bdRouter = router({
     }),
   updateDeal: protectedProcedure
     .input(z.object({ id: z.number(), title: z.string().optional(), ownerId: z.number().optional(), companyId: z.number().optional(), contactId: z.number().optional(), serviceType: z.string().optional(), seats: z.number().optional(), value: z.string().optional(), notes: z.string().optional(), expectedCloseDate: z.string().optional() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      await assertBdDealOwnership(ctx, input.id);
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
@@ -5970,7 +6030,8 @@ const bdRouter = router({
     }),
   moveStage: protectedProcedure
     .input(z.object({ id: z.number(), stage: z.enum(["follow_up", "negotiations", "review", "partners_consultants", "closed_won", "closed_lost"]), reason: z.string().optional() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      await assertBdDealOwnership(ctx, input.id);
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
@@ -5986,7 +6047,8 @@ const bdRouter = router({
   // Activity log — a timestamped note; also refreshes the deal's last-contacted date
   addActivity: protectedProcedure
     .input(z.object({ dealId: z.number(), note: z.string().min(1), createdBy: z.number().optional() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      await assertBdDealOwnership(ctx, input.dealId);
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
@@ -6009,7 +6071,8 @@ const bdRouter = router({
     }),
   setReminder: protectedProcedure
     .input(z.object({ id: z.number(), reminderDate: z.string().optional(), reminderNote: z.string().optional() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      await assertBdDealOwnership(ctx, input.id);
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
@@ -6020,7 +6083,8 @@ const bdRouter = router({
     }),
   deleteDeal: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      await assertBdDealOwnership(ctx, input.id);
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
