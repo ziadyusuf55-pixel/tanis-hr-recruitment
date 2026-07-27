@@ -280,29 +280,39 @@ async function startServer() {
           const category = kind === "quality" ? "quality" : "attendance";
           const type = s(r.type) || "Other";
           const existing = await db.select().from(agentViolations).where(and(
-            eq(agentViolations.crdts, crdts),
+            eq(agentViolations.agentCode, crdts),
             eq(agentViolations.date, date),
             eq(agentViolations.type, type),
             eq(agentViolations.category, category),
           )).limit(1);
           if (existing.length) { skipped++; continue; }
           const bits = [s(r.details)];
-          if (s(r.offenseNo)) bits.push(`offense #${s(r.offenseNo)}`);
+          // offenseNo may be "N/A" or any non-numeric string from a spreadsheet formula — guard it
+          const rawOffenseNo = s(r.offenseNo);
+          const safeOffenseNo = rawOffenseNo && /^\d+$/.test(rawOffenseNo) ? rawOffenseNo : null;
+          if (safeOffenseNo) bits.push(`offense #${safeOffenseNo}`);
           if (s(r.penalty)) bits.push(s(r.penalty));
           if (s(r.loggedBy)) bits.push(`logged by ${s(r.loggedBy)}`);
           if (s(r.recording)) bits.push(`recording: ${s(r.recording)}`);
           const st = s(r.status).toLowerCase();
-          await db.insert(agentViolations).values({
-            crdts, agentCode: crdts,
-            date, month: mon(date), type, category,
-            hours: String(n(r.hours)), deduction: String(n(r.deduction)),
-            description: bits.filter(Boolean).join(" · ") || null,
-            status: st === "approved" ? "approved" : st === "rejected" ? "rejected" : "pending",
-            approvedBy: s(r.approvedBy) || null,
-            approvedAt: st === "approved" ? now : null,
-            uploadedAt: now,
-          });
-          inserted++;
+          try {
+            await db.insert(agentViolations).values({
+              crdts, agentCode: crdts,
+              date, month: mon(date), type, category,
+              hours: String(n(r.hours)), deduction: String(n(r.deduction)),
+              description: bits.filter(Boolean).join(" · ") || null,
+              status: st === "approved" ? "approved" : st === "rejected" ? "rejected" : "pending",
+              approvedBy: s(r.approvedBy) || null,
+              approvedAt: st === "approved" ? now : null,
+              uploadedAt: now,
+            });
+            inserted++;
+          } catch (insertErr: unknown) {
+            // Gracefully handle duplicate key — can occur on race conditions or agentCode/crdts mismatch
+            const msg = insertErr instanceof Error ? insertErr.message : String(insertErr);
+            if (msg.includes("Duplicate entry") || msg.includes("ER_DUP_ENTRY")) { skipped++; }
+            else throw insertErr;
+          }
         } else if (kind === "ot") {
           const otType = s(r.otType) || "1.5x";
           const existing = await db.select().from(cycleOT).where(and(
