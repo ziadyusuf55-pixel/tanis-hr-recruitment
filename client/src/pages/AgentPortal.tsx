@@ -46,6 +46,7 @@ import {
   PhoneOff,
   Trophy,
   DollarSign,
+  ClipboardCheck,
 } from "lucide-react";
 
 const TANIS_LOGO_WHITE =
@@ -3231,8 +3232,8 @@ function MyCourses({ theme }: { theme: Theme }) {
   });
   const [openId, setOpenId] = useState<number | null>(null);
 
-  type A = { id: number; courseId: number; status: string; dueDate: string | null };
-  type C = { id: number; title: string; description: string | null; category: string | null; isMandatory: boolean };
+  type A = { id: number; courseId: number; status: string; dueDate: string | null; score: number | null };
+  type C = { id: number; title: string; description: string | null; category: string | null; isMandatory: boolean; passMark: number | null };
   type M = { id: number; courseId: number; title: string; contentType: string; contentUrl: string | null; body: string | null };
   type P = { moduleId: number };
 
@@ -3307,12 +3308,168 @@ function MyCourses({ theme }: { theme: Theme }) {
                       </div>
                     );
                   })}
+
+                  {(course.passMark ?? 0) > 0 && (
+                    <AgentQuiz
+                      theme={theme}
+                      courseId={course.id}
+                      passMark={course.passMark ?? 0}
+                      modulesDone={mods.length > 0 && done >= mods.length}
+                      status={a.status}
+                      savedScore={a.score}
+                    />
+                  )}
                 </div>
               )}
             </div>
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/** Agent-facing assessment: unlocks after all modules are done. Questions come
+ *  from getQuiz (answers stripped); grading is server-side in submitQuiz.
+ *  Passing (score >= passMark) completes the course; failing allows retakes. */
+function AgentQuiz({ theme, courseId, passMark, modulesDone, status, savedScore }: {
+  theme: Theme; courseId: number; passMark: number; modulesDone: boolean; status: string; savedScore: number | null;
+}) {
+  const utils = trpc.useUtils();
+  const [taking, setTaking] = useState(false);
+  const [answers, setAnswers] = useState<Record<number, number>>({});
+  const [result, setResult] = useState<null | { score: number; passed: boolean; correctCount: number; totalQuestions: number }>(null);
+
+  const { data: quiz, isLoading } = trpc.academy.getQuiz.useQuery({ courseId }, { enabled: taking });
+  const submit = trpc.academy.submitQuiz.useMutation({
+    onSuccess: (r) => { setResult(r); utils.academy.myCourses.invalidate(); },
+  });
+
+  const passed = status === "completed";
+  const boxStyle = { borderTop: `1px dashed ${theme.cardBorder}` };
+
+  // Already passed — show the badge, nothing else to do.
+  if (passed) {
+    return (
+      <div className="pt-2 mt-1" style={boxStyle}>
+        <div className="rounded-lg px-3 py-2 flex items-center gap-2" style={{ background: "#dcfce7" }}>
+          <ClipboardCheck className="w-4 h-4 shrink-0" style={{ color: "#166534" }} />
+          <p className="text-xs font-medium" style={{ color: "#166534" }}>
+            Assessment passed{savedScore != null ? ` — ${savedScore}%` : ""} (pass mark {passMark}%)
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // Modules not finished yet — assessment locked.
+  if (!modulesDone) {
+    return (
+      <div className="pt-2 mt-1" style={boxStyle}>
+        <p className="text-[11px]" style={{ color: theme.textMuted }}>
+          🔒 Final assessment unlocks when all modules are done · pass mark {passMark}%
+        </p>
+      </div>
+    );
+  }
+
+  // Result screen (just submitted).
+  if (result) {
+    return (
+      <div className="pt-2 mt-1" style={boxStyle}>
+        <div className="rounded-lg px-3 py-3 text-center" style={{ background: result.passed ? "#dcfce7" : "#fee2e2" }}>
+          <p className="text-2xl font-bold" style={{ color: result.passed ? "#166534" : "#b91c1c" }}>{result.score}%</p>
+          <p className="text-xs mt-0.5" style={{ color: result.passed ? "#166534" : "#b91c1c" }}>
+            {result.correctCount}/{result.totalQuestions} correct · pass mark {passMark}%
+          </p>
+          <p className="text-xs font-semibold mt-1" style={{ color: result.passed ? "#166534" : "#b91c1c" }}>
+            {result.passed ? "Passed — course complete! 🎉" : "Not passed — review the modules and try again."}
+          </p>
+          {!result.passed && (
+            <button className="text-[11px] px-3 py-1.5 rounded-lg mt-2 text-white" style={{ background: BRAND }}
+              onClick={() => { setResult(null); setAnswers({}); }}>
+              Retake assessment
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // Not started yet.
+  if (!taking) {
+    return (
+      <div className="pt-2 mt-1" style={boxStyle}>
+        <div className="flex items-center justify-between gap-2">
+          <p className="text-[11px]" style={{ color: theme.textMuted }}>
+            Final assessment · pass mark {passMark}%
+            {savedScore != null ? ` · last attempt ${savedScore}%` : ""}
+          </p>
+          <button className="text-[11px] px-3 py-1.5 rounded-lg text-white shrink-0" style={{ background: BRAND }}
+            onClick={() => setTaking(true)}>
+            {savedScore != null ? "Retake assessment" : "Take assessment"}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Taking the quiz.
+  const questions = quiz?.questions ?? [];
+  const allAnswered = questions.length > 0 && questions.every(q => answers[q.id] != null);
+
+  return (
+    <div className="pt-2 mt-1 space-y-3" style={boxStyle}>
+      {isLoading ? (
+        <p className="text-xs" style={{ color: theme.textMuted }}>Loading assessment…</p>
+      ) : questions.length === 0 ? (
+        <p className="text-xs" style={{ color: theme.textMuted }}>No questions in this assessment yet — check back later.</p>
+      ) : (
+        <>
+          <p className="text-xs font-semibold" style={{ color: theme.text }}>
+            Final assessment — {questions.length} question{questions.length === 1 ? "" : "s"} · pass mark {passMark}%
+          </p>
+          {questions.map((q, qi) => (
+            <div key={q.id}>
+              <p className="text-xs font-medium mb-1.5" style={{ color: theme.text }}>{qi + 1}. {q.question}</p>
+              <div className="space-y-1">
+                {q.options.map((opt, oi) => {
+                  const selected = answers[q.id] === oi;
+                  return (
+                    <button key={oi} type="button"
+                      onClick={() => setAnswers({ ...answers, [q.id]: oi })}
+                      className="w-full text-left text-xs px-2.5 py-1.5 rounded-lg"
+                      style={{
+                        border: `1px solid ${selected ? BRAND : theme.cardBorder}`,
+                        background: selected ? `${BRAND}12` : "transparent",
+                        color: selected ? BRAND : theme.text,
+                        fontWeight: selected ? 600 : 400,
+                      }}>
+                      {String.fromCharCode(65 + oi)}. {opt}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px]" style={{ color: theme.textMuted }}>
+              {Object.keys(answers).length}/{questions.length} answered
+            </p>
+            <button
+              disabled={!allAnswered || submit.isPending}
+              className="text-xs px-4 py-2 rounded-lg text-white font-semibold shrink-0 disabled:opacity-50"
+              style={{ background: allAnswered ? BRAND : theme.textMuted }}
+              onClick={() => submit.mutate({
+                courseId,
+                answers: questions.map(q => ({ questionId: q.id, answerIndex: answers[q.id] })),
+              })}>
+              {submit.isPending ? "Submitting…" : "Submit answers"}
+            </button>
+          </div>
+          {submit.error && <p className="text-[11px]" style={{ color: "#b91c1c" }}>{submit.error.message}</p>}
+        </>
+      )}
     </div>
   );
 }

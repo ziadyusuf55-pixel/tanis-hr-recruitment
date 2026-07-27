@@ -5777,6 +5777,109 @@ const bdRouter = router({
     const { bdUsers } = await import("../drizzle/schema");
     return db.select().from(bdUsers);
   }),
+  // ── Companies (top of the BD tree: company → contacts → deals) ──
+  /** Lists companies. First call auto-backfills from legacy free-text company
+   *  names on contacts, then links contacts + deals to their new companyId. */
+  listCompanies: publicProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return [];
+    const { bdCompanies, bdContacts, bdDeals } = await import("../drizzle/schema");
+    const { eq, desc, isNull } = await import("drizzle-orm");
+
+    let companies = await db.select().from(bdCompanies);
+    const orphanContacts = await db.select().from(bdContacts).where(isNull(bdContacts.companyId));
+    if (orphanContacts.length > 0) {
+      const now = Date.now();
+      // Create any missing companies from distinct legacy names (case-insensitive)
+      const byName = new Map(companies.map(c => [c.name.trim().toLowerCase(), c.id]));
+      for (const ct of orphanContacts) {
+        const key = (ct.company ?? "").trim().toLowerCase();
+        if (!key) continue;
+        if (!byName.has(key)) {
+          const res = await db.insert(bdCompanies).values({
+            name: ct.company.trim(), website: ct.website ?? null, source: ct.source ?? null,
+            createdAt: now, updatedAt: now,
+          });
+          const newId = (res as unknown as { insertId: number }).insertId ?? 0;
+          byName.set(key, newId);
+        }
+        const companyId = byName.get(key)!;
+        await db.update(bdContacts).set({ companyId }).where(eq(bdContacts.id, ct.id));
+      }
+      // Link deals to their contact's company
+      const allContacts = await db.select().from(bdContacts);
+      const contactCompany = new Map(allContacts.map(c => [c.id, c.companyId]));
+      const orphanDeals = await db.select().from(bdDeals).where(isNull(bdDeals.companyId));
+      for (const d of orphanDeals) {
+        const cid = d.contactId ? contactCompany.get(d.contactId) : null;
+        if (cid) await db.update(bdDeals).set({ companyId: cid }).where(eq(bdDeals.id, d.id));
+      }
+      companies = await db.select().from(bdCompanies);
+    }
+    return companies.sort((a, b) => b.updatedAt - a.updatedAt);
+  }),
+  addCompany: protectedProcedure
+    .input(z.object({ name: z.string().min(1).max(255), website: z.string().optional(), industry: z.string().optional(), country: z.string().optional(), source: z.string().optional(), notes: z.string().optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdCompanies } = await import("../drizzle/schema");
+      const now = Date.now();
+      const res = await db.insert(bdCompanies).values({ ...input, createdAt: now, updatedAt: now });
+      return { ok: true, id: (res as unknown as { insertId: number }).insertId ?? 0 };
+    }),
+  updateCompany: protectedProcedure
+    .input(z.object({ id: z.number(), name: z.string().min(1).max(255).optional(), website: z.string().optional(), industry: z.string().optional(), country: z.string().optional(), source: z.string().optional(), notes: z.string().optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdCompanies, bdContacts } = await import("../drizzle/schema");
+      const { id, ...rest } = input;
+      await db.update(bdCompanies).set({ ...rest, updatedAt: Date.now() }).where(eq(bdCompanies.id, id));
+      // Keep legacy free-text in sync when a company is renamed
+      if (rest.name) await db.update(bdContacts).set({ company: rest.name }).where(eq(bdContacts.companyId, id));
+      return { ok: true };
+    }),
+  /** Deleting a company is blocked while it still has contacts or open deals. */
+  deleteCompany: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdCompanies, bdContacts, bdDeals } = await import("../drizzle/schema");
+      const [contacts, deals] = await Promise.all([
+        db.select({ id: bdContacts.id }).from(bdContacts).where(eq(bdContacts.companyId, input.id)),
+        db.select({ id: bdDeals.id }).from(bdDeals).where(eq(bdDeals.companyId, input.id)),
+      ]);
+      if (contacts.length || deals.length) {
+        throw new TRPCError({ code: "PRECONDITION_FAILED", message: `Company still has ${contacts.length} contact(s) and ${deals.length} deal(s) — move or delete them first` });
+      }
+      await db.delete(bdCompanies).where(eq(bdCompanies.id, input.id));
+      return { ok: true };
+    }),
+  /** Open deals with no logged activity for 14+ days — the "going cold" list. */
+  staleDeals: publicProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return [];
+    const { bdDeals } = await import("../drizzle/schema");
+    const { notInArray } = await import("drizzle-orm");
+    const deals = await db.select().from(bdDeals).where(notInArray(bdDeals.stage, ["closed_won", "closed_lost"]));
+    const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
+    return deals
+      .map(d => {
+        const last = d.lastContactedAt ?? d.createdAt;
+        return { ...d, lastTouch: last, daysStale: Math.floor((Date.now() - last) / (24 * 60 * 60 * 1000)) };
+      })
+      .filter(d => d.lastTouch < cutoff)
+      .sort((a, b) => a.lastTouch - b.lastTouch);
+  }),
   // ── Contacts (shared across the team) ──
   listContacts: publicProcedure.query(async () => {
     const { getDb } = await import("./db");
@@ -5787,19 +5890,28 @@ const bdRouter = router({
     return db.select().from(bdContacts).orderBy(desc(bdContacts.updatedAt));
   }),
   addContact: protectedProcedure
-    .input(z.object({ company: z.string().min(1), contactName: z.string().optional(), jobTitle: z.string().optional(), email: z.string().optional(), phone: z.string().optional(), website: z.string().optional(), source: z.string().optional(), notes: z.string().optional(), createdBy: z.number().optional() }))
+    .input(z.object({ companyId: z.number().optional(), company: z.string().optional(), contactName: z.string().optional(), jobTitle: z.string().optional(), email: z.string().optional(), phone: z.string().optional(), website: z.string().optional(), source: z.string().optional(), notes: z.string().optional(), createdBy: z.number().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { bdContacts } = await import("../drizzle/schema");
+      const { bdContacts, bdCompanies } = await import("../drizzle/schema");
+      // Keep the legacy free-text company column in sync with the linked company
+      let companyName = input.company ?? "";
+      if (input.companyId) {
+        const [c] = await db.select().from(bdCompanies).where(eq(bdCompanies.id, input.companyId)).limit(1);
+        if (!c) throw new TRPCError({ code: "NOT_FOUND", message: "Company not found" });
+        companyName = c.name;
+      }
+      if (!companyName) throw new TRPCError({ code: "BAD_REQUEST", message: "companyId or company name is required" });
       const now = Date.now();
-      const result = await db.insert(bdContacts).values({ ...input, createdAt: now, updatedAt: now });
+      const result = await db.insert(bdContacts).values({ ...input, company: companyName, createdAt: now, updatedAt: now });
       const insertId = (result as unknown as { insertId: number }).insertId;
       return { ok: true, id: insertId ?? 0 };
     }),
   updateContact: protectedProcedure
-    .input(z.object({ id: z.number(), company: z.string().optional(), contactName: z.string().optional(), jobTitle: z.string().optional(), email: z.string().optional(), phone: z.string().optional(), website: z.string().optional(), source: z.string().optional(), notes: z.string().optional() }))
+    .input(z.object({ id: z.number(), companyId: z.number().optional(), company: z.string().optional(), contactName: z.string().optional(), jobTitle: z.string().optional(), email: z.string().optional(), phone: z.string().optional(), website: z.string().optional(), source: z.string().optional(), notes: z.string().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
@@ -5834,7 +5946,7 @@ const bdRouter = router({
       return db.select().from(bdDeals).orderBy(desc(bdDeals.updatedAt));
     }),
   addDeal: protectedProcedure
-    .input(z.object({ title: z.string().min(1), ownerId: z.number(), contactId: z.number().optional(), stage: z.enum(["follow_up", "negotiations", "review", "partners_consultants", "closed_won", "closed_lost"]).optional(), serviceType: z.string().optional(), seats: z.number().optional(), value: z.string().optional(), notes: z.string().optional(), expectedCloseDate: z.string().optional() }))
+    .input(z.object({ title: z.string().min(1), ownerId: z.number(), companyId: z.number().optional(), contactId: z.number().optional(), stage: z.enum(["follow_up", "negotiations", "review", "partners_consultants", "closed_won", "closed_lost"]).optional(), serviceType: z.string().optional(), seats: z.number().optional(), value: z.string().optional(), notes: z.string().optional(), expectedCloseDate: z.string().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
       const db = await getDb();
@@ -5845,7 +5957,7 @@ const bdRouter = router({
       return { ok: true };
     }),
   updateDeal: protectedProcedure
-    .input(z.object({ id: z.number(), title: z.string().optional(), ownerId: z.number().optional(), contactId: z.number().optional(), serviceType: z.string().optional(), seats: z.number().optional(), value: z.string().optional(), notes: z.string().optional(), expectedCloseDate: z.string().optional() }))
+    .input(z.object({ id: z.number(), title: z.string().optional(), ownerId: z.number().optional(), companyId: z.number().optional(), contactId: z.number().optional(), serviceType: z.string().optional(), seats: z.number().optional(), value: z.string().optional(), notes: z.string().optional(), expectedCloseDate: z.string().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");

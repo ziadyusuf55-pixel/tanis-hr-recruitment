@@ -1050,9 +1050,26 @@ export const bdUsers = mysqlTable("bd_users", {
 export type BdUser = typeof bdUsers.$inferSelect;
 export type InsertBdUser = typeof bdUsers.$inferInsert;
 
+/** Companies are the top level of the BD tree: one company → many contacts →
+ *  many deals. Backfilled automatically from the old free-text company names. */
+export const bdCompanies = mysqlTable("bd_companies", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  website: varchar("website", { length: 320 }),
+  industry: varchar("industry", { length: 150 }),       // vertical: solar, debt, insurance…
+  country: varchar("country", { length: 100 }),
+  source: varchar("source", { length: 120 }),
+  notes: text("notes"),
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+  updatedAt: bigint("updatedAt", { mode: "number" }).notNull(),
+});
+export type BdCompany = typeof bdCompanies.$inferSelect;
+export type InsertBdCompany = typeof bdCompanies.$inferInsert;
+
 export const bdContacts = mysqlTable("bd_contacts", {
   id: int("id").autoincrement().primaryKey(),
-  company: varchar("company", { length: 255 }).notNull(),
+  company: varchar("company", { length: 255 }).notNull(), // legacy free-text — kept for backfill; companyId is the truth now
+  companyId: int("companyId"),                            // bdCompanies.id (null only until backfill runs)
   contactName: varchar("contactName", { length: 255 }),
   jobTitle: varchar("jobTitle", { length: 150 }),
   email: varchar("email", { length: 320 }),
@@ -1070,7 +1087,8 @@ export type InsertBdContact = typeof bdContacts.$inferInsert;
 export const bdDeals = mysqlTable("bd_deals", {
   id: int("id").autoincrement().primaryKey(),
   title: varchar("title", { length: 255 }).notNull(),  // deal name
-  contactId: int("contactId"),                         // bdContacts.id (shared)
+  companyId: int("companyId"),                         // bdCompanies.id — the deal's company
+  contactId: int("contactId"),                         // bdContacts.id (shared) — primary contact on the deal
   ownerId: int("ownerId").notNull(),                   // bdUsers.id — whose pipeline
   stage: mysqlEnum("stage", ["follow_up", "negotiations", "review", "partners_consultants", "closed_won", "closed_lost"]).default("follow_up").notNull(),
   serviceType: varchar("serviceType", { length: 150 }), // call-center service being sold
