@@ -1108,10 +1108,13 @@ export const bdDeals = mysqlTable("bd_deals", {
 export type BdDeal = typeof bdDeals.$inferSelect;
 export type InsertBdDeal = typeof bdDeals.$inferInsert;
 
-// Activity log — timestamped notes per deal ("left VM", "sent proposal", …)
+// Activity log — timestamped notes on a deal ("left VM", "sent proposal", …)
+// or directly on a company (dealId null, companyId set). A company's timeline
+// shows its own notes PLUS every activity on its deals.
 export const bdDealActivity = mysqlTable("bd_deal_activity", {
   id: int("id").autoincrement().primaryKey(),
-  dealId: int("dealId").notNull(),
+  dealId: int("dealId"),                // null for company-level notes
+  companyId: int("companyId"),          // set on company-level notes (bdCompanies.id)
   note: text("note").notNull(),
   createdBy: int("createdBy"),          // bdUsers.id (optional)
   createdAt: bigint("createdAt", { mode: "number" }).notNull(),
