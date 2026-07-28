@@ -1294,8 +1294,15 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
                 <SelectValue placeholder="Select type..." />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="paid_leave">Paid Leave</SelectItem>
-                <SelectItem value="day_off">Unpaid Day Off</SelectItem>
+                {(() => {
+                      const leaveOpen = new Date().getMonth() >= 11;
+                      return (
+                        <>
+                          <SelectItem value="paid_leave" disabled={!leaveOpen}>Paid Leave{!leaveOpen ? " (opens Dec 1)" : ""}</SelectItem>
+                          <SelectItem value="day_off">Unpaid Day Off</SelectItem>
+                        </>
+                      );
+                    })()}
                 <SelectItem value="sick_note">Sick Note</SelectItem>
                 <SelectItem value="resignation">Resignation</SelectItem>
                 <SelectItem value="salary">Salary Inquiry</SelectItem>

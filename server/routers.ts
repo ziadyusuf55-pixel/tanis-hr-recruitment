@@ -122,8 +122,6 @@ import {
   listAllScheduleChangeRequests,
   updateScheduleChangeRequest,
   // Overtime
-  upsertOvertimeAvailability,
-  getOvertimeAvailabilityForDate,
   getHeadcountForecast,
   // Agent comments
   getCommentsByCode,
@@ -159,13 +157,7 @@ import {
   getPerformanceByMonth,
   getPerformanceMonths,
   // Adherence
-  bulkInsertAdherence,
-  listAdherence,
-  getAdherenceMonths,
   // Quality
-  bulkInsertQuality,
-  listQuality,
-  getQualityMonths,
   // Cycle Tracker
   getCurrentCycleKey,
   getCycleKeyForDate,
@@ -187,7 +179,6 @@ import {
   getAvailableCommissionMonths,
   getAgentPerformanceHistory,
   getCampaignRanking,
-  adminDeleteAgent,
   getPendingDeletionAgents,
   getNextAvailableTraineeCode,
 } from "./db";
@@ -2314,26 +2305,6 @@ const scheduleChangeRouter = router({
 });
 
 // ─── Overtime Router ──────────────────────────────────────────────────────────
-const overtimeRouter = router({
-  respond: publicProcedure
-    .input(z.object({
-      campaignId: z.number(),
-      date: z.string(),
-      status: z.enum(["available", "unavailable"]),
-    }))
-    .mutation(({ ctx, input }) => {
-      const _otTok = getAgentCookieFromReq(ctx.req);
-      if (!_otTok) throw new TRPCError({ code: "UNAUTHORIZED" });
-      let _otCode: string;
-      try { _otCode = (jwt.verify(_otTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
-      return upsertOvertimeAvailability({ ...input, traineeCode: _otCode });
-    }),
-
-    getResponses: protectedProcedure
-    .input(z.object({ campaignId: z.number(), date: z.string() }))
-    .query(({ input }) => getOvertimeAvailabilityForDate(input.campaignId, input.date)),
-});
-
 // ─── Break Schedule Router ────────────────────────────────────────────────────
 const breakScheduleRouter = router({
   // Admin: replace all break slots for multiple agent+date combinations
@@ -2436,14 +2407,7 @@ const separationRouter = router({
   getByAgent: protectedProcedure
     .input(z.object({ agentCode: z.string() }))
     .query(({ input }) => getSeparationsByAgent(input.agentCode)),
-  // Admin: hard delete agent after final pay confirmed
-  adminDelete: protectedProcedure
-    .input(z.object({ agentCode: z.string() }))
-    .mutation(async ({ input }) => {
-      await adminDeleteAgent(input.agentCode);
-      return { success: true };
-    }),
-    // Admin: get all terminated/resigned agents pending deletion
+  // Admin: get all terminated/resigned agents pending deletion
   pendingDeletion: protectedProcedure
     .query(() => getPendingDeletionAgents()),
   // Get pending (scheduled, not yet applied) separation for an agent
@@ -3383,63 +3347,6 @@ const performanceV2Router = router({
 });
 
 // ─── Adherence Router ─────────────────────────────────────────────────────────
-const adherenceRouter = router({
-  bulkInsert: protectedProcedure
-    .input(z.array(z.object({
-      agentCode: z.string().optional(),
-      crdts: z.string().optional(),
-      alias: z.string().optional(),
-      date: z.string(),
-      month: z.string().optional(),
-      type: z.string(),
-      hours: z.number().optional(),
-      deduction: z.number().optional(),
-      notes: z.string().optional(),
-    })))
-    .mutation(async ({ input, ctx }) => {
-      const uploadedBy = ctx.user?.name ?? "admin";
-      const uploadedAt = Date.now();
-      await bulkInsertAdherence(input.map(r => ({ ...r, uploadedBy, uploadedAt })));
-      return { success: true };
-    }),
-
-  list: protectedProcedure
-    .input(z.object({ agentCode: z.string().optional(), month: z.string().optional() }))
-    .query(({ input }) => listAdherence(input)),
-
-  getMonths: protectedProcedure
-    .query(() => getAdherenceMonths()),
-});
-
-// ─── Quality Router ───────────────────────────────────────────────────────────
-const qualityRouter = router({
-  bulkInsert: protectedProcedure
-    .input(z.array(z.object({
-      agentCode: z.string().optional(),
-      crdts: z.string().optional(),
-      alias: z.string().optional(),
-      date: z.string(),
-      month: z.string().optional(),
-      type: z.string(),
-      score: z.number().optional(),
-      penalty: z.number().optional(),
-      notes: z.string().optional(),
-    })))
-    .mutation(async ({ input, ctx }) => {
-      const uploadedBy = ctx.user?.name ?? "admin";
-      const uploadedAt = Date.now();
-      await bulkInsertQuality(input.map(r => ({ ...r, uploadedBy, uploadedAt })));
-      return { success: true };
-    }),
-
-  list: protectedProcedure
-    .input(z.object({ agentCode: z.string().optional(), month: z.string().optional() }))
-    .query(({ input }) => listQuality(input)),
-
-  getMonths: protectedProcedure
-    .query(() => getQualityMonths()),
-});
-
 
 // ─── Cycle Tracker Router ────────────────────────────────────────────────────
 const cycleTrackerRouter = router({
@@ -6212,6 +6119,11 @@ const leaveRouter = router({
   request: publicProcedure
     .input(z.object({ traineeCode: z.string(), startDate: z.string(), endDate: z.string(), days: z.number().min(1), reason: z.string().optional() }))
     .mutation(async ({ input }) => {
+      // Leave requests open on December 1st each year
+      const now = new Date();
+      if (now.getMonth() < 11) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Leave requests open on December 1st. You can see your balance but submissions aren't accepted yet." });
+      }
       const { getDb } = await import("./db");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
@@ -6483,7 +6395,7 @@ export const appRouter = router({
   agentComments: agentCommentsRouter,
   documents: documentsRouter,
   scheduleChange: scheduleChangeRouter,
-  overtime: overtimeRouter,
+  // overtimeRouter removed
   breakSchedule: breakScheduleRouter,
   separation: separationRouter,
   payrollV2: payrollV2Router,
@@ -6493,8 +6405,7 @@ export const appRouter = router({
   employees: employeesRouter,
   academy: academyRouter,
   performanceV2: performanceV2Router,
-  adherence: adherenceRouter,
-  quality: qualityRouter,
+  // adherenceRouter + qualityRouter removed
   cycleTracker: cycleTrackerRouter,
   coaching: coachingRouter,
   coachingCases: coachingCasesRouter,
