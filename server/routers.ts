@@ -1554,9 +1554,6 @@ const campaignsRouter = router({
       return { sent: agents.length };
     }),
 
-  getOvertimeResponses: protectedProcedure
-    .input(z.object({ campaignId: z.number(), date: z.string() }))
-    .query(({ input }) => getOvertimeAvailabilityForDate(input.campaignId, input.date)),
   // Dynamic operation plan: 7-day grid (Mon-Sun) showing each agent's work/off status
   getOperationPlanMonth: publicProcedure
     .input(z.object({ campaignId: z.number(), year: z.number().int(), month: z.number().int().min(1).max(12) }))
