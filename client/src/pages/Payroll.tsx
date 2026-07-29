@@ -111,7 +111,7 @@ export default function PayrollPage() {
   type BulkRow = { id: number; crdts: string | null; alias: string | null; agentCode: string | null; netPay: string | null; paymentStatus: string; paidAt: number | null; paidBy: string | null; amountPaid: string | null };
   const { data: bulkRows = [], isLoading: bulkLoading, refetch: refetchBulk } = trpc.payrollV2.getStatusPage.useQuery({ month: bulkMonth }, { enabled: activeTab === "bulk" });
   const { data: statsData, isLoading: statsLoading } = trpc.payrollV2.statsForMonth.useQuery({ month: statsMonth }, { enabled: activeTab === "stats" });
-  const bulkTyped = bulkRows as BulkRow[];
+  const bulkTyped = bulkRows as unknown as BulkRow[];
   const pending = bulkTyped.filter(r => r.paymentStatus !== "paid");
   const paid = bulkTyped.filter(r => r.paymentStatus === "paid");
 
