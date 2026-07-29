@@ -361,7 +361,7 @@ export default function AgentPortal() {
         {activeTab === "profile" && <ProfileTab agent={agent} theme={theme} />}
         {activeTab === "opplan" && <OperationPlanTab theme={theme} />}
         {activeTab === "performance" && <PerformanceTab theme={theme} />}
-        {activeTab === "academy" && <AcademyTab theme={theme} />}
+        {activeTab === "academy" && <AcademyTab theme={theme} traineeCode={(agent as Record<string,unknown> | undefined)?.traineeCode as string | undefined} />}
         {activeTab === "payroll" && <PayrollTab theme={theme} />}
         {activeTab === "commission" && <CommissionTrackerTab theme={theme} />}
         {activeTab === "requests" && <RequestCenterTab candidateId={agent.candidateId} theme={theme} />}
@@ -3216,7 +3216,7 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
  */
 /** Tanis Academy — the agent's assigned courses and their progress. */
 /** Tanis Academy — the agent's own training home. */
-function AcademyTab({ theme }: { theme: Theme }) {
+function AcademyTab({ theme, traineeCode }: { theme: Theme; traineeCode?: string | null }) {
   const [view, setView] = useState<"courses" | "english">("courses");
   return (
     <div className="space-y-5">
@@ -3232,7 +3232,7 @@ function AcademyTab({ theme }: { theme: Theme }) {
           🇬🇧 English Level
         </button>
       </div>
-      {view === "courses" ? <MyCourses theme={theme} /> : <EnglishLevelQuiz theme={theme} />}
+      {view === "courses" ? <MyCourses theme={theme} /> : <EnglishLevelQuiz theme={theme} traineeCode={traineeCode ?? undefined} />}
     </div>
   );
 }
@@ -3724,69 +3724,169 @@ function ThisMonthView({ theme }: { theme: Theme }) {
   );
 }
 
-// ─── CEFR English Level Assessment ───────────────────────────────────────────
-const CEFR_QUESTIONS: ReadonlyArray<{ q: string; opts: [string,string,string,string]; a: number; level: string }> = [
-  { q: "What ___ your name?", opts: ["is","are","am","be"], a: 0, level: "A1" },
-  { q: "She ___ a teacher.", opts: ["is","are","am","be"], a: 0, level: "A1" },
-  { q: "I ___ from Egypt.", opts: ["am","is","are","be"], a: 0, level: "A1" },
-  { q: "They ___ students.", opts: ["are","is","am","be"], a: 0, level: "A1" },
-  { q: "This is ___ apple.", opts: ["an","a","the","—"], a: 0, level: "A1" },
-  { q: "How ___ are you?", opts: ["old","age","years","much"], a: 0, level: "A1" },
-  { q: "The cat is ___ the box.", opts: ["in","on","at","to"], a: 0, level: "A1" },
-  { q: "I have ___ brothers.", opts: ["two","second","twice","twos"], a: 0, level: "A1" },
-  { q: "She ___ English every day.", opts: ["studies","study","studying","studied"], a: 0, level: "A1" },
-  { q: "What time ___ it?", opts: ["is","are","do","does"], a: 0, level: "A1" },
-  { q: "I ___ to the cinema last night.", opts: ["went","go","goes","going"], a: 0, level: "A2" },
-  { q: "She ___ been to Paris.", opts: ["has","have","had","is"], a: 0, level: "A2" },
-  { q: "They were ___ when I called.", opts: ["sleeping","slept","sleep","sleeps"], a: 0, level: "A2" },
-  { q: "___ you like some coffee?", opts: ["Would","Will","Do","Are"], a: 0, level: "A2" },
-  { q: "This bag is ___ than that one.", opts: ["heavier","more heavy","heavy","heaviest"], a: 0, level: "A2" },
-  { q: "I ___ like spicy food.", opts: ["don't","doesn't","not","no"], a: 0, level: "A2" },
-  { q: "There ___ any milk in the fridge.", opts: ["isn't","aren't","don't","not"], a: 0, level: "A2" },
-  { q: "We ___ arrive at 9 AM tomorrow.", opts: ["will","are","do","going"], a: 0, level: "A2" },
-  { q: "He ___ TV when the phone rang.", opts: ["was watching","watched","watches","watch"], a: 0, level: "A2" },
-  { q: "I ___ never eaten sushi.", opts: ["have","had","has","was"], a: 0, level: "A2" },
-  { q: "If I ___ rich, I would travel the world.", opts: ["were","am","will be","be"], a: 0, level: "B1" },
-  { q: "She asked me where I ___.", opts: ["lived","live","living","lives"], a: 0, level: "B1" },
-  { q: "The report ___ by the manager yesterday.", opts: ["was written","wrote","has written","is written"], a: 0, level: "B1" },
-  { q: "I ___ here for five years.", opts: ["have worked","work","worked","am working"], a: 0, level: "B1" },
-  { q: "Despite ___ tired, she finished the task.", opts: ["being","be","to be","been"], a: 0, level: "B1" },
-  { q: "He said he ___ call me back.", opts: ["would","will","could","should"], a: 0, level: "B1" },
-  { q: "I wish I ___ speak better English.", opts: ["could","can","would","will"], a: 0, level: "B1" },
-  { q: "By the time she arrived, we ___ dinner.", opts: ["had finished","finished","finish","have finished"], a: 0, level: "B1" },
-  { q: "The meeting ___ until tomorrow.", opts: ["has been postponed","postponed","is postponing","postpones"], a: 0, level: "B1" },
-  { q: "She made me ___ the whole report.", opts: ["rewrite","rewriting","to rewrite","rewrote"], a: 0, level: "B1" },
-  { q: "Had I known about the problem, I ___ earlier.", opts: ["would have acted","will act","had acted","acted"], a: 0, level: "B2" },
-  { q: "It is essential that he ___ on time.", opts: ["arrive","arrives","arrived","arriving"], a: 0, level: "B2" },
-  { q: "Rarely ___ such dedication in a new employee.", opts: ["have I seen","I have seen","I saw","did I saw"], a: 0, level: "B2" },
-  { q: "The project, ___ lasted six months, was a success.", opts: ["which","that","who","what"], a: 0, level: "B2" },
-  { q: "___ he tried hard, he failed the exam.", opts: ["Although","Despite","However","Even"], a: 0, level: "B2" },
-  { q: "She is used to ___ long hours.", opts: ["working","work","worked","works"], a: 0, level: "B2" },
-  { q: "Not only ___ late, but he also forgot his ID.", opts: ["did he arrive","he arrived","he did arrive","arrived he"], a: 0, level: "B2" },
-  { q: "I'd rather you ___ tell anyone.", opts: ["didn't","don't","won't","haven't"], a: 0, level: "B2" },
-  { q: "The findings suggest that stress ___ productivity.", opts: ["may reduce","reduces maybe","maybe reduces","can reducing"], a: 0, level: "B2" },
-  { q: "A decision was made ___ the project launch.", opts: ["to postpone","postponing","postponed","for postponing"], a: 0, level: "B2" },
-  { q: "The proposal was met with ___ skepticism.", opts: ["considerable","considerate","considering","considerably"], a: 0, level: "C1" },
-  { q: "Scarcely ___ sat down when the alarm went off.", opts: ["had she","she had","did she","she did"], a: 0, level: "C1" },
-  { q: "The policy aims to ___ corruption at every level.", opts: ["eradicate","erase","eliminate","prevent"], a: 0, level: "C1" },
-  { q: "His speech was ___ with historical references.", opts: ["replete","repeated","repeating","filled"], a: 0, level: "C1" },
-  { q: "The committee ___ their decision pending further review.", opts: ["deferred","differed","delayed","diverted"], a: 0, level: "C1" },
-  { q: "She gave a ___ account of the events.", opts: ["meticulous","methodical","mechanical","minute"], a: 0, level: "C1" },
-  { q: "This clause is ___ to the contract.", opts: ["integral","integrated","integrating","essential"], a: 0, level: "C1" },
-  { q: "The legislation was passed ___ strong opposition.", opts: ["in spite of","despite of","regardless","in the face"], a: 0, level: "C1" },
-  { q: "The argument he presented was inherently ___.", opts: ["flawed","flawless","flaw","flawing"], a: 0, level: "C1" },
-  { q: "Their concerns were ___ dismissed by management.", opts: ["summarily","swiftly","summary","briefly"], a: 0, level: "C1" },
-  { q: "The speaker's rhetoric was ___, obscuring rather than clarifying.", opts: ["obfuscatory","redundant","obscure","objectionable"], a: 0, level: "C2" },
-  { q: "___ he been present, the outcome might have differed.", opts: ["Had","Were","Should","Would"], a: 0, level: "C2" },
-  { q: "The text is replete with ___ references.", opts: ["recondite","recorded","reconciled","recursive"], a: 0, level: "C2" },
-  { q: "Her argumentation was so ___ that few could follow.", opts: ["abstruse","abstract","absurd","abrasive"], a: 0, level: "C2" },
-  { q: "The clause was deemed ___ and removed.", opts: ["otiose","obtuse","onerous","opaque"], a: 0, level: "C2" },
-  { q: "The policy ___ unintended consequences.", opts: ["engendered","engineered","endangered","entangled"], a: 0, level: "C2" },
-  { q: "His ___ delivery made complex topics accessible.", opts: ["pellucid","pedantic","pervasive","poignant"], a: 0, level: "C2" },
-  { q: "The two theories are ___ — they cannot both be true.", opts: ["mutually exclusive","collectively exhaustive","jointly sufficient","mutually inclusive"], a: 0, level: "C2" },
-  { q: "She managed to ___ herself from a precarious position.", opts: ["extricate","exonerate","expurgate","expatiate"], a: 0, level: "C2" },
-  { q: "The novel's prose is ___, demanding close re-reading.", opts: ["lapidary","lavish","lateral","laborious"], a: 0, level: "C2" },
+// ─── CEFR English Level Assessment (diversified: Grammar · Vocab · Reading · Listening) ──
+
+// ── Question bank — grouped by skill ──────────────────────────────────────────
+// Each bucket has 30 questions; we randomly pick 15 per skill = 60 total per attempt.
+// This means every agent sees a different mix and order.
+
+type CefrQ = { q: string; opts: [string,string,string,string]; a: number; level: string; skill: "grammar"|"vocab"|"reading"|"listening" };
+
+const GRAMMAR_BANK: CefrQ[] = [
+  { q: "She ___ to work every day.", opts: ["walks","walk","is walk","are walking"], a: 0, level: "A1", skill: "grammar" },
+  { q: "They ___ students at this school.", opts: ["are","is","am","be"], a: 0, level: "A1", skill: "grammar" },
+  { q: "I ___ from Egypt.", opts: ["am","is","are","be"], a: 0, level: "A1", skill: "grammar" },
+  { q: "There ___ a cat on the roof.", opts: ["is","are","am","be"], a: 0, level: "A1", skill: "grammar" },
+  { q: "He ___ like coffee.", opts: ["doesn't","don't","isn't","aren't"], a: 0, level: "A2", skill: "grammar" },
+  { q: "I ___ TV when she called.", opts: ["was watching","watched","am watching","watch"], a: 0, level: "A2", skill: "grammar" },
+  { q: "She ___ been to London twice.", opts: ["has","have","had","is"], a: 0, level: "A2", skill: "grammar" },
+  { q: "We ___ go to the beach tomorrow.", opts: ["are going to","go","goes","went"], a: 0, level: "A2", skill: "grammar" },
+  { q: "If I study hard, I ___ pass the exam.", opts: ["will","would","am","could"], a: 0, level: "B1", skill: "grammar" },
+  { q: "By 2020, she ___ worked here for ten years.", opts: ["had","has","have","was"], a: 0, level: "B1", skill: "grammar" },
+  { q: "The report ___ by the team last week.", opts: ["was written","wrote","is written","writes"], a: 0, level: "B1", skill: "grammar" },
+  { q: "I wish I ___ more time to study.", opts: ["had","have","has","am having"], a: 0, level: "B1", skill: "grammar" },
+  { q: "Had she arrived earlier, she ___ the meeting.", opts: ["would have attended","will attend","has attended","attends"], a: 0, level: "B2", skill: "grammar" },
+  { q: "Rarely ___ such commitment in a junior employee.", opts: ["do I see","I see","I do see","did I saw"], a: 0, level: "B2", skill: "grammar" },
+  { q: "It is vital that every agent ___ the protocol.", opts: ["follow","follows","is following","followed"], a: 0, level: "B2", skill: "grammar" },
+  { q: "I'd rather you ___ tell the manager just yet.", opts: ["didn't","don't","won't","haven't"], a: 0, level: "B2", skill: "grammar" },
+  { q: "Scarcely ___ begun when the power went out.", opts: ["had the meeting","the meeting had","the meeting has","has the meeting"], a: 0, level: "C1", skill: "grammar" },
+  { q: "The legislation requires that all data ___ encrypted.", opts: ["be","is","are","were"], a: 0, level: "C1", skill: "grammar" },
+  { q: "Not only ___ the deadline, but he also exceeded targets.", opts: ["did he meet","he met","he did meet","met he"], a: 0, level: "C1", skill: "grammar" },
+  { q: "Were I in your position, I ___ accept the offer.", opts: ["would","will","am going to","could"], a: 0, level: "C1", skill: "grammar" },
+  { q: "___ he been informed, the error ___ avoided.", opts: ["Had / would have been","If / will be","Was / could be","Were / had been"], a: 0, level: "C2", skill: "grammar" },
+  { q: "The report, ___ findings contradicted prior research, sparked debate.", opts: ["whose","which","that","what"], a: 0, level: "C2", skill: "grammar" },
+  { q: "So complex ___ the problem ___ no single solution sufficed.", opts: ["was / that","is / that","were / that","was / as"], a: 0, level: "C2", skill: "grammar" },
+  { q: "The committee insisted that the decision ___ reversed.", opts: ["be","is","was","were"], a: 0, level: "C2", skill: "grammar" },
+  { q: "This is ___ most interesting book I have ever read.", opts: ["the","a","an","—"], a: 0, level: "A1", skill: "grammar" },
+  { q: "She gave ___ honest answer.", opts: ["an","a","the","—"], a: 0, level: "A1", skill: "grammar" },
+  { q: "He ___ working here since 2019.", opts: ["has been","is","have been","was"], a: 0, level: "B1", skill: "grammar" },
+  { q: "The earlier you start, ___ you'll finish.", opts: ["the sooner","sooner","more soon","the more soon"], a: 0, level: "B1", skill: "grammar" },
+  { q: "She ___ the contract before signing it.", opts: ["should have read","should read","should reads","should be reading"], a: 0, level: "B2", skill: "grammar" },
+  { q: "Despite ___ thoroughly, they found no evidence.", opts: ["having searched","searched","to search","search"], a: 0, level: "C1", skill: "grammar" },
 ];
+
+const VOCAB_BANK: CefrQ[] = [
+  { q: "The opposite of 'hot' is:", opts: ["cold","warm","cool","chilly"], a: 0, level: "A1", skill: "vocab" },
+  { q: "Choose the word that means 'very big':", opts: ["enormous","tiny","narrow","shallow"], a: 0, level: "A1", skill: "vocab" },
+  { q: "A 'physician' is a type of:", opts: ["doctor","lawyer","teacher","pilot"], a: 0, level: "A2", skill: "vocab" },
+  { q: "If something is 'urgent', it needs to be done:", opts: ["immediately","slowly","carefully","quietly"], a: 0, level: "A2", skill: "vocab" },
+  { q: "The word 'annual' means:", opts: ["every year","every month","every day","every decade"], a: 0, level: "B1", skill: "vocab" },
+  { q: "'Concise' writing is:", opts: ["brief and clear","long and detailed","creative","informal"], a: 0, level: "B1", skill: "vocab" },
+  { q: "To 'escalate' a problem means to:", opts: ["make it more serious","solve it quickly","ignore it","document it"], a: 0, level: "B1", skill: "vocab" },
+  { q: "A 'discrepancy' is:", opts: ["a difference or inconsistency","an agreement","a solution","a schedule"], a: 0, level: "B2", skill: "vocab" },
+  { q: "'Pragmatic' means:", opts: ["practical","idealistic","creative","strict"], a: 0, level: "B2", skill: "vocab" },
+  { q: "To 'mitigate' a risk means to:", opts: ["reduce it","ignore it","increase it","report it"], a: 0, level: "B2", skill: "vocab" },
+  { q: "'Ambiguous' language is:", opts: ["unclear, open to interpretation","very precise","formal","technical"], a: 0, level: "B2", skill: "vocab" },
+  { q: "An 'impediment' to progress is:", opts: ["an obstacle","an advantage","a shortcut","a resource"], a: 0, level: "C1", skill: "vocab" },
+  { q: "'Corroborate' means to:", opts: ["confirm or support","contradict","analyse","dismiss"], a: 0, level: "C1", skill: "vocab" },
+  { q: "To 'exacerbate' a situation means to:", opts: ["make it worse","improve it","document it","postpone it"], a: 0, level: "C1", skill: "vocab" },
+  { q: "'Tenacious' describes someone who is:", opts: ["persistent","careless","indifferent","impulsive"], a: 0, level: "C1", skill: "vocab" },
+  { q: "'Obfuscate' means to:", opts: ["make confusing","clarify","translate","summarise"], a: 0, level: "C2", skill: "vocab" },
+  { q: "'Perspicacious' describes someone who is:", opts: ["shrewd and insightful","clumsy","talkative","stubborn"], a: 0, level: "C2", skill: "vocab" },
+  { q: "A 'laconic' response is:", opts: ["very brief","very detailed","very emotional","very technical"], a: 0, level: "C2", skill: "vocab" },
+  { q: "'Equivocate' means to:", opts: ["be deliberately vague","speak clearly","agree","disagree"], a: 0, level: "C2", skill: "vocab" },
+  { q: "Choose the correct word: 'The manager will ___ the new policy.'", opts: ["implement","implicate","imply","impose"], a: 0, level: "B1", skill: "vocab" },
+  { q: "Choose the correct word: 'We need to ___ our goals for next quarter.'", opts: ["reassess","reassure","reattach","reapply"], a: 0, level: "B1", skill: "vocab" },
+  { q: "'Redundant' in the workplace means:", opts: ["no longer needed","promoted","transferred","experienced"], a: 0, level: "B2", skill: "vocab" },
+  { q: "Something 'mandatory' is:", opts: ["required","optional","recommended","forbidden"], a: 0, level: "A2", skill: "vocab" },
+  { q: "A 'reimbursement' is:", opts: ["money paid back","a bonus","a penalty","a salary"], a: 0, level: "B1", skill: "vocab" },
+  { q: "'Coherent' communication is:", opts: ["logical and clear","emotional","brief","technical"], a: 0, level: "B1", skill: "vocab" },
+  { q: "To 'comply' with rules means to:", opts: ["follow them","break them","question them","rewrite them"], a: 0, level: "A2", skill: "vocab" },
+  { q: "'Transparent' behaviour in a company means:", opts: ["open and honest","secretive","competitive","efficient"], a: 0, level: "B1", skill: "vocab" },
+  { q: "An 'incentive' is something that:", opts: ["motivates action","discourages action","delays action","documents action"], a: 0, level: "B1", skill: "vocab" },
+  { q: "'Proficient' at a skill means:", opts: ["competent and skilled","a beginner","learning","unqualified"], a: 0, level: "B1", skill: "vocab" },
+  { q: "A 'benchmark' in business is:", opts: ["a standard for comparison","a type of meeting","a financial report","a training module"], a: 0, level: "B2", skill: "vocab" },
+];
+
+const READING_BANK: CefrQ[] = [
+  { q: "Read: 'The store opens at 9 AM and closes at 9 PM.' What time does the store close?", opts: ["9 PM","9 AM","10 PM","8 PM"], a: 0, level: "A1", skill: "reading" },
+  { q: "Read: 'Please return the form by Friday.' When is the deadline?", opts: ["Friday","Monday","Thursday","Wednesday"], a: 0, level: "A1", skill: "reading" },
+  { q: "Read: 'Agents must log in before 8:30 AM or their shift is marked late.' An agent logs in at 8:45 AM. Their shift is:", opts: ["marked late","on time","cancelled","extended"], a: 0, level: "A2", skill: "reading" },
+  { q: "Read: 'Commission is paid on the 1st of every month for the previous month's sales.' Sales made in March are paid:", opts: ["on April 1st","on March 1st","on March 31st","on May 1st"], a: 0, level: "A2", skill: "reading" },
+  { q: "Read: 'Attendance deductions apply after three unexcused absences in a cycle.' An agent has two unexcused absences. Are they deducted?", opts: ["No","Yes","Only if they are late","Only with manager approval"], a: 0, level: "B1", skill: "reading" },
+  { q: "Read: 'Quality scores below 70% result in a coaching session. Below 50% results in a formal warning.' An agent scores 65%. What happens?", opts: ["A coaching session","A formal warning","Nothing","Termination"], a: 0, level: "B1", skill: "reading" },
+  { q: "Read: 'OT at 1.5x applies on weekdays; 2x on weekends; 3x on public holidays.' An agent works extra hours on a Saturday. Their OT rate is:", opts: ["2x","1.5x","3x","1x"], a: 0, level: "B1", skill: "reading" },
+  { q: "Read: 'The bonus is paid only if the agent achieves 100% of their target AND maintains quality above 75%.' An agent hits 100% target but scores 70% quality. Do they get the bonus?", opts: ["No","Yes","Half of it","They are asked to retake the quality test"], a: 0, level: "B2", skill: "reading" },
+  { q: "Read: 'In the event that a client disconnects a call within 30 seconds, it is classified as a short call and excluded from quality review.' A 25-second call is:", opts: ["excluded from quality review","included in quality review","counted as a rejection","flagged for coaching"], a: 0, level: "B2", skill: "reading" },
+  { q: "Read: 'Agents who are consistently in the top 10% of their campaign for three consecutive cycles qualify for a senior nesting badge.' An agent ranked top 10% in cycles 1, 2, and 4 (not cycle 3). Do they qualify?", opts: ["No — cycles must be consecutive","Yes","They need one more cycle","They must re-apply"], a: 0, level: "B2", skill: "reading" },
+  { q: "Read the email subject: 'ACTION REQUIRED: Submit your timesheet by EOD Friday.' What does 'EOD' most likely mean?", opts: ["End of day","End of deal","Every other day","Extension of deadline"], a: 0, level: "B1", skill: "reading" },
+  { q: "Read: 'The policy is subject to change without prior notice.' This means:", opts: ["The policy can change at any time","The policy never changes","You will always be told before changes","Changes require your approval"], a: 0, level: "B1", skill: "reading" },
+  { q: "Read: 'Agents are expected to maintain a professional demeanour at all times, including during breaks.' This means agents should:", opts: ["behave professionally even during breaks","only be professional during calls","only be professional when supervisors are present","relax completely during breaks"], a: 0, level: "B2", skill: "reading" },
+  { q: "Read: 'Pursuant to clause 4.2, any modification to the scope of work requires written consent from both parties.' A verbal agreement to change the project scope:", opts: ["is not valid under this clause","is fully valid","is valid if witnessed","is valid for 30 days"], a: 0, level: "C1", skill: "reading" },
+  { q: "Read: 'The moratorium on new hires is in effect until Q3.' This means:", opts: ["No new hiring until Q3","All hires must be approved by Q3","Hiring accelerates in Q3","Existing hires are affected in Q3"], a: 0, level: "C1", skill: "reading" },
+  { q: "Read: 'Notwithstanding the foregoing, either party may terminate this agreement with 30 days written notice.' The phrase 'notwithstanding the foregoing' means:", opts: ["Despite what was said before","In addition to the above","As a result of the above","Subject to the above"], a: 0, level: "C2", skill: "reading" },
+  { q: "Read: 'The findings are at best inconclusive and at worst misleading.' The author's attitude toward the findings is:", opts: ["skeptical","supportive","neutral","enthusiastic"], a: 0, level: "C2", skill: "reading" },
+  { q: "Read: 'While revenue increased by 12%, profitability declined — a paradox attributable to disproportionate cost escalation.' Why did profitability decline?", opts: ["Costs grew faster than revenue","Revenue fell","Taxes increased","The team was reduced"], a: 0, level: "C2", skill: "reading" },
+  { q: "Read: 'Please note that access to the building is restricted after 8 PM. Exceptions require prior approval from security.' Can an agent enter at 9 PM without approval?", opts: ["No","Yes","Only on weekdays","Only with their badge"], a: 0, level: "A2", skill: "reading" },
+  { q: "Read: 'Your call will be recorded for quality and training purposes.' Why is the call recorded?", opts: ["For quality and training","For billing","For legal purposes","For the client's records"], a: 0, level: "A1", skill: "reading" },
+  { q: "Read: 'All expenses must be submitted within 30 days of the purchase date.' An agent bought something on March 5th. The latest submission date is:", opts: ["April 4th","March 30th","April 5th","March 20th"], a: 0, level: "B1", skill: "reading" },
+  { q: "Read: 'The meeting was postponed indefinitely.' This means the meeting:", opts: ["has no new date yet","was cancelled permanently","was moved to next week","was moved online"], a: 0, level: "B1", skill: "reading" },
+  { q: "Read: 'Salary increments are discretionary and subject to performance review.' This means raises are:", opts: ["not guaranteed","guaranteed annually","fixed at 10%","based only on seniority"], a: 0, level: "B2", skill: "reading" },
+  { q: "Read: 'In lieu of overtime pay, employees may elect to receive compensatory time off.' 'In lieu of' means:", opts: ["instead of","in addition to","because of","regardless of"], a: 0, level: "C1", skill: "reading" },
+  { q: "Read: 'The audit revealed significant irregularities in the expense reports.' 'Irregularities' most likely refers to:", opts: ["errors or fraud","normal patterns","missing signatures","late submissions"], a: 0, level: "C1", skill: "reading" },
+  { q: "Read: 'Agents should always use active listening techniques.' Active listening means:", opts: ["fully concentrating and responding thoughtfully","speaking more than the customer","interrupting to show engagement","taking notes only"], a: 0, level: "B1", skill: "reading" },
+  { q: "Read a sign: 'Wet floor — proceed with caution.' What should you do?", opts: ["Walk carefully","Run to avoid the wet area","Do not enter","Clean the floor"], a: 0, level: "A1", skill: "reading" },
+  { q: "Read: 'The client expressed dissatisfaction with the resolution time.' The client was unhappy about:", opts: ["how long it took to resolve their issue","the quality of the product","the agent's tone","the price"], a: 0, level: "B1", skill: "reading" },
+  { q: "Read: 'The new system is intuitive and requires minimal training.' 'Intuitive' means:", opts: ["easy to understand naturally","complex","technical","slow"], a: 0, level: "B1", skill: "reading" },
+  { q: "Read: 'Staff are reminded that personal calls are prohibited during working hours.' An agent makes a personal call at 2 PM. This is:", opts: ["against the rules","allowed if brief","allowed on breaks","the manager's decision"], a: 0, level: "A2", skill: "reading" },
+];
+
+const LISTENING_BANK: CefrQ[] = [
+  { q: "A customer says: 'I've been waiting for 20 minutes!' The best response is:", opts: ["'I'm so sorry for the wait. Let me help you right away.'","'That's not our fault.'","'Please hold again.'","'Other customers wait too.'"], a: 0, level: "A2", skill: "listening" },
+  { q: "A caller says: 'I need to speak to a manager NOW.' You should:", opts: ["Acknowledge their frustration and offer to escalate","Hang up","Tell them to call back","Ask why they are angry"], a: 0, level: "A2", skill: "listening" },
+  { q: "A caller says: 'I already explained this to someone else!' The best response:", opts: ["'I understand — let me pull up your account so you don't repeat yourself.'","'I wasn't the one you spoke to.'","'Please explain again.'","'I can't access other agents' notes.'"], a: 0, level: "B1", skill: "listening" },
+  { q: "A customer says: 'Your competitor offers the same thing for less.' The best response:", opts: ["'I understand. Let me tell you what makes our offer unique.'","'Then go with them.'","'That's not accurate.'","'Price isn't everything.'"], a: 0, level: "B1", skill: "listening" },
+  { q: "A caller says: 'I'm not interested.' You should:", opts: ["Acknowledge politely and ask if you can share one key benefit","Hang up immediately","Keep pushing with the same pitch","Transfer to another agent"], a: 0, level: "B1", skill: "listening" },
+  { q: "A customer says: 'Can you call me back later?' You should:", opts: ["Confirm a specific time and call back then","Say yes and forget","Say no","Transfer them now"], a: 0, level: "A2", skill: "listening" },
+  { q: "A caller sounds confused about pricing. The best approach:", opts: ["Slow down, use simpler language, and confirm understanding","Repeat the same explanation faster","Transfer to billing","Read the price list verbatim"], a: 0, level: "B1", skill: "listening" },
+  { q: "A customer says: 'This is the third time I've called about the same issue.' The best response:", opts: ["Apologise sincerely and commit to a resolution this time","Explain company procedures","Ask them to be patient","Tell them to email instead"], a: 0, level: "B1", skill: "listening" },
+  { q: "A manager says in a briefing: 'Going forward, all escalations must be documented in the CRM within 15 minutes.' What must agents do?", opts: ["Log escalations in CRM within 15 minutes","Email the manager within 15 minutes","Verbally inform a supervisor","Document at end of shift"], a: 0, level: "B1", skill: "listening" },
+  { q: "A caller says: 'I didn't authorise this charge!' The FIRST thing you should do is:", opts: ["Acknowledge their concern and access their account","Deny the charge","Transfer immediately","Ask them to prove it"], a: 0, level: "B1", skill: "listening" },
+  { q: "In a team meeting, the TL says: 'Stats are down this week — I need everyone to tighten up on talk time.' This means:", opts: ["Reduce how long calls take","Talk more on each call","Avoid taking calls","Record all calls manually"], a: 0, level: "B1", skill: "listening" },
+  { q: "A customer says: 'I want to cancel.' The best first response:", opts: ["'I'm sorry to hear that. Can I ask what's prompted this?'","'I'll process that now.'","'Are you sure?'","'That will take 30 days.'"], a: 0, level: "B2", skill: "listening" },
+  { q: "A colleague says: 'Can you cover my shift — it's a matter of urgency?' 'A matter of urgency' means:", opts: ["It is very important and time-sensitive","It is optional","It would be helpful","It can wait"], a: 0, level: "B1", skill: "listening" },
+  { q: "Your manager says: 'This is a ballpark figure.' This means:", opts: ["It is an approximate estimate","It is an exact number","It is a minimum","It is a maximum"], a: 0, level: "B2", skill: "listening" },
+  { q: "A client says: 'We need to get our ducks in a row before the launch.' This idiom means:", opts: ["Get organised and prepared","Hire more staff","Delay the launch","Contact more clients"], a: 0, level: "B2", skill: "listening" },
+  { q: "A manager says: 'I want this handled proactively, not reactively.' This means:", opts: ["Anticipate issues before they happen","Only act when problems arise","Document issues after they occur","Wait for client complaints"], a: 0, level: "B2", skill: "listening" },
+  { q: "During a call, a customer speaks very fast. You should:", opts: ["Politely ask them to repeat or slow down","Guess what they said","Put them on hold","Transfer immediately"], a: 0, level: "A2", skill: "listening" },
+  { q: "A customer says: 'I'd like to flag a concern.' 'Flag' here means:", opts: ["raise or bring attention to","remove","forget","postpone"], a: 0, level: "B1", skill: "listening" },
+  { q: "In a training session, the trainer says: 'This is a non-negotiable.' This means:", opts: ["It cannot be changed or argued","It can be discussed","It is optional","It is a suggestion"], a: 0, level: "B1", skill: "listening" },
+  { q: "A caller says: 'I was misled by your agent.' The best response:", opts: ["'I apologise for any miscommunication. Let me review this with you.'","'That agent was wrong.'","'You must have misunderstood.'","'I can't speak for other agents.'"], a: 0, level: "B2", skill: "listening" },
+  { q: "Your TL says: 'Keep it concise on calls — no fluff.' 'No fluff' means:", opts: ["Don't include unnecessary words","Speak quietly","Be more friendly","Add more detail"], a: 0, level: "B1", skill: "listening" },
+  { q: "A customer says: 'I'm at the end of my rope.' This idiom means they are:", opts: ["very frustrated and out of patience","calling from a different location","about to hang up the phone","speaking quietly"], a: 0, level: "B2", skill: "listening" },
+  { q: "A manager says: 'Let's table this discussion.' In a business context, this typically means:", opts: ["Postpone it for now","Start the discussion now","Cancel it entirely","Write it on the whiteboard"], a: 0, level: "C1", skill: "listening" },
+  { q: "A caller says very quickly: 'I need-to-renew-my-policy-before-the-end-of-the-month.' The key information is:", opts: ["Renew policy before end of month","Cancel policy","Get a new policy","Call back next month"], a: 0, level: "A2", skill: "listening" },
+  { q: "Your manager says in a meeting: 'We need to be more circumspect in how we handle complaints.' 'Circumspect' means:", opts: ["careful and thorough","quick","dismissive","formal"], a: 0, level: "C1", skill: "listening" },
+  { q: "A client says: 'I expect a more robust solution.' 'Robust' here means:", opts: ["strong and reliable","faster","cheaper","simpler"], a: 0, level: "C1", skill: "listening" },
+  { q: "A caller says: 'Your service is subpar.' This means:", opts: ["Below the expected standard","Above average","Average","Excellent"], a: 0, level: "B2", skill: "listening" },
+  { q: "During onboarding, the trainer says: 'Don't go off-script unless you're confident.' This means:", opts: ["Follow the script unless you are experienced enough to deviate","Never improvise","Always improvise","Scripts are optional"], a: 0, level: "B1", skill: "listening" },
+  { q: "A customer says: 'I want a word-for-word transcript of our conversation.' You should:", opts: ["Explain the process for requesting call recordings/transcripts","Deny the request","Read the call script","Put them on hold indefinitely"], a: 0, level: "B2", skill: "listening" },
+  { q: "A TL says: 'Your AHT is creeping up — let's workshop it.' 'AHT' in a call centre context stands for:", opts: ["Average Handle Time","Agent Hour Total","After-Hours Threshold","Automated Help Tool"], a: 0, level: "B2", skill: "listening" },
+];
+
+/** Seeded shuffle using agent's traineeCode so each agent gets a consistent
+ *  but different order on the same day — retakes use a timestamp seed for variety. */
+function seededShuffle<T>(arr: T[], seed: string): T[] {
+  const copy = [...arr];
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  for (let i = copy.length - 1; i > 0; i--) {
+    hash = (hash * 1664525 + 1013904223) >>> 0;
+    const j = hash % (i + 1);
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function buildQuiz(seed: string): CefrQ[] {
+  const pick = (bank: CefrQ[], n: number) => seededShuffle(bank, seed + bank[0].skill).slice(0, n);
+  return [
+    ...pick(GRAMMAR_BANK, 15),
+    ...pick(VOCAB_BANK, 15),
+    ...pick(READING_BANK, 15),
+    ...pick(LISTENING_BANK, 15),
+  ];
+}
 
 function getCefrLevel(score: number): { level: string; color: string; desc: string } {
   if (score >= 57) return { level: "C2", color: "#7c3aed", desc: "Mastery — near-native fluency" };
@@ -3797,22 +3897,51 @@ function getCefrLevel(score: number): { level: string; color: string; desc: stri
   return { level: "A1", color: "#dc2626", desc: "Beginner — limited to very basic phrases" };
 }
 
-function EnglishLevelQuiz({ theme }: { theme: Theme }) {
+const SKILL_LABELS: Record<string, string> = {
+  grammar: "📝 Grammar",
+  vocab: "📚 Vocabulary",
+  reading: "📖 Reading",
+  listening: "🎧 Listening / Context",
+};
+
+function EnglishLevelQuiz({ theme, traineeCode }: { theme: Theme; traineeCode?: string }) {
+  const seed = traineeCode ? traineeCode + new Date().toDateString() : String(Date.now());
+  const [questions] = useState<CefrQ[]>(() => buildQuiz(seed));
   const [started, setStarted] = useState(false);
-  const [answers, setAnswers] = useState<number[]>(Array(CEFR_QUESTIONS.length).fill(-1));
+  const [answers, setAnswers] = useState<number[]>(Array(60).fill(-1));
   const [submitted, setSubmitted] = useState(false);
-  const score = answers.filter((a, i) => a === CEFR_QUESTIONS[i].a).length;
+
+  const { data: cefrEnabled = true } = trpc.academy.getCefrEnabled.useQuery();
+  const submitScore = trpc.academy.submitCefrScore.useMutation();
+
+  const score = answers.filter((a, i) => a === questions[i]?.a).length;
   const cefr = getCefrLevel(score);
   const answered = answers.filter(a => a >= 0).length;
-  const levels = ["A1","A2","B1","B2","C1","C2"];
+  const skills = ["grammar", "vocab", "reading", "listening"] as const;
+
+  if (!cefrEnabled) return (
+    <div className="py-12 text-center space-y-2">
+      <p className="text-2xl">🔒</p>
+      <p className="text-sm font-semibold" style={{ color: theme.text }}>English Assessment Unavailable</p>
+      <p className="text-xs" style={{ color: theme.textMuted }}>This assessment has been temporarily disabled. Check back later.</p>
+    </div>
+  );
+
   if (!started) return (
     <div className="space-y-4 py-6 text-center">
       <div className="text-4xl">🇬🇧</div>
       <p className="text-sm font-semibold" style={{ color: theme.text }}>English Level Assessment</p>
-      <p className="text-xs max-w-xs mx-auto" style={{ color: theme.textMuted }}>60 questions across A1 → C2. Takes 15–20 min. Your CEFR level appears at the end.</p>
-      <button onClick={() => setStarted(true)} className="text-sm px-5 py-2 rounded-lg text-white font-medium" style={{ background: BRAND }}>Start Assessment</button>
+      <p className="text-xs max-w-sm mx-auto" style={{ color: theme.textMuted }}>
+        60 questions across 4 skills: Grammar, Vocabulary, Reading, and Listening/Context.
+        Takes 15–20 minutes. Your CEFR level (A1 → C2) appears at the end.
+      </p>
+      <div className="flex justify-center gap-2 flex-wrap">
+        {skills.map(s => <span key={s} className="text-[11px] px-2.5 py-1 rounded-full" style={{ background: theme.inputBg, color: theme.textMuted }}>{SKILL_LABELS[s]}</span>)}
+      </div>
+      <button onClick={() => setStarted(true)} className="text-sm px-6 py-2.5 rounded-lg text-white font-medium" style={{ background: BRAND }}>Start Assessment</button>
     </div>
   );
+
   if (submitted) return (
     <div className="space-y-4 py-4">
       <div className="rounded-2xl p-6 text-center" style={{ background: `${cefr.color}18`, border: `2px solid ${cefr.color}` }}>
@@ -3820,54 +3949,76 @@ function EnglishLevelQuiz({ theme }: { theme: Theme }) {
         <p className="text-sm font-semibold mt-1" style={{ color: cefr.color }}>{cefr.desc}</p>
         <p className="text-xs mt-2" style={{ color: theme.textMuted }}>{score}/60 correct ({Math.round(score/60*100)}%)</p>
       </div>
-      <div className="space-y-1.5">
-        {levels.map(lv => {
-          const qs = CEFR_QUESTIONS.filter(q => q.level === lv);
-          const correct = qs.filter(q => answers[CEFR_QUESTIONS.indexOf(q)] === q.a).length;
+      <div className="space-y-3">
+        {skills.map(sk => {
+          const qs = questions.filter(q => q.skill === sk);
+          const correct = qs.filter((q, _) => answers[questions.indexOf(q)] === q.a).length;
           return (
-            <div key={lv} className="flex items-center gap-3">
-              <span className="text-xs font-bold w-6" style={{ color: theme.textMuted }}>{lv}</span>
-              <div className="flex-1 rounded-full h-2 overflow-hidden" style={{ background: theme.inputBg }}>
+            <div key={sk}>
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-medium" style={{ color: theme.text }}>{SKILL_LABELS[sk]}</span>
+                <span className="text-xs" style={{ color: theme.textMuted }}>{correct}/{qs.length}</span>
+              </div>
+              <div className="rounded-full h-2 overflow-hidden" style={{ background: theme.inputBg }}>
                 <div className="h-full rounded-full" style={{ width: `${(correct/qs.length)*100}%`, background: BRAND }} />
               </div>
-              <span className="text-xs" style={{ color: theme.textMuted }}>{correct}/{qs.length}</span>
             </div>
           );
         })}
       </div>
-      <button onClick={() => { setStarted(false); setSubmitted(false); setAnswers(Array(CEFR_QUESTIONS.length).fill(-1)); }} className="text-xs underline" style={{ color: theme.textMuted }}>Retake</button>
+      <button onClick={() => { setStarted(false); setSubmitted(false); setAnswers(Array(60).fill(-1)); }} className="text-xs underline" style={{ color: theme.textMuted }}>Retake (new question mix)</button>
     </div>
   );
+
+  // Group questions by skill section for display
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
+    <div className="space-y-6">
+      <div className="flex items-center justify-between sticky top-0 py-2 z-10" style={{ background: theme.bg }}>
         <p className="text-xs font-semibold" style={{ color: theme.text }}>English Level Assessment</p>
         <span className="text-xs" style={{ color: theme.textMuted }}>{answered}/60 answered</span>
       </div>
-      {CEFR_QUESTIONS.map((q, qi) => (
-        <div key={qi} className="rounded-xl p-4 space-y-2.5" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
-          <p className="text-xs font-medium" style={{ color: theme.text }}>
-            {qi+1}. {q.q}
-            <span className="text-[10px] font-normal px-1.5 py-0.5 rounded ml-1.5" style={{ background: theme.inputBg, color: theme.textFaint }}>{q.level}</span>
-          </p>
-          <div className="grid grid-cols-2 gap-1.5">
-            {q.opts.map((opt, oi) => {
-              const sel = answers[qi] === oi;
-              return (
-                <button key={oi} type="button" onClick={() => { const a=[...answers]; a[qi]=oi; setAnswers(a); }}
-                  className="text-left text-xs px-2.5 py-2 rounded-lg"
-                  style={{ border:`1px solid ${sel ? BRAND : theme.cardBorder}`, background: sel ? `${BRAND}15` : "transparent", color: sel ? BRAND : theme.text, fontWeight: sel ? 600 : 400 }}>
-                  {String.fromCharCode(65+oi)}. {opt}
-                </button>
-              );
-            })}
+
+      {skills.map(sk => {
+        const skillQs = questions.map((q, i) => ({ q, i })).filter(({ q }) => q.skill === sk);
+        return (
+          <div key={sk} className="space-y-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-semibold" style={{ color: theme.text }}>{SKILL_LABELS[sk]}</span>
+              <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: theme.inputBg, color: theme.textFaint }}>15 questions</span>
+            </div>
+            {skillQs.map(({ q, i }) => (
+              <div key={i} className="rounded-xl p-4 space-y-2.5" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+                <p className="text-xs font-medium" style={{ color: theme.text }}>
+                  {i + 1}. {q.q}
+                  <span className="text-[10px] font-normal px-1.5 py-0.5 rounded ml-1.5" style={{ background: theme.inputBg, color: theme.textFaint }}>{q.level}</span>
+                </p>
+                <div className="grid grid-cols-1 gap-1.5">
+                  {q.opts.map((opt, oi) => {
+                    const sel = answers[i] === oi;
+                    return (
+                      <button key={oi} type="button" onClick={() => { const a = [...answers]; a[i] = oi; setAnswers(a); }}
+                        className="text-left text-xs px-3 py-2 rounded-lg"
+                        style={{ border: `1px solid ${sel ? BRAND : theme.cardBorder}`, background: sel ? `${BRAND}15` : "transparent", color: sel ? BRAND : theme.text, fontWeight: sel ? 600 : 400 }}>
+                        {String.fromCharCode(65+oi)}. {opt}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
-        </div>
-      ))}
-      <button disabled={answered < 60} onClick={() => setSubmitted(true)}
+        );
+      })}
+
+      <button
+        disabled={answered < 60}
+        onClick={() => {
+          setSubmitted(true);
+          submitScore.mutate({ level: cefr.level, score, totalQuestions: 60 });
+        }}
         className="w-full py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
         style={{ background: BRAND }}>
-        {answered < 60 ? `Answer all (${60-answered} remaining)` : "Submit — See My Level"}
+        {answered < 60 ? `Answer all questions (${60-answered} remaining)` : "Submit — See My Level"}
       </button>
     </div>
   );

@@ -19,7 +19,7 @@ type Course = {
  * the Hub raises from real performance data (violations, logouts, coaching).
  */
 export default function Academy() {
-  const [tab, setTab] = useState<"courses" | "suggestions">("courses");
+  const [tab, setTab] = useState<"courses" | "suggestions" | "english">("courses");
   return (
     <div className="p-4 sm:p-6 space-y-4 max-w-6xl">
       <div>
@@ -400,6 +400,76 @@ function SuggestionsTab() {
           ))}
         </div>
       )}
+      {tab === "english" && <EnglishAssessmentAdmin />}
+    </div>
+  );
+}
+
+function EnglishAssessmentAdmin() {
+  const utils = trpc.useUtils();
+  const { data: enabled = true } = trpc.academy.getCefrEnabled.useQuery();
+  const { data: scores = [], isLoading } = trpc.academy.listCefrScores.useQuery();
+  const toggle = trpc.academy.setCefrEnabled.useMutation({
+    onSuccess: () => { utils.academy.getCefrEnabled.invalidate(); toast.success(enabled ? "Assessment disabled" : "Assessment enabled"); },
+    onError: (e) => toast.error(e.message),
+  });
+  type ScoreRow = { id: number; traineeCode: string; fullName: string; alias: string | null; level: string; score: number; totalQuestions: number; takenAt: number };
+  const rows = scores as ScoreRow[];
+  const levelColors: Record<string, string> = { A1:"#dc2626",A2:"#d97706",B1:"#059669",B2:"#0891b2",C1:"#2563eb",C2:"#7c3aed" };
+  const levelCounts = rows.reduce((m,r) => { m[r.level]=(m[r.level]??0)+1; return m; }, {} as Record<string,number>);
+  const fmt = (ms: number) => new Date(ms).toLocaleDateString("en-GB",{day:"2-digit",month:"short",year:"numeric"});
+  return (
+    <div className="space-y-5">
+      <Card><CardContent className="p-4 flex items-center justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold flex items-center gap-2"><Globe className="w-4 h-4" style={{color:BRAND}}/> English Level Assessment</p>
+          <p className="text-xs text-muted-foreground mt-0.5">{enabled?"Agents can take the assessment from the Academy tab.":"Assessment is disabled — agents see a locked message."}</p>
+        </div>
+        <button onClick={()=>toggle.mutate({enabled:!enabled})} disabled={toggle.isPending}
+          className="flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg border"
+          style={enabled?{background:"oklch(0.55 0.18 145/0.1)",borderColor:"oklch(0.55 0.18 145)",color:"oklch(0.45 0.18 145)"}:{background:"#fee2e2",borderColor:"#fca5a5",color:"#b91c1c"}}>
+          {enabled?<ToggleRight className="w-4 h-4"/>:<ToggleLeft className="w-4 h-4"/>}
+          {enabled?"Enabled":"Disabled"}
+        </button>
+      </CardContent></Card>
+      {rows.length>0&&(
+        <Card><CardContent className="p-4">
+          <p className="text-xs font-semibold text-muted-foreground mb-3">Level Distribution ({rows.length} agents tested)</p>
+          <div className="flex flex-wrap gap-2">
+            {["A1","A2","B1","B2","C1","C2"].map(lv=>(
+              <div key={lv} className="rounded-lg px-3 py-2 text-center min-w-12" style={{background:`${levelColors[lv]}15`,border:`1px solid ${levelColors[lv]}40`}}>
+                <p className="text-base font-bold" style={{color:levelColors[lv]}}>{levelCounts[lv]??0}</p>
+                <p className="text-[10px] font-semibold" style={{color:levelColors[lv]}}>{lv}</p>
+              </div>
+            ))}
+          </div>
+        </CardContent></Card>
+      )}
+      <Card><CardContent className="p-0">
+        <div className="px-4 py-3 border-b"><p className="text-sm font-semibold">Agent Scores</p><p className="text-xs text-muted-foreground">Most recent result per agent</p></div>
+        {isLoading?<p className="text-sm text-muted-foreground p-4">Loading…</p>:rows.length===0?<p className="text-sm text-muted-foreground p-8 text-center">No agents have completed the assessment yet.</p>:(
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b bg-muted/30">
+                <th className="px-4 py-2 text-left">Agent</th><th className="px-4 py-2 text-left">Code</th><th className="px-4 py-2 text-center">Level</th><th className="px-4 py-2 text-center">Score</th><th className="px-4 py-2 text-left">Date</th>
+              </tr></thead>
+              <tbody>
+                {[...rows].sort((a,b)=>["C2","C1","B2","B1","A2","A1"].indexOf(a.level)-["C2","C1","B2","B1","A2","A1"].indexOf(b.level)).map(r=>(
+                  <tr key={r.id} className="border-b last:border-0">
+                    <td className="px-4 py-2.5 font-medium">{r.alias??r.fullName}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground text-xs">{r.traineeCode}</td>
+                    <td className="px-4 py-2.5 text-center">
+                      <span className="text-xs font-bold px-2.5 py-1 rounded-full" style={{background:`${levelColors[r.level]??"#888"}15`,color:levelColors[r.level]??"#888",border:`1px solid ${levelColors[r.level]??"#888"}40`}}>{r.level}</span>
+                    </td>
+                    <td className="px-4 py-2.5 text-center text-xs text-muted-foreground">{r.score}/{r.totalQuestions} ({Math.round(r.score/r.totalQuestions*100)}%)</td>
+                    <td className="px-4 py-2.5 text-xs text-muted-foreground">{fmt(r.takenAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent></Card>
     </div>
   );
 }

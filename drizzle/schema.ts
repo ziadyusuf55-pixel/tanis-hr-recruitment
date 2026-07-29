@@ -1297,3 +1297,24 @@ export const sessionLogs = mysqlTable("session_logs", {
   revokedAt: bigint("revokedAt", { mode: "number" }),
   revokedBy: varchar("revokedBy", { length: 255 }),
 });
+
+// ─── App Settings (key-value feature flags) ───────────────────────────────────
+export const appSettings = mysqlTable("app_settings", {
+  key: varchar("key", { length: 100 }).primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: bigint("updatedAt", { mode: "number" }).notNull(),
+  updatedBy: varchar("updatedBy", { length: 255 }),
+});
+
+// ─── English (CEFR) Assessment Scores ────────────────────────────────────────
+/** One row per agent per attempt. The latest row is the current score. */
+export const englishScores = mysqlTable("english_scores", {
+  id: int("id").autoincrement().primaryKey(),
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
+  level: varchar("level", { length: 4 }).notNull(),   // A1 A2 B1 B2 C1 C2
+  score: int("score").notNull(),                       // 0–60 raw correct answers
+  totalQuestions: int("totalQuestions").default(60).notNull(),
+  takenAt: bigint("takenAt", { mode: "number" }).notNull(),
+});
+export type EnglishScore = typeof englishScores.$inferSelect;
+

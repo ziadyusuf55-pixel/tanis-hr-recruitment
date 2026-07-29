@@ -3174,6 +3174,64 @@ const academyRouter = router({
       return { ok: true } as const;
     }),
 
+  // ---- CEFR English Assessment (admin toggle + score storage) ---------------
+  /** Is the English Level assessment enabled for agents? Default: true */
+  getCefrEnabled: publicProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const { appSettings } = await import("../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return true;
+    const [row] = await db.select().from(appSettings).where(eq(appSettings.key, "cefr_enabled")).limit(1);
+    return row ? row.value !== "false" : true;
+  }),
+  setCefrEnabled: protectedProcedure
+    .input(z.object({ enabled: z.boolean() }))
+    .mutation(async ({ ctx, input }) => {
+      const { getDb } = await import("./db");
+      const { appSettings } = await import("../drizzle/schema");
+      const { sql } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      await db.execute(sql`INSERT INTO app_settings (\`key\`, value, updatedAt, updatedBy)
+        VALUES ('cefr_enabled', ${input.enabled ? "true" : "false"}, ${Date.now()}, ${ctx.user?.name ?? "admin"})
+        ON DUPLICATE KEY UPDATE value = VALUES(value), updatedAt = VALUES(updatedAt), updatedBy = VALUES(updatedBy)`);
+      return { ok: true };
+    }),
+  /** Agent submits their CEFR result (called after they see their score). */
+  submitCefrScore: publicProcedure
+    .input(z.object({ level: z.string(), score: z.number().int().min(0).max(60), totalQuestions: z.number().int().default(60) }))
+    .mutation(async ({ ctx, input }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) throw new TRPCError({ code: "UNAUTHORIZED" });
+      let traineeCode = "";
+      try {
+        const p = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+        if (p.type !== "agent") throw new Error("not agent");
+        traineeCode = p.traineeCode;
+      } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      const { getDb } = await import("./db");
+      const { englishScores } = await import("../drizzle/schema");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      await db.insert(englishScores).values({ traineeCode, level: input.level, score: input.score, totalQuestions: input.totalQuestions, takenAt: Date.now() });
+      return { ok: true };
+    }),
+  /** Admin: all CEFR scores (latest per agent). */
+  listCefrScores: protectedProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const { englishScores, workforceAgents } = await import("../drizzle/schema");
+    const { desc } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return [];
+    const allScores = await db.select().from(englishScores).orderBy(desc(englishScores.takenAt));
+    const agents = await db.select({ traineeCode: workforceAgents.traineeCode, fullName: workforceAgents.fullName, alias: workforceAgents.alias }).from(workforceAgents);
+    const agentMap = new Map(agents.map(a => [a.traineeCode, a]));
+    // Keep latest per agent
+    const seen = new Set<string>();
+    const latest = allScores.filter(s => { if (seen.has(s.traineeCode)) return false; seen.add(s.traineeCode); return true; });
+    return latest.map(s => ({ ...s, fullName: agentMap.get(s.traineeCode)?.fullName ?? s.traineeCode, alias: agentMap.get(s.traineeCode)?.alias ?? null }));
+  }),
   // ---- Quiz (assessment) -------------------------------------------------
   /** Admin: list a course's questions WITH correct answers (builder view). */
   listQuizQuestions: protectedProcedure
