@@ -3217,16 +3217,22 @@ function PerformanceHistoryTab({ theme }: { theme: Theme }) {
 /** Tanis Academy — the agent's assigned courses and their progress. */
 /** Tanis Academy — the agent's own training home. */
 function AcademyTab({ theme }: { theme: Theme }) {
+  const [view, setView] = useState<"courses" | "english">("courses");
   return (
     <div className="space-y-5">
       <div className="rounded-xl p-4 flex items-start gap-3" style={{ background: `${BRAND}12`, border: `1px solid ${BRAND}33` }}>
         <GraduationCap className="w-4 h-4 mt-0.5 shrink-0" style={{ color: BRAND }} />
-        <div>
+        <div className="flex-1 min-w-0">
           <p className="text-xs font-semibold" style={{ color: BRAND }}>Tanis Academy</p>
           <p className="text-xs mt-0.5" style={{ color: theme.textMuted }}>Your training courses and progress.</p>
         </div>
+        <button onClick={() => setView(view === "english" ? "courses" : "english")}
+          className="text-xs px-3 py-1.5 rounded-lg shrink-0"
+          style={view === "english" ? { background: BRAND, color: "#fff" } : { background: theme.inputBg, color: theme.textMuted }}>
+          🇬🇧 English Level
+        </button>
       </div>
-      <MyCourses theme={theme} />
+      {view === "courses" ? <MyCourses theme={theme} /> : <EnglishLevelQuiz theme={theme} />}
     </div>
   );
 }

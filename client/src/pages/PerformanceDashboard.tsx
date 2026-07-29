@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { trpc } from "@/lib/trpc";
-import { Download, Upload, TrendingUp, DollarSign, Clock, BarChart2 } from "lucide-react";
+import { Download, Upload, TrendingUp, DollarSign, Clock, BarChart2, AlertTriangle, Copy, CheckCheck } from "lucide-react";
 import { useState, useRef } from "react";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
@@ -42,6 +42,12 @@ export default function PerformanceDashboard() {
   const [uploadRows, setUploadRows] = useState<Array<Record<string, unknown>>>([]);
   const [uploadMonth, setUploadMonth] = useState(currentMonth);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const [activeTab, setActiveTab] = useState<"performance" | "incomplete">("performance");
+  const [copied, setCopied] = useState(false);
+  const { data: incompleteAgents = [] } = trpc.workforce.incompleteProfiles.useQuery();
+  type IncompleteAgent = { traineeCode: string; fullName: string; alias: string | null; missing: string[] };
+  const incomplete = incompleteAgents as IncompleteAgent[];
 
   const { data: rows = [], isLoading } = trpc.performanceV2.getByMonth.useQuery(
     { month: selectedMonth },
@@ -132,6 +138,53 @@ export default function PerformanceDashboard() {
         </div>
       </div>
 
+      {/* Tab switcher */}
+      <div className="flex items-center gap-1 rounded-lg border p-0.5 w-fit">
+        <button onClick={() => setActiveTab("performance")} className={`px-4 py-1.5 text-sm rounded-md font-medium ${activeTab === "performance" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Performance</button>
+        <button onClick={() => setActiveTab("incomplete")} className={`px-4 py-1.5 text-sm rounded-md font-medium flex items-center gap-1.5 ${activeTab === "incomplete" ? "bg-foreground text-background" : "text-muted-foreground"}`}>
+          Incomplete Profiles {incomplete.length > 0 && <span className="rounded-full bg-red-500 text-white text-[10px] px-1.5 py-0.5 font-bold">{incomplete.length}</span>}
+        </button>
+      </div>
+
+      {activeTab === "incomplete" && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground flex items-center gap-1.5"><AlertTriangle className="w-4 h-4 text-amber-500" /> {incomplete.length} active agent{incomplete.length !== 1 ? "s" : ""} with incomplete profiles</p>
+            <button
+              onClick={() => {
+                const names = incomplete.map(a => a.alias || a.fullName).join(", ");
+                navigator.clipboard.writeText(names).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+              }}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border hover:bg-muted/50">
+              {copied ? <CheckCheck className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? "Copied!" : "Copy all names"}
+            </button>
+          </div>
+          <div className="rounded-xl border overflow-hidden">
+            <table className="w-full text-sm">
+              <thead><tr className="border-b bg-muted/30"><th className="text-left px-4 py-2 font-medium">Agent</th><th className="text-left px-4 py-2 font-medium">Code</th><th className="text-left px-4 py-2 font-medium">Missing</th><th className="px-4 py-2"></th></tr></thead>
+              <tbody>
+                {incomplete.map((a, i) => (
+                  <tr key={a.traineeCode} className={i % 2 === 0 ? "" : "bg-muted/20"} style={{ borderTop: i > 0 ? "1px solid hsl(var(--border))" : undefined }}>
+                    <td className="px-4 py-2.5 font-medium">{a.alias || a.fullName}</td>
+                    <td className="px-4 py-2.5 text-muted-foreground text-xs">{a.traineeCode}</td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex flex-wrap gap-1">
+                        {a.missing.map(m => <span key={m} className="text-[10px] px-1.5 py-0.5 rounded bg-red-50 text-red-700 border border-red-200">{m}</span>)}
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5">
+                      <button onClick={() => { navigator.clipboard.writeText(a.alias || a.fullName); }} className="text-[10px] px-2 py-1 rounded border hover:bg-muted/50 text-muted-foreground">Copy name</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "performance" && <>
       {/* Month selector */}
       <div className="flex items-center gap-3">
         <label className="text-sm font-medium text-muted-foreground">Month:</label>
@@ -207,6 +260,8 @@ export default function PerformanceDashboard() {
       </Card>
 
       {/* Upload Dialog */}
+      </> }
+
       <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>

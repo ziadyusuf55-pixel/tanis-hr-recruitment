@@ -149,18 +149,18 @@ export default function PerformanceReports() {
     { cycleKey: prevCycleKey },
     { enabled: !!prevCycleKey }
   );
-  const prevStats = rawPrevStats as AgentStat[];
+  const prevStats = effectiveRawPrevStats as AgentStat[];
   const prevTeamRevenue = prevStats.reduce((acc, s) => acc + s.totalRevenue, 0);
-  // Client logouts for current cycle
+  // Client logouts (cycle mode only)
   const { data: rawLogouts = [] } = trpc.cycleTracker.getClientLogoutsByCycle.useQuery(
     { cycleKey: activeCycle },
-    { enabled: !!activeCycle }
+    { enabled: !!activeCycle && viewMode === "cycle" }
   );
   type LogoutRow = { crdts: string; alias: string | null; agentCode: string | null; };
   const logouts = rawLogouts as LogoutRow[];
   const logoutCountByCrdts = logouts.reduce((acc, l) => { acc[l.crdts] = (acc[l.crdts] ?? 0) + 1; return acc; }, {} as Record<string, number>);
 
-  const stats = rawStats as AgentStat[];
+  const stats = effectiveRawStats as AgentStat[];
   const uniqueTLs = Array.from(new Set(stats.map(s => s.teamLeader).filter(Boolean) as string[])).sort();
 
   const filtered = stats

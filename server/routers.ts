@@ -1665,6 +1665,45 @@ const workforceRouter = router({
   list: protectedProcedure
     .input(z.object({ campaignId: z.number().optional(), teamLeader: z.string().optional(), includeFormer: z.boolean().optional() }))
     .query(({ input }) => listWorkforceAgents(input.campaignId, input.teamLeader, input.includeFormer)),
+  /** Active agents missing required personal info — for Slack pings. */
+  incompleteProfiles: protectedProcedure
+    .query(async () => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      const { workforceAgents } = await import("../drizzle/schema");
+      const agents = await db.select({
+        traineeCode: workforceAgents.traineeCode,
+        fullName: workforceAgents.fullName,
+        alias: workforceAgents.alias,
+        phone: workforceAgents.phone,
+        email: workforceAgents.email,
+        nationalId: workforceAgents.nationalId,
+        dateOfBirth: workforceAgents.dateOfBirth,
+        gender: workforceAgents.gender,
+        nationality: workforceAgents.nationality,
+        emergencyContactName: workforceAgents.emergencyContactName,
+        emergencyContactPhone: workforceAgents.emergencyContactPhone,
+      }).from(workforceAgents).where(eq(workforceAgents.agentStatus, "active"));
+      const REQUIRED = [
+        { key: "phone", label: "Phone" },
+        { key: "email", label: "Email" },
+        { key: "nationalId", label: "National ID" },
+        { key: "dateOfBirth", label: "Date of Birth" },
+        { key: "gender", label: "Gender" },
+        { key: "nationality", label: "Nationality" },
+        { key: "emergencyContactName", label: "Emergency Contact" },
+        { key: "emergencyContactPhone", label: "Emergency Phone" },
+      ] as const;
+      return agents
+        .map(a => {
+          const missing = REQUIRED.filter(f => !a[f.key as keyof typeof a]).map(f => f.label);
+          return { ...a, missing };
+        })
+        .filter(a => a.missing.length > 0)
+        .sort((a, b) => b.missing.length - a.missing.length);
+    }),
   allInTraining: protectedProcedure
     .query(() => listAllAgentsInTraining()),
   // Returns the next available T-{N} code (lowest unused sequential number)

@@ -27,108 +27,81 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
   throw new Error(`No available port found starting from ${startPort}`);
 }
 
+// ─── In-memory rate limiters (no external dep needed) ──────────────────────
+const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
+function rateLimit(key: string, maxPerMinute: number): boolean {
+  const now = Date.now();
+  const entry = rateLimitStore.get(key);
+  if (!entry || now > entry.resetAt) {
+    rateLimitStore.set(key, { count: 1, resetAt: now + 60_000 });
+    return false; // not limited
+  }
+  entry.count++;
+  return entry.count > maxPerMinute;
+}
+// Clean stale keys every 5 min
+setInterval(() => { const now = Date.now(); rateLimitStore.forEach((v, k) => { if (now > v.resetAt) rateLimitStore.delete(k); }); }, 5 * 60 * 1000).unref();
+
 async function startServer() {
   const app = express();
   const server = createServer(app);
+
+  // ── Security headers (no helmet needed — manual is fine for this stack) ──
+  app.use((_req, res, next) => {
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "DENY");
+    res.setHeader("X-XSS-Protection", "1; mode=block");
+    res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+    res.setHeader("Content-Security-Policy",
+      "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https:; font-src 'self' https:;"
+    );
+    next();
+  });
+
+  // ── Global rate limit: 300 req/min per IP (stops scrapers & brute-force) ──
+  app.use((req, res, next) => {
+    const ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ?? req.socket.remoteAddress ?? "unknown";
+    if (rateLimit(`global:${ip}`, 300)) {
+      res.status(429).json({ error: "Too many requests — please slow down." });
+      return;
+    }
+    next();
+  });
+
+  // ── Strict rate limit on auth endpoints (10 attempts/min per IP) ──
+  const AUTH_PATHS = ["/api/oauth", "/api/trpc/agent.login", "/api/trpc/adminAuth"];
+  app.use((req, res, next) => {
+    const ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ?? req.socket.remoteAddress ?? "unknown";
+    if (AUTH_PATHS.some(p => req.path.startsWith(p)) && rateLimit(`auth:${ip}`, 10)) {
+      res.status(429).json({ error: "Too many login attempts — try again in a minute." });
+      return;
+    }
+    next();
+  });
+
+  // ── Reject oversized bodies early (before JSON parse) — blocks memory bombs ──
+  app.use((req, res, next) => {
+    const ct = req.headers["content-type"] ?? "";
+    const isUpload = req.path.startsWith("/api/upload") || req.path.includes("upload-doc");
+    const limit = isUpload ? 52_428_800 : 524_288; // 50 MB for uploads, 512 KB for everything else
+    const claimed = parseInt(req.headers["content-length"] ?? "0", 10);
+    if (claimed > limit) {
+      res.status(413).json({ error: "Request body too large." });
+      return;
+    }
+    next();
+  });
+
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb", verify: (req, _res, buf) => { (req as unknown as { rawBody?: Buffer }).rawBody = buf; } }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
 
-  // Temporary migration endpoint — adds subStatus column for No Answer feature
-  app.post("/api/run-migration-substatus", async (_req, res) => {
-    res.setTimeout(300000); // 5 min timeout for this endpoint
-    try {
-      const { getDb } = await import("../db");
-      const db = await getDb();
-      if (!db) { res.status(500).json({ error: "DB not available" }); return; }
-      const { sql } = await import("drizzle-orm");
-      // Check if subStatus column already exists
-      const result = await db.execute(sql`SHOW COLUMNS FROM \`candidates\` LIKE 'subStatus'`);
-      const cols = (result as unknown as Array<Array<{Field: string}>>)[0] ?? [];
-      if (cols.length > 0) {
-        res.json({ ok: true, message: "Already migrated - subStatus column exists" });
-        return;
-      }
-      await db.execute(sql`ALTER TABLE \`candidates\` ADD COLUMN \`subStatus\` VARCHAR(50) NULL DEFAULT NULL`);
-      res.json({ ok: true, message: "subStatus column added" });
-    } catch (err: unknown) {
-      res.status(500).json({ error: String(err) });
-    }
-  });
-  // Round 22 migration — create agent portal tables
-  app.post("/api/run-migration-round22", async (_req, res) => {
-    res.setTimeout(120000);
-    try {
-      const { getDb } = await import("../db");
-      const db = await getDb();
-      if (!db) { res.status(500).json({ error: "DB not available" }); return; }
-      const { sql } = await import("drizzle-orm");
-      const results: string[] = [];
+  // Legacy migration endpoints removed — use drizzle-kit migrate instead
 
-      // agent_credentials
-      const ac = (await db.execute(sql`SHOW TABLES LIKE 'agent_credentials'`) as unknown as Array<unknown[]>)[0] ?? [];
-      if (ac.length === 0) {
-        await db.execute(sql`CREATE TABLE agent_credentials (
-          id INT AUTO_INCREMENT PRIMARY KEY,
-          candidateId INT NOT NULL UNIQUE,
-          traineeCode VARCHAR(100) NOT NULL UNIQUE,
-          passwordHash VARCHAR(255) NOT NULL,
-          generatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-          updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL
-        )`);
-        results.push("agent_credentials created");
-      } else { results.push("agent_credentials already exists"); }
-
-      // payroll_records
-      const pr = (await db.execute(sql`SHOW TABLES LIKE 'payroll_records'`) as unknown as Array<unknown[]>)[0] ?? [];
-      if (pr.length === 0) {
-        await db.execute(sql`CREATE TABLE payroll_records (
-          id INT AUTO_INCREMENT PRIMARY KEY,
-          candidateId INT NOT NULL,
-          month VARCHAR(7) NOT NULL,
-          grossSalary DECIMAL(10,2),
-          deductions DECIMAL(10,2) DEFAULT 0,
-          netPay DECIMAL(10,2),
-          paymentDate BIGINT,
-          status ENUM('pending','paid','on_hold') DEFAULT 'pending' NOT NULL,
-          notes TEXT,
-          createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-          updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
-          UNIQUE KEY uq_payroll_candidate_month (candidateId, month)
-        )`);
-        results.push("payroll_records created");
-      } else { results.push("payroll_records already exists"); }
-
-      // performance_records
-      const perf = (await db.execute(sql`SHOW TABLES LIKE 'performance_records'`) as unknown as Array<unknown[]>)[0] ?? [];
-      if (perf.length === 0) {
-        await db.execute(sql`CREATE TABLE performance_records (
-          id INT AUTO_INCREMENT PRIMARY KEY,
-          candidateId INT NOT NULL,
-          period VARCHAR(7) NOT NULL,
-          callsMade INT,
-          leadsGenerated INT,
-          targetsHit INT,
-          totalTargets INT,
-          qualityScore DECIMAL(4,1),
-          attendanceRate DECIMAL(5,2),
-          notes TEXT,
-          createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
-          updatedAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
-          UNIQUE KEY uq_perf_candidate_period (candidateId, period)
-        )`);
-        results.push("performance_records created");
-      } else { results.push("performance_records already exists"); }
-
-      res.json({ ok: true, results });
-    } catch (err: unknown) {
-      res.status(500).json({ error: String(err) });
-    }
-  });
-
-  // File upload endpoint for agent documents
+    // File upload endpoint for agent documents
   app.post("/api/upload-doc", async (req, res) => {
     try {
       const busboy = (await import("busboy")).default;
