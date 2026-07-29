@@ -3723,3 +3723,152 @@ function ThisMonthView({ theme }: { theme: Theme }) {
     </div>
   );
 }
+
+// ─── CEFR English Level Assessment ───────────────────────────────────────────
+const CEFR_QUESTIONS: ReadonlyArray<{ q: string; opts: [string,string,string,string]; a: number; level: string }> = [
+  { q: "What ___ your name?", opts: ["is","are","am","be"], a: 0, level: "A1" },
+  { q: "She ___ a teacher.", opts: ["is","are","am","be"], a: 0, level: "A1" },
+  { q: "I ___ from Egypt.", opts: ["am","is","are","be"], a: 0, level: "A1" },
+  { q: "They ___ students.", opts: ["are","is","am","be"], a: 0, level: "A1" },
+  { q: "This is ___ apple.", opts: ["an","a","the","—"], a: 0, level: "A1" },
+  { q: "How ___ are you?", opts: ["old","age","years","much"], a: 0, level: "A1" },
+  { q: "The cat is ___ the box.", opts: ["in","on","at","to"], a: 0, level: "A1" },
+  { q: "I have ___ brothers.", opts: ["two","second","twice","twos"], a: 0, level: "A1" },
+  { q: "She ___ English every day.", opts: ["studies","study","studying","studied"], a: 0, level: "A1" },
+  { q: "What time ___ it?", opts: ["is","are","do","does"], a: 0, level: "A1" },
+  { q: "I ___ to the cinema last night.", opts: ["went","go","goes","going"], a: 0, level: "A2" },
+  { q: "She ___ been to Paris.", opts: ["has","have","had","is"], a: 0, level: "A2" },
+  { q: "They were ___ when I called.", opts: ["sleeping","slept","sleep","sleeps"], a: 0, level: "A2" },
+  { q: "___ you like some coffee?", opts: ["Would","Will","Do","Are"], a: 0, level: "A2" },
+  { q: "This bag is ___ than that one.", opts: ["heavier","more heavy","heavy","heaviest"], a: 0, level: "A2" },
+  { q: "I ___ like spicy food.", opts: ["don't","doesn't","not","no"], a: 0, level: "A2" },
+  { q: "There ___ any milk in the fridge.", opts: ["isn't","aren't","don't","not"], a: 0, level: "A2" },
+  { q: "We ___ arrive at 9 AM tomorrow.", opts: ["will","are","do","going"], a: 0, level: "A2" },
+  { q: "He ___ TV when the phone rang.", opts: ["was watching","watched","watches","watch"], a: 0, level: "A2" },
+  { q: "I ___ never eaten sushi.", opts: ["have","had","has","was"], a: 0, level: "A2" },
+  { q: "If I ___ rich, I would travel the world.", opts: ["were","am","will be","be"], a: 0, level: "B1" },
+  { q: "She asked me where I ___.", opts: ["lived","live","living","lives"], a: 0, level: "B1" },
+  { q: "The report ___ by the manager yesterday.", opts: ["was written","wrote","has written","is written"], a: 0, level: "B1" },
+  { q: "I ___ here for five years.", opts: ["have worked","work","worked","am working"], a: 0, level: "B1" },
+  { q: "Despite ___ tired, she finished the task.", opts: ["being","be","to be","been"], a: 0, level: "B1" },
+  { q: "He said he ___ call me back.", opts: ["would","will","could","should"], a: 0, level: "B1" },
+  { q: "I wish I ___ speak better English.", opts: ["could","can","would","will"], a: 0, level: "B1" },
+  { q: "By the time she arrived, we ___ dinner.", opts: ["had finished","finished","finish","have finished"], a: 0, level: "B1" },
+  { q: "The meeting ___ until tomorrow.", opts: ["has been postponed","postponed","is postponing","postpones"], a: 0, level: "B1" },
+  { q: "She made me ___ the whole report.", opts: ["rewrite","rewriting","to rewrite","rewrote"], a: 0, level: "B1" },
+  { q: "Had I known about the problem, I ___ earlier.", opts: ["would have acted","will act","had acted","acted"], a: 0, level: "B2" },
+  { q: "It is essential that he ___ on time.", opts: ["arrive","arrives","arrived","arriving"], a: 0, level: "B2" },
+  { q: "Rarely ___ such dedication in a new employee.", opts: ["have I seen","I have seen","I saw","did I saw"], a: 0, level: "B2" },
+  { q: "The project, ___ lasted six months, was a success.", opts: ["which","that","who","what"], a: 0, level: "B2" },
+  { q: "___ he tried hard, he failed the exam.", opts: ["Although","Despite","However","Even"], a: 0, level: "B2" },
+  { q: "She is used to ___ long hours.", opts: ["working","work","worked","works"], a: 0, level: "B2" },
+  { q: "Not only ___ late, but he also forgot his ID.", opts: ["did he arrive","he arrived","he did arrive","arrived he"], a: 0, level: "B2" },
+  { q: "I'd rather you ___ tell anyone.", opts: ["didn't","don't","won't","haven't"], a: 0, level: "B2" },
+  { q: "The findings suggest that stress ___ productivity.", opts: ["may reduce","reduces maybe","maybe reduces","can reducing"], a: 0, level: "B2" },
+  { q: "A decision was made ___ the project launch.", opts: ["to postpone","postponing","postponed","for postponing"], a: 0, level: "B2" },
+  { q: "The proposal was met with ___ skepticism.", opts: ["considerable","considerate","considering","considerably"], a: 0, level: "C1" },
+  { q: "Scarcely ___ sat down when the alarm went off.", opts: ["had she","she had","did she","she did"], a: 0, level: "C1" },
+  { q: "The policy aims to ___ corruption at every level.", opts: ["eradicate","erase","eliminate","prevent"], a: 0, level: "C1" },
+  { q: "His speech was ___ with historical references.", opts: ["replete","repeated","repeating","filled"], a: 0, level: "C1" },
+  { q: "The committee ___ their decision pending further review.", opts: ["deferred","differed","delayed","diverted"], a: 0, level: "C1" },
+  { q: "She gave a ___ account of the events.", opts: ["meticulous","methodical","mechanical","minute"], a: 0, level: "C1" },
+  { q: "This clause is ___ to the contract.", opts: ["integral","integrated","integrating","essential"], a: 0, level: "C1" },
+  { q: "The legislation was passed ___ strong opposition.", opts: ["in spite of","despite of","regardless","in the face"], a: 0, level: "C1" },
+  { q: "The argument he presented was inherently ___.", opts: ["flawed","flawless","flaw","flawing"], a: 0, level: "C1" },
+  { q: "Their concerns were ___ dismissed by management.", opts: ["summarily","swiftly","summary","briefly"], a: 0, level: "C1" },
+  { q: "The speaker's rhetoric was ___, obscuring rather than clarifying.", opts: ["obfuscatory","redundant","obscure","objectionable"], a: 0, level: "C2" },
+  { q: "___ he been present, the outcome might have differed.", opts: ["Had","Were","Should","Would"], a: 0, level: "C2" },
+  { q: "The text is replete with ___ references.", opts: ["recondite","recorded","reconciled","recursive"], a: 0, level: "C2" },
+  { q: "Her argumentation was so ___ that few could follow.", opts: ["abstruse","abstract","absurd","abrasive"], a: 0, level: "C2" },
+  { q: "The clause was deemed ___ and removed.", opts: ["otiose","obtuse","onerous","opaque"], a: 0, level: "C2" },
+  { q: "The policy ___ unintended consequences.", opts: ["engendered","engineered","endangered","entangled"], a: 0, level: "C2" },
+  { q: "His ___ delivery made complex topics accessible.", opts: ["pellucid","pedantic","pervasive","poignant"], a: 0, level: "C2" },
+  { q: "The two theories are ___ — they cannot both be true.", opts: ["mutually exclusive","collectively exhaustive","jointly sufficient","mutually inclusive"], a: 0, level: "C2" },
+  { q: "She managed to ___ herself from a precarious position.", opts: ["extricate","exonerate","expurgate","expatiate"], a: 0, level: "C2" },
+  { q: "The novel's prose is ___, demanding close re-reading.", opts: ["lapidary","lavish","lateral","laborious"], a: 0, level: "C2" },
+];
+
+function getCefrLevel(score: number): { level: string; color: string; desc: string } {
+  if (score >= 57) return { level: "C2", color: "#7c3aed", desc: "Mastery — near-native fluency" };
+  if (score >= 47) return { level: "C1", color: "#2563eb", desc: "Advanced — nuanced, effective use" };
+  if (score >= 37) return { level: "B2", color: "#0891b2", desc: "Upper Intermediate — handles complex topics" };
+  if (score >= 27) return { level: "B1", color: "#059669", desc: "Intermediate — manages everyday situations" };
+  if (score >= 17) return { level: "A2", color: "#d97706", desc: "Elementary — basic familiar communication" };
+  return { level: "A1", color: "#dc2626", desc: "Beginner — limited to very basic phrases" };
+}
+
+function EnglishLevelQuiz({ theme }: { theme: Theme }) {
+  const [started, setStarted] = useState(false);
+  const [answers, setAnswers] = useState<number[]>(Array(CEFR_QUESTIONS.length).fill(-1));
+  const [submitted, setSubmitted] = useState(false);
+  const score = answers.filter((a, i) => a === CEFR_QUESTIONS[i].a).length;
+  const cefr = getCefrLevel(score);
+  const answered = answers.filter(a => a >= 0).length;
+  const levels = ["A1","A2","B1","B2","C1","C2"];
+  if (!started) return (
+    <div className="space-y-4 py-6 text-center">
+      <div className="text-4xl">🇬🇧</div>
+      <p className="text-sm font-semibold" style={{ color: theme.text }}>English Level Assessment</p>
+      <p className="text-xs max-w-xs mx-auto" style={{ color: theme.textMuted }}>60 questions across A1 → C2. Takes 15–20 min. Your CEFR level appears at the end.</p>
+      <button onClick={() => setStarted(true)} className="text-sm px-5 py-2 rounded-lg text-white font-medium" style={{ background: BRAND }}>Start Assessment</button>
+    </div>
+  );
+  if (submitted) return (
+    <div className="space-y-4 py-4">
+      <div className="rounded-2xl p-6 text-center" style={{ background: `${cefr.color}18`, border: `2px solid ${cefr.color}` }}>
+        <p className="text-5xl font-black" style={{ color: cefr.color }}>{cefr.level}</p>
+        <p className="text-sm font-semibold mt-1" style={{ color: cefr.color }}>{cefr.desc}</p>
+        <p className="text-xs mt-2" style={{ color: theme.textMuted }}>{score}/60 correct ({Math.round(score/60*100)}%)</p>
+      </div>
+      <div className="space-y-1.5">
+        {levels.map(lv => {
+          const qs = CEFR_QUESTIONS.filter(q => q.level === lv);
+          const correct = qs.filter(q => answers[CEFR_QUESTIONS.indexOf(q)] === q.a).length;
+          return (
+            <div key={lv} className="flex items-center gap-3">
+              <span className="text-xs font-bold w-6" style={{ color: theme.textMuted }}>{lv}</span>
+              <div className="flex-1 rounded-full h-2 overflow-hidden" style={{ background: theme.inputBg }}>
+                <div className="h-full rounded-full" style={{ width: `${(correct/qs.length)*100}%`, background: BRAND }} />
+              </div>
+              <span className="text-xs" style={{ color: theme.textMuted }}>{correct}/{qs.length}</span>
+            </div>
+          );
+        })}
+      </div>
+      <button onClick={() => { setStarted(false); setSubmitted(false); setAnswers(Array(CEFR_QUESTIONS.length).fill(-1)); }} className="text-xs underline" style={{ color: theme.textMuted }}>Retake</button>
+    </div>
+  );
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <p className="text-xs font-semibold" style={{ color: theme.text }}>English Level Assessment</p>
+        <span className="text-xs" style={{ color: theme.textMuted }}>{answered}/60 answered</span>
+      </div>
+      {CEFR_QUESTIONS.map((q, qi) => (
+        <div key={qi} className="rounded-xl p-4 space-y-2.5" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+          <p className="text-xs font-medium" style={{ color: theme.text }}>
+            {qi+1}. {q.q}
+            <span className="text-[10px] font-normal px-1.5 py-0.5 rounded ml-1.5" style={{ background: theme.inputBg, color: theme.textFaint }}>{q.level}</span>
+          </p>
+          <div className="grid grid-cols-2 gap-1.5">
+            {q.opts.map((opt, oi) => {
+              const sel = answers[qi] === oi;
+              return (
+                <button key={oi} type="button" onClick={() => { const a=[...answers]; a[qi]=oi; setAnswers(a); }}
+                  className="text-left text-xs px-2.5 py-2 rounded-lg"
+                  style={{ border:`1px solid ${sel ? BRAND : theme.cardBorder}`, background: sel ? `${BRAND}15` : "transparent", color: sel ? BRAND : theme.text, fontWeight: sel ? 600 : 400 }}>
+                  {String.fromCharCode(65+oi)}. {opt}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      <button disabled={answered < 60} onClick={() => setSubmitted(true)}
+        className="w-full py-3 rounded-xl text-sm font-semibold text-white disabled:opacity-40"
+        style={{ background: BRAND }}>
+        {answered < 60 ? `Answer all (${60-answered} remaining)` : "Submit — See My Level"}
+      </button>
+    </div>
+  );
+}

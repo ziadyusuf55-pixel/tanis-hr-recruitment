@@ -2443,6 +2443,46 @@ const separationRouter = router({
   getByAgent: protectedProcedure
     .input(z.object({ agentCode: z.string() }))
     .query(({ input }) => getSeparationsByAgent(input.agentCode)),
+  /** Full list of resigned + terminated + archived agents with all their data. */
+  listFormerAgents: protectedProcedure
+    .query(async () => {
+      const { getDb } = await import("./db");
+      const { eq, or, inArray, desc } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      const { workforceAgents, agentRequests, payrollRecords, cycleStats, agentViolations, coachingSessions } = await import("../drizzle/schema");
+      // All non-active agents
+      const agents = await db.select().from(workforceAgents).where(
+        inArray(workforceAgents.agentStatus, ["resigned", "terminated", "blacklisted", "frozen", "inactive"])
+      );
+      if (agents.length === 0) return [];
+      const codes = agents.map(a => a.traineeCode);
+      // Fetch supporting data in parallel
+      const [requests, payroll, cycles, violations, coaching] = await Promise.all([
+        db.select().from(agentRequests).where(inArray(agentRequests.traineeCode, codes)).orderBy(desc(agentRequests.createdAt)),
+        db.select().from(payrollRecords).where(inArray(payrollRecords.agentCode, codes)).orderBy(desc(payrollRecords.month)),
+        db.select().from(cycleStats).where(inArray(cycleStats.crdts, agents.map(a => a.crdts ?? "").filter(Boolean))),
+        db.select().from(agentViolations).where(inArray(agentViolations.agentCode, codes)),
+        db.select().from(coachingSessions).where(inArray(coachingSessions.agentCode, codes)),
+      ]);
+      // Group by traineeCode
+      const reqByCode = requests.reduce((m, r) => { (m[r.traineeCode] = m[r.traineeCode] ?? []).push(r); return m; }, {} as Record<string, typeof requests>);
+      const payByCode = payroll.reduce((m, r) => { const k = r.agentCode ?? ""; (m[k] = m[k] ?? []).push(r); return m; }, {} as Record<string, typeof payroll>);
+      const violByCode = violations.reduce((m, r) => { const k = r.agentCode ?? ""; (m[k] = m[k] ?? []).push(r); return m; }, {} as Record<string, typeof violations>);
+      const coachByCode = coaching.reduce((m, r) => { const k = r.agentCode ?? ""; (m[k] = m[k] ?? []).push(r); return m; }, {} as Record<string, typeof coaching>);
+      const crdtsCycles = cycles.reduce((m, r) => { (m[r.crdts] = m[r.crdts] ?? []).push(r); return m; }, {} as Record<string, typeof cycles>);
+      return agents.map(a => ({
+        agent: a,
+        requests: reqByCode[a.traineeCode] ?? [],
+        payroll: payByCode[a.traineeCode] ?? [],
+        performance: crdtsCycles[a.crdts ?? ""] ?? [],
+        violations: violByCode[a.traineeCode] ?? [],
+        coaching: coachByCode[a.traineeCode] ?? [],
+        totalPaidEgp: (payByCode[a.traineeCode] ?? []).filter(p => p.paymentStatus === "paid").reduce((s, p) => s + parseFloat(String(p.netPay ?? 0)), 0),
+        totalCycles: (crdtsCycles[a.crdts ?? ""] ?? []).length,
+        totalRevenue: (crdtsCycles[a.crdts ?? ""] ?? []).reduce((s, r) => s + parseFloat(String(r.revenue ?? 0)), 0),
+      }));
+    }),
   // Admin: get all terminated/resigned agents pending deletion
   pendingDeletion: protectedProcedure
     .query(() => getPendingDeletionAgents()),
@@ -2651,6 +2691,116 @@ const payrollV2Router = router({
         .where(eq(payrollRecords.crdts, input.crdts))
         .orderBy(asc(payrollRecords.month));
       return rows.reverse(); // newest first
+    }),
+
+  /** Bulk mark a selected list of payroll IDs as paid. Records who clicked it. */
+  bulkMarkPaid: protectedProcedure
+    .input(z.object({ ids: z.array(z.number()).min(1), month: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const { getDb } = await import("./db");
+      const { inArray } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { payrollRecords } = await import("../drizzle/schema");
+      const paidBy = ctx.user?.name ?? ctx.user?.email ?? "Admin";
+      const paidAt = Date.now();
+      await db.update(payrollRecords)
+        .set({ paymentStatus: "paid", paidAt, paidBy } as never)
+        .where(inArray(payrollRecords.id, input.ids));
+      return { ok: true, count: input.ids.length, paidBy };
+    }),
+
+  /** Partial pay: record a partial amount paid and who paid it.
+   *  Status stays "pending" until pay reaches netPay (then auto-flips to paid). */
+  partialPay: protectedProcedure
+    .input(z.object({ id: z.number(), amountPaid: z.number().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { payrollRecords } = await import("../drizzle/schema");
+      const [rec] = await db.select().from(payrollRecords).where(eq(payrollRecords.id, input.id)).limit(1);
+      if (!rec) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
+      const netPay = parseFloat(String(rec.netPay ?? 0));
+      const prevPaid = parseFloat(String((rec as Record<string, unknown>).amountPaid ?? "0"));
+      const totalPaid = prevPaid + input.amountPaid;
+      const paidBy = ctx.user?.name ?? ctx.user?.email ?? "Admin";
+      const paidAt = Date.now();
+      const fullyPaid = totalPaid >= netPay;
+      await db.update(payrollRecords)
+        .set({
+          amountPaid: String(totalPaid.toFixed(2)),
+          paidBy,
+          paidAt,
+          paymentStatus: fullyPaid ? "paid" : "pending",
+        } as never)
+        .where(eq(payrollRecords.id, input.id));
+      const remaining = Math.max(0, netPay - totalPaid);
+      return { ok: true, totalPaid, remaining, fullyPaid, paidBy };
+    }),
+
+  /** Pay the remaining balance on a partially-paid record. */
+  payRemaining: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { payrollRecords } = await import("../drizzle/schema");
+      const [rec] = await db.select().from(payrollRecords).where(eq(payrollRecords.id, input.id)).limit(1);
+      if (!rec) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
+      const paidBy = ctx.user?.name ?? ctx.user?.email ?? "Admin";
+      await db.update(payrollRecords)
+        .set({ amountPaid: rec.netPay, paidBy, paidAt: Date.now(), paymentStatus: "paid" } as never)
+        .where(eq(payrollRecords.id, input.id));
+      return { ok: true, paidBy };
+    }),
+
+  /** Monthly payroll stats and insights. */
+  statsForMonth: protectedProcedure
+    .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return null;
+      const { payrollRecords } = await import("../drizzle/schema");
+      const rows = await db.select().from(payrollRecords).where(eq(payrollRecords.month, input.month));
+      if (rows.length === 0) return null;
+      const n = (v: unknown) => parseFloat(String(v ?? "0")) || 0;
+      const paid = rows.filter(r => r.paymentStatus === "paid");
+      const pending = rows.filter(r => r.paymentStatus !== "paid");
+      const totalNetPay = rows.reduce((s, r) => s + n(r.netPay), 0);
+      const totalBaseSalary = rows.reduce((s, r) => s + n(r.baseSalary), 0);
+      const totalOTPay = rows.reduce((s, r) => s + n(r.ot1x5Pay) + n(r.ot2xPay) + n(r.ot3xPay), 0);
+      const totalOTHours = rows.reduce((s, r) => s + n(r.ot1x5Hours) + n(r.ot2xHours) + n(r.ot3xHours), 0);
+      const totalDeductions = rows.reduce((s, r) => s + n(r.totalDeductions), 0);
+      const totalCommission = rows.reduce((s, r) => s + n(r.commissionEgp), 0);
+      const totalCoachingBonus = rows.reduce((s, r) => s + n(r.coachingBonus), 0);
+      const totalQualityDeductions = rows.reduce((s, r) => s + n(r.qualityDeductions), 0);
+      const totalAttendanceDeductions = rows.reduce((s, r) => s + n(r.attendanceDeductions), 0);
+      const paidByMap = paid.reduce((m, r) => { const k = (r as Record<string, unknown>).paidBy as string ?? "Unknown"; m[k] = (m[k] ?? 0) + 1; return m; }, {} as Record<string, number>);
+      // Highest earner
+      const sorted = [...rows].sort((a, b) => n(b.netPay) - n(a.netPay));
+      return {
+        month: input.month,
+        headcount: rows.length,
+        paidCount: paid.length,
+        pendingCount: pending.length,
+        totalNetPay, totalBaseSalary, totalOTPay, totalOTHours,
+        totalDeductions, totalCommission, totalCoachingBonus,
+        totalQualityDeductions, totalAttendanceDeductions,
+        avgNetPay: totalNetPay / rows.length,
+        maxNetPay: n(sorted[0]?.netPay),
+        minNetPay: n(sorted[sorted.length - 1]?.netPay),
+        paidByBreakdown: paidByMap,
+        otAgentCount: rows.filter(r => n(r.ot1x5Pay) + n(r.ot2xPay) + n(r.ot3xPay) > 0).length,
+        commissionAgentCount: rows.filter(r => n(r.commissionEgp) > 0).length,
+        topEarner: sorted[0] ? { crdts: sorted[0].crdts, alias: sorted[0].alias, netPay: n(sorted[0].netPay) } : null,
+        partiallyPaidCount: rows.filter(r => { const a = n((r as Record<string, unknown>).amountPaid); return a > 0 && r.paymentStatus !== "paid"; }).length,
+      };
     }),
 
   // Admin: delete all payroll V2 rows for a specific month (undo a bad import)

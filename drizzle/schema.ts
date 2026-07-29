@@ -250,6 +250,8 @@ export const payrollRecords = mysqlTable("payroll_records", {
   attendanceDetail: text("attendanceDetail"),                   // itemized attendance incidents
   paymentStatus: mysqlEnum("paymentStatus", ["pending", "paid"]).default("pending").notNull(),
   paidAt: bigint("paidAt", { mode: "number" }),                 // UTC ms — when admin marked as paid
+  paidBy: varchar("paidBy", { length: 255 }),                  // name of the admin who clicked "Paid"
+  amountPaid: decimal("amountPaid", { precision: 10, scale: 2 }),  // partial pay: amount actually paid so far
   uploadedBy: varchar("uploadedBy", { length: 255 }),
   uploadedAt: bigint("uploadedAt", { mode: "number" }),
   // legacy fields kept for backward compat

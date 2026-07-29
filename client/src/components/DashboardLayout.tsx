@@ -28,6 +28,7 @@ import {
   LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings,
   Briefcase, Banknote, CreditCard, BarChart2, AlertCircle, Star, Wallet,
   FileText, Activity, ChevronDown, ChevronRight, TrendingUp, BookOpen, PhoneOff, DollarSign, UserCog, Building2, Zap, UserCircle, CalendarDays, Bell,
+  UserX,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -50,6 +51,7 @@ const NAV: NavItem[] = [
       { icon: Star,        label: "Quality Log",   path: "/quality" },
       { icon: BookOpen,    label: "Coaching",      path: "/coaching-admin" },
       { icon: PhoneOff,    label: "Client Logouts", path: "/client-logouts" },
+      { icon: UserX,       label: "Former Agents",  path: "/former-agents" },
       { icon: Zap,         label: "Overtime",       path: "/ot" },
     ],
   },

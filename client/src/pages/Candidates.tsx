@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { Button } from "@/components/ui/button";
@@ -91,6 +92,7 @@ const EMPTY_FORM: CandidateForm = {
 };
 
 export default function Candidates() {
+  const [, setLocation] = useLocation();
   const [, navigate] = useLocation();
   const utils = trpc.useUtils();
   const { data: candidates, isLoading } = trpc.candidates.list.useQuery();
@@ -584,6 +586,9 @@ export default function Candidates() {
         >
           <Clock className="h-3.5 w-3.5" />
           Resigned / Terminated{separatedCount > 0 && <span className={`ml-0.5 rounded-full px-1.5 py-0 text-[10px] font-bold ${showSeparated ? "bg-white/20 text-white" : "bg-orange-100 text-orange-700"}`}>{separatedCount}</span>}
+        </button>
+        <button onClick={() => setLocation("/former-agents")} className="text-xs px-3 py-1.5 rounded-full border border-dashed text-muted-foreground hover:text-foreground hover:border-foreground transition-colors flex items-center gap-1.5">
+          Full Former Agent Records →
         </button>
         {!showRejected && (
           <Tabs value={view} onValueChange={(v) => { setView(v as "board" | "list"); clearSelection(); }}>

@@ -91,7 +91,7 @@ function n(v: string | number | null | undefined) {
 
 export default function PayrollPage() {
   const utils = trpc.useUtils();
-  const [activeTab, setActiveTab] = useState<"status" | "upload" | "adjustments" | "trainers">("status");
+  const [activeTab, setActiveTab] = useState<"status" | "upload" | "adjustments" | "trainers" | "bulk" | "stats">("status");
 
   // Trainee Salaries tab state
   const [trainerMonth, setTrainerMonth] = useState<string>(() => {
@@ -101,6 +101,32 @@ export default function PayrollPage() {
   const [trainerDialog, setTrainerDialog] = useState(false);
   const [trainerEditId, setTrainerEditId] = useState<number | null>(null);
   const [trainerForm, setTrainerForm] = useState<{ crdts: string; trainerName: string; salaryEgp: string; notes: string }>({ crdts: "", trainerName: "", salaryEgp: "", notes: "" });
+
+  const [bulkMonth, setBulkMonth] = useState<string>(() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}`; });
+  const [statsMonth, setStatsMonth] = useState<string>(() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}`; });
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [partialId, setPartialId] = useState<number | null>(null);
+  const [partialAmt, setPartialAmt] = useState("");
+
+  type BulkRow = { id: number; crdts: string | null; alias: string | null; agentCode: string | null; netPay: string | null; paymentStatus: string; paidAt: number | null; paidBy: string | null; amountPaid: string | null };
+  const { data: bulkRows = [], isLoading: bulkLoading, refetch: refetchBulk } = trpc.payrollV2.getStatusPage.useQuery({ month: bulkMonth }, { enabled: activeTab === "bulk" });
+  const { data: statsData, isLoading: statsLoading } = trpc.payrollV2.statsForMonth.useQuery({ month: statsMonth }, { enabled: activeTab === "stats" });
+  const bulkTyped = bulkRows as BulkRow[];
+  const pending = bulkTyped.filter(r => r.paymentStatus !== "paid");
+  const paid = bulkTyped.filter(r => r.paymentStatus === "paid");
+
+  const bulkMarkPaid = trpc.payrollV2.bulkMarkPaid.useMutation({
+    onSuccess: (r) => { toast.success(`${r.count} agents marked paid by ${r.paidBy}`); setSelectedIds(new Set()); refetchBulk(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const partialPay = trpc.payrollV2.partialPay.useMutation({
+    onSuccess: (r) => { toast.success(`Paid EGP ${r.totalPaid.toLocaleString()} — EGP ${r.remaining.toLocaleString()} remaining`); setPartialId(null); setPartialAmt(""); refetchBulk(); },
+    onError: (e) => toast.error(e.message),
+  });
+  const payRemaining = trpc.payrollV2.payRemaining.useMutation({
+    onSuccess: (r) => { toast.success(`Remaining paid by ${r.paidBy}`); refetchBulk(); },
+    onError: (e) => toast.error(e.message),
+  });
 
   const { data: trainerSalaries = [], refetch: refetchTrainers } = trpc.trainerSalaries.getForMonth.useQuery(
     { month: trainerMonth },
@@ -372,18 +398,18 @@ export default function PayrollPage() {
       </div>
 
       {/* Tab bar */}
-      <div className="flex gap-1 border-b">
-        {(["status", "adjustments", "trainers", "upload"] as const).map(tab => (
+      <div className="flex gap-1 border-b overflow-x-auto">
+        {(["status", "bulk", "stats", "adjustments", "trainers", "upload"] as const).map(tab => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
               activeTab === tab
                 ? "border-primary text-primary"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
-            {tab === "status" ? "Payment Status" : tab === "adjustments" ? "Manual Adjustments" : tab === "trainers" ? "Trainee Salaries" : "Upload History"}
+            {tab === "status" ? "Payment Status" : tab === "bulk" ? "Bulk Pay" : tab === "stats" ? "Stats" : tab === "adjustments" ? "Manual Adjustments" : tab === "trainers" ? "Trainee Salaries" : "Upload History"}
           </button>
         ))}
       </div>
@@ -655,6 +681,132 @@ export default function PayrollPage() {
       )}
 
       {/* ── Manual Adjustments Tab ── */}
+      {activeTab === "bulk" && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <input type="month" value={bulkMonth} onChange={e => { setBulkMonth(e.target.value); setSelectedIds(new Set()); }} className="border rounded-md px-3 py-1.5 text-sm bg-background" />
+            <span className="text-sm text-muted-foreground">{pending.length} pending · {paid.length} paid</span>
+            {selectedIds.size > 0 && (
+              <Button size="sm" disabled={bulkMarkPaid.isPending} onClick={() => {
+                if (confirm(`Mark ${selectedIds.size} agent(s) as paid?`))
+                  bulkMarkPaid.mutate({ ids: Array.from(selectedIds), month: bulkMonth });
+              }} className="text-white" style={{ background: "oklch(0.55 0.18 145)" }}>
+                ✓ Pay {selectedIds.size} selected
+              </Button>
+            )}
+          </div>
+          {bulkLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : (
+            <div className="rounded-xl border overflow-hidden">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b bg-muted/30">
+                  <th className="px-3 py-2 w-8"><input type="checkbox" checked={selectedIds.size === pending.length && pending.length > 0} onChange={e => setSelectedIds(e.target.checked ? new Set(pending.map((r: BulkRow) => r.id)) : new Set())} /></th>
+                  <th className="px-3 py-2 text-left">Agent</th><th className="px-3 py-2 text-right">Net Pay</th><th className="px-3 py-2 text-right">Paid So Far</th><th className="px-3 py-2 text-center">Status</th><th className="px-3 py-2 text-left">Paid By</th><th className="px-3 py-2"></th>
+                </tr></thead>
+                <tbody>
+                  {bulkTyped.map((r: BulkRow) => {
+                    const net = parseFloat(String(r.netPay ?? 0));
+                    const amtPaid = parseFloat(String(r.amountPaid ?? "0"));
+                    const partial = amtPaid > 0 && r.paymentStatus !== "paid";
+                    return (
+                      <tr key={r.id} className="border-b last:border-0">
+                        <td className="px-3 py-2 text-center">
+                          {r.paymentStatus !== "paid" && <input type="checkbox" checked={selectedIds.has(r.id)} onChange={e => { const s = new Set(selectedIds); e.target.checked ? s.add(r.id) : s.delete(r.id); setSelectedIds(s); }} />}
+                        </td>
+                        <td className="px-3 py-2"><span className="font-medium">{r.alias ?? r.crdts}</span><span className="text-xs text-muted-foreground ml-1">{r.crdts}</span></td>
+                        <td className="px-3 py-2 text-right font-medium">EGP {net.toLocaleString()}</td>
+                        <td className="px-3 py-2 text-right text-xs text-muted-foreground">{amtPaid > 0 ? `EGP ${amtPaid.toLocaleString()}` : "—"}</td>
+                        <td className="px-3 py-2 text-center">
+                          <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${r.paymentStatus === "paid" ? "bg-green-100 text-green-700" : partial ? "bg-amber-100 text-amber-700" : "bg-gray-100 text-gray-600"}`}>
+                            {r.paymentStatus === "paid" ? "paid" : partial ? `partial (${Math.round(amtPaid/net*100)}%)` : "pending"}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-xs text-muted-foreground">{r.paidBy ?? "—"}</td>
+                        <td className="px-3 py-2">
+                          {r.paymentStatus !== "paid" && (
+                            <div className="flex items-center gap-1">
+                              {partial && <Button size="sm" variant="outline" className="h-7 text-xs" disabled={payRemaining.isPending} onClick={() => payRemaining.mutate({ id: r.id })}>Pay remaining</Button>}
+                              {partialId === r.id ? (
+                                <div className="flex items-center gap-1">
+                                  <input type="number" placeholder="Amount" value={partialAmt} onChange={e => setPartialAmt(e.target.value)} className="w-24 h-7 border rounded px-2 text-xs bg-background" />
+                                  <Button size="sm" className="h-7 text-xs text-white" style={{ background: "oklch(0.55 0.18 145)" }} disabled={partialPay.isPending} onClick={() => { const a = parseFloat(partialAmt); if (!a || a <= 0) return toast.error("Enter a valid amount"); partialPay.mutate({ id: r.id, amountPaid: a }); }}>Pay</Button>
+                                  <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => { setPartialId(null); setPartialAmt(""); }}>✕</Button>
+                                </div>
+                              ) : (
+                                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setPartialId(r.id)}>Partial pay</Button>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {bulkTyped.length === 0 && <tr><td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">No payroll data for {bulkMonth}</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === "stats" && (
+        <div className="space-y-5">
+          <div className="flex items-center gap-3">
+            <input type="month" value={statsMonth} onChange={e => setStatsMonth(e.target.value)} className="border rounded-md px-3 py-1.5 text-sm bg-background" />
+          </div>
+          {statsLoading ? <p className="text-sm text-muted-foreground">Loading…</p> :
+          !statsData ? <p className="text-sm text-muted-foreground">No payroll data for this month.</p> : (() => {
+            const s = statsData as Record<string, unknown>;
+            const fmtStat = (v: unknown) => `EGP ${Number(v).toLocaleString("en-EG", { maximumFractionDigits: 0 })}`;
+            const paidByMap = (s.paidByBreakdown ?? {}) as Record<string, number>;
+            return (
+              <div className="space-y-5">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {[
+                    { label: "Headcount", value: String(s.headcount) },
+                    { label: "Paid", value: `${s.paidCount}/${s.headcount}`, sub: `${s.pendingCount} pending` },
+                    { label: "Total Payroll", value: fmtStat(s.totalNetPay) },
+                    { label: "Avg Net Pay", value: fmtStat(s.avgNetPay) },
+                    { label: "Total Base Salary", value: fmtStat(s.totalBaseSalary) },
+                    { label: "Total OT Pay", value: fmtStat(s.totalOTPay), sub: `${Number(s.otAgentCount)} agents · ${Number(s.totalOTHours).toFixed(1)}h` },
+                    { label: "Total Commission", value: fmtStat(s.totalCommission), sub: `${s.commissionAgentCount} agents` },
+                    { label: "Total Deductions", value: fmtStat(s.totalDeductions) },
+                    { label: "Quality Deductions", value: fmtStat(s.totalQualityDeductions) },
+                    { label: "Attendance Deductions", value: fmtStat(s.totalAttendanceDeductions) },
+                    { label: "Highest Pay", value: fmtStat(s.maxNetPay) },
+                    { label: "Lowest Pay", value: fmtStat(s.minNetPay) },
+                  ].map(card => (
+                    <div key={card.label} className="rounded-xl border p-4">
+                      <p className="text-xs text-muted-foreground">{card.label}</p>
+                      <p className="text-lg font-bold mt-1">{card.value}</p>
+                      {card.sub && <p className="text-[10px] text-muted-foreground mt-0.5">{card.sub}</p>}
+                    </div>
+                  ))}
+                </div>
+                {(s.topEarner as Record<string,unknown>|null) && (
+                  <div className="rounded-xl border p-4">
+                    <p className="text-xs text-muted-foreground mb-1">Top Earner</p>
+                    <p className="text-sm font-semibold">{String((s.topEarner as Record<string,unknown>).alias ?? (s.topEarner as Record<string,unknown>).crdts)}</p>
+                    <p className="text-xs text-muted-foreground">{fmtStat((s.topEarner as Record<string,unknown>).netPay)}</p>
+                  </div>
+                )}
+                {Object.keys(paidByMap).length > 0 && (
+                  <div className="rounded-xl border p-4">
+                    <p className="text-xs font-semibold mb-2 text-muted-foreground">Who Processed Payments</p>
+                    <div className="space-y-1">
+                      {Object.entries(paidByMap).sort((a,b) => b[1]-a[1]).map(([name, count]) => (
+                        <div key={name} className="flex items-center justify-between text-sm">
+                          <span>{name}</span><span className="text-muted-foreground">{count} payment{count !== 1 ? "s" : ""}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
       {activeTab === "adjustments" && (
         <div className="space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-3">

@@ -15,6 +15,7 @@ import AdminInviteAccept from "./pages/AdminInviteAccept";
 import Login from "./pages/Login";
 import AgentPortal from "./pages/AgentPortal";
 import Operations from "./pages/Operations";
+import FormerAgents from "./pages/FormerAgents";
 import Payroll from "./pages/Payroll";
 import PerformanceDashboard from "./pages/PerformanceDashboard";
 import AdherenceLog from "./pages/AdherenceLog";
@@ -95,6 +96,7 @@ function Router() {
       <Route path="/candidates/:id" component={() => <ProtectedRoute component={CandidateDetail} />} />
       <Route path="/training" component={() => <ProtectedRoute component={Training} />} />
       <Route path="/operations" component={() => <ProtectedRoute component={Operations} />} />
+      <Route path="/former-agents" component={() => <ProtectedRoute component={FormerAgents} />} />
       <Route path="/operations/agents/:code" component={() => <ProtectedRoute component={AgentProfilePage} />} />
       <Route path="/payroll" component={() => <ProtectedRoute component={Payroll} />} />
       <Route path="/commission" component={() => <ProtectedRoute component={CommissionAdmin} />} />
