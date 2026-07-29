@@ -95,7 +95,7 @@ export default function FormerAgents() {
           const a = row.agent;
           const code = String(a.traineeCode ?? "");
           const isOpen = expanded === code;
-          const exitReason = row.requests.find((r: Record<string, unknown>) => r.type === "resignation")?.message
+          const exitReason = ((row.requests as unknown as Record<string, unknown>[]).find((r) => r.type === "resignation"))?.message as string | undefined
             ?? (a as Record<string, unknown>).exitReason as string | undefined
             ?? "—";
           return (
@@ -107,7 +107,7 @@ export default function FormerAgents() {
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-semibold text-sm">{String(a.fullName ?? "")}</span>
-                        {a.alias && <span className="text-xs text-muted-foreground">({String(a.alias)})</span>}
+                        {!!a.alias && <span className="text-xs text-muted-foreground">({String(a.alias)})</span>}
                         <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium capitalize ${statusColor(String(a.agentStatus ?? ""))}`}>
                           {String(a.agentStatus ?? "")}
                         </span>
@@ -142,7 +142,7 @@ export default function FormerAgents() {
                     <div className="p-4">
                       {expandedSection === "personal" && (
                         <div className="grid sm:grid-cols-2 gap-x-8 gap-y-2 text-sm">
-                          {[
+                          {([
                             ["Full Name", a.fullName], ["Alias", a.alias], ["Trainee Code", a.traineeCode],
                             ["CRDTS", a.crdts], ["Phone", a.phone], ["Email", a.email],
                             ["National ID", a.nationalId], ["DOB", a.dateOfBirth], ["Gender", a.gender],
@@ -153,10 +153,10 @@ export default function FormerAgents() {
                             ["Work Location", a.workLocation], ["Team Leader", a.teamLeader],
                             ["Status", a.agentStatus], ["Exit Reason", exitReason],
                             ["Join Date", fmtDate(a.joinDate as number)],
-                          ].map(([label, val]) => (
+                          ] as [string, unknown][]).map(([label, val]) => (
                             <div key={String(label)} className="flex gap-2">
                               <span className="text-xs text-muted-foreground w-36 shrink-0">{label}</span>
-                              <span className="text-xs font-medium">{val ? String(val) : "—"}</span>
+                              <span className="text-xs font-medium">{val != null ? String(val) : "—"}</span>
                             </div>
                           ))}
                         </div>
@@ -247,8 +247,8 @@ export default function FormerAgents() {
                                 <span className="font-medium capitalize">{String(r.type ?? "").replace(/_/g, " ")}</span>
                                 <Badge variant="outline" className="text-[10px] capitalize">{String(r.status ?? "")}</Badge>
                               </div>
-                              {r.subject && <p className="text-muted-foreground">{String(r.subject)}</p>}
-                              {r.message && <p className="mt-1">{String(r.message)}</p>}
+                              {!!r.subject && <p className="text-muted-foreground">{String(r.subject)}</p>}
+                              {!!r.message && <p className="mt-1">{String(r.message)}</p>}
                               <p className="text-[10px] text-muted-foreground mt-1">{fmtDate(r.createdAt as number)}</p>
                             </div>
                           ))}

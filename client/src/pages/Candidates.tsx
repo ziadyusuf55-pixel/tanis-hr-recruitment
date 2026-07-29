@@ -63,7 +63,6 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useLocation } from "wouter";
 
 type CandidateForm = {
   name: string;
