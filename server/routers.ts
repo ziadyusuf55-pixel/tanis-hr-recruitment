@@ -850,6 +850,23 @@ const agentRouter = router({
           message: `Account locked due to too many failed attempts. Try again in ${remainingMins} minute${remainingMins !== 1 ? "s" : ""}.`,
         });
       }
+      // Block non-active agents from logging in at all
+      {
+        const { getDb: _lgGdb } = await import("./db");
+        const { eq: _lgEq } = await import("drizzle-orm");
+        const _lgDb = await _lgGdb();
+        if (_lgDb) {
+          const { workforceAgents: _lgWa } = await import("../drizzle/schema");
+          const [_lgAgent] = await _lgDb.select({ agentStatus: _lgWa.agentStatus })
+            .from(_lgWa).where(_lgEq(_lgWa.traineeCode, input.traineeCode)).limit(1);
+          if (_lgAgent && _lgAgent.agentStatus && !["active"].includes(_lgAgent.agentStatus)) {
+            throw new TRPCError({
+              code: "FORBIDDEN",
+              message: "This account is no longer active. Please contact HR.",
+            });
+          }
+        }
+      }
       const cred = await getAgentCredentialByTraineeCode(input.traineeCode);
       if (!cred) {
         await recordFailedLogin(input.traineeCode, "agent");
@@ -995,8 +1012,33 @@ const agentRouter = router({
     const token = getAgentCookieFromReq(ctx.req);
     if (!token) return null;
     try {
-      const payload = jwt.verify(token, ENV.cookieSecret) as { candidateId: number; traineeCode: string; type: string };
+      const payload = jwt.verify(token, ENV.cookieSecret) as { candidateId: number; traineeCode: string; type: string; iat?: number };
       if (payload.type !== "agent") return null;
+      // Session revocation check: if the token was issued before sessionRevokedAt, reject it
+      if (payload.traineeCode && payload.iat) {
+        const { getDb: _meGdb } = await import("./db");
+        const { eq: _meEq } = await import("drizzle-orm");
+        const _meDb = await _meGdb();
+        if (_meDb) {
+          const { workforceAgents: _meWa } = await import("../drizzle/schema");
+          const [_meAgent] = await _meDb.select({ sessionRevokedAt: _meWa.sessionRevokedAt, agentStatus: _meWa.agentStatus })
+            .from(_meWa).where(_meEq(_meWa.traineeCode, payload.traineeCode)).limit(1);
+          if (_meAgent) {
+            // Reject if session was issued before revocation timestamp
+            const issuedAt = payload.iat * 1000; // JWT iat is in seconds
+            if (_meAgent.sessionRevokedAt && issuedAt < _meAgent.sessionRevokedAt) {
+              // Clear the stale cookie
+              ctx.res.clearCookie("agent_session");
+              return null;
+            }
+            // Also reject if agent is no longer active
+            if (_meAgent.agentStatus && !["active"].includes(_meAgent.agentStatus)) {
+              ctx.res.clearCookie("agent_session");
+              return null;
+            }
+          }
+        }
+      }
       const candidate = await getCandidateById(payload.candidateId);
       if (!candidate) return null;
       // Get batch info
@@ -2396,6 +2438,14 @@ const separationRouter = router({
     .mutation(async ({ input, ctx }) => {
       const adminName = ctx.user?.name ?? "Admin";
       await markAgentResignedOnSpot(input.agentCode, input.reason, adminName);
+      // Revoke any active portal sessions immediately
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (db) {
+        const { workforceAgents } = await import("../drizzle/schema");
+        await db.update(workforceAgents).set({ sessionRevokedAt: Date.now() } as never).where(eq(workforceAgents.traineeCode, input.agentCode));
+      }
       return { success: true };
     }),
 
@@ -2405,6 +2455,14 @@ const separationRouter = router({
     .mutation(async ({ input, ctx }) => {
       const adminName = ctx.user?.name ?? "Admin";
       await terminateAgent(input.agentCode, input.reason, adminName);
+      // Revoke any active portal sessions immediately
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (db) {
+        const { workforceAgents } = await import("../drizzle/schema");
+        await db.update(workforceAgents).set({ sessionRevokedAt: Date.now() } as never).where(eq(workforceAgents.traineeCode, input.agentCode));
+      }
       return { success: true };
     }),
 
@@ -2418,6 +2476,16 @@ const separationRouter = router({
     }))
     .mutation(async ({ input, ctx }) => {
       const adminName = ctx.user?.name ?? "Admin";
+      // Revoke portal session as soon as resignation is approved
+      {
+        const { getDb: _rGdb } = await import("./db");
+        const { eq: _rEq } = await import("drizzle-orm");
+        const _rDb = await _rGdb();
+        if (_rDb) {
+          const { workforceAgents: _rWa } = await import("../drizzle/schema");
+          await _rDb.update(_rWa).set({ sessionRevokedAt: Date.now() } as never).where(_rEq(_rWa.traineeCode, input.agentCode));
+        }
+      }
       // Look up the request to get the reason
       const req = await getAgentRequestById(input.requestId);
       if (!req) throw new TRPCError({ code: "NOT_FOUND", message: "Request not found" });

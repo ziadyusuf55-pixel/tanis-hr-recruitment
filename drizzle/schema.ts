@@ -480,6 +480,7 @@ export const workforceAgents = mysqlTable("workforce_agents", {
   profileLocked: boolean("profileLocked").default(false).notNull(),    // true after the agent's one-time self-edit
   isActive: boolean("isActive").default(true).notNull(),
   orientationShown: boolean("orientationShown").default(false).notNull(), // true after agent completes orientation tour
+  sessionRevokedAt: bigint("sessionRevokedAt", { mode: "number" }),    // set on terminate/resign — any session JWT issued BEFORE this timestamp is rejected
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
