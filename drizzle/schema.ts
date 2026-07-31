@@ -1319,3 +1319,27 @@ export const englishScores = mysqlTable("english_scores", {
 });
 export type EnglishScore = typeof englishScores.$inferSelect;
 
+// ─── Audit Log ────────────────────────────────────────────────────────────────
+/** Immutable record of every sensitive action taken in the Hub. */
+export const auditLog = mysqlTable("audit_log", {
+  id: int("id").autoincrement().primaryKey(),
+  actorName: varchar("actorName", { length: 255 }).notNull(),   // who did it
+  actorOpenId: varchar("actorOpenId", { length: 255 }),
+  action: varchar("action", { length: 100 }).notNull(),          // e.g. "terminate_agent"
+  targetType: varchar("targetType", { length: 60 }),             // e.g. "agent"
+  targetId: varchar("targetId", { length: 100 }),                // traineeCode / id
+  detail: text("detail"),                                        // JSON or description
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+});
+export type AuditLogEntry = typeof auditLog.$inferSelect;
+
+// ─── Slack Notifications Queue ────────────────────────────────────────────────
+/** Tracks which agents have been pinged about incomplete info / missing payment prefs. */
+export const slackPingLog = mysqlTable("slack_ping_log", {
+  id: int("id").autoincrement().primaryKey(),
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
+  reason: varchar("reason", { length: 100 }).notNull(),   // "incomplete_profile" | "missing_payment_prefs"
+  sentAt: bigint("sentAt", { mode: "number" }).notNull(),
+  messageTs: varchar("messageTs", { length: 100 }),       // Slack message timestamp for threading
+});
+

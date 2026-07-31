@@ -30,16 +30,18 @@ export default function Academy() {
       </div>
 
       <div className="flex gap-1 border-b">
-        {(["courses", "suggestions"] as const).map(t => (
+        {(["courses", "suggestions", "english"] as const).map(t => (
           <button key={t} onClick={() => setTab(t)}
             className="px-3 py-2 text-sm font-medium border-b-2 -mb-px capitalize"
             style={{ borderColor: tab === t ? BRAND : "transparent", color: tab === t ? BRAND : undefined }}>
-            {t === "suggestions" ? "Who needs training" : "Courses"}
+            {t === "suggestions" ? "Who needs training" : t === "english" ? "🇬🇧 English Assessment" : "Courses"}
           </button>
         ))}
       </div>
 
-      {tab === "courses" ? <CoursesTab /> : <SuggestionsTab />}
+      {tab === "courses" && <CoursesTab />}
+      {tab === "suggestions" && <SuggestionsTab />}
+      {tab === "english" && <EnglishAssessmentAdmin />}
     </div>
   );
 }

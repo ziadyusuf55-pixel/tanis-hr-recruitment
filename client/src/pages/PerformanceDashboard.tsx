@@ -148,17 +148,21 @@ export default function PerformanceDashboard() {
 
       {activeTab === "incomplete" && (
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm text-muted-foreground flex items-center gap-1.5"><AlertTriangle className="w-4 h-4 text-amber-500" /> {incomplete.length} active agent{incomplete.length !== 1 ? "s" : ""} with incomplete profiles</p>
-            <button
-              onClick={() => {
-                const names = incomplete.map(a => a.alias || a.fullName).join(", ");
-                navigator.clipboard.writeText(names).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
-              }}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border hover:bg-muted/50">
-              {copied ? <CheckCheck className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
-              {copied ? "Copied!" : "Copy all names"}
-            </button>
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                onClick={() => {
+                  const names = incomplete.map(a => a.alias || a.fullName).join(", ");
+                  navigator.clipboard.writeText(names).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); });
+                }}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border hover:bg-muted/50">
+                {copied ? <CheckCheck className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? "Copied!" : "Copy all names"}
+              </button>
+              <SlackReminderButton type="incomplete_profile" label="Ping on Slack" />
+              <SlackReminderButton type="missing_payment_prefs" label="Ping missing payment prefs" />
+            </div>
           </div>
           <div className="rounded-xl border overflow-hidden">
             <table className="w-full text-sm">
@@ -299,5 +303,26 @@ export default function PerformanceDashboard() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function SlackReminderButton({ type, label }: { type: "incomplete_profile" | "missing_payment_prefs"; label: string }) {
+  const [result, setResult] = useState<{ sent: number; skipped: number; targets: number } | null>(null);
+  const send = trpc.slack.sendReminders.useMutation({
+    onSuccess: (r) => { setResult(r as { sent: number; skipped: number; targets: number }); setTimeout(() => setResult(null), 5000); },
+    onError: (e) => { alert(`Slack error: ${e.message}`); },
+  });
+  if (result) return (
+    <span className="text-xs px-3 py-1.5 rounded-lg bg-green-50 text-green-700 border border-green-200">
+      ✓ Sent {result.sent}/{result.targets} · {result.skipped} skipped
+    </span>
+  );
+  return (
+    <button
+      disabled={send.isPending}
+      onClick={() => { if (confirm(`Send Slack DM to all eligible agents (5+ days since first login, not yet pinged this week)?`)) send.mutate({ type }); }}
+      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border hover:bg-muted/50 disabled:opacity-50">
+      {send.isPending ? "Sending…" : `💬 ${label}`}
+    </button>
   );
 }

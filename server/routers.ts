@@ -2775,7 +2775,37 @@ const payrollV2Router = router({
       await db.update(payrollRecords)
         .set({ paymentStatus: "paid", paidAt, paidBy } as never)
         .where(inArray(payrollRecords.id, input.ids));
+      await auditEntry(ctx.user, "bulk_mark_paid", "payroll", input.month, JSON.stringify({ ids: input.ids, count: input.ids.length, paidBy }));
       return { ok: true, count: input.ids.length, paidBy };
+    }),
+
+  /** Bulk partial pay — pay a fixed amount to each selected agent. */
+  bulkPartialPay: protectedProcedure
+    .input(z.object({ ids: z.array(z.number()).min(1), amountEach: z.number().positive(), month: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { payrollRecords } = await import("../drizzle/schema");
+      const paidBy = ctx.user?.name ?? ctx.user?.email ?? "Admin";
+      const paidAt = Date.now();
+      let count = 0;
+      for (const id of input.ids) {
+        const [rec] = await db.select().from(payrollRecords).where(eq(payrollRecords.id, id)).limit(1);
+        if (!rec || rec.paymentStatus === "paid") continue;
+        const netPay = parseFloat(String(rec.netPay ?? 0));
+        const prevPaid = parseFloat(String((rec as Record<string, unknown>).amountPaid ?? "0"));
+        const totalPaid = Math.min(prevPaid + input.amountEach, netPay);
+        const fullyPaid = totalPaid >= netPay;
+        await db.update(payrollRecords).set({
+          amountPaid: String(totalPaid.toFixed(2)), paidBy, paidAt,
+          paymentStatus: fullyPaid ? "paid" : "pending",
+        } as never).where(eq(payrollRecords.id, id));
+        count++;
+      }
+      await auditEntry(ctx.user, "bulk_partial_pay", "payroll", input.month, JSON.stringify({ ids: input.ids, amountEach: input.amountEach, count, paidBy }));
+      return { ok: true, count, paidBy };
     }),
 
   /** Partial pay: record a partial amount paid and who paid it.
@@ -2805,6 +2835,7 @@ const payrollV2Router = router({
         } as never)
         .where(eq(payrollRecords.id, input.id));
       const remaining = Math.max(0, netPay - totalPaid);
+      await auditEntry(ctx.user, "partial_pay", "payroll", String(input.id), JSON.stringify({ amountPaid: input.amountPaid, totalPaid, remaining, fullyPaid, paidBy }));
       return { ok: true, totalPaid, remaining, fullyPaid, paidBy };
     }),
 
@@ -2823,6 +2854,7 @@ const payrollV2Router = router({
       await db.update(payrollRecords)
         .set({ amountPaid: rec.netPay, paidBy, paidAt: Date.now(), paymentStatus: "paid" } as never)
         .where(eq(payrollRecords.id, input.id));
+      await auditEntry(ctx.user, "pay_remaining", "payroll", String(input.id), JSON.stringify({ paidBy }));
       return { ok: true, paidBy };
     }),
 
@@ -4205,32 +4237,28 @@ const cycleTrackerRouter = router({
 
   // Admin: per-day stats for a specific agent + cycle (for line charts with logout markers)
   getAgentDailyStats: protectedProcedure
-    .input(z.object({ crdts: z.string(), cycleKey: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .input(z.object({ crdts: z.string(), cycleKey: z.string().regex(/^\d{4}-\d{2}$/), viewMode: z.enum(["cycle", "month"]).default("cycle") }))
     .query(async ({ input }) => {
       const { getDb } = await import('./db');
       const { cycleStats, clientLogouts } = await import('../drizzle/schema');
-      const { eq, and } = await import('drizzle-orm');
+      const { eq, and, sql } = await import('drizzle-orm');
       const db = await getDb();
       if (!db) return { daily: [], logoutDates: [] };
+      const dateFilter = input.viewMode === "month"
+        ? and(eq(cycleStats.crdts, input.crdts), sql`LEFT(${cycleStats.date}, 7) = ${input.cycleKey}`)
+        : and(eq(cycleStats.crdts, input.crdts), eq(cycleStats.cycleKey, input.cycleKey));
       const daily = await db.select({
-        date: cycleStats.date,
-        loginHours: cycleStats.loginHours,
-        revenue: cycleStats.revenue,
-        totalCalls: cycleStats.totalCalls,
-        profit: cycleStats.profit,
-      }).from(cycleStats)
-        .where(and(eq(cycleStats.crdts, input.crdts), eq(cycleStats.cycleKey, input.cycleKey)))
-        .orderBy(cycleStats.date);
-      const logouts = await db.select({ date: clientLogouts.date })
-        .from(clientLogouts)
-        .where(and(eq(clientLogouts.crdts, input.crdts), eq(clientLogouts.cycleKey, input.cycleKey)));
+        date: cycleStats.date, loginHours: cycleStats.loginHours,
+        revenue: cycleStats.revenue, totalCalls: cycleStats.totalCalls, profit: cycleStats.profit,
+      }).from(cycleStats).where(dateFilter).orderBy(cycleStats.date);
+      const logoutFilter = input.viewMode === "month"
+        ? and(eq(clientLogouts.crdts, input.crdts), sql`LEFT(${clientLogouts.date}, 7) = ${input.cycleKey}`)
+        : and(eq(clientLogouts.crdts, input.crdts), eq(clientLogouts.cycleKey, input.cycleKey));
+      const logouts = await db.select({ date: clientLogouts.date }).from(clientLogouts).where(logoutFilter);
       return {
         daily: daily.map(r => ({
-          date: r.date,
-          loginHours: Number(r.loginHours ?? 0),
-          revenue: Number(r.revenue ?? 0),
-          totalCalls: Number(r.totalCalls ?? 0),
-          profit: Number(r.profit ?? 0),
+          date: r.date, loginHours: Number(r.loginHours ?? 0),
+          revenue: Number(r.revenue ?? 0), totalCalls: Number(r.totalCalls ?? 0), profit: Number(r.profit ?? 0),
         })),
         logoutDates: logouts.map(l => l.date),
       };
@@ -5881,6 +5909,17 @@ async function assertBdDealOwnership(ctx: { user?: { role?: string; openId?: str
   }
 }
 
+// ─── Audit log helper ─────────────────────────────────────────────────────────
+async function auditEntry(actor: { name?: string | null; openId?: string | null } | null | undefined, action: string, targetType: string, targetId: string, detail?: string) {
+  try {
+    const { getDb } = await import("./db");
+    const { auditLog } = await import("../drizzle/schema");
+    const db = await getDb();
+    if (!db) return;
+    await db.insert(auditLog).values({ actorName: actor?.name ?? "system", actorOpenId: actor?.openId ?? null, action, targetType, targetId, detail: detail ?? null, createdAt: Date.now() });
+  } catch { /* non-blocking */ }
+}
+
 const bdRouter = router({
   // ── Role & login linking ──
   me: protectedProcedure.query(async ({ ctx }) => {
@@ -6710,6 +6749,96 @@ export const appRouter = router({
   // overtimeRouter removed
   breakSchedule: breakScheduleRouter,
   separation: separationRouter,
+  auditLog: router({
+    list: protectedProcedure
+      .input(z.object({ limit: z.number().int().min(1).max(200).default(100), action: z.string().optional() }))
+      .query(async ({ input }) => {
+        const { getDb } = await import("./db");
+        const { auditLog } = await import("../drizzle/schema");
+        const { desc, eq } = await import("drizzle-orm");
+        const db = await getDb();
+        if (!db) return [];
+        if (input.action) return db.select().from(auditLog).where(eq(auditLog.action, input.action)).orderBy(desc(auditLog.createdAt)).limit(input.limit);
+        return db.select().from(auditLog).orderBy(desc(auditLog.createdAt)).limit(input.limit);
+      }),
+  }),
+  slack: router({
+    sendReminders: protectedProcedure
+      .input(z.object({ type: z.enum(["incomplete_profile", "missing_payment_prefs"]) }))
+      .mutation(async ({ ctx, input }) => {
+        const { ENV } = await import("./_core/env");
+        if (!ENV.slackBotToken) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Set SLACK_BOT_TOKEN in environment variables first." });
+        const { getDb } = await import("./db");
+        const { eq } = await import("drizzle-orm");
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const { workforceAgents, slackPingLog, agentCredentials, paymentMethods } = await import("../drizzle/schema");
+        const FIVE_DAYS = 5 * 24 * 60 * 60 * 1000;
+        const cutoff = Date.now() - FIVE_DAYS;
+
+        const activeAgents = await db.select({
+          traineeCode: workforceAgents.traineeCode, fullName: workforceAgents.fullName, email: workforceAgents.email,
+          phone: workforceAgents.phone, nationalId: workforceAgents.nationalId, dateOfBirth: workforceAgents.dateOfBirth,
+          gender: workforceAgents.gender, nationality: workforceAgents.nationality, emergencyContactName: workforceAgents.emergencyContactName,
+        }).from(workforceAgents).where(eq(workforceAgents.agentStatus, "active"));
+
+        const creds = await db.select({ traineeCode: agentCredentials.traineeCode, firstLoginAt: agentCredentials.firstLoginAt }).from(agentCredentials);
+        const credMap = new Map(creds.map(c => [c.traineeCode, c.firstLoginAt ?? 0]));
+        const recentPings = await db.select({ traineeCode: slackPingLog.traineeCode, sentAt: slackPingLog.sentAt, reason: slackPingLog.reason }).from(slackPingLog);
+        const lastPing = new Map<string, number>();
+        recentPings.filter(p => p.reason === input.type).forEach(p => {
+          const existing = lastPing.get(p.traineeCode) ?? 0;
+          if (p.sentAt > existing) lastPing.set(p.traineeCode, p.sentAt);
+        });
+
+        let targets: { traineeCode: string; fullName: string; email: string | null }[] = [];
+        if (input.type === "incomplete_profile") {
+          const REQUIRED = ["phone","email","nationalId","dateOfBirth","gender","nationality","emergencyContactName"] as const;
+          targets = activeAgents
+            .filter(a => (credMap.get(a.traineeCode) ?? 0) < cutoff)
+            .filter(a => REQUIRED.some(f => !a[f as keyof typeof a]))
+            .filter(a => (lastPing.get(a.traineeCode) ?? 0) < cutoff)
+            .map(a => ({ traineeCode: a.traineeCode, fullName: a.fullName, email: a.email }));
+        } else {
+          const withPayment = await db.select({ traineeCode: paymentMethods.traineeCode }).from(paymentMethods);
+          const withSet = new Set(withPayment.map(p => p.traineeCode));
+          targets = activeAgents
+            .filter(a => !withSet.has(a.traineeCode) && (credMap.get(a.traineeCode) ?? 0) < cutoff)
+            .filter(a => (lastPing.get(a.traineeCode) ?? 0) < cutoff)
+            .map(a => ({ traineeCode: a.traineeCode, fullName: a.fullName, email: a.email }));
+        }
+
+        if (targets.length === 0) return { ok: true, sent: 0, skipped: 0, targets: 0 };
+        const msgText = input.type === "incomplete_profile"
+          ? "👋 Hi! Your personal info on *Tanis Hub* is incomplete. Please log in and complete your profile — it helps HR and payroll run smoothly. Thank you! 🙏"
+          : "👋 Hi! You haven't added your payment preferences on *Tanis Hub* yet. Please log in and add your wallet or bank details so your salary can be processed on time. Thank you! 🙏";
+
+        let sent = 0; let skipped = 0;
+        for (const t of targets) {
+          try {
+            let channelId: string | null = null;
+            if (t.email) {
+              const lu = await fetch(`https://slack.com/api/users.lookupByEmail?email=${encodeURIComponent(t.email)}`, { headers: { Authorization: `Bearer ${ENV.slackBotToken}` } });
+              const luData = await lu.json() as { ok: boolean; user?: { id: string } };
+              if (luData.ok && luData.user?.id) {
+                const open = await fetch("https://slack.com/api/conversations.open", { method: "POST", headers: { Authorization: `Bearer ${ENV.slackBotToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ users: luData.user.id }) });
+                const openData = await open.json() as { ok: boolean; channel?: { id: string } };
+                if (openData.ok && openData.channel?.id) channelId = openData.channel.id;
+              }
+            }
+            const targetChannel = channelId ?? ENV.slackChannelId;
+            if (!targetChannel) { skipped++; continue; }
+            const finalMsg = channelId ? msgText : `📌 *${t.fullName}* (${t.traineeCode}): ${msgText}`;
+            const msg = await fetch("https://slack.com/api/chat.postMessage", { method: "POST", headers: { Authorization: `Bearer ${ENV.slackBotToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ channel: targetChannel, text: finalMsg }) });
+            const msgData = await msg.json() as { ok: boolean; ts?: string };
+            await db.insert(slackPingLog).values({ traineeCode: t.traineeCode, reason: input.type, sentAt: Date.now(), messageTs: msgData.ts ?? null });
+            sent++;
+          } catch { skipped++; }
+        }
+        await auditEntry(ctx.user, "slack_reminder", input.type, "batch", JSON.stringify({ sent, skipped, targets: targets.length }));
+        return { ok: true, sent, skipped, targets: targets.length };
+      }),
+  }),
   payrollV2: payrollV2Router,
   orientation: orientationRouter,
   violations: violationsRouter,

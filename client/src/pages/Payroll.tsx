@@ -106,6 +106,8 @@ export default function PayrollPage() {
   const [statsMonth, setStatsMonth] = useState<string>(() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}`; });
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [partialId, setPartialId] = useState<number | null>(null);
+  const [bulkPartialAmt, setBulkPartialAmt] = useState("");
+  const [showBulkPartial, setShowBulkPartial] = useState(false);
   const [partialAmt, setPartialAmt] = useState("");
 
   type BulkRow = { id: number; crdts: string | null; alias: string | null; agentCode: string | null; netPay: string | null; paymentStatus: string; paidAt: number | null; paidBy: string | null; amountPaid: string | null };
@@ -127,6 +129,14 @@ export default function PayrollPage() {
     onSuccess: (r) => { toast.success(`Remaining paid by ${r.paidBy}`); refetchBulk(); },
     onError: (e) => toast.error(e.message),
   });
+  const bulkPartialPay = trpc.payrollV2.bulkPartialPay.useMutation({
+    onSuccess: (r) => { toast.success(`EGP ${Number(bulkPartialAmt).toLocaleString()} paid to ${r.count} agents by ${r.paidBy}`); setSelectedIds(new Set()); setBulkPartialAmt(""); setShowBulkPartial(false); refetchBulk(); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  // Previous month for stats comparison
+  const prevStatsMonth = (() => { const [y,m] = statsMonth.split("-").map(Number); const d = new Date(y, m-2, 1); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`; })();
+  const { data: prevStatsData } = trpc.payrollV2.statsForMonth.useQuery({ month: prevStatsMonth }, { enabled: activeTab === "stats" });
 
   const { data: trainerSalaries = [], refetch: refetchTrainers } = trpc.trainerSalaries.getForMonth.useQuery(
     { month: trainerMonth },
@@ -687,12 +697,37 @@ export default function PayrollPage() {
             <input type="month" value={bulkMonth} onChange={e => { setBulkMonth(e.target.value); setSelectedIds(new Set()); }} className="border rounded-md px-3 py-1.5 text-sm bg-background" />
             <span className="text-sm text-muted-foreground">{pending.length} pending · {paid.length} paid</span>
             {selectedIds.size > 0 && (
-              <Button size="sm" disabled={bulkMarkPaid.isPending} onClick={() => {
-                if (confirm(`Mark ${selectedIds.size} agent(s) as paid?`))
-                  bulkMarkPaid.mutate({ ids: Array.from(selectedIds), month: bulkMonth });
-              }} className="text-white" style={{ background: "oklch(0.55 0.18 145)" }}>
-                ✓ Pay {selectedIds.size} selected
-              </Button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button size="sm" disabled={bulkMarkPaid.isPending} onClick={() => {
+                  if (confirm(`Mark ${selectedIds.size} agent(s) as fully paid?`))
+                    bulkMarkPaid.mutate({ ids: Array.from(selectedIds), month: bulkMonth });
+                }} className="text-white" style={{ background: "oklch(0.55 0.18 145)" }}>
+                  ✓ Mark {selectedIds.size} fully paid
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setShowBulkPartial(!showBulkPartial)}>
+                  Partial pay {selectedIds.size} agents
+                </Button>
+                {showBulkPartial && (
+                  <div className="flex items-center gap-2">
+                    <Input
+                      type="number" placeholder="EGP amount each" value={bulkPartialAmt}
+                      onChange={e => setBulkPartialAmt(e.target.value)}
+                      className="h-8 w-40 text-sm"
+                    />
+                    <Button size="sm" className="h-8 text-white" style={{ background: "oklch(0.55 0.18 145)" }}
+                      disabled={bulkPartialPay.isPending || !bulkPartialAmt}
+                      onClick={() => {
+                        const a = parseFloat(bulkPartialAmt);
+                        if (!a || a <= 0) return toast.error("Enter a valid amount");
+                        if (!confirm(`Pay EGP ${a.toLocaleString()} to each of ${selectedIds.size} agents?`)) return;
+                        bulkPartialPay.mutate({ ids: Array.from(selectedIds), amountEach: a, month: bulkMonth });
+                      }}>
+                      {bulkPartialPay.isPending ? "Paying…" : "Pay"}
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-8" onClick={() => { setShowBulkPartial(false); setBulkPartialAmt(""); }}>✕</Button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
           {bulkLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : (
@@ -752,50 +787,95 @@ export default function PayrollPage() {
         <div className="space-y-5">
           <div className="flex items-center gap-3">
             <input type="month" value={statsMonth} onChange={e => setStatsMonth(e.target.value)} className="border rounded-md px-3 py-1.5 text-sm bg-background" />
+            {prevStatsData && <span className="text-xs text-muted-foreground">vs {prevStatsMonth}</span>}
           </div>
           {statsLoading ? <p className="text-sm text-muted-foreground">Loading…</p> :
           !statsData ? <p className="text-sm text-muted-foreground">No payroll data for this month.</p> : (() => {
             const s = statsData as Record<string, unknown>;
+            const p = (prevStatsData ?? {}) as Record<string, unknown>;
             const fmtStat = (v: unknown) => `EGP ${Number(v).toLocaleString("en-EG", { maximumFractionDigits: 0 })}`;
+            const diff = (curr: unknown, prev: unknown) => {
+              const c = Number(curr ?? 0); const pr = Number(prev ?? 0);
+              if (!pr) return null;
+              const pct = Math.round(((c - pr) / pr) * 100);
+              return { pct, up: pct >= 0 };
+            };
             const paidByMap = (s.paidByBreakdown ?? {}) as Record<string, number>;
+            const metrics = [
+              { label: "Headcount", curr: s.headcount, prev: p.headcount, fmt: (v: unknown) => String(v), sub: `${s.pendingCount} pending` },
+              { label: "Total Payroll", curr: s.totalNetPay, prev: p.totalNetPay, fmt: fmtStat },
+              { label: "Avg Net Pay", curr: s.avgNetPay, prev: p.avgNetPay, fmt: fmtStat },
+              { label: "Total Base Salary", curr: s.totalBaseSalary, prev: p.totalBaseSalary, fmt: fmtStat },
+              { label: "Total OT Pay", curr: s.totalOTPay, prev: p.totalOTPay, fmt: fmtStat, sub: `${Number(s.otAgentCount)} agents · ${Number(s.totalOTHours).toFixed(1)}h` },
+              { label: "Total Commission", curr: s.totalCommission, prev: p.totalCommission, fmt: fmtStat, sub: `${s.commissionAgentCount} agents` },
+              { label: "Total Deductions", curr: s.totalDeductions, prev: p.totalDeductions, fmt: fmtStat },
+              { label: "Quality Deductions", curr: s.totalQualityDeductions, prev: p.totalQualityDeductions, fmt: fmtStat },
+              { label: "Attendance Deductions", curr: s.totalAttendanceDeductions, prev: p.totalAttendanceDeductions, fmt: fmtStat },
+              { label: "Coaching Bonuses", curr: s.totalCoachingBonus, prev: p.totalCoachingBonus, fmt: fmtStat },
+              { label: "Highest Pay", curr: s.maxNetPay, prev: p.maxNetPay, fmt: fmtStat },
+              { label: "Lowest Pay", curr: s.minNetPay, prev: p.minNetPay, fmt: fmtStat },
+            ];
             return (
               <div className="space-y-5">
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {[
-                    { label: "Headcount", value: String(s.headcount) },
-                    { label: "Paid", value: `${s.paidCount}/${s.headcount}`, sub: `${s.pendingCount} pending` },
-                    { label: "Total Payroll", value: fmtStat(s.totalNetPay) },
-                    { label: "Avg Net Pay", value: fmtStat(s.avgNetPay) },
-                    { label: "Total Base Salary", value: fmtStat(s.totalBaseSalary) },
-                    { label: "Total OT Pay", value: fmtStat(s.totalOTPay), sub: `${Number(s.otAgentCount)} agents · ${Number(s.totalOTHours).toFixed(1)}h` },
-                    { label: "Total Commission", value: fmtStat(s.totalCommission), sub: `${s.commissionAgentCount} agents` },
-                    { label: "Total Deductions", value: fmtStat(s.totalDeductions) },
-                    { label: "Quality Deductions", value: fmtStat(s.totalQualityDeductions) },
-                    { label: "Attendance Deductions", value: fmtStat(s.totalAttendanceDeductions) },
-                    { label: "Highest Pay", value: fmtStat(s.maxNetPay) },
-                    { label: "Lowest Pay", value: fmtStat(s.minNetPay) },
-                  ].map(card => (
-                    <div key={card.label} className="rounded-xl border p-4">
-                      <p className="text-xs text-muted-foreground">{card.label}</p>
-                      <p className="text-lg font-bold mt-1">{card.value}</p>
-                      {card.sub && <p className="text-[10px] text-muted-foreground mt-0.5">{card.sub}</p>}
-                    </div>
-                  ))}
+                {/* Paid progress bar */}
+                <div className="rounded-xl border p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-semibold">Payment Progress</p>
+                    <span className="text-xs text-muted-foreground">{Number(s.paidCount)}/{Number(s.headcount)} agents paid</span>
+                  </div>
+                  <div className="rounded-full h-3 overflow-hidden bg-muted">
+                    <div className="h-full rounded-full bg-green-500 transition-all" style={{ width: `${Number(s.headcount) > 0 ? Math.round((Number(s.paidCount)/Number(s.headcount))*100) : 0}%` }} />
+                  </div>
+                  {Number(s.partiallyPaidCount) > 0 && <p className="text-xs text-amber-600 mt-1">{Number(s.partiallyPaidCount)} partially paid</p>}
                 </div>
+
+                {/* Metrics grid with MoM comparison */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {metrics.map(m => {
+                    const d = diff(m.curr, m.prev);
+                    return (
+                      <div key={m.label} className="rounded-xl border p-4">
+                        <p className="text-xs text-muted-foreground">{m.label}</p>
+                        <p className="text-base font-bold mt-1">{m.fmt(m.curr)}</p>
+                        {m.sub && <p className="text-[10px] text-muted-foreground mt-0.5">{m.sub}</p>}
+                        {d && (
+                          <p className={`text-[10px] font-medium mt-1 ${d.up ? "text-green-600" : "text-red-600"}`}>
+                            {d.up ? "▲" : "▼"} {Math.abs(d.pct)}% vs {prevStatsMonth}
+                          </p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Top / bottom earner */}
                 {(s.topEarner as Record<string,unknown>|null) && (
-                  <div className="rounded-xl border p-4">
-                    <p className="text-xs text-muted-foreground mb-1">Top Earner</p>
-                    <p className="text-sm font-semibold">{String((s.topEarner as Record<string,unknown>).alias ?? (s.topEarner as Record<string,unknown>).crdts)}</p>
-                    <p className="text-xs text-muted-foreground">{fmtStat((s.topEarner as Record<string,unknown>).netPay)}</p>
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <div className="rounded-xl border p-4">
+                      <p className="text-xs text-muted-foreground mb-1">🏆 Top Earner</p>
+                      <p className="text-sm font-semibold">{String((s.topEarner as Record<string,unknown>).alias ?? (s.topEarner as Record<string,unknown>).crdts)}</p>
+                      <p className="text-xs text-muted-foreground">{fmtStat((s.topEarner as Record<string,unknown>).netPay)}</p>
+                    </div>
+                    <div className="rounded-xl border p-4">
+                      <p className="text-xs text-muted-foreground mb-1">📊 Pay Spread</p>
+                      <p className="text-sm font-semibold">{fmtStat(s.maxNetPay)} — {fmtStat(s.minNetPay)}</p>
+                      <p className="text-xs text-muted-foreground">Avg: {fmtStat(s.avgNetPay)}</p>
+                    </div>
                   </div>
                 )}
+
+                {/* Who processed */}
                 {Object.keys(paidByMap).length > 0 && (
                   <div className="rounded-xl border p-4">
-                    <p className="text-xs font-semibold mb-2 text-muted-foreground">Who Processed Payments</p>
-                    <div className="space-y-1">
+                    <p className="text-xs font-semibold mb-2 text-muted-foreground">👤 Who Processed Payments</p>
+                    <div className="space-y-1.5">
                       {Object.entries(paidByMap).sort((a,b) => b[1]-a[1]).map(([name, count]) => (
-                        <div key={name} className="flex items-center justify-between text-sm">
-                          <span>{name}</span><span className="text-muted-foreground">{count} payment{count !== 1 ? "s" : ""}</span>
+                        <div key={name} className="flex items-center gap-3">
+                          <span className="text-sm flex-1">{name}</span>
+                          <div className="flex-1 rounded-full h-1.5 overflow-hidden bg-muted">
+                            <div className="h-full rounded-full bg-primary" style={{ width: `${(count / Math.max(...Object.values(paidByMap)))*100}%` }} />
+                          </div>
+                          <span className="text-xs text-muted-foreground w-16 text-right">{count} payment{count !== 1 ? "s" : ""}</span>
                         </div>
                       ))}
                     </div>

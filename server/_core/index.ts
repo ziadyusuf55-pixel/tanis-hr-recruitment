@@ -743,8 +743,40 @@ async function startServer() {
     createExpressMiddleware({
       router: appRouter,
       createContext,
+      onError({ error, path }) {
+        // Log full error server-side but never expose internal details to client
+        if (error.code === "INTERNAL_SERVER_ERROR") {
+          console.error(`[tRPC] ${path ?? "unknown"}:`, error);
+        }
+        // Sanitize: replace generic internal errors with a safe message
+        if (error.code === "INTERNAL_SERVER_ERROR" && process.env.NODE_ENV === "production") {
+          error.message = "An internal error occurred. Please try again.";
+        }
+      },
     })
   );
+
+  // ── CSRF: reject cross-origin state-changing requests ──────────────────────
+  // Runs after tRPC so reads/queries still work from anywhere, but mutations
+  // from foreign origins are blocked.
+  app.use("/api/trpc", (req, res, next) => {
+    if (req.method === "GET") return next(); // queries are safe
+    const origin = req.headers["origin"] as string | undefined;
+    const host = req.headers["host"] as string | undefined;
+    if (origin && host) {
+      try {
+        const originHost = new URL(origin).host;
+        if (originHost !== host) {
+          res.status(403).json({ error: "Cross-origin request rejected." });
+          return;
+        }
+      } catch {
+        res.status(403).json({ error: "Invalid origin." });
+        return;
+      }
+    }
+    next();
+  });
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);
