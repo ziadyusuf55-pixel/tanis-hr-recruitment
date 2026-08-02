@@ -42,9 +42,9 @@ function rankBadge(i: number) {
 
 type DailyPoint = { date: string; loginHours: number; revenue: number; totalCalls: number; profit: number; };
 
-function AgentDetailChart({ crdts, cycleKey }: { crdts: string; cycleKey: string }) {
+function AgentDetailChart({ crdts, cycleKey, viewMode = "cycle" }: { crdts: string; cycleKey: string; viewMode?: "cycle" | "month" }) {
   const { data, isLoading } = trpc.cycleTracker.getAgentDailyStats.useQuery(
-    { crdts, cycleKey },
+    { crdts, cycleKey, viewMode },
     { enabled: !!crdts && !!cycleKey }
   );
   if (isLoading) return <div className="h-32 flex items-center justify-center text-xs text-muted-foreground">Loading chart…</div>;
@@ -116,18 +116,28 @@ export default function PerformanceReports() {
   const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"revenue" | "calls" | "revPerHr" | "profit">("revenue");
+  const [viewMode, setViewMode] = useState<"cycle" | "month">("month");
   const [cycleKey, setCycleKey] = useState<string>("");
+  const [monthKey, setMonthKey] = useState<string>(() => new Date().toISOString().slice(0, 7));
   const [tlFilter, setTlFilter] = useState<string>("all");
   const [expandedCrdts, setExpandedCrdts] = useState<Set<string>>(new Set());
 
   const { data: cycleInfo } = trpc.cycleTracker.getCurrentCycle.useQuery();
   const currentCycle = cycleInfo?.cycleKey ?? "";
   const activeCycle = cycleKey || currentCycle;
+  const activeMonth = monthKey;
+  const activePeriod = viewMode === "cycle" ? activeCycle : activeMonth;
 
-  const { data: rawStats = [], isLoading } = trpc.cycleTracker.getTeamStats.useQuery(
+  const { data: rawCycleStats = [], isLoading: loadingCycle } = trpc.cycleTracker.getTeamStats.useQuery(
     { cycleKey: activeCycle },
-    { enabled: !!activeCycle }
+    { enabled: !!activeCycle && viewMode === "cycle" }
   );
+  const { data: rawMonthStats = [], isLoading: loadingMonth } = trpc.cycleTracker.getMonthlyTeamStats.useQuery(
+    { month: activeMonth },
+    { enabled: viewMode === "month" }
+  );
+  const rawStats = viewMode === "cycle" ? rawCycleStats : rawMonthStats;
+  const isLoading = viewMode === "cycle" ? loadingCycle : loadingMonth;
 
   const pastCycles: string[] = [];
   if (currentCycle) {
@@ -137,24 +147,38 @@ export default function PerformanceReports() {
       pastCycles.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
     }
   }
+  const pastMonths: string[] = [];
+  for (let i = 0; i < 6; i++) {
+    const d = new Date(); d.setMonth(d.getMonth() - i);
+    pastMonths.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
 
-  // Previous cycle key for comparison
+  // Previous period for comparison
   const prevCycleKey = (() => {
     if (!activeCycle) return "";
     const [y, m] = activeCycle.split("-").map(Number);
     const d = new Date(y, m - 2, 1);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
   })();
+  const prevMonthKey = (() => {
+    const [y, m] = activeMonth.split("-").map(Number);
+    const d = new Date(y, m - 2, 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  })();
   const { data: rawPrevStats = [] } = trpc.cycleTracker.getTeamStats.useQuery(
     { cycleKey: prevCycleKey },
-    { enabled: !!prevCycleKey }
+    { enabled: !!prevCycleKey && viewMode === "cycle" }
   );
-  const prevStats = rawPrevStats as AgentStat[];
+  const { data: rawPrevMonthStats = [] } = trpc.cycleTracker.getMonthlyTeamStats.useQuery(
+    { month: prevMonthKey },
+    { enabled: viewMode === "month" }
+  );
+  const prevStats = (viewMode === "cycle" ? rawPrevStats : rawPrevMonthStats) as AgentStat[];
   const prevTeamRevenue = prevStats.reduce((acc, s) => acc + s.totalRevenue, 0);
-  // Client logouts (cycle mode only)
+  // Client logouts — cycle mode only (data is cycle-keyed)
   const { data: rawLogouts = [] } = trpc.cycleTracker.getClientLogoutsByCycle.useQuery(
     { cycleKey: activeCycle },
-    { enabled: !!activeCycle }
+    { enabled: !!activeCycle && viewMode === "cycle" }
   );
   type LogoutRow = { crdts: string; alias: string | null; agentCode: string | null; };
   const logouts = rawLogouts as LogoutRow[];
@@ -194,7 +218,7 @@ export default function PerformanceReports() {
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `performance-${activeCycle}.csv`; a.click();
+    a.href = url; a.download = `performance-${activePeriod}.csv`; a.click();
     URL.revokeObjectURL(url);
   }
 
@@ -242,7 +266,7 @@ export default function PerformanceReports() {
             {/* Top 3 Performers */}
             <Card className="border-0 shadow-sm">
               <CardContent className="p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Top Performers — {activeCycle}</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Top Performers — {activePeriod}</p>
                 <div className="space-y-2">
                   {[...stats].sort((a, b) => b.totalRevenue - a.totalRevenue).slice(0, 3).map((s, i) => (
                     <div key={s.crdts} className="flex items-center gap-3">
@@ -266,7 +290,7 @@ export default function PerformanceReports() {
             {/* Most Logouts + Most Deductions */}
             <Card className="border-0 shadow-sm">
               <CardContent className="p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Client Logouts — {activeCycle}</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-3">Client Logouts — {activeCycle}{viewMode === "month" && " (cycle view only)"}</p>
                 {Object.keys(logoutCountByCrdts).length === 0 ? (
                   <p className="text-xs text-muted-foreground text-center py-4">No client logouts this cycle ✓</p>
                 ) : (
@@ -300,12 +324,22 @@ export default function PerformanceReports() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input placeholder="Search CRDTS, alias…" value={search} onChange={e => setSearch(e.target.value)} className="pl-9 h-9 text-sm" />
         </div>
-        <Select value={cycleKey || currentCycle} onValueChange={v => setCycleKey(v === currentCycle ? "" : v)}>
-          <SelectTrigger className="w-36 h-9 text-xs"><SelectValue placeholder="Select cycle" /></SelectTrigger>
-          <SelectContent>
-            {pastCycles.map(c => <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center rounded-lg border overflow-hidden">
+          <button onClick={() => setViewMode("month")} className={`px-3 py-1.5 text-xs font-medium ${viewMode === "month" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Monthly</button>
+          <button onClick={() => setViewMode("cycle")} className={`px-3 py-1.5 text-xs font-medium ${viewMode === "cycle" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Cycle</button>
+        </div>
+        {viewMode === "month" ? (
+          <select value={activeMonth} onChange={e => setMonthKey(e.target.value)} className="h-9 rounded-md border px-2 text-xs bg-background">
+            {pastMonths.map(m => <option key={m} value={m}>{new Date(m + "-01").toLocaleString("en-US", { month: "long", year: "numeric" })}</option>)}
+          </select>
+        ) : (
+          <Select value={cycleKey || currentCycle} onValueChange={v => setCycleKey(v === currentCycle ? "" : v)}>
+            <SelectTrigger className="w-36 h-9 text-xs"><SelectValue placeholder="Select cycle" /></SelectTrigger>
+            <SelectContent>
+              {pastCycles.map(c => <SelectItem key={c} value={c} className="text-xs">{c}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
         {uniqueTLs.length > 0 && (
           <Select value={tlFilter} onValueChange={setTlFilter}>
             <SelectTrigger className="w-36 h-9 text-xs"><SelectValue placeholder="All TLs" /></SelectTrigger>
@@ -384,7 +418,7 @@ export default function PerformanceReports() {
                     {isExpanded && (
                       <tr key={`${s.crdts}-detail`} className="border-b bg-muted/10">
                         <td colSpan={9} className="p-0">
-                          <AgentDetailChart crdts={s.crdts} cycleKey={activeCycle} />
+                          <AgentDetailChart crdts={s.crdts} cycleKey={activePeriod} viewMode={viewMode} />
                         </td>
                       </tr>
                     )}

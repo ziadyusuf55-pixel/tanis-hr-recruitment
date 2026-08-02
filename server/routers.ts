@@ -3892,6 +3892,50 @@ const cycleTrackerRouter = router({
         avgRevPerHr: a.totalLoginHours > 0 ? a.totalRevenue / a.totalLoginHours : 0,
       }));
     }),
+
+  /** Calendar-month view of team stats (26th→25th cycle vs Jan 1st→31st month). */
+  getMonthlyTeamStats: protectedProcedure
+    .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { cycleStats, workforceAgents } = await import("../drizzle/schema");
+      const { sql } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      const rows = await db.select().from(cycleStats).where(sql`LEFT(${cycleStats.date}, 7) = ${input.month}`);
+      const agentRows = await db.select({ crdts: workforceAgents.crdts, teamLeader: workforceAgents.teamLeader }).from(workforceAgents);
+      const tlByCrdts = new Map(agentRows.map(a => [a.crdts, a.teamLeader ?? null]));
+      const byAgent = new Map<string, {
+        crdts: string; agentCode: string | null; alias: string | null; teamLeader: string | null;
+        totalRevenue: number; totalCalls: number; totalLoginHours: number;
+        totalProfit: number; totalRevPerHr: number; days: number;
+      }>();
+      for (const row of rows) {
+        const existing = byAgent.get(row.crdts);
+        if (existing) {
+          existing.totalRevenue += Number(row.revenue ?? 0);
+          existing.totalCalls += Number(row.totalCalls ?? 0);
+          existing.totalLoginHours += Number(row.loginHours ?? 0);
+          existing.totalProfit += Number(row.profit ?? 0);
+          existing.totalRevPerHr += Number(row.revPerHr ?? 0);
+          existing.days += 1;
+          if (!existing.alias && row.alias) existing.alias = row.alias;
+          if (!existing.agentCode && row.agentCode) existing.agentCode = row.agentCode;
+        } else {
+          byAgent.set(row.crdts, {
+            crdts: row.crdts, agentCode: row.agentCode ?? null, alias: row.alias ?? null,
+            teamLeader: tlByCrdts.get(row.crdts) ?? null,
+            totalRevenue: Number(row.revenue ?? 0), totalCalls: Number(row.totalCalls ?? 0),
+            totalLoginHours: Number(row.loginHours ?? 0), totalProfit: Number(row.profit ?? 0),
+            totalRevPerHr: Number(row.revPerHr ?? 0), days: 1,
+          });
+        }
+      }
+      return Array.from(byAgent.values()).map(a => ({
+        ...a, avgRevPerHr: a.totalLoginHours > 0 ? a.totalRevenue / a.totalLoginHours : 0,
+      }));
+    }),
+
   // Agent: get list of all cycle keys that have data for this agent
   getMyTrackerHistory: publicProcedure
     .query(async ({ ctx }) => {

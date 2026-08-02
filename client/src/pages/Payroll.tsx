@@ -228,6 +228,12 @@ export default function PayrollPage() {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   });
+  // Commission cycle: the cycle this salary upload links to (default = same month)
+  const [uploadCommissionCycle, setUploadCommissionCycle] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
+  const [uploadNote, setUploadNote] = useState<string>("");
   const [parsedRows, setParsedRows] = useState<ParsedRow[]>([]);
   const [parseError, setParseError] = useState<string | null>(null);
   const [uploadWarnings, setUploadWarnings] = useState<Warning[]>([]);
@@ -1359,7 +1365,30 @@ export default function PayrollPage() {
                 <input
                   type="month"
                   value={uploadMonth}
-                  onChange={e => setUploadMonth(e.target.value)}
+                  onChange={e => {
+                    setUploadMonth(e.target.value);
+                    setUploadCommissionCycle(e.target.value); // auto-sync commission cycle
+                  }}
+                  className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-sm font-medium">Links to Commission Cycle</label>
+                <input
+                  type="month"
+                  value={uploadCommissionCycle}
+                  onChange={e => setUploadCommissionCycle(e.target.value)}
+                  className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
+                />
+                <p className="text-[10px] text-muted-foreground">Which commission cycle does this payroll cover?</p>
+              </div>
+              <div className="flex flex-col gap-1 flex-1">
+                <label className="text-sm font-medium">Upload Note (optional)</label>
+                <input
+                  type="text"
+                  value={uploadNote}
+                  onChange={e => setUploadNote(e.target.value)}
+                  placeholder="e.g. July payroll — OT corrected"
                   className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"
                 />
               </div>
@@ -1406,7 +1435,13 @@ export default function PayrollPage() {
               <div className="space-y-3">
                 <div className="flex items-center gap-2 text-sm text-emerald-600 bg-emerald-50 rounded-md px-3 py-2">
                   <CheckCircle2 className="h-4 w-4" />
-                  <span>{parsedRows.length} rows parsed — ready to upload for <strong>{formatMonthLabel(uploadMonth)}</strong></span>
+                  <span>
+                    {parsedRows.length} rows parsed — uploading for <strong>{formatMonthLabel(uploadMonth)}</strong>
+                    {uploadCommissionCycle !== uploadMonth && (
+                      <span className="ml-1 text-emerald-700"> · linked to commission cycle {uploadCommissionCycle}</span>
+                    )}
+                    {uploadNote && <span className="ml-1 text-muted-foreground"> · "{uploadNote}"</span>}
+                  </span>
                 </div>
                 <div className="overflow-x-auto max-h-64 border rounded-md">
                   <table className="w-full text-xs">

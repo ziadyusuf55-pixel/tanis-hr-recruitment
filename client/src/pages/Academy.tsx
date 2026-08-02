@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
-import { GraduationCap, Plus, Lightbulb, ChevronDown, ChevronRight, Users, CheckCircle2, ClipboardCheck, Trash2, Check } from "lucide-react";
+import { GraduationCap, Plus, Lightbulb, ChevronDown, ChevronRight, Users, CheckCircle2, ClipboardCheck, Trash2, Check, Globe, ToggleLeft, ToggleRight } from "lucide-react";
 
 const BRAND = "#FF6A13";
 

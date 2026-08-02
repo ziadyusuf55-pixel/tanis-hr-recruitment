@@ -2117,6 +2117,8 @@ export async function getPayrollStatusPage(month: string) {
     attendanceDetail: payrollRecords.attendanceDetail,
     paymentStatus: payrollRecords.paymentStatus,
     paidAt: payrollRecords.paidAt,
+    paidBy: payrollRecords.paidBy,
+    amountPaid: payrollRecords.amountPaid,
     month: payrollRecords.month,
     uploadedBy: payrollRecords.uploadedBy,
     uploadedAt: payrollRecords.uploadedAt,
