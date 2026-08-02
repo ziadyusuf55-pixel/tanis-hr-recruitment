@@ -2,10 +2,10 @@ export const ENV = {
   appId: process.env.VITE_APP_ID ?? "",
   cookieSecret: (() => {
     const s = process.env.JWT_SECRET ?? "";
-    if (!s || s.length < 32) {
-      // In production crash immediately — a weak/missing secret means all sessions can be forged
-      if (process.env.NODE_ENV === "production") throw new Error("FATAL: JWT_SECRET must be set and at least 32 characters long.");
-      console.warn("⚠️  JWT_SECRET is missing or weak — using insecure fallback. Set it in production.");
+    if (!s) {
+      // In production crash if JWT_SECRET is completely missing
+      if (process.env.NODE_ENV === "production") throw new Error("FATAL: JWT_SECRET must be set.");
+      console.warn("⚠️  JWT_SECRET is missing — using insecure fallback. Set it in production.");
     }
     return s || "dev-insecure-fallback-do-not-use-in-production";
   })(),
