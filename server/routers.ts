@@ -2693,15 +2693,27 @@ const payrollV2Router = router({
         netPay: z.string().optional(),
       }),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
       const { payrollRecords } = await import("../drizzle/schema");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const updates: Record<string, string | null> = {};
+      const NUMERIC_FIELDS = ["baseSalary","ot1x5Hours","ot1x5Pay","ot2xHours","ot2xPay","ot3xHours","ot3xPay","coachingBonus","commissionEgp","totalDeductions","netPay","workingHours"];
       for (const [k, v] of Object.entries(input.data)) {
-        if (v !== undefined) updates[k] = v === "" ? null : v;
+        if (v !== undefined) {
+          const val = v === "" ? null : v;
+          if (val !== null && NUMERIC_FIELDS.includes(k)) {
+            const clean = val.replace(/,/g, ""); // strip formatting commas
+            const num = parseFloat(clean);
+            if (isNaN(num)) throw new TRPCError({ code: "BAD_REQUEST", message: `${k} must be a valid number` });
+            if (num < 0) throw new TRPCError({ code: "BAD_REQUEST", message: `${k} cannot be negative` });
+            updates[k] = clean;
+          } else {
+            updates[k] = val;
+          }
+        }
       }
       // Auto-recalculate netPay if not explicitly set but other fields changed
       if (!updates.netPay) {
@@ -2714,6 +2726,7 @@ const payrollV2Router = router({
         }
       }
       await db.update(payrollRecords).set(updates).where(eq(payrollRecords.id, input.id));
+      await auditEntry(ctx.user, "edit_payroll_record", "payroll", String(input.id), JSON.stringify({ changes: updates }));
       return { success: true };
     }),
 
@@ -2772,9 +2785,11 @@ const payrollV2Router = router({
       const { payrollRecords } = await import("../drizzle/schema");
       const paidBy = ctx.user?.name ?? ctx.user?.email ?? "Admin";
       const paidAt = Date.now();
-      await db.update(payrollRecords)
-        .set({ paymentStatus: "paid", paidAt, paidBy } as never)
-        .where(inArray(payrollRecords.id, input.ids));
+      await db.transaction(async (tx) => {
+        await tx.update(payrollRecords)
+          .set({ paymentStatus: "paid", paidAt, paidBy } as never)
+          .where(inArray(payrollRecords.id, input.ids));
+      });
       await auditEntry(ctx.user, "bulk_mark_paid", "payroll", input.month, JSON.stringify({ ids: input.ids, count: input.ids.length, paidBy }));
       return { ok: true, count: input.ids.length, paidBy };
     }),
@@ -2791,19 +2806,21 @@ const payrollV2Router = router({
       const paidBy = ctx.user?.name ?? ctx.user?.email ?? "Admin";
       const paidAt = Date.now();
       let count = 0;
-      for (const id of input.ids) {
-        const [rec] = await db.select().from(payrollRecords).where(eq(payrollRecords.id, id)).limit(1);
-        if (!rec || rec.paymentStatus === "paid") continue;
-        const netPay = parseFloat(String(rec.netPay ?? 0));
-        const prevPaid = parseFloat(String((rec as Record<string, unknown>).amountPaid ?? "0"));
-        const totalPaid = Math.min(prevPaid + input.amountEach, netPay);
-        const fullyPaid = totalPaid >= netPay;
-        await db.update(payrollRecords).set({
-          amountPaid: String(totalPaid.toFixed(2)), paidBy, paidAt,
-          paymentStatus: fullyPaid ? "paid" : "pending",
-        } as never).where(eq(payrollRecords.id, id));
-        count++;
-      }
+      await db.transaction(async (tx) => {
+        for (const id of input.ids) {
+          const [rec] = await tx.select().from(payrollRecords).where(eq(payrollRecords.id, id)).limit(1);
+          if (!rec || rec.paymentStatus === "paid") continue;
+          const netPay = parseFloat(String(rec.netPay ?? 0));
+          const prevPaid = parseFloat(String((rec as Record<string, unknown>).amountPaid ?? "0"));
+          const totalPaid = Math.min(prevPaid + input.amountEach, netPay);
+          const fullyPaid = totalPaid >= netPay;
+          await tx.update(payrollRecords).set({
+            amountPaid: String(totalPaid.toFixed(2)), paidBy, paidAt,
+            paymentStatus: fullyPaid ? "paid" : "pending",
+          } as never).where(eq(payrollRecords.id, id));
+          count++;
+        }
+      });
       await auditEntry(ctx.user, "bulk_partial_pay", "payroll", input.month, JSON.stringify({ ids: input.ids, amountEach: input.amountEach, count, paidBy }));
       return { ok: true, count, paidBy };
     }),

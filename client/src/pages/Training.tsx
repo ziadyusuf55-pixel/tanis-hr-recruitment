@@ -68,7 +68,7 @@ const EMPTY_FORM = { name: "", trainerName: "", startDate: "", notes: "" };
 
 export default function Training() {
   const utils = trpc.useUtils();
-  const [activeTab, setActiveTab] = useState<"batches" | "agents" | "referrals">("batches");
+  const [activeTab, setActiveTab] = useState<"batches" | "agents">("batches");
 
   // Referrals
   const { data: allReferrals = [], isLoading: referralsLoading } = trpc.referrals.listAll.useQuery();

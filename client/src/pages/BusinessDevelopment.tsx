@@ -59,7 +59,9 @@ export default function BusinessDevelopment() {
   const typedDeals = deals as Deal[];
   const typedContacts = contacts as Contact[];
   const typedCompanies = companies as Company[];
-  const staleDeals = (stale as (Deal & { daysStale: number })[]).filter(d => ownerId === "all" || d.ownerId === ownerId);
+  const staleDeals = (stale as (Deal & { daysStale: number })[])
+    .filter(d => d.stage !== "closed_won" && d.stage !== "closed_lost")
+    .filter(d => ownerId === "all" || d.ownerId === ownerId);
 
   const seedUsers = trpc.bd.seedUsers.useMutation({
     onSuccess: () => { utils.bd.listUsers.invalidate(); toast.success("BD team ready"); },
@@ -220,6 +222,7 @@ export default function BusinessDevelopment() {
                             {canEdit(d) && <button onClick={() => { if (confirm("Delete this deal?")) deleteDeal.mutate({ id: d.id }); }} className="text-muted-foreground hover:text-red-600"><Trash2 className="w-3.5 h-3.5" /></button>}
                           </div>
                           {dealCompany(d) && <p className="text-xs text-muted-foreground">{dealCompany(d)}</p>}
+                          {d.notes && <p className="text-xs text-muted-foreground line-clamp-2 leading-relaxed">{d.notes}</p>}
                           <div className="flex flex-wrap gap-1.5 text-[11px]">
                             {d.value && <span className="font-semibold text-emerald-700">${d.value}</span>}
                             {d.seats != null && <span className="text-muted-foreground">{d.seats} seats</span>}
