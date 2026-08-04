@@ -1683,7 +1683,7 @@ const workforceRouter = router({
   // Unified HR profile: update address + emergency contact
   updateHrInfo: protectedProcedure
     .input(z.object({ traineeCode: z.string(), address: z.string().optional(), emergencyContactName: z.string().optional(), emergencyContactPhone: z.string().optional(), emergencyContactRelation: z.string().optional() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
@@ -1691,6 +1691,7 @@ const workforceRouter = router({
       const { workforceAgents } = await import("../drizzle/schema");
       const { traineeCode, ...rest } = input;
       await db.update(workforceAgents).set(rest).where(eq(workforceAgents.traineeCode, traineeCode));
+      await auditEntry(ctx.user, "update_hr_info", "agent", traineeCode, JSON.stringify(rest));
       return { ok: true };
     }),
   markSettled: protectedProcedure
@@ -1873,6 +1874,7 @@ const workforceRouter = router({
           console.error("[Notification] Failed to send campaign reassignment notification:", e);
         }
       }
+      await auditEntry(ctx.user, "update_agent_profile", "agent", traineeCode, JSON.stringify(rest));
       return updateWorkforceAgent(traineeCode, rest);
     }),
   getMyProfile: publicProcedure.query(({ ctx }) => {

@@ -2299,11 +2299,20 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
 
   const { data, isLoading } = trpc.cycleTracker.getMyTrackerByCycle.useQuery(
     { cycleKey: activeCycle },
-    { enabled: !!activeCycle, refetchInterval: isCurrentCycle ? 2 * 60 * 60 * 1000 : false, staleTime: isCurrentCycle ? 30 * 60 * 1000 : Infinity }
+    { enabled: !!activeCycle, refetchInterval: isCurrentCycle ? 5 * 60 * 1000 : false, staleTime: 0, refetchOnWindowFocus: true }
   );
+
+  const [logViewMode, setLogViewMode] = useState<"cycle" | "month">("cycle");
+  const [selectedLogMonth, setSelectedLogMonth] = useState<string>(() => {
+    const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}`;
+  });
 
   function formatCycleLabel(ck: string) {
     const [y, m] = ck.split("-");
+    return new Date(parseInt(y), parseInt(m) - 1).toLocaleString("en-US", { month: "long", year: "numeric" });
+  }
+  function formatMonthLabel(mk: string) {
+    const [y, m] = mk.split("-");
     return new Date(parseInt(y), parseInt(m) - 1).toLocaleString("en-US", { month: "long", year: "numeric" });
   }
 
@@ -2315,7 +2324,14 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
     );
   }
 
-  if (!data) {
+  // Build past months list for month selector
+  const pastLogMonths: string[] = [];
+  for (let i = 0; i < 6; i++) {
+    const d = new Date(); d.setMonth(d.getMonth() - i);
+    pastLogMonths.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
+  }
+
+  if (!data && logViewMode === "cycle") {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-3">
         <Activity className="w-10 h-10" style={{ color: theme.textFaint }} />
@@ -2355,22 +2371,55 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
         </div>
       </div>
 
-      {/* Cycle Selector */}
-      {availableCycles.length > 0 && (
-        <div className="flex items-center gap-3">
-          <button disabled={!prevCycle} onClick={() => setSelectedCycle(prevCycle!)}
-            className="h-8 w-8 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30 text-lg"
-            style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}>&#8249;</button>
-          <span className="text-base font-semibold min-w-[180px] text-center" style={{ color: theme.text }}>
-            {formatCycleLabel(activeCycle)}
-            {isCurrentCycle && <span className="ml-2 text-xs font-normal px-2 py-0.5 rounded-full" style={{ background: `${BRAND}22`, color: BRAND }}>Current</span>}
-          </span>
-          <button disabled={!nextCycle} onClick={() => setSelectedCycle(nextCycle!)}
-            className="h-8 w-8 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30 text-lg"
-            style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}>&#8250;</button>
+      {/* View Mode Toggle + Period Selector */}
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="inline-flex rounded-xl p-1" style={{ background: theme.inputBg, border: `1px solid ${theme.cardBorder}` }}>
+          {([["cycle", "Pay Cycle"], ["month", "Calendar Month"]] as const).map(([id, label]) => (
+            <button key={id} onClick={() => setLogViewMode(id)}
+              className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+              style={{ background: logViewMode === id ? BRAND : "transparent", color: logViewMode === id ? "#fff" : theme.textMuted }}>
+              {label}
+            </button>
+          ))}
         </div>
-      )}
 
+        {logViewMode === "month" ? (
+          <select value={selectedLogMonth} onChange={e => setSelectedLogMonth(e.target.value)}
+            className="h-9 rounded-xl px-3 text-sm border"
+            style={{ background: theme.cardBg, color: theme.text, borderColor: theme.cardBorder }}>
+            {pastLogMonths.map(m => (
+              <option key={m} value={m}>{formatMonthLabel(m)}</option>
+            ))}
+          </select>
+        ) : (
+          availableCycles.length > 0 && (
+            <div className="flex items-center gap-3">
+              <button disabled={!prevCycle} onClick={() => setSelectedCycle(prevCycle!)}
+                className="h-8 w-8 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30 text-lg"
+                style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}>&#8249;</button>
+              <span className="text-base font-semibold min-w-[180px] text-center" style={{ color: theme.text }}>
+                {formatCycleLabel(activeCycle)}
+                {isCurrentCycle && <span className="ml-2 text-xs font-normal px-2 py-0.5 rounded-full" style={{ background: `${BRAND}22`, color: BRAND }}>Current</span>}
+              </span>
+              <button disabled={!nextCycle} onClick={() => setSelectedCycle(nextCycle!)}
+                className="h-8 w-8 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30 text-lg"
+                style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}>&#8250;</button>
+            </div>
+          )
+        )}
+      </div>
+
+      {logViewMode === "month" ? (
+        <div className="rounded-xl p-5 text-center" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+          <p className="text-sm" style={{ color: theme.textMuted }}>
+            Calendar month view — showing {formatMonthLabel(selectedLogMonth)}
+          </p>
+          <p className="text-xs mt-1" style={{ color: theme.textFaint }}>
+            Switch to Pay Cycle to see full earnings breakdown
+          </p>
+        </div>
+      ) : (
+      <>
       {/* Section 1 — Today */}
       <div className="rounded-xl p-5 space-y-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
         <div className="flex items-center gap-2">
@@ -2456,6 +2505,8 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
           </div>
         )}
       </div>
+      </>
+      )}
     </div>
   );
 }
@@ -2558,11 +2609,11 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
 
   // Client logouts
   const { data: logouts = [], isLoading: loadingLogouts } =
-    trpc.cycleTracker.getMyClientLogoutsAgent.useQuery();
+    trpc.cycleTracker.getMyClientLogoutsAgent.useQuery(undefined, { staleTime: 0, refetchOnWindowFocus: true });
 
   // Quality flags (QA results — visible to the agent only, never affects pay)
   const { data: qualityFlags = [], isLoading: loadingQuality } =
-    trpc.cycleTracker.getMyQualityFlagsAgent.useQuery();
+    trpc.cycleTracker.getMyQualityFlagsAgent.useQuery(undefined, { staleTime: 0, refetchOnWindowFocus: true });
 
   // Campaign ranking for selected cycle (own stats)
   const { data: ranking, isLoading: loadingRanking } =
