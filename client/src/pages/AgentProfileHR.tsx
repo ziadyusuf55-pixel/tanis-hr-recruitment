@@ -74,12 +74,27 @@ function Profile({ agent }: { agent: Agent }) {
   const crdts = agent.crdts || "";
   const code = agent.traineeCode;
 
+  // Cycle/month view toggle for adherence, quality, coaching
+  const [logView, setLogView] = useState<"cycle" | "month">("cycle");
+  const [logPeriod, setLogPeriod] = useState<string>(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  });
+  const logMonths = Array.from({ length: 6 }, (_, i) => {
+    const d = new Date(); d.setMonth(d.getMonth() - i);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  });
+
   // Deductions live in agent_violations (the payslip source), keyed by CRDTS, split by category.
   // Pass both identifiers — violations may be stored under CRDTS or traineeCode.
   const vKey = { crdts: crdts || undefined, agentCode: code || undefined };
-  const { data: adherence = [] } = trpc.violations.list.useQuery({ ...vKey, category: "attendance" });
-  const { data: quality = [] } = trpc.violations.list.useQuery({ ...vKey, category: "quality" });
-  const { data: coaching = [] } = trpc.coaching.listByCrdts.useQuery({ crdts }, { enabled: !!crdts });
+  const vMonth = logView === "month" ? logPeriod : undefined;
+  const { data: adherence = [] } = trpc.violations.list.useQuery({ ...vKey, category: "attendance", month: vMonth });
+  const { data: quality = [] } = trpc.violations.list.useQuery({ ...vKey, category: "quality", month: vMonth });
+  const { data: coaching = [] } = trpc.coaching.listByCycle.useQuery(
+    { cycleKey: logPeriod, viewMode: logView },
+    { enabled: !!crdts, select: (rows) => (rows as Array<Record<string,unknown>>).filter(r => r.crdts === crdts || r.agentCode === code) }
+  );
   const { data: otRows = [] } = trpc.ot.list.useQuery({ crdts }, { enabled: !!crdts });
   const { data: balances = [] } = trpc.leave.listBalances.useQuery({});
   const { data: leaveReqs = [] } = trpc.leave.myRequests.useQuery({ traineeCode: code });
@@ -165,6 +180,16 @@ function Profile({ agent }: { agent: Agent }) {
       )}
 
       {/* Quality / Adherence / Coaching mirrors — from agent_violations (payslip) by CRDTS */}
+      {/* Cycle / Month toggle */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="inline-flex rounded-lg border overflow-hidden">
+          <button onClick={() => setLogView("cycle")} className={`px-3 py-1.5 text-xs font-medium ${logView === "cycle" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Pay Cycle</button>
+          <button onClick={() => setLogView("month")} className={`px-3 py-1.5 text-xs font-medium ${logView === "month" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Calendar Month</button>
+        </div>
+        <select value={logPeriod} onChange={e => setLogPeriod(e.target.value)} className="border rounded-md px-2 py-1.5 text-xs bg-background">
+          {logMonths.map(m => <option key={m} value={m}>{new Date(m + "-01").toLocaleString("en-US", { month: "long", year: "numeric" })}{logView === "cycle" ? " cycle" : ""}</option>)}
+        </select>
+      </div>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <MirrorCard icon={<Star className="w-4 h-4" style={{ color: BRAND }} />} title={vTitle("Quality", quality)}
           rows={(quality as Viol[]).map(v => ({ id: v.id, main: v.type || "—", sub: vSub(v) }))} />

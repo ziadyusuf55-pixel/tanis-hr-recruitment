@@ -2880,7 +2880,8 @@ const payrollV2Router = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { payrollRecords } = await import("../drizzle/schema");
-      const paidBy = ctx.user?.name ?? ctx.user?.email ?? "Admin";
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED", message: "No authenticated user." });
+      const paidBy = ctx.user.name ?? ctx.user.email ?? "Unknown Admin";
       const paidAt = Date.now();
       let count = 0;
       await db.transaction(async (tx) => {
@@ -2917,7 +2918,8 @@ const payrollV2Router = router({
       const netPay = parseFloat(String(rec.netPay ?? 0));
       const prevPaid = parseFloat(String((rec as Record<string, unknown>).amountPaid ?? "0"));
       const totalPaid = prevPaid + input.amountPaid;
-      const paidBy = ctx.user?.name ?? ctx.user?.email ?? "Admin";
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED", message: "No authenticated user." });
+      const paidBy = ctx.user.name ?? ctx.user.email ?? "Unknown Admin";
       const paidAt = Date.now();
       const fullyPaid = totalPaid >= netPay;
       await db.update(payrollRecords)
@@ -2944,7 +2946,8 @@ const payrollV2Router = router({
       const { payrollRecords } = await import("../drizzle/schema");
       const [rec] = await db.select().from(payrollRecords).where(eq(payrollRecords.id, input.id)).limit(1);
       if (!rec) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
-      const paidBy = ctx.user?.name ?? ctx.user?.email ?? "Admin";
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED", message: "No authenticated user." });
+      const paidBy = ctx.user.name ?? ctx.user.email ?? "Unknown Admin";
       await db.update(payrollRecords)
         .set({ amountPaid: rec.netPay, paidBy, paidAt: Date.now(), paymentStatus: "paid" } as never)
         .where(eq(payrollRecords.id, input.id));
@@ -3384,12 +3387,21 @@ const academyRouter = router({
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
       const { appSettings } = await import("../drizzle/schema");
-      const { sql } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      await db.execute(sql`INSERT INTO app_settings (\`key\`, value, updatedAt, updatedBy)
-        VALUES ('cefr_enabled', ${input.enabled ? "true" : "false"}, ${Date.now()}, ${ctx.user?.name ?? "admin"})
-        ON DUPLICATE KEY UPDATE value = VALUES(value), updatedAt = VALUES(updatedAt), updatedBy = VALUES(updatedBy)`);
+      // ORM upsert — replaces raw SQL
+      await db.insert(appSettings).values({
+        key: "cefr_enabled",
+        value: input.enabled ? "true" : "false",
+        updatedAt: Date.now(),
+        updatedBy: ctx.user?.name ?? "admin",
+      }).onDuplicateKeyUpdate({
+        set: {
+          value: input.enabled ? "true" : "false",
+          updatedAt: Date.now(),
+          updatedBy: ctx.user?.name ?? "admin",
+        },
+      });
       return { ok: true };
     }),
   /** Agent submits their CEFR result (called after they see their score). */
@@ -4514,14 +4526,17 @@ const coachingRouter = router({
 
   // List coaching sessions for a cycle
   listByCycle: protectedProcedure
-    .input(z.object({ cycleKey: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .input(z.object({ cycleKey: z.string().regex(/^\d{4}-\d{2}$/), viewMode: z.enum(["cycle","month"]).default("cycle") }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
-      const { eq: eqOp } = await import("drizzle-orm");
+      const { eq: eqOp, sql } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) return [];
       const { coachingSessions } = await import("../drizzle/schema");
-      return db.select().from(coachingSessions).where(eqOp(coachingSessions.cycleKey, input.cycleKey));
+      const filter = input.viewMode === "month"
+        ? sql`LEFT(${coachingSessions.sessionDate}, 7) = ${input.cycleKey}`
+        : eqOp(coachingSessions.cycleKey, input.cycleKey);
+      return db.select().from(coachingSessions).where(filter);
     }),
 
   // List coaching sessions for a specific agent (by CRDTS)

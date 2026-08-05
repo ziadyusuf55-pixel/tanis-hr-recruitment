@@ -2935,13 +2935,20 @@ export async function upsertCommissionLeaderboard(
 export async function getNextAvailableTraineeCode(): Promise<string> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const { workforceAgents, agentCredentials } = await import("../drizzle/schema");
+  const { workforceAgents, agentCredentials, batchCandidates } = await import("../drizzle/schema");
+  const { isNotNull } = await import("drizzle-orm");
 
-  // Collect all used T- codes from both tables
-  const existing = await db.select({ code: workforceAgents.traineeCode }).from(workforceAgents);
+  // Collect ALL used T- codes:
+  // 1. Active + archived workforce agents (even former agents must not recycle their code
+  //    — they still use it to log in to the Hub portal for historical data)
+  const existing    = await db.select({ code: workforceAgents.traineeCode }).from(workforceAgents);
+  // 2. Agent credentials table (covers graduated trainees)
   const existingCreds = await db.select({ code: agentCredentials.traineeCode }).from(agentCredentials);
+  // 3. Current trainees in batches
+  const traineeCodes  = await db.select({ code: batchCandidates.traineeCode }).from(batchCandidates).where(isNotNull(batchCandidates.traineeCode));
+
   const usedNums = new Set<number>();
-  for (const { code } of [...existing, ...existingCreds]) {
+  for (const { code } of [...existing, ...existingCreds, ...traineeCodes]) {
     if (typeof code === "string" && /^T-\d+$/.test(code)) {
       usedNums.add(parseInt(code.slice(2), 10));
     }

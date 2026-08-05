@@ -45,7 +45,9 @@ export default function CoachingAdmin() {
     if (dd.getDate() >= 26) dd.setMonth(dd.getMonth() + 1);
     return `${dd.getFullYear()}-${String(dd.getMonth() + 1).padStart(2, "0")}`;
   };
+  const [viewMode, setViewMode] = useState<"cycle" | "month">("cycle");
   const [cycle, setCycle] = useState(cycleOf(now));
+  const [month, setMonth] = useState(() => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
   const [q, setQ] = useState("");
 
   // Offer the last 8 cycles in the picker.
@@ -56,7 +58,19 @@ export default function CoachingAdmin() {
     return out;
   }, []);
 
-  const { data: all = [], isLoading } = trpc.coaching.listByCycle.useQuery({ cycleKey: cycle });
+  // Past 8 months for month picker
+  const months = useMemo(() => {
+    const out: string[] = [];
+    const d = new Date(now);
+    for (let i = 0; i < 8; i++) {
+      out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+      d.setMonth(d.getMonth() - 1);
+    }
+    return out;
+  }, []);
+
+  const activePeriod = viewMode === "cycle" ? cycle : month;
+  const { data: all = [], isLoading } = trpc.coaching.listByCycle.useQuery({ cycleKey: activePeriod, viewMode });
   const { data: agents = [] } = trpc.workforce.list.useQuery({});
 
   const nameOf = useMemo(() => {
@@ -119,9 +133,20 @@ export default function CoachingAdmin() {
       </div>
 
       <div className="flex flex-wrap gap-2 items-center">
-        <select className="border rounded-md px-2 py-1.5 text-sm bg-background" value={cycle} onChange={e => setCycle(e.target.value)}>
-          {cycles.map(c => <option key={c} value={c}>{mLabel(c)} cycle</option>)}
-        </select>
+        {/* View mode toggle */}
+        <div className="inline-flex rounded-lg border overflow-hidden">
+          <button onClick={() => setViewMode("cycle")} className={`px-3 py-1.5 text-xs font-medium ${viewMode === "cycle" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Pay Cycle</button>
+          <button onClick={() => setViewMode("month")} className={`px-3 py-1.5 text-xs font-medium ${viewMode === "month" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Calendar Month</button>
+        </div>
+        {viewMode === "cycle" ? (
+          <select className="border rounded-md px-2 py-1.5 text-sm bg-background" value={cycle} onChange={e => setCycle(e.target.value)}>
+            {cycles.map(c => <option key={c} value={c}>{mLabel(c)} cycle</option>)}
+          </select>
+        ) : (
+          <select className="border rounded-md px-2 py-1.5 text-sm bg-background" value={month} onChange={e => setMonth(e.target.value)}>
+            {months.map(m => <option key={m} value={m}>{new Date(m + "-01").toLocaleString("en-US", { month: "long", year: "numeric" })}</option>)}
+          </select>
+        )}
         <div className="relative flex-1 min-w-[200px] max-w-xs">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input className="pl-8 h-9" placeholder="Agent, CRDTS or topic…" value={q} onChange={e => setQ(e.target.value)} />

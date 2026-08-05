@@ -1908,36 +1908,9 @@ export default function Operations() {
               </select>
             </div>
             )}
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Trainee Code (T- ID)</label>
-              <div className="flex gap-2">
-                <Input 
-                  placeholder={nextCodeLoading ? "Loading..." : "e.g. T-53"}
-                  value={addAgentForm.traineeCode} 
-                  onChange={e => setAddAgentForm(f => ({ ...f, traineeCode: e.target.value }))}
-                  className="font-mono"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0 gap-1.5"
-                  onClick={() => {
-                    if (nextTraineeCodeData) {
-                      setAddAgentForm(f => ({ ...f, traineeCode: nextTraineeCodeData }));
-                      toast.success(`Next available T- ID: ${nextTraineeCodeData}`);
-                    } else {
-                      generateUniqueId.mutate();
-                    }
-                  }}
-                  disabled={nextCodeLoading || generateUniqueId.isPending}
-                  title="Auto-fill next available T- ID"
-                >
-                  <Shuffle className="h-3.5 w-3.5" />
-                  {nextCodeLoading ? "..." : "Next"}
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">Auto-filled with the next available T- number. You can edit it manually if needed.</p>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+              <p className="text-xs font-medium text-amber-800">T-Code assigned in Training</p>
+              <p className="text-xs text-amber-700 mt-0.5">The T-ID (trainee code) is assigned from the Training page once the agent is added to a batch. You don't need to set it here.</p>
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Full Name</label>
