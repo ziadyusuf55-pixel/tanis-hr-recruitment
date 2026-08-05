@@ -202,6 +202,7 @@ export default function PayrollPage() {
   });
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [editingRow, setEditingRow] = useState<number | null>(null);
+  const [editingPaidAt, setEditingPaidAt] = useState<number | null>(null);
   const [editValues, setEditValues] = useState<Partial<StatusRecord>>({});
 
   const { data: statusRecords = [], isLoading: loadingStatus, refetch: refetchStatus } =
@@ -213,13 +214,13 @@ export default function PayrollPage() {
   });
 
   const updateRecordMutation = trpc.payrollV2.updateRecord.useMutation({
+    onError: (e) => { if (e.data?.code === "CONFLICT") toast.error("⚠️ " + e.message); else toast.error(e.message); },
     onSuccess: () => {
       refetchStatus();
       setEditingRow(null);
       setEditValues({});
       toast.success("Record updated");
     },
-    onError: (e) => toast.error(e.message),
   });
 
   // Upload tab
@@ -581,7 +582,7 @@ export default function PayrollPage() {
                                 <Button
                                   variant="ghost" size="sm"
                                   className="text-xs h-7 text-blue-600 hover:text-blue-700"
-                                  onClick={() => { setEditingRow(r.id); setEditValues({ ...r }); }}
+                                  onClick={() => { setEditingRow(r.id); setEditValues({ ...r }); setEditingPaidAt((r as Record<string,unknown>).paidAt as number | null ?? null); }}
                                 >
                                   <Pencil className="h-3 w-3" />
                                 </Button>
@@ -847,6 +848,11 @@ export default function PayrollPage() {
                         {d && (
                           <p className={`text-[10px] font-medium mt-1 ${d.up ? "text-green-600" : "text-red-600"}`}>
                             {d.up ? "▲" : "▼"} {Math.abs(d.pct)}% vs {prevStatsMonth}
+                          </p>
+                        )}
+                        {m.prev !== undefined && Number(m.prev) > 0 && (
+                          <p className="text-[10px] text-muted-foreground mt-0.5">
+                            prev: {m.fmt(m.prev)}
                           </p>
                         )}
                       </div>
@@ -1333,13 +1339,33 @@ export default function PayrollPage() {
                 </div>
               ))}
             </div>
+            {/* Live netPay preview */}
+            {(() => {
+              const n = (v: unknown) => parseFloat(String(v ?? "0").replace(/,/g,"")) || 0;
+              const base  = n(editValues.baseSalary);
+              const ot    = n(editValues.ot1x5Pay) + n(editValues.ot2xPay) + n(editValues.ot3xPay);
+              const bonus = n(editValues.coachingBonus) + n(editValues.commissionEgp);
+              const ded   = n(editValues.totalDeductions);
+              const prev  = base + ot + bonus - ded;
+              const orig  = n(editValues.netPay);
+              const changed = Math.abs(prev - orig) > 0.01;
+              return (
+                <div className={`rounded-lg px-4 py-3 flex items-center justify-between ${changed ? "bg-amber-50 border border-amber-200" : "bg-muted/40"}`}>
+                  <span className="text-xs font-medium text-muted-foreground">Projected Net Pay</span>
+                  <span className={`text-sm font-bold ${changed ? "text-amber-700" : "text-foreground"}`}>
+                    EGP {prev.toLocaleString("en-EG", { maximumFractionDigits: 2 })}
+                    {changed && <span className="text-xs font-normal ml-2">(was EGP {orig.toLocaleString()})</span>}
+                  </span>
+                </div>
+              );
+            })()}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setEditingRow(null); setEditValues({}); }}>Cancel</Button>
             <Button
               onClick={() => {
                 if (editingRow === null) return;
-                updateRecordMutation.mutate({ id: editingRow, data: editValues as { baseSalary?: string; workingHours?: string; ot1x5Hours?: string; ot1x5Pay?: string; ot2xHours?: string; ot2xPay?: string; ot3xHours?: string; ot3xPay?: string; coachingBonus?: string; commissionEgp?: string; totalDeductions?: string; netPay?: string; } });
+                updateRecordMutation.mutate({ id: editingRow, lastKnownPaidAt: editingPaidAt ?? undefined, data: editValues as { baseSalary?: string; workingHours?: string; ot1x5Hours?: string; ot1x5Pay?: string; ot2xHours?: string; ot2xPay?: string; ot3xHours?: string; ot3xPay?: string; coachingBonus?: string; commissionEgp?: string; totalDeductions?: string; netPay?: string; } });
               }}
               disabled={updateRecordMutation.isPending}
             >

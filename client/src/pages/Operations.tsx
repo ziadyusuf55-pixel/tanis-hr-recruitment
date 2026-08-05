@@ -846,7 +846,9 @@ export default function Operations() {
   });
   // #5 — CRDTS reuse detection + archive
   const [crdtsOverride, setCrdtsOverride] = useState(false);
-  const archiveHandover = trpc.crdtsArchive.archiveHandover.useMutation();
+  const archiveHandover = trpc.crdtsArchive.archiveHandover.useMutation({
+    onError: (e) => toast.error("CRDTS handover failed: " + getErrorMessage(e)),
+  });
   const crdtsChanged = !!editForm.crdts && editForm.crdts.trim() !== (editingAgent?.crdts ?? "").trim();
   const { data: crdtsReuse } = trpc.crdtsArchive.checkReuse.useQuery(
     { crdts: (editForm.crdts ?? "").trim(), excludeCode: editingAgent?.traineeCode },
@@ -1046,14 +1048,20 @@ export default function Operations() {
     if (crdtsConflict) {
       if (!crdtsConflict.inactive) { toast.error("That CRDTS belongs to an active agent — free it up first."); return; }
       if (!crdtsOverride) { toast.error("Tick the reassign box to take this CRDTS from the previous (departed) holder."); return; }
-      // Archive the handover + clear it off the previous holder, then save the new agent below.
-      archiveHandover.mutate({
-        crdts: (editForm.crdts ?? "").trim(),
-        previousCode: crdtsConflict.holder.traineeCode ?? undefined,
-        newCode: editingAgent.traineeCode,
-      });
+      // Archive handover first — updateAgent fires only on success to avoid race condition
+      const agentPayload = buildAgentPayload();
+      archiveHandover.mutate(
+        { crdts: (editForm.crdts ?? "").trim(), previousCode: (crdtsConflict as { holder: { traineeCode?: string } }).holder.traineeCode ?? undefined, newCode: editingAgent.traineeCode },
+        { onSuccess: () => updateAgent.mutate(agentPayload) }
+      );
+      return;
     }
-    updateAgent.mutate({
+    updateAgent.mutate(buildAgentPayload());
+  };
+
+  const buildAgentPayload = () => {
+    if (!editingAgent) throw new Error("No editing agent");
+    return {
       traineeCode: editingAgent.traineeCode,
       fullName: editForm.fullName || undefined,
       alias: editForm.alias || undefined,
@@ -1078,7 +1086,7 @@ export default function Operations() {
       jobTitle: editForm.jobTitle || undefined,
       city: editForm.city || undefined,
       profileLocked: editForm.profileLocked,
-    });
+    };
   };
 
   const handleSaveCampaign = () => {

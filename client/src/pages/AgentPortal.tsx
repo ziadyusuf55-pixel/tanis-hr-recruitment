@@ -2410,14 +2410,7 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
       </div>
 
       {logViewMode === "month" ? (
-        <div className="rounded-xl p-5 text-center" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
-          <p className="text-sm" style={{ color: theme.textMuted }}>
-            Calendar month view — showing {formatMonthLabel(selectedLogMonth)}
-          </p>
-          <p className="text-xs mt-1" style={{ color: theme.textFaint }}>
-            Switch to Pay Cycle to see full earnings breakdown
-          </p>
-        </div>
+        <MonthlyLogsView theme={theme} monthKey={selectedLogMonth} />
       ) : (
       <>
       {/* Section 1 — Today */}
@@ -2506,6 +2499,89 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
         )}
       </div>
       </>
+      )}
+    </div>
+  );
+}
+
+function MonthlyLogsView({ theme, monthKey }: { theme: Theme; monthKey: string }) {
+  const { data, isLoading } = trpc.cycleTracker.getMyDailyStats.useQuery(
+    { cycleKey: monthKey, viewMode: "month" },
+    { staleTime: 0, refetchOnWindowFocus: true }
+  );
+  const daily = data?.daily ?? [];
+  const logoutDates = new Set(data?.logoutDates ?? []);
+  const totalRevenue = daily.reduce((s, d) => s + d.revenue, 0);
+  const totalHours   = daily.reduce((s, d) => s + d.loginHours, 0);
+  const totalProfit  = daily.reduce((s, d) => s + d.profit, 0);
+  const totalCalls   = daily.reduce((s, d) => s + d.totalCalls, 0);
+  const [y, m] = monthKey.split("-");
+  const monthLabel = new Date(parseInt(y), parseInt(m)-1).toLocaleString("en-US", { month:"long", year:"numeric" });
+
+  if (isLoading) return (
+    <div className="flex items-center justify-center py-16">
+      <div className="w-5 h-5 border-2 rounded-full animate-spin" style={{ borderColor: BRAND, borderTopColor: "transparent" }} />
+    </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3">
+        {[
+          { label: "Revenue",     value: `$${totalRevenue.toLocaleString(undefined,{maximumFractionDigits:2})}`, color: totalRevenue > 0 ? "oklch(0.55 0.18 145)" : theme.textMuted },
+          { label: "Profit",      value: `$${totalProfit.toLocaleString(undefined,{maximumFractionDigits:2})}`,  color: totalProfit >= 0 ? "oklch(0.55 0.18 145)" : "#ef4444" },
+          { label: "Login Hours", value: `${totalHours.toFixed(1)}h`, color: theme.text },
+          { label: "Total Calls", value: totalCalls.toString(), color: theme.text },
+        ].map(c => (
+          <div key={c.label} className="rounded-xl p-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+            <p className="text-xs" style={{ color: theme.textMuted }}>{c.label}</p>
+            <p className="text-lg font-bold mt-0.5" style={{ color: c.color }}>{c.value}</p>
+          </div>
+        ))}
+      </div>
+      {daily.length === 0 ? (
+        <div className="rounded-xl p-8 text-center" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
+          <p className="text-sm" style={{ color: theme.textMuted }}>No data for {monthLabel}</p>
+        </div>
+      ) : (
+        <div className="rounded-xl overflow-hidden" style={{ border: `1px solid ${theme.cardBorder}` }}>
+          <div className="px-4 py-2.5 text-xs font-semibold" style={{ background: theme.cardBg, color: theme.textMuted }}>
+            {monthLabel} — {daily.length} days logged
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr style={{ background: theme.inputBg, borderBottom: `1px solid ${theme.cardBorder}` }}>
+                  {["Date","Login Hrs","Revenue","Profit","Calls",""].map(h => (
+                    <th key={h} className="px-3 py-2 text-left font-medium" style={{ color: theme.textMuted }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {daily.map((d, i) => {
+                  const isLogout = logoutDates.has(d.date);
+                  const bg = i % 2 === 0 ? theme.cardBg : theme.inputBg;
+                  return (
+                    <tr key={d.date} style={{ background: bg, borderBottom: `1px solid ${theme.cardBorder}` }}>
+                      <td className="px-3 py-2 font-medium" style={{ color: theme.text }}>{d.date}</td>
+                      <td className="px-3 py-2" style={{ color: theme.text }}>{d.loginHours.toFixed(1)}h</td>
+                      <td className="px-3 py-2 font-semibold" style={{ color: d.revenue > 0 ? "oklch(0.55 0.18 145)" : theme.textMuted }}>
+                        {d.revenue > 0 ? `$${d.revenue.toLocaleString(undefined,{maximumFractionDigits:2})}` : "—"}
+                      </td>
+                      <td className="px-3 py-2" style={{ color: d.profit >= 0 ? "oklch(0.55 0.18 145)" : "#ef4444" }}>
+                        {d.profit !== 0 ? `$${d.profit.toLocaleString(undefined,{maximumFractionDigits:2})}` : "—"}
+                      </td>
+                      <td className="px-3 py-2" style={{ color: theme.textMuted }}>{d.totalCalls || "—"}</td>
+                      <td className="px-3 py-2">
+                        {isLogout && <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "#fee2e2", color: "#b91c1c" }}>logout</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
       )}
     </div>
   );

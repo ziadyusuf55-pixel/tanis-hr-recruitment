@@ -292,7 +292,47 @@ const batchesRouter = router({
 
     setTraineeCode: protectedProcedure
       .input(z.object({ batchId: z.number(), candidateId: z.number(), code: z.string().nullable() }))
-      .mutation(({ input }) => setTraineeCode(input.batchId, input.candidateId, input.code)),
+      .mutation(async ({ input }) => {
+        // Guard: reject if code is already in use by another active agent
+        if (input.code) {
+          const { getDb } = await import("./db");
+          const { workforceAgents, batchCandidates: bc } = await import("../drizzle/schema");
+          const { eq, and, ne } = await import("drizzle-orm");
+          const db = await getDb();
+          if (db) {
+            // Check workforce_agents (graduated agents)
+            const [existing] = await db.select({ traineeCode: workforceAgents.traineeCode, agentStatus: workforceAgents.agentStatus })
+              .from(workforceAgents).where(eq(workforceAgents.traineeCode, input.code)).limit(1);
+            if (existing && existing.agentStatus === "active") {
+              throw new TRPCError({ code: "CONFLICT", message: `${input.code} is already assigned to an active agent.` });
+            }
+            // Check other candidates in training (not this one)
+            const [otherCandidate] = await db.select({ id: bc.candidateId })
+              .from(bc).where(and(eq(bc.traineeCode, input.code), ne(bc.candidateId, input.candidateId))).limit(1);
+            if (otherCandidate) {
+              throw new TRPCError({ code: "CONFLICT", message: `${input.code} is already assigned to another trainee in this batch.` });
+            }
+          }
+        }
+        return setTraineeCode(input.batchId, input.candidateId, input.code);
+      }),
+
+    getUsedCodes: protectedProcedure.query(async () => {
+      // Returns all T-codes currently in use (active agents + trainees)
+      const { getDb } = await import("./db");
+      const { workforceAgents, batchCandidates: bc } = await import("../drizzle/schema");
+      const { isNotNull } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return { usedByActive: [], usedByTrainees: [] };
+      const active = await db.select({ traineeCode: workforceAgents.traineeCode })
+        .from(workforceAgents).where(isNotNull(workforceAgents.traineeCode));
+      const trainees = await db.select({ traineeCode: bc.traineeCode })
+        .from(bc).where(isNotNull(bc.traineeCode));
+      return {
+        usedByActive: active.map(a => a.traineeCode).filter(Boolean) as string[],
+        usedByTrainees: trainees.map(t => t.traineeCode).filter(Boolean) as string[],
+      };
+    }),
 
     getCandidateBatch: protectedProcedure
       .input(z.object({ candidateId: z.number() }))
@@ -1854,7 +1894,7 @@ const workforceRouter = router({
       profileLocked: z.boolean().optional(),
       agentStatus: z.enum(["active", "inactive", "frozen", "resigned", "terminated", "blacklisted"]).optional(),
     }))
-     .mutation(async ({ input }) => {
+     .mutation(async ({ ctx, input }) => {
       const { traineeCode, ...rest } = input;
       // If campaignId is being set, fetch the old agent to check if it changed
       if (input.campaignId !== undefined) {
@@ -2235,6 +2275,26 @@ const documentsRouter = router({
       adminComment: z.string().optional(),
     }))
     .mutation(({ input }) => reviewAgentDocument(input.id, input.status, input.adminComment)),
+
+  /** Admin uploads a document on behalf of an agent (no agent cookie required). */
+  uploadForAgent: protectedProcedure
+    .input(z.object({
+      traineeCode: z.string().min(1),
+      docType: z.string().min(1),
+      fileBase64: z.string(),
+      fileName: z.string(),
+      mimeType: z.string().default("application/octet-stream"),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { storagePut } = await import("./storage");
+      const buf = Buffer.from(input.fileBase64, "base64");
+      const ext = input.fileName.split(".").pop() ?? "bin";
+      const key = `agent-docs/${input.traineeCode}/${input.docType}-${Date.now()}.${ext}`;
+      const { url } = await storagePut(key, buf, input.mimeType);
+      await upsertAgentDocument({ traineeCode: input.traineeCode, docType: input.docType, fileUrl: url, fileName: input.fileName });
+      await auditEntry(ctx.user, "admin_upload_document", "agent", input.traineeCode, JSON.stringify({ docType: input.docType, fileName: input.fileName }));
+      return { url };
+    }),
 });
 
 // ─── Schedule Change Router ───────────────────────────────────────────────────
@@ -2611,6 +2671,12 @@ const payrollV2Router = router({
       const uploadedBy = ctx.user?.name ?? "admin";
       const uploadedAt = Date.now();
 
+      // Duplicate CRDTS guard — warn if same CRDTS appears more than once
+      const crdtsCounts = input.rows.reduce((m, r) => { m[r.crdts] = (m[r.crdts] ?? 0) + 1; return m; }, {} as Record<string, number>);
+      const dupWarnings = Object.entries(crdtsCounts)
+        .filter(([, count]) => count > 1)
+        .map(([crdts, count]) => ({ crdts, alias: null, type: "duplicate_crdts", message: `CRDTS ${crdts} appears ${count} times — only the last row will be saved.` }));
+
       // Auto-attach commission: the payroll for month M is paid together with the
       // commission earned the PREVIOUS calendar month (June payroll / July 1 salary
       // carries May's commission). Pull it from commission_leaderboard by CRDTS.
@@ -2666,7 +2732,7 @@ const payrollV2Router = router({
         warnings.push({ crdts: "—", type: "no_commission", message: `No commission found for ${commissionCycle} — upload that month's commission file first, then re-upload payroll to attach it.` });
       }
 
-      return { success: true, count: input.rows.length, commissionCycle, commissionAttached: commissionMap.size, warnings };
+      return { success: true, count: input.rows.length, commissionCycle, commissionAttached: commissionMap.size, warnings: [...dupWarnings, ...warnings] };
     }),
 
   getStatusPage: protectedProcedure
@@ -2680,6 +2746,7 @@ const payrollV2Router = router({
   updateRecord: protectedProcedure
     .input(z.object({
       id: z.number(),
+      lastKnownPaidAt: z.number().nullable().optional(),
       data: z.object({
         baseSalary: z.string().optional(),
         workingHours: z.string().optional(),
@@ -2701,6 +2768,13 @@ const payrollV2Router = router({
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      // Optimistic locking — reject if another admin saved since client loaded
+      if (input.lastKnownPaidAt !== undefined) {
+        const [cur] = await db.select({ paidAt: payrollRecords.paidAt }).from(payrollRecords).where(eq(payrollRecords.id, input.id)).limit(1);
+        if (cur && cur.paidAt !== null && cur.paidAt !== input.lastKnownPaidAt) {
+          throw new TRPCError({ code: "CONFLICT", message: "Record was updated by someone else — please refresh and try again." });
+        }
+      }
       const updates: Record<string, string | null> = {};
       const NUMERIC_FIELDS = ["baseSalary","ot1x5Hours","ot1x5Pay","ot2xHours","ot2xPay","ot3xHours","ot3xPay","coachingBonus","commissionEgp","totalDeductions","netPay","workingHours"];
       for (const [k, v] of Object.entries(input.data)) {
@@ -2785,7 +2859,8 @@ const payrollV2Router = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { payrollRecords } = await import("../drizzle/schema");
-      const paidBy = ctx.user?.name ?? ctx.user?.email ?? "Admin";
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED", message: "No authenticated user found." });
+      const paidBy = ctx.user.name ?? ctx.user.email ?? "Unknown Admin";
       const paidAt = Date.now();
       await db.transaction(async (tx) => {
         await tx.update(payrollRecords)
@@ -4351,7 +4426,7 @@ const cycleTrackerRouter = router({
 
   // Agent: per-day stats for own data (uses JWT cookie)
   getMyDailyStats: publicProcedure
-    .input(z.object({ cycleKey: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .input(z.object({ cycleKey: z.string().regex(/^\d{4}-\d{2}$/), viewMode: z.enum(["cycle","month"]).default("cycle") }))
     .query(async ({ ctx, input }) => {
       const token = getAgentCookieFromReq(ctx.req);
       if (!token) return { daily: [], logoutDates: [] };
@@ -4362,7 +4437,7 @@ const cycleTrackerRouter = router({
       } catch { return { daily: [], logoutDates: [] }; }
       const { workforceAgents } = await import('../drizzle/schema');
       const { getDb } = await import('./db');
-      const { eq, and } = await import('drizzle-orm');
+      const { eq, and, sql } = await import('drizzle-orm');
       const dbConn = await getDb();
       if (!dbConn) return { daily: [], logoutDates: [] };
       const agentRow = await dbConn.select({ crdts: workforceAgents.crdts })
@@ -4370,18 +4445,21 @@ const cycleTrackerRouter = router({
       const crdts = agentRow[0]?.crdts;
       if (!crdts) return { daily: [], logoutDates: [] };
       const { cycleStats, clientLogouts } = await import('../drizzle/schema');
+      const dateFilter = input.viewMode === "month"
+        ? and(eq(cycleStats.crdts, crdts), sql`LEFT(${cycleStats.date},7) = ${input.cycleKey}`)
+        : and(eq(cycleStats.crdts, crdts), eq(cycleStats.cycleKey, input.cycleKey));
       const daily = await dbConn.select({
         date: cycleStats.date,
         loginHours: cycleStats.loginHours,
         revenue: cycleStats.revenue,
         totalCalls: cycleStats.totalCalls,
         profit: cycleStats.profit,
-      }).from(cycleStats)
-        .where(and(eq(cycleStats.crdts, crdts), eq(cycleStats.cycleKey, input.cycleKey)))
-        .orderBy(cycleStats.date);
+      }).from(cycleStats).where(dateFilter).orderBy(cycleStats.date);
+      const logoutFilter = input.viewMode === "month"
+        ? and(eq(clientLogouts.crdts, crdts), sql`LEFT(${clientLogouts.date},7) = ${input.cycleKey}`)
+        : and(eq(clientLogouts.crdts, crdts), eq(clientLogouts.cycleKey, input.cycleKey));
       const logouts = await dbConn.select({ date: clientLogouts.date })
-        .from(clientLogouts)
-        .where(and(eq(clientLogouts.crdts, crdts), eq(clientLogouts.cycleKey, input.cycleKey)));
+        .from(clientLogouts).where(logoutFilter);
       return {
         daily: daily.map(r => ({
           date: r.date,
@@ -5495,24 +5573,27 @@ const commissionRouter = router({
       const { commissions, commissionLeaderboard, payrollRecords } = await import("../drizzle/schema");
       // 1. Records being moved
       const recs = await db.select().from(commissions).where(eq(commissions.paymentCycle, input.fromCycle));
-      // 2. Clear commission off the OLD cycle's payroll records
-      for (const rec of recs) {
-        await db.update(payrollRecords).set({ commissionEgp: "0" })
-          .where(and(eq(payrollRecords.crdts, rec.crdts), eq(payrollRecords.month, input.fromCycle)));
-      }
-      // 3. Move the commission records to the new pay cycle
-      await db.update(commissions).set({
-        paymentCycle: input.toCycle,
-        ...(input.newPerformanceMonth ? { performanceMonth: input.newPerformanceMonth } : {}),
-      }).where(eq(commissions.paymentCycle, input.fromCycle));
-      // 4. Move the leaderboard rows too
-      await db.update(commissionLeaderboard).set({ cycleKey: input.toCycle })
-        .where(eq(commissionLeaderboard.cycleKey, input.fromCycle));
-      // 5. Apply commission onto the NEW cycle's payroll records (if that payroll exists yet)
-      for (const rec of recs) {
-        await db.update(payrollRecords).set({ commissionEgp: rec.commissionEgp ?? "0" })
-          .where(and(eq(payrollRecords.crdts, rec.crdts), eq(payrollRecords.month, input.toCycle)));
-      }
+      // Wrap all 5 writes in a transaction — if any step fails, all roll back atomically
+      await db.transaction(async (tx) => {
+        // 2. Clear commission off the OLD cycle's payroll records
+        for (const rec of recs) {
+          await tx.update(payrollRecords).set({ commissionEgp: "0" })
+            .where(and(eq(payrollRecords.crdts, rec.crdts), eq(payrollRecords.month, input.fromCycle)));
+        }
+        // 3. Move the commission records to the new pay cycle
+        await tx.update(commissions).set({
+          paymentCycle: input.toCycle,
+          ...(input.newPerformanceMonth ? { performanceMonth: input.newPerformanceMonth } : {}),
+        }).where(eq(commissions.paymentCycle, input.fromCycle));
+        // 4. Move the leaderboard rows too
+        await tx.update(commissionLeaderboard).set({ cycleKey: input.toCycle })
+          .where(eq(commissionLeaderboard.cycleKey, input.fromCycle));
+        // 5. Apply commission onto the NEW cycle's payroll records (if that payroll exists yet)
+        for (const rec of recs) {
+          await tx.update(payrollRecords).set({ commissionEgp: rec.commissionEgp ?? "0" })
+            .where(and(eq(payrollRecords.crdts, rec.crdts), eq(payrollRecords.month, input.toCycle)));
+        }
+      });
       return { ok: true, moved: recs.length, from: input.fromCycle, to: input.toCycle };
     }),
 

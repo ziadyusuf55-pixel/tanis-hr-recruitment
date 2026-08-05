@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import {
   Search, Download, FileText, ExternalLink, CheckCircle2, XCircle, Clock,
-  MessageSquare, ChevronDown, ChevronRight,
+  MessageSquare, ChevronDown, ChevronRight, Upload, PlusCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -89,6 +89,44 @@ export default function AllDocuments() {
   const [commentDoc, setCommentDoc] = useState<AgentDocument | null>(null);
   const [commentText, setCommentText] = useState("");
   const [commentStatus, setCommentStatus] = useState<"approved" | "rejected">("approved");
+
+  // Admin upload state
+  const [uploadDialog, setUploadDialog] = useState(false);
+  const [uploadCode, setUploadCode] = useState("");
+  const [uploadDocType, setUploadDocType] = useState("national_id");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadLoading, setUploadLoading] = useState(false);
+
+  const handleAdminUpload = async () => {
+    if (!uploadCode || !uploadFile) return;
+    setUploadLoading(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        const base64 = (e.target?.result as string).split(",")[1];
+        await adminUploadMutation.mutateAsync({
+          traineeCode: uploadCode,
+          docType: uploadDocType,
+          fileBase64: base64,
+          fileName: uploadFile.name,
+          mimeType: uploadFile.type || "application/octet-stream",
+        });
+        setUploadDialog(false);
+        setUploadFile(null);
+        setUploadCode("");
+      };
+      reader.readAsDataURL(uploadFile);
+    } catch { setUploadLoading(false); }
+  };
+
+  const adminUploadMutation = trpc.documents.uploadForAgent.useMutation({
+    onSuccess: () => {
+      utils.documents.listAll.invalidate();
+      toast.success("Document uploaded successfully");
+      setUploadLoading(false);
+    },
+    onError: (e) => { toast.error(e.message); setUploadLoading(false); },
+  });
 
   const reviewMutation = trpc.documents.review.useMutation({
     onSuccess: () => {
@@ -180,8 +218,13 @@ export default function AllDocuments() {
       <div className="p-6 space-y-5">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold">Agent Documents</h1>
-            <p className="text-sm text-muted-foreground mt-0.5">All uploaded documents grouped by agent</p>
+            <div>
+              <h1 className="text-2xl font-bold">Agent Documents</h1>
+              <p className="text-sm text-muted-foreground mt-0.5">All uploaded documents grouped by agent</p>
+            </div>
+            <Button onClick={() => setUploadDialog(true)} className="gap-2">
+              <Upload className="h-4 w-4" /> Upload for Agent
+            </Button>
           </div>
           <Button size="sm" variant="outline" className="gap-1.5" onClick={exportCSV}>
             <Download className="h-3.5 w-3.5" /> Export CSV
@@ -378,6 +421,53 @@ export default function AllDocuments() {
               disabled={reviewMutation.isPending}
             >
               {reviewMutation.isPending ? "Saving..." : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Admin Upload Dialog */}
+      <Dialog open={uploadDialog} onOpenChange={setUploadDialog}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Upload className="h-4 w-4" /> Upload Document for Agent
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium">Agent</label>
+              <select value={uploadCode} onChange={e => setUploadCode(e.target.value)}
+                className="h-9 rounded-md border px-2 text-sm bg-background">
+                <option value="">Select agent…</option>
+                {agentList.map(a => (
+                  <option key={a.traineeCode} value={a.traineeCode}>
+                    {a.alias ?? a.fullName} — {a.traineeCode}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium">Document Type</label>
+              <select value={uploadDocType} onChange={e => setUploadDocType(e.target.value)}
+                className="h-9 rounded-md border px-2 text-sm bg-background">
+                {Object.entries(DOC_TYPE_LABELS).map(([k, v]) => (
+                  <option key={k} value={k}>{v}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium">File</label>
+              <input type="file" accept="image/*,.pdf,.doc,.docx"
+                onChange={e => setUploadFile(e.target.files?.[0] ?? null)}
+                className="text-sm file:mr-3 file:rounded file:border-0 file:bg-primary file:text-primary-foreground file:px-3 file:py-1.5 file:text-xs file:cursor-pointer" />
+              {uploadFile && <p className="text-xs text-muted-foreground">{uploadFile.name} ({(uploadFile.size/1024).toFixed(0)} KB)</p>}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setUploadDialog(false); setUploadFile(null); setUploadCode(""); }}>Cancel</Button>
+            <Button onClick={handleAdminUpload} disabled={!uploadCode || !uploadFile || uploadLoading}>
+              {uploadLoading ? "Uploading…" : "Upload"}
             </Button>
           </DialogFooter>
         </DialogContent>
