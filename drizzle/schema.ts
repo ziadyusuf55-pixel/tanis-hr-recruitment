@@ -254,6 +254,7 @@ export const payrollRecords = mysqlTable("payroll_records", {
   amountPaid: decimal("amountPaid", { precision: 10, scale: 2 }),  // partial pay: amount actually paid so far
   uploadedBy: varchar("uploadedBy", { length: 255 }),
   uploadedAt: bigint("uploadedAt", { mode: "number" }),
+  recordUpdatedAt: bigint("recordUpdatedAt", { mode: "number" }),  // UTC ms — updated on every manual edit, used for optimistic locking
   // legacy fields kept for backward compat
   overtimeHours: decimal("overtimeHours", { precision: 8, scale: 2 }),
   commission: decimal("commission", { precision: 10, scale: 2 }).default("0"),

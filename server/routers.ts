@@ -2747,6 +2747,7 @@ const payrollV2Router = router({
     .input(z.object({
       id: z.number(),
       lastKnownPaidAt: z.number().nullable().optional(),
+      lastKnownRecordUpdatedAt: z.number().nullable().optional(),
       data: z.object({
         baseSalary: z.string().optional(),
         workingHours: z.string().optional(),
@@ -2768,8 +2769,16 @@ const payrollV2Router = router({
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      // Optimistic locking — reject if another admin saved since client loaded
-      if (input.lastKnownPaidAt !== undefined) {
+      // Optimistic locking — recordUpdatedAt is stamped on every edit so it
+      // protects BOTH paid and unpaid records (paidAt=null was blind to unpaid)
+      if (input.lastKnownRecordUpdatedAt !== undefined && input.lastKnownRecordUpdatedAt !== null) {
+        const [cur] = await db.select({ rua: payrollRecords.recordUpdatedAt } as never)
+          .from(payrollRecords).where(eq(payrollRecords.id, input.id)).limit(1) as Array<{ rua: number | null }>;
+        if (cur && cur.rua !== null && cur.rua !== input.lastKnownRecordUpdatedAt) {
+          throw new TRPCError({ code: "CONFLICT", message: "Record was updated by someone else — please refresh and try again." });
+        }
+      } else if (input.lastKnownPaidAt !== undefined) {
+        // Legacy fallback for clients that only send lastKnownPaidAt
         const [cur] = await db.select({ paidAt: payrollRecords.paidAt }).from(payrollRecords).where(eq(payrollRecords.id, input.id)).limit(1);
         if (cur && cur.paidAt !== null && cur.paidAt !== input.lastKnownPaidAt) {
           throw new TRPCError({ code: "CONFLICT", message: "Record was updated by someone else — please refresh and try again." });
@@ -2801,6 +2810,8 @@ const payrollV2Router = router({
           updates.netPay = calcNet.toFixed(2);
         }
       }
+      // Stamp the edit timestamp — used as optimistic lock token on next edit
+      (updates as Record<string, unknown>).recordUpdatedAt = Date.now();
       await db.update(payrollRecords).set(updates).where(eq(payrollRecords.id, input.id));
       await auditEntry(ctx.user, "edit_payroll_record", "payroll", String(input.id), JSON.stringify({ changes: updates }));
       return { success: true };
@@ -5447,7 +5458,7 @@ const commissionRouter = router({
   // Upload commission records from parsed Excel rows
   upload: protectedProcedure
     .input(z.object({
-      paymentCycle: z.string(),
+      paymentCycle: z.string().regex(/^\d{4}-\d{2}$/, "Payment cycle must be YYYY-MM"),
       rows: z.array(z.object({
         crdts: z.string(),
         alias: z.string().optional(),
@@ -5460,11 +5471,16 @@ const commissionRouter = router({
       const { getDb } = await import("./db");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      // Validate: warn if performanceMonth is missing or looks wrong
+      const warnings: { crdts: string; type: string; message: string }[] = [];
+      const hasPerformanceMonth = input.rows.some(r => r.performanceMonth && r.performanceMonth.trim());
+      if (!hasPerformanceMonth) {
+        warnings.push({ crdts: "—", type: "missing_performance_month", message: "No performance month provided — commission rows will store paymentCycle as reference only. Upload the Manus tab from the commission file to include performance months." });
+      }
       const { commissions } = await import("../drizzle/schema");
       const { sql } = await import("drizzle-orm");
       const now = Date.now();
       const uploader = input.uploadedBy || (ctx as { user?: { name?: string } }).user?.name || "admin";
-      const warnings: { crdts: string; type: string; message: string }[] = [];
       let count = 0;
       for (const row of input.rows) {
         if (!row.crdts || row.commissionEgp <= 0) continue;
