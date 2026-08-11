@@ -6947,7 +6947,7 @@ export const appRouter = router({
         const { eq } = await import("drizzle-orm");
         const db = await getDb();
         if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-        const { workforceAgents, slackPingLog, agentCredentials, paymentMethods } = await import("../drizzle/schema");
+        const { workforceAgents, slackPingLog, agentCredentials } = await import("../drizzle/schema");
         const FIVE_DAYS = 5 * 24 * 60 * 60 * 1000;
         const cutoff = Date.now() - FIVE_DAYS;
 

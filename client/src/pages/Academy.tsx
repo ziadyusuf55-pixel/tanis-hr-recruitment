@@ -402,7 +402,6 @@ function SuggestionsTab() {
           ))}
         </div>
       )}
-      {tab === "english" && <EnglishAssessmentAdmin />}
     </div>
   );
 }

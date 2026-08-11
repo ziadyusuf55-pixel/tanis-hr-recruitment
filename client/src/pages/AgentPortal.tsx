@@ -2341,22 +2341,24 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
     );
   }
 
+  if (!data) return null;
+
   const { stats, todayStats, ot, cycleKey, dateRange } = data;
 
   // Today section
-  const todayLoginHours = todayStats?.reduce((s, r) => s + parseFloat(String(r.loginHours ?? 0)), 0) ?? 0;
-  const todayRevenue = todayStats?.reduce((s, r) => s + parseFloat(String(r.revenue ?? 0)), 0) ?? 0;
+  const todayLoginHours = todayStats?.reduce((s: number, r: Record<string,unknown>) => s + parseFloat(String(r.loginHours ?? 0)), 0) ?? 0;
+  const todayRevenue = todayStats?.reduce((s: number, r: Record<string,unknown>) => s + parseFloat(String(r.revenue ?? 0)), 0) ?? 0;
 
   // Cycle totals
-  const cycleLoginHours = stats.reduce((s, r) => s + parseFloat(String(r.loginHours ?? 0)), 0);
-  const cycleRevenue = stats.reduce((s, r) => s + parseFloat(String(r.revenue ?? 0)), 0);
-  const cycleCost = stats.reduce((s, r) => s + parseFloat(String(r.cost ?? 0)), 0);
-  const cycleProfit = stats.reduce((s, r) => s + parseFloat(String(r.profit ?? 0)), 0);
+  const cycleLoginHours = (stats as Record<string,unknown>[]).reduce((s: number, r: Record<string,unknown>) => s + parseFloat(String(r.loginHours ?? 0)), 0);
+  const cycleRevenue = (stats as Record<string,unknown>[]).reduce((s: number, r: Record<string,unknown>) => s + parseFloat(String(r.revenue ?? 0)), 0);
+  const cycleCost = (stats as Record<string,unknown>[]).reduce((s: number, r: Record<string,unknown>) => s + parseFloat(String(r.cost ?? 0)), 0);
+  const cycleProfit = (stats as Record<string,unknown>[]).reduce((s: number, r: Record<string,unknown>) => s + parseFloat(String(r.profit ?? 0)), 0);
   const revenuePerHour = cycleLoginHours > 0 ? cycleRevenue / cycleLoginHours : 0;
 
   // OT totals
-  const totalOTHours = ot.reduce((s, r) => s + parseFloat(String(r.hours ?? 0)), 0);
-  const totalOTEgp = ot.reduce((s, r) => s + parseFloat(String(r.egpAmount ?? 0)), 0);
+  const totalOTHours = (ot as Record<string,unknown>[]).reduce((s: number, r: Record<string,unknown>) => s + parseFloat(String(r.hours ?? 0)), 0);
+  const totalOTEgp = (ot as Record<string,unknown>[]).reduce((s: number, r: Record<string,unknown>) => s + parseFloat(String(r.egpAmount ?? 0)), 0);
 
   const today = new Date().toISOString().slice(0, 10);
 
@@ -2483,7 +2485,7 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
                 </tr>
               </thead>
               <tbody>
-                {ot.map((o, i) => (
+                {(ot as Record<string,unknown>[]).map((o, i) => (
                   <tr key={i} style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
                     <td className="py-2 px-2" style={{ color: theme.textMuted }}>{o.date}</td>
                     <td className="py-2 px-2">
