@@ -94,6 +94,16 @@ export default function Candidates() {
   const [, setLocation] = useLocation();
   const [, navigate] = useLocation();
   const utils = trpc.useUtils();
+  const [showReferrals, setShowReferrals] = useState(false);
+  const { data: allReferrals = [], isLoading: referralsLoading } = trpc.referrals.listAll.useQuery();
+  const createFromRef = trpc.candidates.create.useMutation({
+    onSuccess: (_d, v) => { utils.referrals.listAll.invalidate(); toast.success(`"${v.name}" added to pipeline`); },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+  const updateRefStatus = trpc.referrals.updateStatus.useMutation({
+    onSuccess: () => utils.referrals.listAll.invalidate(),
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
   const { data: candidates, isLoading } = trpc.candidates.list.useQuery();
 
   const createCandidate = trpc.candidates.create.useMutation({
@@ -589,6 +599,11 @@ export default function Candidates() {
         <button onClick={() => setLocation("/former-agents")} className="text-xs px-3 py-1.5 rounded-full border border-dashed text-muted-foreground hover:text-foreground hover:border-foreground transition-colors flex items-center gap-1.5">
           Full Former Agent Records →
         </button>
+        <button
+          onClick={() => { setShowReferrals(!showReferrals); setShowRejected(false); setShowSeparated(false); clearSelection(); }}
+          className={`text-xs px-3 py-1.5 rounded-full border ${showReferrals ? "bg-foreground text-background border-foreground" : "text-muted-foreground border-muted-foreground/30"}`}>
+          Referrals{(allReferrals as unknown[]).length > 0 ? ` (${(allReferrals as unknown[]).length})` : ""}
+        </button>
         {!showRejected && (
           <Tabs value={view} onValueChange={(v) => { setView(v as "board" | "list"); clearSelection(); }}>
             <TabsList className="h-9">
@@ -658,7 +673,59 @@ export default function Candidates() {
       )}
 
       {/* Content */}
-      {isLoading ? (
+      {showReferrals ? (
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">{(allReferrals as unknown[]).length} referral{(allReferrals as unknown[]).length !== 1 ? "s" : ""} submitted by agents</p>
+          {referralsLoading ? <p className="text-sm text-muted-foreground py-4 text-center">Loading…</p> : (
+            <div className="rounded-xl border overflow-hidden">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b bg-muted/30">
+                  <th className="px-3 py-2 text-left">Referred By</th>
+                  <th className="px-3 py-2 text-left">Candidate</th>
+                  <th className="px-3 py-2 text-left">Phone</th>
+                  <th className="px-3 py-2 text-left">Note</th>
+                  <th className="px-3 py-2 text-center">Status</th>
+                  <th className="px-3 py-2"></th>
+                </tr></thead>
+                <tbody>
+                  {(allReferrals as Array<Record<string,unknown>>).map((r, idx) => (
+                    <tr key={idx} className="border-b last:border-0">
+                      <td className="px-3 py-2 text-muted-foreground text-xs">{String(r.referrerName ?? "—")}</td>
+                      <td className="px-3 py-2 font-medium">{String(r.refereeName ?? "—")}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{String(r.refereePhone ?? "—")}</td>
+                      <td className="px-3 py-2 text-muted-foreground text-xs max-w-48 truncate">{String(r.refereeNote ?? "—")}</td>
+                      <td className="px-3 py-2 text-center">
+                        <select value={String(r.status ?? "pending")}
+                          onChange={e => updateRefStatus.mutate({ id: Number(r.id), status: e.target.value as "pending"|"contacted"|"hired"|"rejected" })}
+                          className="text-xs border rounded px-1.5 py-0.5 bg-background">
+                          <option value="pending">Pending</option>
+                          <option value="contacted">Contacted</option>
+                          <option value="hired">Hired</option>
+                          <option value="rejected">Not Hired</option>
+                        </select>
+                      </td>
+                      <td className="px-3 py-2">
+                        {r.createdCandidateId ? (
+                          <span className="text-xs text-green-600 font-medium">✓ In pipeline</span>
+                        ) : (
+                          <Button size="sm" variant="outline" className="h-7 text-xs"
+                            disabled={createFromRef.isPending}
+                            onClick={() => createFromRef.mutate({ name: String(r.refereeName ?? ""), phone: String(r.refereePhone ?? ""), source: "referral", notes: `Referred by ${String(r.referrerName ?? "agent")}. ${String(r.refereeNote ?? "")}`.trim() })}>
+                            + Add to pipeline
+                          </Button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                  {(allReferrals as unknown[]).length === 0 && (
+                    <tr><td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">No referrals yet</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      ) : isLoading ? (
         <div className="grid grid-cols-3 gap-4">
           {[1, 2, 3].map((i) => <Skeleton key={i} className="h-64 rounded-xl" />)}
         </div>
