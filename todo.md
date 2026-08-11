@@ -1047,3 +1047,9 @@
 - [ ] OAuth callback: detect invite token in state, promote user to admin after login
 - [ ] Admin Team page: shows current admins list + Generate Invite Link button + invite history
 - [ ] Invite link landing: /admin-invite?token=xxx — auto-uses token after OAuth login
+
+## Deployment Verification
+- [x] Verify client/src/pages/Candidates.tsx contains showReferrals before publishing the current GitHub sync
+- [x] Re-verify showReferrals in Candidates.tsx after the latest GitHub pull before publishing
+- [x] Pull the latest GitHub changes and confirm npx tsc --noEmit reports zero errors before publishing
+- [x] Re-run npx tsc --noEmit after the latest GitHub fix and publish only if it reports zero errors
