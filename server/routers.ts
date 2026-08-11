@@ -6975,8 +6975,8 @@ export const appRouter = router({
             .filter(a => (lastPing.get(a.traineeCode) ?? 0) < cutoff)
             .map(a => ({ traineeCode: a.traineeCode, fullName: a.fullName, email: a.email }));
         } else {
-          const withPayment = await db.select({ traineeCode: paymentMethods.traineeCode }).from(paymentMethods);
-          const withSet = new Set(withPayment.map(p => p.traineeCode));
+          // paymentMethods table not yet implemented — treat all agents as needing payment info ping
+          const withSet = new Set<string>();
           targets = activeAgents
             .filter(a => !withSet.has(a.traineeCode) && (credMap.get(a.traineeCode) ?? 0) < cutoff)
             .filter(a => (lastPing.get(a.traineeCode) ?? 0) < cutoff)

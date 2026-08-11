@@ -2487,9 +2487,9 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
               <tbody>
                 {(ot as Record<string,unknown>[]).map((o, i) => (
                   <tr key={i} style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
-                    <td className="py-2 px-2" style={{ color: theme.textMuted }}>{o.date}</td>
+                    <td className="py-2 px-2" style={{ color: theme.textMuted }}>{String(o.date ?? "")}</td>
                     <td className="py-2 px-2">
-                      <span className="px-1.5 py-0.5 rounded text-xs font-medium" style={{ background: "oklch(0.55 0.18 145 / 0.15)", color: "oklch(0.55 0.18 145)" }}>{o.otType}</span>
+                      <span className="px-1.5 py-0.5 rounded text-xs font-medium" style={{ background: "oklch(0.55 0.18 145 / 0.15)", color: "oklch(0.55 0.18 145)" }}>{String(o.otType ?? "")}</span>
                     </td>
                     <td className="py-2 px-2" style={{ color: theme.textMuted }}>{fmtHM(parseFloat(String(o.hours ?? 0)))}</td>
                     <td className="py-2 px-2 font-medium" style={{ color: "oklch(0.55 0.18 145)" }}>+EGP {parseFloat(String(o.egpAmount ?? 0)).toLocaleString()}</td>
