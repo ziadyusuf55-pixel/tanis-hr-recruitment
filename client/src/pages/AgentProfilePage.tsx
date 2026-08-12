@@ -439,10 +439,18 @@ export default function AgentProfilePage() {
       {/* ── Documents Tab ─────────────────────────────────────────────────── */}
       {activeTab === "documents" && (
         <div className="space-y-3">
+          <div className="flex items-center justify-between mb-3">
+            <p className="text-xs text-muted-foreground">{documents.length} document{documents.length !== 1 ? "s" : ""}</p>
+            <Button size="sm" variant="outline" className="gap-1.5 text-xs h-8"
+              onClick={() => { window.location.href = `/documents?agent=${agent.traineeCode}`; }}>
+              <FileText className="h-3 w-3" /> Upload Document
+            </Button>
+          </div>
           {documents.length === 0 ? (
             <div className="text-center py-12 text-muted-foreground">
               <FileText className="h-10 w-10 mx-auto mb-3 opacity-30" />
               <p className="text-sm">No documents uploaded yet.</p>
+              <p className="text-xs mt-1">Use the Upload button above to add documents for this agent.</p>
             </div>
           ) : (
             documents.map(doc => (
@@ -574,7 +582,7 @@ export default function AgentProfilePage() {
 
       {/* ── Coaching Tab ──────────────────────────────────────────────────── */}
       {activeTab === "coaching" && (
-        <CoachingTab crdts={agent.crdts ?? ""} navigate={navigate} />
+        <CoachingTab crdts={agent.crdts ?? ""} traineeCode={agent.traineeCode ?? ""} navigate={navigate} />
       )}
 
       {/* ── History Tab ───────────────────────────────────────────────────────────────────── */}
@@ -993,10 +1001,17 @@ export default function AgentProfilePage() {
 
 // ─── CoachingTab ─────────────────────────────────────────────────────────────
 
-function CoachingTab({ crdts, navigate }: { crdts: string; navigate: (path: string) => void }) {
+function CoachingTab({ crdts, traineeCode, navigate }: { crdts: string; traineeCode: string; navigate: (path: string) => void }) {
+  // Use CRDTS if available, fall back to traineeCode for agents without a dialer ID
+  const queryId = crdts || traineeCode;
   const { data: sessions = [], isLoading } = trpc.coaching.listByCrdts.useQuery(
-    { crdts },
-    { enabled: !!crdts }
+    { crdts: queryId },
+    { enabled: !!queryId }
+  );
+  if (!queryId) return (
+    <div className="py-10 text-center text-sm text-muted-foreground">
+      No CRDTS assigned yet — coaching data will appear once the agent is linked to the dialer.
+    </div>
   );
 
   const STATUS_COLORS: Record<string, string> = {

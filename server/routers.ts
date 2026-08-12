@@ -6112,18 +6112,26 @@ async function assertBdDealOwnership(ctx: { user?: { role?: string; openId?: str
   const hubRole = ctx.user?.role;
   if (hubRole !== "bd") return; // admins & staff roles keep full control
   const openId = ctx.user?.openId;
+  if (!openId) throw new TRPCError({ code: "UNAUTHORIZED", message: "No authenticated user" });
   const { getDb } = await import("./db");
-  const { eq } = await import("drizzle-orm");
+  const { eq, sql: rawSql } = await import("drizzle-orm");
   const db = await getDb();
   if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
   const { bdUsers, bdDeals } = await import("../drizzle/schema");
-  const linked = openId ? await db.select().from(bdUsers).where(eq(bdUsers.openId, openId)).limit(1) : [];
-  if (!linked[0]) throw new TRPCError({ code: "FORBIDDEN", message: "Link your BD profile first" });
-  const [deal] = await db.select().from(bdDeals).where(eq(bdDeals.id, dealId)).limit(1);
-  if (!deal) throw new TRPCError({ code: "NOT_FOUND", message: "Deal not found" });
-  if (deal.ownerId !== linked[0].id) {
-    const [owner] = await db.select().from(bdUsers).where(eq(bdUsers.id, deal.ownerId)).limit(1);
-    throw new TRPCError({ code: "FORBIDDEN", message: `View-only: this deal belongs to ${owner?.name ?? "another BD user"}` });
+  // Single atomic join query — eliminates the read/check race condition
+  // where deal ownership could change between the two separate reads
+  const [result] = await db.select({
+    dealOwnerId: bdDeals.ownerId,
+    requesterId: bdUsers.id,
+    ownerName: rawSql<string>`(SELECT name FROM bd_users WHERE id = ${bdDeals.ownerId})`,
+  }).from(bdDeals)
+    .leftJoin(bdUsers, eq(bdUsers.openId, openId))
+    .where(eq(bdDeals.id, dealId))
+    .limit(1);
+  if (!result) throw new TRPCError({ code: "NOT_FOUND", message: "Deal not found" });
+  if (!result.requesterId) throw new TRPCError({ code: "FORBIDDEN", message: "Link your BD profile first" });
+  if (result.dealOwnerId !== result.requesterId) {
+    throw new TRPCError({ code: "FORBIDDEN", message: `View-only: this deal belongs to ${result.ownerName ?? "another BD user"}` });
   }
 }
 

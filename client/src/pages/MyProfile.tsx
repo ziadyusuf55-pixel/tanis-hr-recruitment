@@ -47,7 +47,7 @@ export default function MyProfile() {
       <div className="p-6 max-w-lg">
         <Card><CardContent className="p-6 text-center space-y-2">
           <UserCircle className="w-9 h-9 mx-auto text-muted-foreground/50" />
-          <p className="text-sm font-medium">Your login isn't linked to an employee record yet.</p>
+          <p className="text-sm font-medium">Your login isn't linked to a profile yet.</p>
           <p className="text-xs text-muted-foreground">
             Ask an owner to link you in Settings → Management. Once linked, you can edit your details here.
           </p>
@@ -57,6 +57,11 @@ export default function MyProfile() {
   }
 
   const m = me as unknown as Record<string, string | null>;
+  const isAdminSource = (me as unknown as Record<string, unknown>)._source === "admin";
+  // Normalise fields for both workforce and admin sources
+  const displayName = m.fullName || m.name || m.alias || "—";
+  const displayEmail = m.email || "—";
+  const displayRole = m.role || m.employeeType || m.jobTitle || "—";
   const F = ({ label, k, type = "text" }: { label: string; k: keyof typeof f; type?: string }) => (
     <div>
       <p className="text-xs text-muted-foreground mb-1">{label}</p>
@@ -77,15 +82,15 @@ export default function MyProfile() {
       <Card><CardContent className="p-4">
         <div className="flex flex-wrap items-center gap-3">
           <div className="h-11 w-11 rounded-full flex items-center justify-center text-white font-bold" style={{ background: BRAND }}>
-            {(m.fullName || m.alias || "?").charAt(0).toUpperCase()}
+            {displayName.charAt(0).toUpperCase()}
           </div>
           <div className="min-w-0">
-            <p className="font-semibold">{m.fullName || m.alias}</p>
-            <p className="text-xs text-muted-foreground">{m.email || "—"}</p>
+            <p className="font-semibold">{displayName}</p>
+            <p className="text-xs text-muted-foreground">{displayEmail}</p>
           </div>
           <div className="ml-auto flex gap-1.5">
-            {m.jobTitle && <Badge variant="outline">{m.jobTitle}</Badge>}
-            {m.employeeType && <Badge variant="outline">{String(m.employeeType).replace(/_/g, " ")}</Badge>}
+            <Badge variant="outline">{displayRole}</Badge>
+            {isAdminSource && <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">Admin Account</Badge>}
           </div>
         </div>
         <p className="text-[11px] text-muted-foreground mt-3">
@@ -96,14 +101,19 @@ export default function MyProfile() {
       {/* Editable */}
       <Card><CardContent className="p-4 space-y-3">
         <p className="text-sm font-semibold">Personal details</p>
+        {isAdminSource && (
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+            Admin accounts have limited profile fields. Full HR profile is managed via Settings → Management.
+          </p>
+        )}
         <div className="grid sm:grid-cols-2 gap-3">
           <F label="Phone" k="phone" />
-          <F label="City" k="city" />
-          <F label="Date of birth" k="dateOfBirth" type="date" />
-          <div className="sm:col-span-2">
+          {!isAdminSource && <F label="City" k="city" />}
+          {!isAdminSource && <F label="Date of birth" k="dateOfBirth" type="date" />}
+          {!isAdminSource && <div className="sm:col-span-2">
             <p className="text-xs text-muted-foreground mb-1">Address</p>
             <Input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} />
-          </div>
+          </div>}
         </div>
 
         <p className="text-sm font-semibold pt-2">Emergency contact <span className="font-normal text-muted-foreground">· جهة اتصال للطوارئ</span></p>
