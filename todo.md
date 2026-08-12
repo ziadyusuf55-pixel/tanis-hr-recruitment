@@ -1064,3 +1064,6 @@
 
 ## Payroll Records Repair
 - [x] Add payroll_records.recordUpdatedAt as nullable BIGINT, verify the schema, and run TypeScript validation before publishing
+
+## Deployment Verification
+- [x] Pull latest changes with no migration and confirm npx tsc --noEmit succeeds before publishing
