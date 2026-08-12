@@ -901,7 +901,8 @@ export type InsertCoachingCaseStatusLog = typeof coachingCaseStatusLog.$inferIns
  */
 export const integrationsTokens = mysqlTable("integrations_tokens", {
   id:           int("id").autoincrement().primaryKey(),
-  provider:     varchar("provider", { length: 50 }).notNull().unique(),
+  provider:     varchar("provider", { length: 50 }).notNull(),
+  userId:       varchar("userId", { length: 64 }),   // openId of the user who connected — NULL = legacy shared token
   accessToken:  text("access_token").notNull(),
   refreshToken: text("refresh_token"),
   expiresAt:    bigint("expires_at", { mode: "number" }),

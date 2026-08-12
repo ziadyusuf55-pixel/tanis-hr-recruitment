@@ -137,12 +137,18 @@ async function startServer() {
   app.get("/api/oauth/google", (req, res) => {
     // Get frontend origin from query param (passed by frontend)
     const origin = (req.query.origin as string) || "";
+    const incomingState = req.query.state as string | undefined;
     const redirectUri = `${origin}/api/oauth/google/callback`;
     const scopes = [
       "https://www.googleapis.com/auth/calendar.readonly",
       "https://www.googleapis.com/auth/userinfo.email",
     ].join(" ");
-    const state = Buffer.from(JSON.stringify({ origin })).toString("base64");
+    // Preserve userId from frontend state if provided, otherwise build fresh state
+    let stateObj: Record<string, string> = { origin };
+    if (incomingState) {
+      try { stateObj = { ...JSON.parse(Buffer.from(incomingState, "base64").toString()), origin }; } catch {}
+    }
+    const state = Buffer.from(JSON.stringify(stateObj)).toString("base64");
     const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
     authUrl.searchParams.set("client_id", process.env.GOOGLE_CLIENT_ID ?? "");
     authUrl.searchParams.set("redirect_uri", redirectUri);
@@ -161,7 +167,11 @@ async function startServer() {
       const stateRaw = req.query.state as string;
       if (!code) { res.status(400).send("Missing code"); return; }
       let origin = "";
-      try { origin = JSON.parse(Buffer.from(stateRaw, "base64").toString()).origin; } catch {}
+      let stateParam: Record<string, string> = {};
+      try {
+        stateParam = JSON.parse(Buffer.from(stateRaw, "base64").toString());
+        origin = stateParam.origin ?? "";
+      } catch {}
       const redirectUri = `${origin}/api/oauth/google/callback`;
 
       // Exchange code for tokens
@@ -182,16 +192,18 @@ async function startServer() {
         return;
       }
 
-      // Store tokens in DB
+      // Store tokens in DB — keyed per user so each admin has their own calendar connection
       const { getDb } = await import("../db");
       const db = await getDb();
       if (db) {
         const { integrationsTokens } = await import("../../drizzle/schema");
         const { sql } = await import("drizzle-orm");
         const now = Date.now();
+        // Extract userId from state param (passed in OAuth initiation URL)
+        const userId = stateParam?.userId ?? null;
         await db.execute(sql`
-          INSERT INTO integrations_tokens (provider, access_token, refresh_token, expires_at, scope, created_at, updated_at)
-          VALUES ('google', ${tokenData.access_token}, ${tokenData.refresh_token ?? null}, ${now + (tokenData.expires_in ?? 3600) * 1000}, ${tokenData.scope ?? null}, ${now}, ${now})
+          INSERT INTO integrations_tokens (provider, userId, access_token, refresh_token, expires_at, scope, created_at, updated_at)
+          VALUES ('google', ${userId}, ${tokenData.access_token}, ${tokenData.refresh_token ?? null}, ${now + (tokenData.expires_in ?? 3600) * 1000}, ${tokenData.scope ?? null}, ${now}, ${now})
           ON DUPLICATE KEY UPDATE
             access_token = VALUES(access_token),
             refresh_token = COALESCE(VALUES(refresh_token), refresh_token),

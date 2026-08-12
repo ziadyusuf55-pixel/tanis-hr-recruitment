@@ -1260,7 +1260,17 @@ function PipelineBoard({
         return (
           <div key={stage} className={`flex-shrink-0 rounded-xl border flex flex-col transition-all ${
             isHidden ? "w-12 " + STAGE_BG[stage] : "w-64 " + STAGE_BG[stage]
-          }`}>
+          }`}
+            onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; (e.currentTarget as HTMLElement).style.outline = "2px solid #6366f1"; }}
+            onDragLeave={(e) => { (e.currentTarget as HTMLElement).style.outline = ""; }}
+            onDrop={(e) => {
+              e.preventDefault();
+              (e.currentTarget as HTMLElement).style.outline = "";
+              const id = parseInt(e.dataTransfer.getData("candidateId"));
+              const from = e.dataTransfer.getData("fromStage") as PipelineStage;
+              if (!isNaN(id) && from !== stage) onMoveStage(id, stage);
+            }}
+          >
             {isHidden ? (
               // Collapsed column — vertical label + count
               <button
@@ -1360,6 +1370,12 @@ function CandidateCard({
     <div
       className={`bg-white rounded-lg p-3 shadow-sm border transition-all group cursor-pointer hover:shadow-md ${isSelected ? "border-primary/50 ring-1 ring-primary/20" : "border-white/80"}`}
       onClick={onClick}
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData("candidateId", String(candidate.id));
+        e.dataTransfer.setData("fromStage", currentStage);
+        e.dataTransfer.effectAllowed = "move";
+      }}
     >
       <div className="flex items-start gap-2.5">
         {/* Checkbox */}

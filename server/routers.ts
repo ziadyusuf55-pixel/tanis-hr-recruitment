@@ -432,8 +432,11 @@ const candidatesRouter = router({
       }))
       .mutation(async ({ input, ctx }) => {
         await updateCandidateStatus(input.id, input.status);
-        // WhatsApp group cascade: if moving away from whatsapp_group_added, remove from batch
-        if (input.fromStage === "whatsapp_group_added" && input.status !== "whatsapp_group_added") {
+        // Cascade: remove from batch when moving away from whatsapp_group_added OR when rejected/blacklisted
+        const removeFromBatchStages = ["whatsapp_group_added"];
+        const shouldRemove = (input.fromStage && removeFromBatchStages.includes(input.fromStage) && !removeFromBatchStages.includes(input.status))
+          || ["rejected", "blacklisted"].includes(input.status);
+        if (shouldRemove) {
           const batch = await getCandidateBatch(input.id);
           if (batch) {
             await removeCandidateFromBatch(batch.id, input.id);
@@ -1825,11 +1828,25 @@ const workforceRouter = router({
         }).from(waTable).where(eqGuard(waTable.traineeCode, input.traineeCode)).limit(1);
         if (existing.length > 0) {
           const ex = existing[0];
-          const statusLabel = ex.agentStatus === "resigned" ? "resigned" : ex.agentStatus === "terminated" ? "terminated" : ex.isActive ? "active" : "inactive";
-          throw new TRPCError({
-            code: "CONFLICT",
-            message: `"${input.traineeCode}" is already assigned to ${ex.fullName} (${statusLabel}). This ID cannot be reused — agent IDs are permanently retired.`,
-          });
+          const isInactive = ex.agentStatus === "resigned" || ex.agentStatus === "terminated" || ex.agentStatus === "inactive";
+          if (!isInactive) {
+            // Active agent — hard block
+            throw new TRPCError({
+              code: "CONFLICT",
+              message: `"${input.traineeCode}" is already assigned to an active agent (${ex.fullName}). Free the T-code first.`,
+            });
+          }
+          // Inactive/terminated/resigned — allow restore: update existing record instead of inserting
+          const { eq: eqUpd } = await import("drizzle-orm");
+          await dbGuard.update(waTable).set({
+            fullName: input.fullName ?? ex.fullName,
+            alias: (input as Record<string,unknown>).alias as string ?? null,
+            agentStatus: "active",
+            isActive: true,
+            campaignId: (input as Record<string,unknown>).campaignId as number ?? null,
+          }).where(eqUpd(waTable.traineeCode, input.traineeCode));
+          // Skip the createWorkforceAgent call below — record already updated
+          return { restored: true, traineeCode: input.traineeCode };
         }
         // Also check agentCredentials to catch soft-deleted agents
         const { agentCredentials: acTable } = await import("../drizzle/schema");
@@ -1975,7 +1992,20 @@ const workforceRouter = router({
   getAgentFullProfile: protectedProcedure
     .input(z.object({ traineeCode: z.string() }))
     .query(async ({ input }) => {
-      const agent = await getWorkforceAgentByCode(input.traineeCode);
+      // traineeCode may actually be a CRDTS (6-digit number) if the agent has no T-code
+      let agent = await getWorkforceAgentByCode(input.traineeCode);
+      if (!agent) {
+        // Try looking up by CRDTS as fallback
+        const { getDb } = await import("./db");
+        const { workforceAgents } = await import("../drizzle/schema");
+        const { eq } = await import("drizzle-orm");
+        const db = await getDb();
+        if (db) {
+          const [row] = await db.select({ traineeCode: workforceAgents.traineeCode })
+            .from(workforceAgents).where(eq(workforceAgents.crdts, input.traineeCode)).limit(1);
+          if (row?.traineeCode) agent = await getWorkforceAgentByCode(row.traineeCode);
+        }
+      }
       if (!agent) return null;
       const [documents, paymentMethods, comments] = await Promise.all([
         getDocumentsByCode(input.traineeCode),

@@ -220,8 +220,14 @@ export default function AgentProfilePage() {
 
   if (!profile) {
     return (
-      <div className="p-8 text-center">
-        <p className="text-muted-foreground">Agent not found.</p>
+      <div className="p-8 text-center space-y-3">
+        <p className="font-semibold text-foreground">Agent not found</p>
+        <p className="text-sm text-muted-foreground">
+          No agent record found for ID: <code className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono">{traineeCode}</code>
+        </p>
+        <p className="text-xs text-muted-foreground">
+          This can happen if the agent has no T-code assigned yet, or was recently added. Try editing the agent in Operations to assign a T-code or CRDTS.
+        </p>
         <Button variant="outline" className="mt-4" onClick={() => navigate("/operations")}>
           <ArrowLeft className="h-4 w-4 mr-2" /> Back to Operations
         </Button>

@@ -563,7 +563,10 @@ function IntegrationsSection() {
 
   const handleConnectGoogle = () => {
     const origin = window.location.origin;
-    window.location.href = `/api/oauth/google?origin=${encodeURIComponent(origin)}`;
+    // userId passed in state so token is stored per-user (not shared)
+    const meData = (window as unknown as Record<string,unknown>).__tanis_user_openId as string | undefined;
+    const state = btoa(JSON.stringify({ origin, userId: meData ?? "" }));
+    window.location.href = `/api/oauth/google?origin=${encodeURIComponent(origin)}&state=${encodeURIComponent(state)}`;
   };
 
   return (

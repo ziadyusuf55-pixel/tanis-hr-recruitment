@@ -1316,7 +1316,7 @@ export default function Operations() {
                 </thead>
                 <tbody className="divide-y">
                   {filteredAgents.map(agent => (
-                    <tr key={agent.traineeCode} className="hover:bg-muted/20 transition-colors cursor-pointer" onClick={() => navigate(`/operations/agents/${agent.traineeCode}`)}>
+                    <tr key={agent.traineeCode ?? agent.crdts} className="hover:bg-muted/20 transition-colors cursor-pointer" onClick={() => { const id = agent.traineeCode || agent.crdts; if (id) navigate(`/operations/agents/${encodeURIComponent(String(id))}`); else toast.error("Agent has no ID — edit the agent to assign a T-code or CRDTS first."); }}>
                       <td className="px-4 py-3">
                         <div className="font-medium">{agent.fullName}</div>
                         <div className="flex items-center gap-1.5 mt-0.5">
