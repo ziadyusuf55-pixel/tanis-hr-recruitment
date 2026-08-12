@@ -1992,25 +1992,38 @@ const workforceRouter = router({
   getAgentFullProfile: protectedProcedure
     .input(z.object({ traineeCode: z.string() }))
     .query(async ({ input }) => {
-      // traineeCode may actually be a CRDTS (6-digit number) if the agent has no T-code
-      let agent = await getWorkforceAgentByCode(input.traineeCode);
+      const lookup = decodeURIComponent(input.traineeCode).trim();
+      // Try exact traineeCode match first
+      let agent = await getWorkforceAgentByCode(lookup);
       if (!agent) {
-        // Try looking up by CRDTS as fallback
         const { getDb } = await import("./db");
         const { workforceAgents } = await import("../drizzle/schema");
-        const { eq } = await import("drizzle-orm");
+        const { eq, like } = await import("drizzle-orm");
         const db = await getDb();
         if (db) {
-          const [row] = await db.select({ traineeCode: workforceAgents.traineeCode })
-            .from(workforceAgents).where(eq(workforceAgents.crdts, input.traineeCode)).limit(1);
-          if (row?.traineeCode) agent = await getWorkforceAgentByCode(row.traineeCode);
+          // Try CRDTS match (agent clicked by CRDTS instead of T-code)
+          const [byCrdts] = await db.select({ traineeCode: workforceAgents.traineeCode })
+            .from(workforceAgents).where(eq(workforceAgents.crdts, lookup)).limit(1);
+          if (byCrdts?.traineeCode) {
+            agent = await getWorkforceAgentByCode(byCrdts.traineeCode);
+          }
+          // Try case-insensitive / trimmed match (handles encoding differences)
+          if (!agent) {
+            const [byLike] = await db.select({ traineeCode: workforceAgents.traineeCode })
+              .from(workforceAgents).where(like(workforceAgents.traineeCode, lookup)).limit(1);
+            if (byLike?.traineeCode) {
+              agent = await getWorkforceAgentByCode(byLike.traineeCode);
+            }
+          }
         }
       }
       if (!agent) return null;
+      // Use the resolved traineeCode for sub-queries
+      const resolvedCode = agent.traineeCode ?? lookup;
       const [documents, paymentMethods, comments] = await Promise.all([
-        getDocumentsByCode(input.traineeCode),
-        getPaymentMethodsByCode(input.traineeCode),
-        getCommentsByCode(input.traineeCode),
+        getDocumentsByCode(resolvedCode),
+        getPaymentMethodsByCode(resolvedCode),
+        getCommentsByCode(resolvedCode),
       ]);
       const [candidate, payroll] = await Promise.all([
         agent.candidateId ? getCandidateById(agent.candidateId) : Promise.resolve(undefined),
