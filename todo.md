@@ -1056,3 +1056,11 @@
 - [x] Pull the latest GitHub changes, apply the new schema migration, and confirm npx tsc --noEmit reports zero errors before publishing
 - [x] Pull the latest GitHub changes with no migration and confirm npx tsc --noEmit reports zero errors before publishing
 - [x] Pull the latest GitHub changes with no migration and re-run npx tsc --noEmit before publishing
+
+## Temporary Debugging
+- [x] Add and capture temporary getAgentFullProfile lookup diagnostics for T-51
+- [x] Remove the confirmed malformed workforce_agents header row where traineeCode is traineeCode
+- [x] Remove the temporary getAgentFullProfile lookup diagnostics after capture
+
+## Payroll Records Repair
+- [x] Add payroll_records.recordUpdatedAt as nullable BIGINT, verify the schema, and run TypeScript validation before publishing
