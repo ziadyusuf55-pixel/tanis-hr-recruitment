@@ -91,11 +91,26 @@ export function ViolationTracker({
       </div>
 
       <div className="flex flex-wrap gap-2 items-center">
-        <select className="border rounded-md px-2 py-1.5 text-sm bg-background"
-          value={month} onChange={e => setMonth(e.target.value)}>
-          {months.length === 0 && <option value={month}>{monthLabel(month)}</option>}
-          {months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
-        </select>
+        <div className="inline-flex rounded-lg border overflow-hidden">
+          {([["month","Calendar Month"],["cycle","Pay Cycle"],["all","All Time"]] as const).map(([id, label]) => (
+            <button key={id} onClick={() => setViewMode(id)}
+              className={`px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === id ? "bg-foreground text-background" : "text-muted-foreground"}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        {viewMode === "month" && (
+          <select className="border rounded-md px-2 py-1.5 text-sm bg-background" value={month} onChange={e => setMonth(e.target.value)}>
+            {months.length === 0 && <option value={month}>{monthLabel(month)}</option>}
+            {months.map(m => <option key={m} value={m}>{monthLabel(m)}</option>)}
+          </select>
+        )}
+        {viewMode === "cycle" && (
+          <select className="border rounded-md px-2 py-1.5 text-sm bg-background" value={cycle} onChange={e => setCycle(e.target.value)}>
+            {cycles.map(c => <option key={c} value={c}>{monthLabel(c)} cycle</option>)}
+          </select>
+        )}
+        {viewMode === "all" && <span className="text-xs text-muted-foreground">Showing all {(all as ViolationRow[]).length} records</span>}
         <div className="relative flex-1 min-w-[200px] max-w-xs">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input className="pl-8 h-9" placeholder="Agent, CRDTS or type…" value={q} onChange={e => setQ(e.target.value)} />

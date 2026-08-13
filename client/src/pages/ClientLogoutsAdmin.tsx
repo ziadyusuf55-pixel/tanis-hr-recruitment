@@ -296,17 +296,28 @@ export default function ClientLogoutsAdmin() {
                 <p className="text-sm">No client logouts for {formatMonthLabel(selectedCycle)}.</p>
               </div>
             ) : (
-              <div className="space-y-3">
-                <p className="text-sm text-muted-foreground">
-                  {logoutsByCycle.length} logout{logoutsByCycle.length !== 1 ? "s" : ""} across {Object.keys(groupedByAgent).length} agent{Object.keys(groupedByAgent).length !== 1 ? "s" : ""}
-                </p>
+              <div className="space-y-4">
+                {/* Summary stats */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="rounded-lg bg-muted/40 p-3 text-center">
+                    <p className="text-2xl font-bold">{logoutsByCycle.length}</p>
+                    <p className="text-xs text-muted-foreground">Total logouts</p>
+                  </div>
+                  <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-center">
+                    <p className="text-2xl font-bold text-amber-700">{Object.values(groupedByAgent).filter(a => a.dates.length === 3).length}</p>
+                    <p className="text-xs text-amber-600">Warning (3×)</p>
+                  </div>
+                  <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-center">
+                    <p className="text-2xl font-bold text-red-700">{Object.values(groupedByAgent).filter(a => a.dates.length >= 4).length}</p>
+                    <p className="text-xs text-red-600">Critical (4+)</p>
+                  </div>
+                </div>
                 <div className="overflow-x-auto border rounded-md">
                   <table className="w-full text-sm">
                     <thead className="bg-muted/50">
                       <tr className="border-b">
-                        <th className="text-left px-4 py-2.5 font-medium">CRDTS</th>
-                        <th className="text-left px-4 py-2.5 font-medium">Alias</th>
-                        <th className="text-left px-4 py-2.5 font-medium">Agent Code</th>
+                        <th className="text-left px-4 py-2.5 font-medium">Agent</th>
+                        <th className="text-left px-4 py-2.5 font-medium">Risk</th>
                         <th className="text-left px-4 py-2.5 font-medium">Dates</th>
                         <th className="text-right px-4 py-2.5 font-medium">Count</th>
                       </tr>
@@ -314,25 +325,36 @@ export default function ClientLogoutsAdmin() {
                     <tbody className="divide-y">
                       {Object.entries(groupedByAgent)
                         .sort((a, b) => b[1].dates.length - a[1].dates.length)
-                        .map(([crdts, info]) => (
-                          <tr key={crdts} className="hover:bg-muted/20">
-                            <td className="px-4 py-2.5 font-mono text-xs">{crdts}</td>
-                            <td className="px-4 py-2.5">{info.alias || "—"}</td>
-                            <td className="px-4 py-2.5 text-muted-foreground text-xs">{info.agentCode || "—"}</td>
-                            <td className="px-4 py-2.5">
-                              <div className="flex flex-wrap gap-1">
-                                {info.dates.sort().map((d, i) => (
-                                  <Badge key={i} variant="destructive" className="text-xs font-mono px-1.5 py-0">
-                                    {d}
-                                  </Badge>
-                                ))}
-                              </div>
-                            </td>
-                            <td className="px-4 py-2.5 text-right">
-                              <Badge variant="secondary" className="font-bold">{info.dates.length}</Badge>
-                            </td>
-                          </tr>
-                        ))}
+                        .map(([crdts, info]) => {
+                          const n = info.dates.length;
+                          const risk = n >= 4 ? "critical" : n === 3 ? "warning" : "ok";
+                          const riskStyle = risk === "critical" ? "bg-red-100 text-red-700 border-red-200" : risk === "warning" ? "bg-amber-100 text-amber-700 border-amber-200" : "bg-muted text-muted-foreground border-border";
+                          return (
+                            <tr key={crdts} className={`hover:bg-muted/20 ${risk === "critical" ? "bg-red-50/30" : ""}`}>
+                              <td className="px-4 py-2.5">
+                                <p className="font-medium">{info.alias || "—"}</p>
+                                <p className="text-xs text-muted-foreground font-mono">{crdts}{info.agentCode ? ` · ${info.agentCode}` : ""}</p>
+                              </td>
+                              <td className="px-4 py-2.5">
+                                <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${riskStyle}`}>
+                                  {risk === "critical" ? "🔴 Critical" : risk === "warning" ? "🟡 Warning" : "✓ OK"}
+                                </span>
+                              </td>
+                              <td className="px-4 py-2.5">
+                                <div className="flex flex-wrap gap-1">
+                                  {info.dates.sort().map((d, i) => (
+                                    <Badge key={i} variant="destructive" className="text-xs font-mono px-1.5 py-0">
+                                      {d}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </td>
+                              <td className="px-4 py-2.5 text-right">
+                                <span className={`font-bold text-base ${n >= 4 ? "text-red-600" : n === 3 ? "text-amber-600" : ""}`}>{n}</span>
+                              </td>
+                            </tr>
+                          );
+                        })}
                     </tbody>
                   </table>
                 </div>

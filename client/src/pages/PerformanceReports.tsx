@@ -112,11 +112,17 @@ function AgentDetailChart({ crdts, cycleKey, viewMode = "cycle" }: { crdts: stri
   );
 }
 
+// Helper: format YYYY-MM as readable label
+function fmtYM(m: string) {
+  const [y, mo] = m.split("-");
+  return new Date(parseInt(y), parseInt(mo)-1).toLocaleString("en-US", { month: "short", year: "numeric" });
+}
+
 export default function PerformanceReports() {
   const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"revenue" | "calls" | "revPerHr" | "profit">("revenue");
-  const [viewMode, setViewMode] = useState<"cycle" | "month">("month");
+  const [viewMode, setViewMode] = useState<"cycle" | "month" | "all">("month");
   const [cycleKey, setCycleKey] = useState<string>("");
   const [monthKey, setMonthKey] = useState<string>(() => new Date().toISOString().slice(0, 7));
   const [tlFilter, setTlFilter] = useState<string>("all");
@@ -126,7 +132,7 @@ export default function PerformanceReports() {
   const currentCycle = cycleInfo?.cycleKey ?? "";
   const activeCycle = cycleKey || currentCycle;
   const activeMonth = monthKey;
-  const activePeriod = viewMode === "cycle" ? activeCycle : activeMonth;
+  const activePeriod = viewMode === "cycle" ? activeCycle : viewMode === "month" ? activeMonth : "all";
 
   const { data: rawCycleStats = [], isLoading: loadingCycle } = trpc.cycleTracker.getTeamStats.useQuery(
     { cycleKey: activeCycle },
@@ -136,8 +142,13 @@ export default function PerformanceReports() {
     { month: activeMonth },
     { enabled: viewMode === "month" }
   );
-  const rawStats = viewMode === "cycle" ? rawCycleStats : rawMonthStats;
-  const isLoading = viewMode === "cycle" ? loadingCycle : loadingMonth;
+  // All-time: fetch all cycles and aggregate per agent
+  const { data: rawAllStats = [], isLoading: loadingAll } = trpc.cycleTracker.getTeamStats.useQuery(
+    { cycleKey: "" },
+    { enabled: viewMode === "all" }
+  );
+  const rawStats = viewMode === "cycle" ? rawCycleStats : viewMode === "month" ? rawMonthStats : rawAllStats;
+  const isLoading = viewMode === "cycle" ? loadingCycle : viewMode === "month" ? loadingMonth : loadingAll;
 
   const pastCycles: string[] = [];
   if (currentCycle) {
@@ -327,6 +338,7 @@ export default function PerformanceReports() {
         <div className="flex items-center rounded-lg border overflow-hidden">
           <button onClick={() => setViewMode("month")} className={`px-3 py-1.5 text-xs font-medium ${viewMode === "month" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Monthly</button>
           <button onClick={() => setViewMode("cycle")} className={`px-3 py-1.5 text-xs font-medium ${viewMode === "cycle" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Cycle</button>
+          <button onClick={() => setViewMode("all")} className={`px-3 py-1.5 text-xs font-medium ${viewMode === "all" ? "bg-foreground text-background" : "text-muted-foreground"}`}>All Time</button>
         </div>
         {viewMode === "month" ? (
           <select value={activeMonth} onChange={e => setMonthKey(e.target.value)} className="h-9 rounded-md border px-2 text-xs bg-background">
