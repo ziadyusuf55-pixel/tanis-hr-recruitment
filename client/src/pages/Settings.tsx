@@ -712,6 +712,10 @@ export default function Settings() {
   // Central permissions: Google-login users + their roles
   const utilsRoles = trpc.useUtils();
   const { data: appUsers = [] } = trpc.auth.listAppUsers.useQuery(undefined, { retry: false });
+  const removeUserMutation = trpc.auth.removeUser.useMutation({
+    onSuccess: () => { utilsRoles.auth.listAppUsers.invalidate(); toast.success("User access revoked"); },
+    onError: (e) => toast.error(e.message),
+  });
   const setRoleMutation = trpc.auth.setUserRole.useMutation({
     onSuccess: () => { utilsRoles.auth.listAppUsers.invalidate(); toast.success("Role updated"); },
     onError: (e) => toast.error(e.message),
@@ -825,6 +829,11 @@ export default function Settings() {
                         <option key={r} value={r}>{ROLE_LABELS[r]}</option>
                       ))}
                     </select>
+                    <button
+                      className="text-xs text-red-500 hover:text-red-700 px-2 py-1 rounded border border-red-200 hover:border-red-400 transition-colors"
+                      title="Revoke access — sets role to viewer (no access)"
+                      onClick={() => { if (confirm(`Revoke access for ${u.name || u.email}?`)) removeUserMutation.mutate({ openId: u.openId }); }}
+                    >Remove</button>
                   </div>
                 </div>
               ))}

@@ -245,6 +245,21 @@ const authRouter = router({
       await db.update(users).set({ role: input.role }).where(eq(users.openId, input.openId));
       return { ok: true } as const;
     }),
+
+  removeUser: protectedProcedure
+    .input(z.object({ openId: z.string() }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user?.role !== "owner" && ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
+      if (ctx.user?.openId === input.openId) throw new TRPCError({ code: "BAD_REQUEST", message: "You cannot remove yourself." });
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { users } = await import("../drizzle/schema");
+      // Set to "viewer" (no access) — preserves login history and audit trail
+      await db.update(users).set({ role: "viewer" }).where(eq(users.openId, input.openId));
+      return { ok: true } as const;
+    }),
 });
 
 
@@ -427,7 +442,7 @@ const candidatesRouter = router({
       .input(z.object({
         id: z.number(),
         status: PIPELINE_STAGES_ZOD,
-        fromStage: PIPELINE_STAGES_ZOD.optional(),
+        fromStage: PIPELINE_STAGES_ZOD.optional(), // kept optional for backward compat — frontend always sends it
         detail: z.string().optional(), // e.g. rejection reason
       }))
       .mutation(async ({ input, ctx }) => {
@@ -1368,10 +1383,10 @@ const requestsRouter = router({
     .mutation(({ input }) => updateAgentRequestStatus(input.id, input.status, input.adminReply ?? null)),
 
   // Admin: count unread requests (for red dot badge)
-  countUnread: protectedProcedure.query(() => countUnreadAgentRequests()),
+  countUnread: protectedProcedure.query(({ ctx }) => countUnreadAgentRequests(ctx.user?.openId ?? undefined)),
 
   // Admin: mark all requests as read (called when admin opens the Requests page)
-  markAllRead: protectedProcedure.mutation(() => markAllAgentRequestsRead()),
+  markAllRead: protectedProcedure.mutation(({ ctx }) => markAllAgentRequestsRead(ctx.user?.openId ?? undefined)),
 
   // Agent: upload an attachment file (returns S3 URL)
   uploadAttachment: publicProcedure
@@ -3705,7 +3720,7 @@ const employeesRouter = router({
     .input(z.object({
       fullName: z.string().min(1).max(255),
       alias: z.string().max(100).optional(),
-      email: z.string().email().optional(),
+      email: z.union([z.string().email(), z.literal(""), z.null()]).optional().transform(v => v || null),
       phone: z.string().max(50).optional(),
       jobTitle: z.string().max(100).optional(),
       employeeType: z.enum(NON_AGENT_TYPES),
@@ -4163,17 +4178,18 @@ const cycleTrackerRouter = router({
       const { eq, asc } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) return [];
-      // Get all distinct cycle keys for this agent
-      const cycleRows = await db.selectDistinct({ cycleKey: cycleStats.cycleKey })
-        .from(cycleStats).where(eq(cycleStats.crdts, input.crdts)).orderBy(asc(cycleStats.cycleKey));
-      const cycleKeys = cycleRows.map(r => r.cycleKey).reverse();
-      // For each cycle, aggregate stats
-      const result = await Promise.all(cycleKeys.map(async (cycleKey) => {
-        const [stats, deds, ots] = await Promise.all([
-          db.select().from(cycleStats).where(eq(cycleStats.crdts, input.crdts)).then(rows => rows.filter(r => r.cycleKey === cycleKey)),
-          db.select().from(cycleDeductions).where(eq(cycleDeductions.crdts, input.crdts)).then(rows => rows.filter(r => r.cycleKey === cycleKey)),
-          db.select().from(cycleOT).where(eq(cycleOT.crdts, input.crdts)).then(rows => rows.filter(r => r.cycleKey === cycleKey)),
-        ]);
+      // Fetch ALL rows for this agent in 3 queries (not N+1)
+      const [allStats, allDeds, allOTs] = await Promise.all([
+        db.select().from(cycleStats).where(eq(cycleStats.crdts, input.crdts)).orderBy(asc(cycleStats.date)),
+        db.select().from(cycleDeductions).where(eq(cycleDeductions.crdts, input.crdts)),
+        db.select().from(cycleOT).where(eq(cycleOT.crdts, input.crdts)),
+      ]);
+      // Group by cycleKey in memory
+      const cycleKeys = [...new Set(allStats.map(r => r.cycleKey))].sort().reverse();
+      return cycleKeys.map(cycleKey => {
+        const stats = allStats.filter(r => r.cycleKey === cycleKey);
+        const deds  = allDeds.filter(r => r.cycleKey === cycleKey);
+        const ots   = allOTs.filter(r => r.cycleKey === cycleKey);
         const totalRevenue = stats.reduce((s, r) => s + Number(r.revenue ?? 0), 0);
         const totalCalls = stats.reduce((s, r) => s + Number(r.totalCalls ?? 0), 0);
         const totalLoginHours = stats.reduce((s, r) => s + Number(r.loginHours ?? 0), 0);
@@ -4184,8 +4200,7 @@ const cycleTrackerRouter = router({
         const revPerHr = totalLoginHours > 0 ? totalRevenue / totalLoginHours : 0;
         const dateRange = getCycleDateRange(cycleKey);
         return { cycleKey, dateRange, totalRevenue, totalCalls, totalLoginHours, totalProfit, totalDeductions, totalOTHours, totalOTEgp, revPerHr, days: stats.length };
-      }));
-      return result;
+      });
     }),
 
   // Admin: delete all stats rows for a specific date (undo a bad upload)

@@ -929,9 +929,19 @@ export async function getRequestBySlackMessageTs(ts: string) {
   return row ?? null;
 }
 
-export async function countUnreadAgentRequests() {
+export async function countUnreadAgentRequests(openId?: string) {
   const db = await getDb();
   if (!db) return 0;
+  if (openId) {
+    // Per-user: count requests where this user's openId is NOT in readByUsers
+    const rows = await db.execute(sql`
+      SELECT COUNT(*) as count FROM agent_requests
+      WHERE NOT JSON_CONTAINS(COALESCE(readByUsers, JSON_ARRAY()), ${JSON.stringify(openId)}, '$')
+    `) as unknown as Array<Record<string, unknown>>;
+    const first = Array.isArray(rows) ? rows[0] : (rows as unknown as { rows: unknown[] }).rows?.[0];
+    return Number((first as Record<string, unknown>)?.count ?? 0);
+  }
+  // Legacy fallback
   const rows = await db
     .select({ count: sql<number>`COUNT(*)` })
     .from(agentRequests)
@@ -939,10 +949,22 @@ export async function countUnreadAgentRequests() {
   return Number(rows[0]?.count ?? 0);
 }
 
-export async function markAllAgentRequestsRead() {
+export async function markAllAgentRequestsRead(openId?: string) {
   const db = await getDb();
   if (!db) return;
-  await db.update(agentRequests).set({ isAdminRead: true }).where(eq(agentRequests.isAdminRead, false));
+  if (openId) {
+    // Per-user: append openId to readByUsers JSON array for unread requests
+    const { sql } = await import("drizzle-orm");
+    await db.execute(sql`
+      UPDATE agent_requests
+      SET isAdminRead = true,
+          readByUsers = JSON_ARRAY_APPEND(COALESCE(readByUsers, JSON_ARRAY()), '$', ${openId})
+      WHERE NOT JSON_CONTAINS(COALESCE(readByUsers, JSON_ARRAY()), ${JSON.stringify(openId)}, '$')
+    `);
+  } else {
+    // Legacy fallback — mark all globally
+    await db.update(agentRequests).set({ isAdminRead: true }).where(eq(agentRequests.isAdminRead, false));
+  }
 }
 
 // ─── Admin Accounts ───────────────────────────────────────────────────────────

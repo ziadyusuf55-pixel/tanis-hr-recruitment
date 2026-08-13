@@ -327,7 +327,8 @@ export const agentRequests = mysqlTable("agent_requests", {
   hrLetterPurpose: varchar("hrLetterPurpose", { length: 500 }), // purpose for hr_letter requests
   hrLetterLanguage: mysqlEnum("hrLetterLanguage", ["arabic", "english"]), // language for hr_letter requests
   status: mysqlEnum("status", ["pending", "in_progress", "resolved", "rejected"]).default("pending").notNull(),
-   isAdminRead: boolean("isAdminRead").default(false).notNull(), // true once admin has viewed this request
+   isAdminRead: boolean("isAdminRead").default(false).notNull(), // true once any admin has viewed this request
+  readByUsers: text("readByUsers"),  // JSON array of openIds who have read — for per-user unread tracking
   adminReply: text("adminReply"),
   slackMessageTs: varchar("slackMessageTs", { length: 50 }),   // Slack message ts of the request alert (for react-to-action)
   adminLastWorkingDay: varchar("adminLastWorkingDay", { length: 10 }), // YYYY-MM-DD — admin sets this when approving resignation

@@ -49,7 +49,7 @@ export default function MyProfile() {
           <UserCircle className="w-9 h-9 mx-auto text-muted-foreground/50" />
           <p className="text-sm font-medium">Your login isn't linked to a profile yet.</p>
           <p className="text-xs text-muted-foreground">
-            Ask an owner to link you in Settings → Management. Once linked, you can edit your details here.
+            Ask an owner to add you in <strong>Settings → Team Roles & Access</strong> and assign you a role. Once you have a role, your profile will appear here.
           </p>
         </CardContent></Card>
       </div>
