@@ -430,7 +430,13 @@ export default function PerformanceReports() {
                     {isExpanded && (
                       <tr key={`${s.crdts}-detail`} className="border-b bg-muted/10">
                         <td colSpan={9} className="p-0">
-                          <AgentDetailChart crdts={s.crdts} cycleKey={activePeriod} viewMode={viewMode} />
+                          {viewMode === "all" ? (
+                            <div className="px-4 py-6 text-center text-xs text-muted-foreground">
+                              Daily charts are unavailable for the all-time view. Select a calendar month or pay cycle to view daily details.
+                            </div>
+                          ) : (
+                            <AgentDetailChart crdts={s.crdts} cycleKey={activePeriod} viewMode={viewMode} />
+                          )}
                         </td>
                       </tr>
                     )}
