@@ -4185,7 +4185,7 @@ const cycleTrackerRouter = router({
         db.select().from(cycleOT).where(eq(cycleOT.crdts, input.crdts)),
       ]);
       // Group by cycleKey in memory
-      const cycleKeys = [...new Set(allStats.map(r => r.cycleKey))].sort().reverse();
+      const cycleKeys = Array.from(new Set(allStats.map(r => r.cycleKey))).sort().reverse();
       return cycleKeys.map(cycleKey => {
         const stats = allStats.filter(r => r.cycleKey === cycleKey);
         const deds  = allDeds.filter(r => r.cycleKey === cycleKey);

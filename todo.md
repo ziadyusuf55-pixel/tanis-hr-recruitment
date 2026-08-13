@@ -1067,3 +1067,7 @@
 
 ## Deployment Verification
 - [x] Pull latest changes with no migration and confirm npx tsc --noEmit succeeds before publishing
+
+## Agent Request Read Tracking
+- [x] Add agent_requests.readByUsers as nullable TEXT, verify the column, and run TypeScript validation before publishing
+- [x] Replace Set spread syntax in server/routers.ts with an ES5-compatible array conversion for TypeScript validation
