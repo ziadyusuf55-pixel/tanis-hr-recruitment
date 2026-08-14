@@ -1076,3 +1076,5 @@
 - [x] Pull latest changes with no migration and confirm npx tsc --noEmit succeeds before publishing
 - [x] Restore ViolationTracker view mode and cycle state declarations required by its filter controls
 - [x] Handle the all-period view mode before passing it to AgentDetailChart in PerformanceReports
+- [x] Pull latest changes with no migration and confirm npx tsc --noEmit succeeds before publishing
+- [x] Fix the undefined ctx reference in server/routers.ts before deployment validation
