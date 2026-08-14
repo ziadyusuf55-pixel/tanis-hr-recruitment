@@ -3047,7 +3047,7 @@ const payrollV2Router = router({
       const totalCoachingBonus = rows.reduce((s, r) => s + n(r.coachingBonus), 0);
       const totalQualityDeductions = rows.reduce((s, r) => s + n(r.qualityDeductions), 0);
       const totalAttendanceDeductions = rows.reduce((s, r) => s + n(r.attendanceDeductions), 0);
-      const paidByMap = paid.reduce((m, r) => { const k = (r as Record<string, unknown>).paidBy as string ?? "Unknown"; m[k] = (m[k] ?? 0) + 1; return m; }, {} as Record<string, number>);
+      const paidByMap = paid.reduce((m, r) => { const raw = (r as Record<string, unknown>).paidBy as string | null; const k = raw && raw.trim() ? raw.trim() : "Bulk Import / Legacy"; m[k] = (m[k] ?? 0) + 1; return m; }, {} as Record<string, number>);
       // Highest earner
       const sorted = [...rows].sort((a, b) => n(b.netPay) - n(a.netPay));
       return {
@@ -3771,9 +3771,22 @@ const employeesRouter = router({
     const { eq } = await import("drizzle-orm");
     const db = await getDb();
     if (!db) return null;
-    const { workforceAgents } = await import("../drizzle/schema");
-    const [row] = await db.select().from(workforceAgents).where(eq(workforceAgents.openId, openId));
-    return row ?? null;
+    const { workforceAgents, users } = await import("../drizzle/schema");
+    // 1. Try workforce_agents (agents, TLs, managers with employee records)
+    const [agentRow] = await db.select().from(workforceAgents).where(eq(workforceAgents.openId, openId));
+    if (agentRow) return { ...agentRow, _source: "workforce" as const };
+    // 2. Fall back to users table (admins/owners who have no workforce record)
+    const [userRow] = await db.select().from(users).where(eq(users.openId, openId));
+    if (userRow) return {
+      fullName: userRow.name ?? null,
+      alias: null,
+      email: userRow.email ?? null,
+      phone: (userRow as Record<string,unknown>).phone as string ?? null,
+      role: userRow.role,
+      employeeType: userRow.role,
+      _source: "admin" as const,
+    };
+    return null;
   }),
 
   /** Edit your OWN profile — personal details only. Can't touch salary/status/role. */
@@ -4018,14 +4031,17 @@ const cycleTrackerRouter = router({
 
   // Admin: get team performance summary for a cycle
   getTeamStats: protectedProcedure
-    .input(z.object({ cycleKey: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .input(z.object({ cycleKey: z.union([z.string().regex(/^\d{4}-\d{2}$/), z.literal("")]).optional() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
       const { cycleStats } = await import("../drizzle/schema");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) return [];
-      const rows = await db.select().from(cycleStats).where(eq(cycleStats.cycleKey, input.cycleKey));
+      // Empty or missing cycleKey = all-time (no date filter)
+      const rows = input.cycleKey
+        ? await db.select().from(cycleStats).where(eq(cycleStats.cycleKey, input.cycleKey))
+        : await db.select().from(cycleStats);
       // Pull teamLeader from workforce_agents for TL filter
       const { workforceAgents } = await import("../drizzle/schema");
       const agentRows = await db.select({ crdts: workforceAgents.crdts, teamLeader: workforceAgents.teamLeader }).from(workforceAgents);
@@ -5127,11 +5143,16 @@ const integrationsRouter = router({
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
     const { integrationsTokens, candidates: candidatesTable } = await import("../drizzle/schema");
-    const { eq } = await import("drizzle-orm");
+    const { eq, or: orLCE, isNull: isNullLCE, and: andLCE } = await import("drizzle-orm");
 
-    // Get stored Google token
-    const [tokenRow] = await db.select().from(integrationsTokens).where(eq(integrationsTokens.provider, "google")).limit(1);
-    if (!tokenRow) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Google Calendar not connected. Please connect in Settings > Integrations." });
+    // Get stored Google token — per-user first, fall back to legacy shared token
+    const userId6 = ctx.user?.openId ?? null;
+    const [tokenRow] = await db.select().from(integrationsTokens).where(
+      userId6
+        ? andLCE(eq(integrationsTokens.provider, "google"), orLCE(eq(integrationsTokens.userId, userId6), isNullLCE(integrationsTokens.userId)))
+        : andLCE(eq(integrationsTokens.provider, "google"), isNullLCE(integrationsTokens.userId))
+    ).orderBy(integrationsTokens.updatedAt).limit(1);
+    if (!tokenRow) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Google Calendar not connected. Please connect your own Google account in Settings > Integrations." });
 
     // Refresh token if needed
     let accessToken = tokenRow.accessToken;

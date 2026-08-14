@@ -1829,6 +1829,17 @@ function CalendarImportPanel({
   type CalEvent = { eventId: string; candidateName: string; candidateEmail: string; candidatePhone: string; interviewDate: string; meetLink: string; status: "new" | "duplicate"; matchedId?: number };
   const [rawEvents, setRawEvents] = useState<CalEvent[]>([]);
 
+  const { data: integrationStatus } = trpc.integrations.getStatus.useQuery();
+  const googleConnected = (integrationStatus as Record<string,unknown> | undefined)?.google === true;
+  const { data: meUser } = trpc.auth.me.useQuery();
+
+  const handleConnectGoogleHere = () => {
+    const origin = window.location.origin;
+    const openId = (meUser as Record<string,unknown> | null)?.openId as string ?? "";
+    const state = btoa(JSON.stringify({ origin, userId: openId }));
+    window.location.href = `/api/oauth/google?origin=${encodeURIComponent(origin)}&state=${encodeURIComponent(state)}`;
+  };
+
   const doImport = trpc.integrations.importCalendarEvents.useMutation({
     onSuccess: (data: { imported: number }) => {
       toast.success(`Imported ${data.imported} candidates from calendar`);
@@ -1941,12 +1952,24 @@ function CalendarImportPanel({
       {preview.length === 0 ? (
         <div className="text-center py-6 space-y-3">
           <Calendar className="h-10 w-10 text-muted-foreground mx-auto" />
-          <p className="text-sm text-muted-foreground">Fetches interview events from your connected Google Calendar within the selected date range.</p>
-          <p className="text-xs text-muted-foreground">Extracts candidate name, email, and phone from event attendees and description.</p>
-          {loading ? (
-            <Button disabled><RefreshCw className="h-4 w-4 mr-2 animate-spin" /> Fetching...</Button>
+          {!googleConnected ? (
+            <>
+              <p className="text-sm font-medium">Google Calendar not connected</p>
+              <p className="text-xs text-muted-foreground">Connect your Google account to import interview candidates directly from your calendar events.</p>
+              <Button onClick={handleConnectGoogleHere} className="gap-2">
+                <Calendar className="h-4 w-4" /> Connect My Google Calendar
+              </Button>
+            </>
           ) : (
-            <Button onClick={handleFetch}>Fetch Calendar Events</Button>
+            <>
+              <p className="text-sm text-muted-foreground">Fetches interview events from your connected Google Calendar within the selected date range.</p>
+              <p className="text-xs text-muted-foreground">Extracts candidate name, email, and phone from event attendees and description.</p>
+              {loading ? (
+                <Button disabled><RefreshCw className="h-4 w-4 mr-2 animate-spin" /> Fetching...</Button>
+              ) : (
+                <Button onClick={handleFetch}>Fetch Calendar Events</Button>
+              )}
+            </>
           )}
         </div>
       ) : (

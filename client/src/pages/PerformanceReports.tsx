@@ -142,9 +142,9 @@ export default function PerformanceReports() {
     { month: activeMonth },
     { enabled: viewMode === "month" }
   );
-  // All-time: fetch all cycles and aggregate per agent
+  // All-time: no cycleKey filter — fetches everything
   const { data: rawAllStats = [], isLoading: loadingAll } = trpc.cycleTracker.getTeamStats.useQuery(
-    { cycleKey: "" },
+    { cycleKey: undefined },
     { enabled: viewMode === "all" }
   );
   const rawStats = viewMode === "cycle" ? rawCycleStats : viewMode === "month" ? rawMonthStats : rawAllStats;
@@ -430,7 +430,13 @@ export default function PerformanceReports() {
                     {isExpanded && (
                       <tr key={`${s.crdts}-detail`} className="border-b bg-muted/10">
                         <td colSpan={9} className="p-0">
-                          <AgentDetailChart crdts={s.crdts} cycleKey={activePeriod} viewMode={viewMode} />
+                          {viewMode === "all" ? (
+                            <div className="px-4 py-6 text-center text-xs text-muted-foreground">
+                              Daily charts are unavailable for the all-time view. Select a calendar month or pay cycle to view daily details.
+                            </div>
+                          ) : (
+                            <AgentDetailChart crdts={s.crdts} cycleKey={activePeriod} viewMode={viewMode} />
+                          )}
                         </td>
                       </tr>
                     )}

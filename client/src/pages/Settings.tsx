@@ -561,11 +561,12 @@ function IntegrationsSection() {
     }
   }, []);
 
+  const { data: meUser } = trpc.auth.me.useQuery();
   const handleConnectGoogle = () => {
     const origin = window.location.origin;
-    // userId passed in state so token is stored per-user (not shared)
-    const meData = (window as unknown as Record<string,unknown>).__tanis_user_openId as string | undefined;
-    const state = btoa(JSON.stringify({ origin, userId: meData ?? "" }));
+    // Pass the current user's openId in state so the token is stored per-user
+    const openId = (meUser as Record<string,unknown> | null)?.openId as string ?? "";
+    const state = btoa(JSON.stringify({ origin, userId: openId }));
     window.location.href = `/api/oauth/google?origin=${encodeURIComponent(origin)}&state=${encodeURIComponent(state)}`;
   };
 

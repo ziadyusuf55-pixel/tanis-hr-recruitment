@@ -1107,6 +1107,7 @@ function CoachingTab({ crdts, traineeCode, navigate }: { crdts: string; traineeC
 // ─── AgentHistoryTab ──────────────────────────────────────────────────────────
 
 function AgentHistoryTab({ crdts }: { crdts: string }) {
+  const [histView, setHistView] = useState<"all" | "cycles" | "payroll">("all");
   const { data: cycleHistory = [], isLoading: loadingCycles } = trpc.cycleTracker.getAgentHistory.useQuery(
     { crdts },
     { enabled: !!crdts }
@@ -1141,6 +1142,12 @@ function AgentHistoryTab({ crdts }: { crdts: string }) {
   const hasCycles = cycleHistory.length > 0;
   const hasPayroll = payrollHistory.length > 0;
 
+  // All-time aggregates
+  const allTimeRevenue = cycleHistory.reduce((s, c) => s + Number(c.totalRevenue || 0), 0);
+  const allTimeProfit = cycleHistory.reduce((s, c) => s + Number(c.totalProfit || 0), 0);
+  const allTimeHours = cycleHistory.reduce((s, c) => s + Number(c.totalLoginHours || 0), 0);
+  const allTimeCycles = cycleHistory.length;
+
   if (!hasCycles && !hasPayroll) {
     return (
       <div className="text-center py-16 text-muted-foreground">
@@ -1152,9 +1159,37 @@ function AgentHistoryTab({ crdts }: { crdts: string }) {
   }
 
   return (
+    <div className="space-y-6">
+      {/* All-time summary cards */}
+      {hasCycles && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          {[
+            { label: "Total Cycles", value: String(allTimeCycles) },
+            { label: "All-Time Revenue", value: `$${allTimeRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}` },
+            { label: "All-Time Profit", value: `$${allTimeProfit.toLocaleString(undefined, { maximumFractionDigits: 0 })}`, color: allTimeProfit >= 0 ? "text-emerald-600" : "text-red-600" },
+            { label: "Total Login Hours", value: `${allTimeHours.toFixed(0)}h` },
+          ].map(c => (
+            <div key={c.label} className="rounded-xl border bg-card p-4">
+              <p className="text-xs text-muted-foreground">{c.label}</p>
+              <p className={`text-xl font-bold mt-0.5 ${c.color ?? ""}`}>{c.value}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* View toggle */}
+      <div className="inline-flex rounded-lg border overflow-hidden">
+        {([["all", "All Records"], ["cycles", "By Cycle"], ["payroll", "Payroll"]] as const).map(([id, label]) => (
+          <button key={id} onClick={() => setHistView(id)}
+            className={`px-3 py-1.5 text-xs font-medium transition-colors ${histView === id ? "bg-foreground text-background" : "text-muted-foreground"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
     <div className="space-y-8">
       {/* ── Cycle Performance History ── */}
-      {hasCycles && (
+      {(histView === "all" || histView === "cycles") && hasCycles && (
         <div>
           <div className="flex items-center gap-2 mb-3">
             <History className="h-4 w-4" style={{ color: BRAND }} />
@@ -1199,7 +1234,7 @@ function AgentHistoryTab({ crdts }: { crdts: string }) {
       )}
 
       {/* ── Payroll History ── */}
-      {hasPayroll && (
+      {(histView === "all" || histView === "payroll") && hasPayroll && (
         <div>
           <div className="flex items-center gap-2 mb-3">
             <CreditCard className="h-4 w-4" style={{ color: BRAND }} />
@@ -1248,6 +1283,7 @@ function AgentHistoryTab({ crdts }: { crdts: string }) {
           </div>
         </div>
       )}
+    </div>
     </div>
   );
 }

@@ -784,6 +784,8 @@ export default function Operations() {
   const [search, setSearch] = useState("");
   const [tlFilter, setTlFilter] = useState<string>("all");
   const [agentStatusFilter, setAgentStatusFilter] = useState<"active" | "terminated" | "resigned" | "all">("active");
+  // Note: "Former Agents" in the sidebar (/former-agents) shows ALL departed agents with full records.
+  // The filter here shows terminated/resigned agents whose salary hasn't been settled yet.
 
   // Data
   const { data: campaigns = [], isLoading: loadingCampaigns } = trpc.campaigns.list.useQuery();
@@ -1242,8 +1244,8 @@ export default function Operations() {
           <div className="flex gap-1 mb-3">
             {([
               { value: "active", label: "Active", color: "text-emerald-700 bg-emerald-50 border-emerald-200" },
-              { value: "terminated", label: "Terminated", color: "text-red-700 bg-red-50 border-red-200" },
-              { value: "resigned", label: "Resigned", color: "text-orange-700 bg-orange-50 border-orange-200" },
+              { value: "terminated", label: "Terminated (unsettled)", color: "text-red-700 bg-red-50 border-red-200" },
+              { value: "resigned", label: "Resigned (unsettled)", color: "text-orange-700 bg-orange-50 border-orange-200" },
               { value: "all", label: "All", color: "text-foreground bg-muted/40 border-border" },
             ] as const).map(opt => {
               const count = (agents as WorkforceAgent[]).filter(a => opt.value === "all" || (a.agentStatus ?? "active") === opt.value).length;
