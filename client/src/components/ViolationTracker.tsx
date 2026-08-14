@@ -33,6 +33,8 @@ export function ViolationTracker({
 }) {
   const now = new Date();
   const [month, setMonth] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
+  const [cycle, setCycle] = useState(month);
+  const [viewMode, setViewMode] = useState<"month" | "cycle" | "all">("month");
   const [q, setQ] = useState("");
 
   const { data: all = [], isLoading } = trpc.violations.list.useQuery({ category });
@@ -50,9 +52,14 @@ export function ViolationTracker({
     (all as ViolationRow[]).forEach(r => { if (r.month) s.add(r.month); });
     return Array.from(s).sort().reverse();
   }, [all]);
+  const cycles = months;
 
   const rows = useMemo(() => {
-    let r = (all as ViolationRow[]).filter(x => x.month === month);
+    let r = all as ViolationRow[];
+    if (viewMode !== "all") {
+      const period = viewMode === "cycle" ? cycle : month;
+      r = r.filter(x => x.month === period);
+    }
     if (q.trim()) {
       const t = q.toLowerCase();
       r = r.filter(x =>
@@ -61,7 +68,7 @@ export function ViolationTracker({
         (x.type || "").toLowerCase().includes(t));
     }
     return r.sort((a, b) => b.date.localeCompare(a.date));
-  }, [all, month, q, nameOf]);
+  }, [all, month, cycle, viewMode, q, nameOf]);
 
   const num = (v: unknown) => Number(v || 0);
   const totalEgp = rows.reduce((s, r) => s + num(r.deduction), 0);
