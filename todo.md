@@ -1072,6 +1072,15 @@
 - [x] Add agent_requests.readByUsers as nullable TEXT, verify the column, and run TypeScript validation before publishing
 - [x] Replace Set spread syntax in server/routers.ts with an ES5-compatible array conversion for TypeScript validation
 
+## Production Demo Account
+- [x] Seed the requested terminated T-DEMO-1 account with its approved demo profile, credentials, payroll, cycle, coaching, and quality records
+- [x] Add the required candidates.positionApplied value to the demo seed before rerunning it
+- [x] Use the workforce_agents joinDate storage format required by the production schema in the demo seed
+- [x] Adapt the demo coaching session to the current coaching_sessions column names
+- [x] Set T-DEMO-1 to active, isActive, and isDemo in production, then verify the stored flags
+- [x] Add workforce_agents.isDemo with a false default and validate TypeScript before publishing
+- [x] Fix the undefined ctx reference at server/routers.ts line 5149 before deployment validation
+
 ## Deployment Verification
 - [x] Pull latest changes with no migration and confirm npx tsc --noEmit succeeds before publishing
 - [x] Restore ViolationTracker view mode and cycle state declarations required by its filter controls
