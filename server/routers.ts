@@ -4090,10 +4090,10 @@ const cycleTrackerRouter = router({
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
       const { cycleStats, workforceAgents } = await import("../drizzle/schema");
-      const { sql } = await import("drizzle-orm");
+      const { sql, ne: neMonth } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) return [];
-      const rows = await db.select().from(cycleStats).where(sql`LEFT(${cycleStats.date}, 7) = ${input.month}`);
+      const rows = await db.select().from(cycleStats).where(sql`LEFT(${cycleStats.date}, 7) = ${input.month} AND ${cycleStats.crdts} != '999999'`);
       const agentRows = await db.select({ crdts: workforceAgents.crdts, teamLeader: workforceAgents.teamLeader }).from(workforceAgents);
       const tlByCrdts = new Map(agentRows.map(a => [a.crdts, a.teamLeader ?? null]));
       const byAgent = new Map<string, {
@@ -5138,7 +5138,7 @@ const integrationsRouter = router({
       dateFrom: z.string().optional(), // ISO date string, e.g. "2026-05-19"
       dateTo: z.string().optional(),   // ISO date string, e.g. "2026-05-21"
     }).optional())
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });

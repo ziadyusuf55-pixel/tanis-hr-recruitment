@@ -358,6 +358,7 @@ export default function AgentPortal() {
 
       {/* ── Content ── */}
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
+        <ProfileCompletionBanner agent={agent} theme={theme} onGoToProfile={() => setActiveTab("profile")} onGoToPayment={() => setActiveTab("payment")} />
         {activeTab === "profile" && <ProfileTab agent={agent} theme={theme} />}
         {activeTab === "opplan" && <OperationPlanTab theme={theme} />}
         {activeTab === "performance" && <PerformanceTab theme={theme} />}
@@ -413,6 +414,63 @@ function PSelect({ theme, label, value, onChange, options }: { theme: Theme; lab
   );
 }
 function pTitle(str: string) { return str ? str.charAt(0).toUpperCase() + str.slice(1) : str; }
+
+// ─── Profile Completion Banner ────────────────────────────────────────────────
+function ProfileCompletionBanner({ agent, theme, onGoToProfile, onGoToPayment }: {
+  agent: AgentData; theme: Theme;
+  onGoToProfile: () => void;
+  onGoToPayment: () => void;
+}) {
+  const { data: wfProfile } = trpc.workforce.getMyProfile.useQuery();
+  const { data: payMethods = [] } = trpc.paymentMethods.listMine.useQuery();
+
+  const missingProfile = !((wfProfile as Record<string,unknown> | null)?.phone)
+    || !((wfProfile as Record<string,unknown> | null)?.nationalId)
+    || !((wfProfile as Record<string,unknown> | null)?.dateOfBirth);
+
+  const missingPayment = (payMethods as unknown[]).length === 0;
+
+  if (!missingProfile && !missingPayment) return null;
+
+  return (
+    <div className="mb-6 space-y-2">
+      {missingProfile && (
+        <div className="flex items-center justify-between gap-3 rounded-xl px-4 py-3"
+          style={{ background: "rgba(251,191,36,0.12)", border: "1px solid rgba(251,191,36,0.4)" }}>
+          <div className="flex items-center gap-2.5">
+            <span style={{ color: "#f59e0b", fontSize: 18 }}>⚠️</span>
+            <div>
+              <p className="text-sm font-semibold" style={{ color: theme.text }}>Complete your personal info</p>
+              <p className="text-xs" style={{ color: theme.textMuted }}>Phone, National ID and Date of Birth are required. This banner stays until done.</p>
+            </div>
+          </div>
+          <button onClick={onGoToProfile}
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0 transition-colors"
+            style={{ background: "#f59e0b", color: "#fff" }}>
+            Update Now
+          </button>
+        </div>
+      )}
+      {missingPayment && (
+        <div className="flex items-center justify-between gap-3 rounded-xl px-4 py-3"
+          style={{ background: "rgba(239,68,68,0.10)", border: "1px solid rgba(239,68,68,0.35)" }}>
+          <div className="flex items-center gap-2.5">
+            <span style={{ color: "#ef4444", fontSize: 18 }}>💳</span>
+            <div>
+              <p className="text-sm font-semibold" style={{ color: theme.text }}>Add a payment method</p>
+              <p className="text-xs" style={{ color: theme.textMuted }}>We need your wallet or bank details to process your salary. Required before first payslip.</p>
+            </div>
+          </div>
+          <button onClick={onGoToPayment}
+            className="text-xs font-semibold px-3 py-1.5 rounded-lg shrink-0 transition-colors"
+            style={{ background: "#ef4444", color: "#fff" }}>
+            Add Payment
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
   const { data: wfProfile } = trpc.workforce.getMyProfile.useQuery();

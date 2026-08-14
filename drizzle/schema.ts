@@ -411,7 +411,7 @@ export const agentNotifications = mysqlTable("agent_notifications", {
   id: int("id").autoincrement().primaryKey(),
   candidateId: int("candidateId").notNull(), // FK to candidates.id
   message: varchar("message", { length: 500 }).notNull(),
-  type: mysqlEnum("type", ["request_reply", "referral_update", "general", "campaign_assigned"]).default("general").notNull(),
+  type: mysqlEnum("type", ["request_reply", "referral_update", "general", "campaign_assigned", "profile_incomplete", "payment_missing"]).default("general").notNull(),
   relatedId: int("relatedId"), // requestId or referralId
   isRead: boolean("isRead").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
@@ -483,6 +483,7 @@ export const workforceAgents = mysqlTable("workforce_agents", {
   isActive: boolean("isActive").default(true).notNull(),
   orientationShown: boolean("orientationShown").default(false).notNull(), // true after agent completes orientation tour
   sessionRevokedAt: bigint("sessionRevokedAt", { mode: "number" }),    // set on terminate/resign — any session JWT issued BEFORE this timestamp is rejected
+  isDemo: boolean("isDemo").default(false), // demo/test accounts — excluded from all reports and headcount
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

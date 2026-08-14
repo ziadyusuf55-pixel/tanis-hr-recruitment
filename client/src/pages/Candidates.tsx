@@ -96,6 +96,15 @@ export default function Candidates() {
   const utils = trpc.useUtils();
   const [showReferrals, setShowReferrals] = useState(false);
   const { data: allReferrals = [], isLoading: referralsLoading } = trpc.referrals.listAll.useQuery();
+  const { data: calStatus } = trpc.integrations.getStatus.useQuery();
+  const googleCalConnected = (calStatus as Record<string,unknown> | undefined)?.google === true;
+  const { data: meForCal } = trpc.auth.me.useQuery();
+  const handleConnectGoogleCalendar = () => {
+    const origin = window.location.origin;
+    const openId = (meForCal as Record<string,unknown> | null)?.openId as string ?? "";
+    const state = btoa(JSON.stringify({ origin, userId: openId }));
+    window.location.href = `/api/oauth/google?origin=${encodeURIComponent(origin)}&state=${encodeURIComponent(state)}`;
+  };
   const createFromRef = trpc.candidates.create.useMutation({
     onSuccess: (_d, v) => { utils.referrals.listAll.invalidate(); toast.success(`"${v.name}" added to pipeline`); },
     onError: (e) => toast.error(getErrorMessage(e)),
@@ -536,13 +545,19 @@ export default function Candidates() {
           }} className="gap-2 h-9">
             <Building2 className="h-3.5 w-3.5" /> Import HubSpot
           </Button>
-          <Button variant="outline" size="sm" onClick={() => {
-            setImportPreview([]);
-            setImportSelectedIds(new Set());
-            setCalendarImportOpen(true);
-          }} className="gap-2 h-9">
-            <Calendar className="h-3.5 w-3.5" /> Import Calendar
-          </Button>
+          {googleCalConnected ? (
+            <Button variant="outline" size="sm" onClick={() => {
+              setImportPreview([]);
+              setImportSelectedIds(new Set());
+              setCalendarImportOpen(true);
+            }} className="gap-2 h-9">
+              <Calendar className="h-3.5 w-3.5" /> Import Calendar
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm" onClick={handleConnectGoogleCalendar} className="gap-2 h-9 border-blue-200 text-blue-600 hover:bg-blue-50">
+              <Calendar className="h-3.5 w-3.5" /> Connect Google Calendar
+            </Button>
+          )}
           <Button size="sm" onClick={() => setAddOpen(true)} className="gap-2 h-9">
             <Plus className="h-3.5 w-3.5" /> Add Candidate
           </Button>
