@@ -47,7 +47,7 @@ export default function FormerAgents() {
   const utils = trpc.useUtils();
   const restoreMutation = trpc.workforce.update.useMutation({
     onSuccess: () => {
-      utils.workforce.listFormer.invalidate();
+      utils.separation.listFormerAgents.invalidate();
       toast.success("Agent restored to active status");
     },
     onError: (e: unknown) => toast.error(getErrorMessage(e)),
