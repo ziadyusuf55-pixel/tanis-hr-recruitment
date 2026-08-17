@@ -1089,3 +1089,10 @@
 - [x] Pull latest changes with no migration and confirm npx tsc --noEmit succeeds before publishing
 - [x] Fix the undefined ctx reference in server/routers.ts before deployment validation
 - [x] Pull latest changes with no migration and confirm npx tsc --noEmit succeeds before publishing
+
+## Microsoft OAuth Configuration
+- [x] Microsoft OAuth configuration intentionally skipped at the user's request
+
+## Deployment Verification
+- [x] Pull latest changes, ignore Microsoft OAuth configuration, and confirm npx tsc --noEmit succeeds before publishing
+- [x] Fix the undefined ctx reference at server/routers.ts line 5240 before deployment validation

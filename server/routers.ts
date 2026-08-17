@@ -5229,7 +5229,7 @@ const integrationsRouter = router({
       dateFrom: z.string().optional(), // ISO date string, e.g. "2026-05-19"
       dateTo: z.string().optional(),   // ISO date string, e.g. "2026-05-21"
     }).optional())
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
