@@ -98,6 +98,8 @@ export default function Candidates() {
   const { data: allReferrals = [], isLoading: referralsLoading } = trpc.referrals.listAll.useQuery();
   const { data: calStatus } = trpc.integrations.getStatus.useQuery();
   const googleCalConnected = (calStatus as Record<string,unknown> | undefined)?.google === true;
+  const msCalConnected = (calStatus as Record<string,unknown> | undefined)?.microsoft === true;
+  const [msImportOpen, setMsImportOpen] = useState(false);
   const { data: meForCal } = trpc.auth.me.useQuery();
   const handleConnectMicrosoftCalendar = () => {
     // Microsoft OAuth — redirect to Microsoft identity platform
@@ -552,24 +554,26 @@ export default function Candidates() {
           }} className="gap-2 h-9">
             <Building2 className="h-3.5 w-3.5" /> Import HubSpot
           </Button>
-          {googleCalConnected ? (
-            <Button variant="outline" size="sm" onClick={() => {
-              setImportPreview([]);
-              setImportSelectedIds(new Set());
-              setCalendarImportOpen(true);
-            }} className="gap-2 h-9">
-              <Calendar className="h-3.5 w-3.5" /> Import Calendar
-            </Button>
-          ) : (
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" onClick={handleConnectGoogleCalendar} className="gap-2 h-9 border-blue-200 text-blue-600 hover:bg-blue-50">
+          <div className="flex gap-2">
+            {googleCalConnected ? (
+              <Button variant="outline" size="sm" onClick={() => { setImportPreview([]); setImportSelectedIds(new Set()); setCalendarImportOpen(true); }} className="gap-2 h-9">
                 <Calendar className="h-3.5 w-3.5" /> Google Calendar
               </Button>
-              <Button variant="outline" size="sm" onClick={handleConnectMicrosoftCalendar} className="gap-2 h-9 border-indigo-200 text-indigo-600 hover:bg-indigo-50">
+            ) : (
+              <Button variant="outline" size="sm" onClick={handleConnectGoogleCalendar} className="gap-2 h-9 border-blue-200 text-blue-600 hover:bg-blue-50">
+                <Calendar className="h-3.5 w-3.5" /> Connect Google
+              </Button>
+            )}
+            {msCalConnected ? (
+              <Button variant="outline" size="sm" onClick={() => setMsImportOpen(true)} className="gap-2 h-9 border-indigo-200 text-indigo-600 hover:bg-indigo-50">
                 <Calendar className="h-3.5 w-3.5" /> Outlook Calendar
               </Button>
-            </div>
-          )}
+            ) : (
+              <Button variant="outline" size="sm" onClick={handleConnectMicrosoftCalendar} className="gap-2 h-9 border-indigo-200 text-indigo-600 hover:bg-indigo-50">
+                <Calendar className="h-3.5 w-3.5" /> Connect Outlook
+              </Button>
+            )}
+          </div>
           <Button size="sm" onClick={() => setAddOpen(true)} className="gap-2 h-9">
             <Plus className="h-3.5 w-3.5" /> Add Candidate
           </Button>
@@ -1215,6 +1219,14 @@ export default function Candidates() {
           />
         </DialogContent>
       </Dialog>
+
+      {/* Microsoft Calendar Import Dialog */}
+      {msImportOpen && (
+        <MicrosoftCalendarImportDialog
+          onClose={() => setMsImportOpen(false)}
+          onImported={() => { utils.candidates.list.invalidate(); setMsImportOpen(false); }}
+        />
+      )}
 
       {/* Google Calendar Import Dialog */}
       <Dialog open={calendarImportOpen} onOpenChange={(v) => { setCalendarImportOpen(v); if (!v) { setImportPreview([]); setImportSelectedIds(new Set()); } }}>
@@ -2051,5 +2063,58 @@ function CalendarImportPanel({
         </>
       )}
     </div>
+  );
+}
+
+// ─── Microsoft Calendar Import Dialog ────────────────────────────────────────
+function MicrosoftCalendarImportDialog({ onClose, onImported }: { onClose: () => void; onImported: () => void }) {
+  const [startDate, setStartDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [endDate, setEndDate] = useState(() => { const d = new Date(); d.setDate(d.getDate() + 7); return d.toISOString().slice(0, 10); });
+  const [keywords, setKeywords] = useState("interview,tanis,hiring,candidate");
+
+  const importMutation = trpc.integrations.importMicrosoftCalendarEvents.useMutation({
+    onSuccess: (data) => {
+      toast.success(`Imported ${data.imported} candidate${data.imported !== 1 ? "s" : ""} from ${data.total} Outlook events`);
+      onImported();
+    },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Calendar className="h-5 w-5 text-indigo-600" /> Import from Outlook Calendar
+          </DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Start Date</label>
+              <Input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-1">End Date</label>
+              <Input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Filter by keywords (comma-separated)</label>
+            <Input value={keywords} onChange={e => setKeywords(e.target.value)} placeholder="interview, tanis, hiring" />
+            <p className="text-xs text-muted-foreground mt-1">Only imports events whose subject contains these words</p>
+          </div>
+          <div className="rounded-lg bg-indigo-50 border border-indigo-200 px-3 py-2.5">
+            <p className="text-xs text-indigo-700">Fetches attendees from your Outlook calendar events. Each attendee is added as a new candidate in the pipeline if they don't already exist.</p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => importMutation.mutate({ startDate, endDate, keywords })} disabled={importMutation.isPending} className="gap-2">
+            {importMutation.isPending ? "Importing…" : "Import Candidates"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -221,7 +221,87 @@ async function startServer() {
     }
   });
 
-  // ─── REST API: POST /api/upload/logs ──────────────────────────────────────
+  // ─── Microsoft OAuth ──────────────────────────────────────────────────────
+  app.get("/api/oauth/microsoft", (req, res) => {
+    const origin = (req.query.origin as string) || "";
+    const incomingState = req.query.state as string | undefined;
+    const tenantId = process.env.MICROSOFT_TENANT_ID ?? "common";
+    const redirectUri = `${origin}/api/oauth/microsoft/callback`;
+    let stateObj: Record<string, string> = { origin };
+    if (incomingState) {
+      try { stateObj = { ...JSON.parse(Buffer.from(incomingState, "base64").toString()), origin }; } catch {}
+    }
+    const state = Buffer.from(JSON.stringify(stateObj)).toString("base64");
+    const authUrl = new URL(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize`);
+    authUrl.searchParams.set("client_id", process.env.MICROSOFT_CLIENT_ID ?? "");
+    authUrl.searchParams.set("redirect_uri", redirectUri);
+    authUrl.searchParams.set("response_type", "code");
+    authUrl.searchParams.set("scope", "Calendars.Read User.Read offline_access");
+    authUrl.searchParams.set("response_mode", "query");
+    authUrl.searchParams.set("state", state);
+    res.redirect(authUrl.toString());
+  });
+
+  app.get("/api/oauth/microsoft/callback", async (req, res) => {
+    try {
+      const code = req.query.code as string;
+      const stateRaw = req.query.state as string;
+      if (!code) { res.status(400).send("Missing code"); return; }
+      let origin = "";
+      let stateParam: Record<string, string> = {};
+      try {
+        stateParam = JSON.parse(Buffer.from(stateRaw, "base64").toString());
+        origin = stateParam.origin ?? "";
+      } catch {}
+      const tenantId = process.env.MICROSOFT_TENANT_ID ?? "common";
+      const redirectUri = `${origin}/api/oauth/microsoft/callback`;
+
+      // Exchange code for tokens
+      const tokenRes = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          code,
+          client_id: process.env.MICROSOFT_CLIENT_ID ?? "",
+          client_secret: process.env.MICROSOFT_CLIENT_SECRET ?? "",
+          redirect_uri: redirectUri,
+          grant_type: "authorization_code",
+          scope: "Calendars.Read User.Read offline_access",
+        }),
+      });
+      const tokenData = await tokenRes.json() as { access_token?: string; refresh_token?: string; expires_in?: number; scope?: string; error?: string; error_description?: string };
+      if (!tokenData.access_token) {
+        res.status(400).send(`Microsoft OAuth error: ${tokenData.error_description || tokenData.error || "no access_token"}`);
+        return;
+      }
+
+      // Store token per-user — same table as Google, different provider
+      const { getDb } = await import("../db");
+      const db = await getDb();
+      if (db) {
+        const { integrationsTokens } = await import("../../drizzle/schema");
+        const { sql } = await import("drizzle-orm");
+        const now = Date.now();
+        const userId = stateParam?.userId ?? null;
+        await db.execute(sql`
+          INSERT INTO integrations_tokens (provider, userId, access_token, refresh_token, expires_at, scope, created_at, updated_at)
+          VALUES ('microsoft', ${userId}, ${tokenData.access_token}, ${tokenData.refresh_token ?? null}, ${now + (tokenData.expires_in ?? 3600) * 1000}, ${tokenData.scope ?? null}, ${now}, ${now})
+          ON DUPLICATE KEY UPDATE
+            access_token = VALUES(access_token),
+            refresh_token = COALESCE(VALUES(refresh_token), refresh_token),
+            expires_at = VALUES(expires_at),
+            scope = VALUES(scope),
+            updated_at = VALUES(updated_at)
+        `);
+      }
+      res.redirect(`${origin}/candidates?microsoft=connected`);
+    } catch (err) {
+      console.error("Microsoft OAuth callback error:", err);
+      res.status(500).send(`OAuth error: ${String(err)}`);
+    }
+  });
+
+
   // Receives Adherence / OT / Coaching rows pushed from Google Sheets (Apps Script).
   //
   // IMPORTANT: this is DISPLAY-ONLY. It never touches payroll_records or payslips —

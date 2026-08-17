@@ -5088,6 +5088,97 @@ const integrationsRouter = router({
   }),
 
   // Debug: inspect raw Google Calendar data
+  /** Import candidates from Microsoft/Outlook calendar events */
+  importMicrosoftCalendarEvents: protectedProcedure
+    .input(z.object({
+      startDate: z.string(),
+      endDate: z.string(),
+      keywords: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { integrationsTokens } = await import("../drizzle/schema");
+      const { eq, and: andMs, or: orMs, isNull: isNullMs } = await import("drizzle-orm");
+      const userId = ctx.user?.openId ?? null;
+      const [tokenRow] = await db.select().from(integrationsTokens).where(
+        userId
+          ? andMs(eq(integrationsTokens.provider, "microsoft"), orMs(eq(integrationsTokens.userId, userId), isNullMs(integrationsTokens.userId)))
+          : andMs(eq(integrationsTokens.provider, "microsoft"), isNullMs(integrationsTokens.userId))
+      ).orderBy(integrationsTokens.updatedAt).limit(1);
+      if (!tokenRow) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Microsoft Calendar not connected. Please connect your Outlook account in the Recruitment page." });
+
+      // Refresh token if expired
+      let accessToken = tokenRow.accessToken;
+      if (tokenRow.expiresAt && tokenRow.expiresAt < Date.now() + 60000) {
+        const refreshRes = await fetch(`https://login.microsoftonline.com/${process.env.MICROSOFT_TENANT_ID ?? "common"}/oauth2/v2.0/token`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: process.env.MICROSOFT_CLIENT_ID ?? "",
+            client_secret: process.env.MICROSOFT_CLIENT_SECRET ?? "",
+            refresh_token: tokenRow.refreshToken || "",
+            grant_type: "refresh_token",
+            scope: "Calendars.Read User.Read offline_access",
+          }),
+        });
+        const refreshData = await refreshRes.json() as { access_token?: string; expires_in?: number };
+        if (refreshData.access_token) {
+          accessToken = refreshData.access_token;
+          await db.update(integrationsTokens).set({
+            accessToken: refreshData.access_token,
+            expiresAt: Date.now() + (refreshData.expires_in ?? 3600) * 1000,
+            updatedAt: Date.now(),
+          } as never).where(eq(integrationsTokens.id, tokenRow.id));
+        }
+      }
+
+      // Fetch events from Microsoft Graph API
+      const graphUrl = new URL("https://graph.microsoft.com/v1.0/me/calendarView");
+      graphUrl.searchParams.set("startDateTime", new Date(input.startDate).toISOString());
+      graphUrl.searchParams.set("endDateTime", new Date(input.endDate + "T23:59:59").toISOString());
+      graphUrl.searchParams.set("$select", "subject,attendees,body,start,end,organizer");
+      graphUrl.searchParams.set("$top", "50");
+      const eventsRes = await fetch(graphUrl.toString(), {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const eventsData = await eventsRes.json() as { value?: Array<Record<string,unknown>> };
+      const events = eventsData.value ?? [];
+
+      // Extract candidates from attendees — filter by keyword
+      const keywords = (input.keywords ?? "interview,tanis,hiring,candidate").toLowerCase().split(",").map(k => k.trim());
+      const { candidates: candidatesTable } = await import("../drizzle/schema");
+      const { eq: eqC } = await import("drizzle-orm");
+      let imported = 0;
+      for (const event of events) {
+        const subject = String(event.subject ?? "").toLowerCase();
+        if (keywords.length > 0 && !keywords.some(k => subject.includes(k))) continue;
+        const attendees = (event.attendees as Array<Record<string,unknown>>) ?? [];
+        for (const att of attendees) {
+          const emailAddress = (att.emailAddress as Record<string,unknown>) ?? {};
+          const email = String(emailAddress.address ?? "");
+          const name = String(emailAddress.name ?? "");
+          if (!email) continue;
+          const existing = await db.select({ id: candidatesTable.id }).from(candidatesTable).where(eqC(candidatesTable.email, email)).limit(1);
+          if (existing.length === 0) {
+            await db.insert(candidatesTable).values({
+              name: name || email.split("@")[0],
+              email,
+              phone: null,
+              status: "new_lead",
+              source: "microsoft_calendar",
+              notes: `Imported from Outlook: ${event.subject}`,
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            } as never);
+            imported++;
+          }
+        }
+      }
+      return { imported, total: events.length };
+    }),
+
   debugCalendar: protectedProcedure.mutation(async () => {
     const { getDb } = await import("./db");
     const db = await getDb();
@@ -5138,7 +5229,7 @@ const integrationsRouter = router({
       dateFrom: z.string().optional(), // ISO date string, e.g. "2026-05-19"
       dateTo: z.string().optional(),   // ISO date string, e.g. "2026-05-21"
     }).optional())
-    .mutation(async ({ input, ctx }) => {
+    .mutation(async ({ input }) => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });

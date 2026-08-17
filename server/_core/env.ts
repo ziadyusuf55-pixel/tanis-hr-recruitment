@@ -18,6 +18,9 @@ export const ENV = {
   hubspotApiToken: process.env.HUBSPOT_API_TOKEN ?? "",
   googleClientId: process.env.GOOGLE_CLIENT_ID ?? "",
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+  microsoftClientId: process.env.MICROSOFT_CLIENT_ID ?? "",
+  microsoftClientSecret: process.env.MICROSOFT_CLIENT_SECRET ?? "",
+  microsoftTenantId: process.env.MICROSOFT_TENANT_ID ?? "common",
   // Set to "true" to lock the agent portal (blocks new logins AND kicks active sessions).
   // Admins are NOT affected. Leave unset (or any value != "true") to keep portal open.
   agentPortalLocked: process.env.AGENT_PORTAL_LOCKED === "true",
