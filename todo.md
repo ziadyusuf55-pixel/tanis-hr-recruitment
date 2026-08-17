@@ -1080,6 +1080,7 @@
 - [x] Set T-DEMO-1 to active, isActive, and isDemo in production, then verify the stored flags
 - [x] Add workforce_agents.isDemo with a false default and validate TypeScript before publishing
 - [x] Fix the undefined ctx reference at server/routers.ts line 5149 before deployment validation
+- [x] Re-run the approved T-DEMO-1 active/isDemo update and verify its production flags
 
 ## Deployment Verification
 - [x] Pull latest changes with no migration and confirm npx tsc --noEmit succeeds before publishing
@@ -1087,3 +1088,4 @@
 - [x] Handle the all-period view mode before passing it to AgentDetailChart in PerformanceReports
 - [x] Pull latest changes with no migration and confirm npx tsc --noEmit succeeds before publishing
 - [x] Fix the undefined ctx reference in server/routers.ts before deployment validation
+- [x] Pull latest changes with no migration and confirm npx tsc --noEmit succeeds before publishing
