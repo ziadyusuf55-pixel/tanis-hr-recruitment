@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { toast } from "sonner";
+import { getErrorMessage } from "@/lib/errorMessage";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -42,6 +44,14 @@ export default function FormerAgents() {
   const rows = data as FormerRow[];
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "resigned" | "terminated" | "blacklisted">("all");
+  const utils = trpc.useUtils();
+  const restoreMutation = trpc.workforce.update.useMutation({
+    onSuccess: () => {
+      utils.workforce.listFormer.invalidate();
+      toast.success("Agent restored to active status");
+    },
+    onError: (e: unknown) => toast.error(getErrorMessage(e)),
+  });
   const [expanded, setExpanded] = useState<string | null>(null);
   const [expandedSection, setExpandedSection] = useState<string>("personal");
 
@@ -116,6 +126,17 @@ export default function FormerAgents() {
                         {code} · {String(a.crdts ?? "—")} · Joined {fmtDate(a.joinDate as number)} · {row.totalCycles} cycles · EGP {row.totalPaidEgp.toLocaleString()} paid
                       </p>
                     </div>
+                    <button
+                      className="shrink-0 text-xs px-3 py-1.5 rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 font-medium transition-colors"
+                      onClick={e => {
+                        e.stopPropagation();
+                        if (confirm(`Restore ${String(a.fullName ?? "this agent")} to active status?`)) {
+                          restoreMutation.mutate({ traineeCode: code, agentStatus: "active", isActive: true });
+                        }
+                      }}
+                    >
+                      ↩ Restore
+                    </button>
                     {isOpen ? <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />}
                   </div>
                 </button>

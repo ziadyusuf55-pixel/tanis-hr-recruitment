@@ -114,6 +114,7 @@ export function ViolationTracker({
         )}
         {viewMode === "cycle" && (
           <select className="border rounded-md px-2 py-1.5 text-sm bg-background" value={cycle} onChange={e => setCycle(e.target.value)}>
+            {cycles.length === 0 && <option value={cycle}>{monthLabel(cycle)} cycle</option>}
             {cycles.map(c => <option key={c} value={c}>{monthLabel(c)} cycle</option>)}
           </select>
         )}

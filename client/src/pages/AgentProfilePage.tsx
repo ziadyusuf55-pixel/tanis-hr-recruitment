@@ -404,6 +404,66 @@ export default function AgentProfilePage() {
         </CardContent>
       </Card>
 
+      {/* Quick status cards — Documents + Payment */}
+      <div className="grid grid-cols-2 gap-4">
+        {/* Document completion */}
+        <Card className="border-0 shadow-sm cursor-pointer hover:shadow-md transition-shadow" onClick={() => setActiveTab("documents")}>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Documents</p>
+              <FileText className="h-4 w-4 text-muted-foreground" />
+            </div>
+            {(() => {
+              const REQUIRED = ["national_id","criminal_record","military_status","insurance_status","contract"];
+              const submitted = new Set((documents as Array<{docType: string}>).map(d => d.docType));
+              const missing = REQUIRED.filter(r => !submitted.has(r));
+              const pct = Math.round((REQUIRED.filter(r => submitted.has(r)).length / REQUIRED.length) * 100);
+              const pending = (documents as Array<{status: string}>).filter(d => d.status === "pending").length;
+              return (
+                <>
+                  <div className="flex items-center gap-2 mb-2">
+                    <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden">
+                      <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: pct === 100 ? "#16a34a" : pct >= 60 ? "#f59e0b" : "#ef4444" }} />
+                    </div>
+                    <span className="text-sm font-bold">{pct}%</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {missing.length === 0 ? "All required docs submitted ✓" : `${missing.length} required doc${missing.length !== 1 ? "s" : ""} missing`}
+                    {pending > 0 && ` · ${pending} pending review`}
+                  </p>
+                </>
+              );
+            })()}
+          </CardContent>
+        </Card>
+
+        {/* Payment method */}
+        <Card className="border-0 shadow-sm cursor-pointer hover:shadow-md transition-shadow" onClick={() => setActiveTab("payment")}>
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Payment Preferences</p>
+              <CreditCard className="h-4 w-4 text-muted-foreground" />
+            </div>
+            {(paymentMethods as unknown[]).length === 0 ? (
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-red-500" />
+                <p className="text-sm text-red-600 font-medium">No payment method added</p>
+              </div>
+            ) : (
+              (paymentMethods as Array<Record<string,unknown>>).slice(0, 2).map((pm, i) => (
+                <div key={i} className="flex items-center gap-2 mb-1">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500" />
+                  <p className="text-sm font-medium">
+                    {pm.type === "wallet" ? `${pm.walletProvider ?? "Wallet"} · ${pm.walletPhone ?? ""}` : `Bank · ${pm.bankName ?? ""}`}
+                    {pm.isPreferred ? <span className="ml-1.5 text-[10px] text-muted-foreground">(preferred)</span> : null}
+                  </p>
+                </div>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
       {/* Tab Navigation */}
       <div className="flex gap-1 border-b">
         {([
