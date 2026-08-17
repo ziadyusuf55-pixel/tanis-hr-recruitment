@@ -99,6 +99,13 @@ export default function Candidates() {
   const { data: calStatus } = trpc.integrations.getStatus.useQuery();
   const googleCalConnected = (calStatus as Record<string,unknown> | undefined)?.google === true;
   const { data: meForCal } = trpc.auth.me.useQuery();
+  const handleConnectMicrosoftCalendar = () => {
+    // Microsoft OAuth — redirect to Microsoft identity platform
+    const origin = window.location.origin;
+    const openId = (meForCal as Record<string,unknown> | null)?.openId as string ?? "";
+    const state = btoa(JSON.stringify({ origin, userId: openId, provider: "microsoft" }));
+    window.location.href = `/api/oauth/microsoft?origin=${encodeURIComponent(origin)}&state=${encodeURIComponent(state)}`;
+  };
   const handleConnectGoogleCalendar = () => {
     const origin = window.location.origin;
     const openId = (meForCal as Record<string,unknown> | null)?.openId as string ?? "";
@@ -554,9 +561,14 @@ export default function Candidates() {
               <Calendar className="h-3.5 w-3.5" /> Import Calendar
             </Button>
           ) : (
-            <Button variant="outline" size="sm" onClick={handleConnectGoogleCalendar} className="gap-2 h-9 border-blue-200 text-blue-600 hover:bg-blue-50">
-              <Calendar className="h-3.5 w-3.5" /> Connect Google Calendar
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={handleConnectGoogleCalendar} className="gap-2 h-9 border-blue-200 text-blue-600 hover:bg-blue-50">
+                <Calendar className="h-3.5 w-3.5" /> Google Calendar
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleConnectMicrosoftCalendar} className="gap-2 h-9 border-indigo-200 text-indigo-600 hover:bg-indigo-50">
+                <Calendar className="h-3.5 w-3.5" /> Outlook Calendar
+              </Button>
+            </div>
           )}
           <Button size="sm" onClick={() => setAddOpen(true)} className="gap-2 h-9">
             <Plus className="h-3.5 w-3.5" /> Add Candidate

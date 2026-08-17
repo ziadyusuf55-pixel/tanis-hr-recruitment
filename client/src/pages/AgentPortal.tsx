@@ -176,6 +176,9 @@ export default function AgentPortal() {
     staleTime: 0,
   });
   const logoutMutation = trpc.agent.logout.useMutation();
+  // Shared data for banner — fetched once at top level
+  const { data: _wfProfile } = trpc.workforce.getMyProfile.useQuery();
+  const { data: _payMethods = [] } = trpc.paymentMethods.listMine.useQuery();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const markOrientationMutation = trpc.orientation.markShown.useMutation();
   const [isDark, setIsDark] = useState<boolean>(() => {
@@ -228,19 +231,25 @@ export default function AgentPortal() {
 
   if (!agent) return null;
 
-  const navItems: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: "profile", label: "Profile", icon: <User className="w-4 h-4" /> },
-    { id: "opplan", label: "Op Plan", icon: <LayoutGrid className="w-4 h-4" /> },
-    { id: "performance", label: "Performance", icon: <TrendingUp className="w-4 h-4" /> },
-    { id: "academy", label: "Tanis Academy", icon: <GraduationCap className="w-4 h-4" /> },
-    { id: "payroll", label: "Payroll", icon: <CreditCard className="w-4 h-4" /> },
-    { id: "commission", label: "Commission", icon: <BarChart2 className="w-4 h-4" /> },
-    { id: "requests", label: "Requests", icon: <MessageSquare className="w-4 h-4" /> },
-    { id: "documents", label: "Documents", icon: <FileText className="w-4 h-4" /> },
-    { id: "payment", label: "Payment", icon: <Wallet className="w-4 h-4" /> },
-    { id: "referrals", label: "Refer", icon: <Users className="w-4 h-4" /> },
-    { id: "comments", label: "Comments", icon: <Bell className="w-4 h-4" /> },
+  // Primary nav (shown prominently) — 6 tabs max
+  const primaryNavItems: { id: Tab; label: string; icon: React.ReactNode }[] = [
+    { id: "profile",     label: "Profile",      icon: <User className="w-4 h-4" /> },
+    { id: "performance", label: "Performance",  icon: <TrendingUp className="w-4 h-4" /> },
+    { id: "payroll",     label: "Payroll",      icon: <CreditCard className="w-4 h-4" /> },
+    { id: "commission",  label: "Commission",   icon: <BarChart2 className="w-4 h-4" /> },
+    { id: "requests",    label: "Requests",     icon: <MessageSquare className="w-4 h-4" /> },
+    { id: "documents",   label: "Documents",    icon: <FileText className="w-4 h-4" /> },
   ];
+  // Secondary nav (in "More" section)
+  const secondaryNavItems: { id: Tab; label: string; icon: React.ReactNode }[] = [
+    { id: "opplan",   label: "Op Plan",       icon: <LayoutGrid className="w-4 h-4" /> },
+    { id: "academy",  label: "Tanis Academy", icon: <GraduationCap className="w-4 h-4" /> },
+    { id: "payment",  label: "Payment",       icon: <Wallet className="w-4 h-4" /> },
+    { id: "referrals",label: "Refer",         icon: <Users className="w-4 h-4" /> },
+    { id: "comments", label: "Feedback",      icon: <Bell className="w-4 h-4" /> },
+  ];
+  const [showMoreNav, setShowMoreNav] = useState(false);
+  const navItems = [...primaryNavItems, ...secondaryNavItems];
 
   return (
     <div className="min-h-screen transition-colors duration-200" style={{ background: theme.bg, color: theme.text }}>
@@ -316,19 +325,39 @@ export default function AgentPortal() {
         </div>
 
         {/* Mobile nav */}
-        <div className="sm:hidden flex" style={{ borderTop: `1px solid ${theme.mobileNavBorder}` }}>
-          {navItems.map((item) => (
+        <div className="sm:hidden flex overflow-x-auto" style={{ borderTop: `1px solid ${theme.mobileNavBorder}` }}>
+          {primaryNavItems.map((item) => (
             <button
               key={item.id}
-              onClick={() => setActiveTab(item.id)}
-              className="flex-1 flex flex-col items-center gap-0.5 py-2 text-xs transition-all"
+              onClick={() => { setActiveTab(item.id); setShowMoreNav(false); }}
+              className="flex-shrink-0 flex-1 min-w-[56px] flex flex-col items-center gap-0.5 py-2 text-[10px] transition-all"
               style={{ color: activeTab === item.id ? theme.text : theme.navInactive }}
             >
               {item.icon}
               {item.label}
             </button>
           ))}
+          <button
+            onClick={() => setShowMoreNav(!showMoreNav)}
+            className="flex-shrink-0 flex-1 min-w-[56px] flex flex-col items-center gap-0.5 py-2 text-[10px] transition-all"
+            style={{ color: showMoreNav ? theme.text : theme.navInactive }}
+          >
+            <span className="w-4 h-4 flex flex-col justify-center gap-0.5"><span className="block h-0.5 w-4 rounded" style={{ background: "currentColor" }} /><span className="block h-0.5 w-4 rounded" style={{ background: "currentColor" }} /><span className="block h-0.5 w-4 rounded" style={{ background: "currentColor" }} /></span>
+            More
+          </button>
         </div>
+        {showMoreNav && (
+          <div className="sm:hidden grid grid-cols-5 py-2 px-2" style={{ borderTop: `1px solid ${theme.mobileNavBorder}`, background: theme.surface }}>
+            {secondaryNavItems.map((item) => (
+              <button key={item.id} onClick={() => { setActiveTab(item.id); setShowMoreNav(false); }}
+                className="flex flex-col items-center gap-1 py-2 px-1 rounded-lg text-[10px] transition-all"
+                style={{ color: activeTab === item.id ? BRAND : theme.textMuted, background: activeTab === item.id ? `${BRAND}15` : "transparent" }}>
+                {item.icon}
+                {item.label}
+              </button>
+            ))}
+          </div>
+        )}
       </header>
 
       {/* ── Hero Banner ── */}
@@ -358,7 +387,7 @@ export default function AgentPortal() {
 
       {/* ── Content ── */}
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
-        <ProfileCompletionBanner agent={agent} theme={theme} onGoToProfile={() => setActiveTab("profile")} onGoToPayment={() => setActiveTab("payment")} />
+        <ProfileCompletionBanner wfProfile={_wfProfile as Record<string,unknown> | null} payMethods={_payMethods as unknown[]} theme={theme} onGoToProfile={() => setActiveTab("profile")} onGoToPayment={() => setActiveTab("payment")} />
         {activeTab === "profile" && <ProfileTab agent={agent} theme={theme} />}
         {activeTab === "opplan" && <OperationPlanTab theme={theme} />}
         {activeTab === "performance" && <PerformanceTab theme={theme} />}
@@ -416,13 +445,13 @@ function PSelect({ theme, label, value, onChange, options }: { theme: Theme; lab
 function pTitle(str: string) { return str ? str.charAt(0).toUpperCase() + str.slice(1) : str; }
 
 // ─── Profile Completion Banner ────────────────────────────────────────────────
-function ProfileCompletionBanner({ agent, theme, onGoToProfile, onGoToPayment }: {
-  agent: AgentData; theme: Theme;
+function ProfileCompletionBanner({ wfProfile, payMethods, theme, onGoToProfile, onGoToPayment }: {
+  wfProfile: Record<string,unknown> | null;
+  payMethods: unknown[];
+  theme: Theme;
   onGoToProfile: () => void;
   onGoToPayment: () => void;
 }) {
-  const { data: wfProfile } = trpc.workforce.getMyProfile.useQuery();
-  const { data: payMethods = [] } = trpc.paymentMethods.listMine.useQuery();
 
   const missingProfile = !((wfProfile as Record<string,unknown> | null)?.phone)
     || !((wfProfile as Record<string,unknown> | null)?.nationalId)
@@ -2005,7 +2034,13 @@ function PaymentMethodsTab({ theme }: { theme: Theme }) {
   const utils = trpc.useUtils();
   const { data: methods = [], isLoading } = trpc.paymentMethods.listMine.useQuery();
   const addMutation = trpc.paymentMethods.upsert.useMutation({
-    onSuccess: () => { utils.paymentMethods.listMine.invalidate(); setShowForm(false); resetForm(); },
+    onSuccess: () => {
+      utils.paymentMethods.listMine.invalidate();
+      setShowForm(false);
+      resetForm();
+      toast.success("Payment method saved. HR has been notified and will verify your details.");
+    },
+    onError: (e: unknown) => toast.error(getErrorMessage(e)),
   });
   const setPreferredMutation = trpc.paymentMethods.setPreferred.useMutation({
     onSuccess: () => utils.paymentMethods.listMine.invalidate(),
@@ -2765,6 +2800,9 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
       { enabled: !!effectiveCycle }
     );
 
+  // Find own row in leaderboard (uses existing myTraineeCode from below)
+  // myCommissionEgp and myRank computed after fullLeaderboard loads
+
   // My own crdts for highlighting
   const { data: myProfile } = trpc.workforce.getMyProfile.useQuery();
   const myCrdts = (myProfile as { crdts?: string } | null)?.crdts ?? null;
@@ -2978,6 +3016,16 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
           const fmtMoneySummary = (v: number) => v < 0 ? `-$${fmtNum(Math.abs(v))}` : `$${fmtNum(v)}`;
           return (
             <div className="px-4 py-3 flex items-center gap-6 flex-wrap" style={{ borderBottom: `1px solid ${theme.cardBorder}`, background: theme.surface }}>
+              {/* Commission as hero */}
+              <div className="flex-1 min-w-[140px]">
+                <p className="text-xs" style={{ color: theme.textFaint }}>Your Commission This Cycle</p>
+                {myCommission > 0 ? (
+                  <p className="text-3xl font-bold mt-0.5" style={{ color: "oklch(0.55 0.18 145)" }}>EGP {fmtNum(myCommission)}</p>
+                ) : (
+                  <p className="text-3xl font-bold mt-0.5" style={{ color: theme.textMuted }}>EGP 0</p>
+                )}
+                {myCommission === 0 && <p className="text-xs mt-0.5" style={{ color: theme.textFaint }}>Not yet uploaded for this cycle</p>}
+              </div>
               <div>
                 <p className="text-xs" style={{ color: theme.textFaint }}>Your Rank</p>
                 <p className="text-xl font-bold" style={{ color: rankDisplayColor }}>
@@ -2989,12 +3037,6 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
                 <p className="text-xs" style={{ color: theme.textFaint }}>Your Profit</p>
                 <p className="text-base font-semibold" style={{ color: myProfit < 0 ? "#ef4444" : theme.text }}>{fmtMoneySummary(myProfit)}</p>
               </div>
-              {myCommission > 0 && (
-                <div>
-                  <p className="text-xs" style={{ color: theme.textFaint }}>Commission</p>
-                  <p className="text-base font-semibold" style={{ color: "oklch(0.55 0.18 145)" }}>EGP {fmtNum(myCommission)}</p>
-                </div>
-              )}
               {campaignLabel && (
                 <div className="ml-auto">
                   <span className="text-xs px-2 py-1 rounded-full font-medium" style={{ background: `${BRAND}22`, color: BRAND }}>{campaignLabel}</span>
