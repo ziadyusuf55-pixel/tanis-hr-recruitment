@@ -1096,3 +1096,5 @@
 ## Deployment Verification
 - [x] Pull latest changes, ignore Microsoft OAuth configuration, and confirm npx tsc --noEmit succeeds before publishing
 - [x] Fix the undefined ctx reference at server/routers.ts line 5240 before deployment validation
+- [x] Pull latest changes with no migration and confirm npx tsc --noEmit succeeds before publishing
+- [x] Fix the FormerAgents cache invalidation reference to a registered workforce procedure
