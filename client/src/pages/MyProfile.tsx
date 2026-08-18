@@ -101,19 +101,17 @@ export default function MyProfile() {
       {/* Editable */}
       <Card><CardContent className="p-4 space-y-3">
         <p className="text-sm font-semibold">Personal details</p>
-        {isAdminSource && (
-          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-            Admin accounts have limited profile fields. Full HR profile is managed via Settings → Management.
-          </p>
-        )}
         <div className="grid sm:grid-cols-2 gap-3">
           <F label="Phone" k="phone" />
-          {!isAdminSource && <F label="City" k="city" />}
-          {!isAdminSource && <F label="Date of birth" k="dateOfBirth" type="date" />}
-          {!isAdminSource && <div className="sm:col-span-2">
+          <F label="City" k="city" />
+          <F label="Date of birth" k="dateOfBirth" type="date" />
+          <div className="sm:col-span-2">
             <p className="text-xs text-muted-foreground mb-1">Address</p>
             <Input value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} />
-          </div>}
+          </div>
+          <F label="Emergency Contact Name" k="emergencyContactName" />
+          <F label="Emergency Contact Phone" k="emergencyContactPhone" />
+          <F label="Emergency Contact Relation" k="emergencyContactRelation" />
         </div>
 
         <p className="text-sm font-semibold pt-2">Emergency contact <span className="font-normal text-muted-foreground">· جهة اتصال للطوارئ</span></p>

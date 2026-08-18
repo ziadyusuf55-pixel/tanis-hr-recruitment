@@ -1191,7 +1191,7 @@ const agentRouter = router({
       })),
     }))
     .mutation(async ({ input, ctx }) => {
-      const uploadedBy = ctx.user?.name ?? ctx.user?.email ?? "Admin";
+      const uploadedBy = ctx.user?.name ?? ctx.user?.email ?? "Unknown Admin";
       const results = await upsertPayrollFromExcel(
         input.rows.map(r => ({
           agentCode: r.agentCode,
@@ -2266,7 +2266,23 @@ const paymentMethodsRouter = router({
     .mutation(({ input }) => upsertPaymentMethod(input)),
   adminDelete: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(({ input }) => deletePaymentMethod(input.id)),
+    .mutation(async ({ input }) => {
+      // Safety check: warn if this payment method is referenced in payroll records
+      const { getDb } = await import("./db");
+      const { agentPaymentMethods, payrollRecords } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (db) {
+        const [pm] = await db.select({ traineeCode: agentPaymentMethods.traineeCode, type: agentPaymentMethods.type }).from(agentPaymentMethods).where(eq(agentPaymentMethods.id, input.id)).limit(1);
+        if (pm) {
+          const [ref] = await db.select({ id: payrollRecords.id }).from(payrollRecords).where(eq(payrollRecords.crdts, pm.traineeCode)).limit(1);
+          if (ref) {
+            throw new TRPCError({ code: "CONFLICT", message: "This agent has payroll records. Deleting their payment method may affect future payments. Ask the agent to update their payment info instead, or confirm with the owner before proceeding." });
+          }
+        }
+      }
+      return deletePaymentMethod(input.id);
+    }),
   adminSetPreferred: protectedProcedure
     .input(z.object({ id: z.number(), traineeCode: z.string() }))
     .mutation(({ input }) => setPaymentMethodPreferred(input.id, input.traineeCode)),
@@ -2556,15 +2572,21 @@ const separationRouter = router({
   resignOnSpot: protectedProcedure
     .input(z.object({ agentCode: z.string(), reason: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
-      const adminName = ctx.user?.name ?? "Admin";
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const adminName = ctx.user.name ?? ctx.user.email ?? "Unknown Admin";
       await markAgentResignedOnSpot(input.agentCode, input.reason, adminName);
-      // Revoke any active portal sessions immediately
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (db) {
-        const { workforceAgents } = await import("../drizzle/schema");
+        const { workforceAgents, exitProcess } = await import("../drizzle/schema");
+        // Revoke portal session
         await db.update(workforceAgents).set({ sessionRevokedAt: Date.now() } as never).where(eq(workforceAgents.traineeCode, input.agentCode));
+        // Auto-create exit process record if not already exists
+        const existing = await db.select({ id: exitProcess.id }).from(exitProcess).where(eq(exitProcess.traineeCode, input.agentCode)).limit(1);
+        if (!existing[0]) {
+          await db.insert(exitProcess).values({ traineeCode: input.agentCode, exitType: "resignation", notes: input.reason, createdAt: Date.now(), updatedAt: Date.now() } as never);
+        }
       }
       return { success: true };
     }),
@@ -2573,15 +2595,20 @@ const separationRouter = router({
   terminate: protectedProcedure
     .input(z.object({ agentCode: z.string(), reason: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
-      const adminName = ctx.user?.name ?? "Admin";
+      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const adminName = ctx.user.name ?? ctx.user.email ?? "Unknown Admin";
       await terminateAgent(input.agentCode, input.reason, adminName);
-      // Revoke any active portal sessions immediately
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (db) {
-        const { workforceAgents } = await import("../drizzle/schema");
+        const { workforceAgents, exitProcess } = await import("../drizzle/schema");
         await db.update(workforceAgents).set({ sessionRevokedAt: Date.now() } as never).where(eq(workforceAgents.traineeCode, input.agentCode));
+        // Auto-create exit process record
+        const existing = await db.select({ id: exitProcess.id }).from(exitProcess).where(eq(exitProcess.traineeCode, input.agentCode)).limit(1);
+        if (!existing[0]) {
+          await db.insert(exitProcess).values({ traineeCode: input.agentCode, exitType: "termination", notes: input.reason, createdAt: Date.now(), updatedAt: Date.now() } as never);
+        }
       }
       return { success: true };
     }),
@@ -2595,7 +2622,7 @@ const separationRouter = router({
       adminLastWorkingDay: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(), // YYYY-MM-DD set by admin
     }))
     .mutation(async ({ input, ctx }) => {
-      const adminName = ctx.user?.name ?? "Admin";
+      const adminName = ctx.user?.name ?? ctx.user?.email ?? "Unknown Admin";
       // Revoke portal session as soon as resignation is approved
       {
         const { getDb: _rGdb } = await import("./db");
@@ -2686,7 +2713,7 @@ const separationRouter = router({
       reason: z.string().min(1),
     }))
     .mutation(async ({ input, ctx }) => {
-      const adminName = ctx.user?.name ?? "Admin";
+      const adminName = ctx.user?.name ?? ctx.user?.email ?? "Unknown Admin";
       await scheduleResignation(input.agentCode, input.effectiveDate, input.reason, adminName);
       return { success: true };
     }),

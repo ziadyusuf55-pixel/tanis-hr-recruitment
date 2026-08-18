@@ -43,8 +43,8 @@ export default function Dashboard() {
   const [period, setPeriod] = useState<Period>("month");
   const periodInput = useMemo(() => ({ period }), [period]);
 
-  const { data: kpis, isLoading } = trpc.dashboard.kpis.useQuery(periodInput);
-  const { data: overview } = trpc.dashboard.overview.useQuery();
+  const { data: kpis, isLoading, isError: kpisError } = trpc.dashboard.kpis.useQuery(periodInput);
+  const { data: overview, isError: overviewError } = trpc.dashboard.overview.useQuery();
   const { data: candidates, isLoading: candidatesLoading } = trpc.candidates.list.useQuery();
 
   // ── Attention feeds (all existing endpoints) ──
@@ -83,6 +83,16 @@ export default function Dashboard() {
   const turnoverColor =
     (kpis?.turnoverRate ?? 0) === 0 ? "text-emerald-600" :
     (kpis?.turnoverRate ?? 0) <= 5 ? "text-yellow-600" : "text-red-600";
+
+  if (kpisError || overviewError) {
+    return (
+      <div className="p-8 text-center space-y-3">
+        <p className="text-lg font-semibold text-foreground">Dashboard unavailable</p>
+        <p className="text-sm text-muted-foreground">Could not load dashboard data. Check your connection and try refreshing.</p>
+        <button onClick={() => window.location.reload()} className="text-sm px-4 py-2 rounded-lg border hover:bg-muted transition-colors">Reload</button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8 max-w-6xl">

@@ -42,6 +42,17 @@ function rateLimit(key: string, maxPerMinute: number): boolean {
 // Clean stale keys every 5 min
 setInterval(() => { const now = Date.now(); rateLimitStore.forEach((v, k) => { if (now > v.resetAt) rateLimitStore.delete(k); }); }, 5 * 60 * 1000).unref();
 
+// Process due separations every hour — applies scheduled resignations/terminations whose effectiveDate has passed
+const runDueSeparations = async () => {
+  try {
+    const { processDueSeparations } = await import("./db");
+    const n = await processDueSeparations();
+    if (n > 0) console.log(`[separations] Applied ${n} due separation(s)`);
+  } catch (e) { console.error("[separations] processDueSeparations error:", e); }
+};
+runDueSeparations(); // run on startup to catch any missed separations
+setInterval(runDueSeparations, 60 * 60 * 1000).unref(); // then every hour
+
 async function startServer() {
   const app = express();
   const server = createServer(app);

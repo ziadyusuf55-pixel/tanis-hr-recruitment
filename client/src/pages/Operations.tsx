@@ -1361,16 +1361,24 @@ export default function Operations() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col gap-1">
-                          {agent.agentStatus === "resigned" ? (
-                            <Badge className="text-xs bg-red-100 text-red-700 border-red-200" variant="outline">Resigned</Badge>
-                          ) : agent.agentStatus === "terminated" ? (
-                            <Badge className="text-xs bg-orange-100 text-orange-700 border-orange-200" variant="outline">Terminated</Badge>
-                          ) : agent.isActive ? (
-                            <Badge className="text-xs bg-emerald-100 text-emerald-700 border-emerald-200" variant="outline">Active</Badge>
-                          ) : (
-                            <Badge className="text-xs bg-muted text-muted-foreground" variant="outline">Inactive</Badge>
-                          )}
-                          {agent.agentStatus !== "resigned" && agent.agentStatus !== "terminated" && (() => {
+                          {(() => {
+                            const s = agent.agentStatus ?? "active";
+                            const STATUS_CONFIG: Record<string, { label: string; cls: string; icon: string }> = {
+                              active:      { label: "Active",      cls: "bg-emerald-100 text-emerald-700 border-emerald-200", icon: "●" },
+                              inactive:    { label: "Inactive",    cls: "bg-gray-100 text-gray-500 border-gray-200",         icon: "○" },
+                              frozen:      { label: "Frozen",      cls: "bg-blue-100 text-blue-700 border-blue-200",         icon: "❄" },
+                              resigned:    { label: "Resigned",    cls: "bg-orange-100 text-orange-700 border-orange-200",   icon: "↗" },
+                              terminated:  { label: "Terminated",  cls: "bg-red-100 text-red-700 border-red-200",            icon: "✕" },
+                              blacklisted: { label: "Blacklisted", cls: "bg-gray-900 text-white border-gray-800",            icon: "⊘" },
+                            };
+                            const cfg = STATUS_CONFIG[s] ?? STATUS_CONFIG.inactive;
+                            return (
+                              <Badge className={`text-xs ${cfg.cls}`} variant="outline">
+                                <span className="mr-1 text-[10px]">{cfg.icon}</span>{cfg.label}
+                              </Badge>
+                            );
+                          })()}
+                          {agent.agentStatus !== "resigned" && agent.agentStatus !== "terminated" && agent.agentStatus !== "blacklisted" && (() => {
                             const joinedMs = agent.joinDate;
                             const isNesting = joinedMs && (Date.now() - joinedMs) < 14 * 24 * 60 * 60 * 1000;
                             if (isNesting) {

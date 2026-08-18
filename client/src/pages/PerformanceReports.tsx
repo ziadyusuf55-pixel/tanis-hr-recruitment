@@ -235,6 +235,11 @@ export default function PerformanceReports() {
 
   return (
     <div className="p-6 space-y-5">
+      {(loadingCycle === false && rawCycleStats.length === 0 && viewMode === "cycle" && activeCycle) && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+          No performance data for {activeCycle}. Make sure the stats Excel has been uploaded for this cycle.
+        </div>
+      )}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold">Performance Reports</h1>
