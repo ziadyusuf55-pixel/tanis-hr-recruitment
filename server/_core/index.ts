@@ -45,7 +45,7 @@ setInterval(() => { const now = Date.now(); rateLimitStore.forEach((v, k) => { i
 // Process due separations every hour — applies scheduled resignations/terminations whose effectiveDate has passed
 const runDueSeparations = async () => {
   try {
-    const { processDueSeparations } = await import("../db");
+    const { processDueSeparations } = await import("./db");
     const n = await processDueSeparations();
     if (n > 0) console.log(`[separations] Applied ${n} due separation(s)`);
   } catch (e) { console.error("[separations] processDueSeparations error:", e); }
