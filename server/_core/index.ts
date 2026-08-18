@@ -57,6 +57,20 @@ async function startServer() {
   const app = express();
   const server = createServer(app);
 
+  // ── CORS — restrict to hub domain in production ──
+  app.use((req, res, next) => {
+    const allowedOrigin = process.env.ALLOWED_ORIGIN ?? "https://hub.tanis-eg.com";
+    const origin = req.headers.origin;
+    if (!origin || origin === allowedOrigin || process.env.NODE_ENV !== "production") {
+      res.setHeader("Access-Control-Allow-Origin", origin || "*");
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+      res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,X-API-Key");
+    }
+    if (req.method === "OPTIONS") { res.status(204).end(); return; }
+    next();
+  });
+
   // ── Security headers (no helmet needed — manual is fine for this stack) ──
   app.use((_req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -116,17 +130,25 @@ async function startServer() {
   app.post("/api/upload-doc", async (req, res) => {
     try {
       const busboy = (await import("busboy")).default;
-      const bb = busboy({ headers: req.headers, limits: { fileSize: 16 * 1024 * 1024 } });
+      const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
+      const ALLOWED_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp", "application/pdf", "image/gif"]);
+      const bb = busboy({ headers: req.headers, limits: { fileSize: MAX_FILE_SIZE } });
       const chunks: Buffer[] = [];
       let mimeType = "application/octet-stream";
       let fileName = "upload";
+      let fileTooLarge = false;
+      let typeRejected = false;
       bb.on("file", (_field: string, file: NodeJS.ReadableStream, info: { filename: string; mimeType: string }) => {
         mimeType = info.mimeType;
         fileName = info.filename || "upload";
+        if (!ALLOWED_TYPES.has(mimeType.toLowerCase())) { typeRejected = true; file.resume(); return; }
         file.on("data", (chunk: Buffer) => chunks.push(chunk));
+        file.on("limit", () => { fileTooLarge = true; chunks.length = 0; });
       });
       bb.on("finish", async () => {
         try {
+          if (typeRejected) { res.status(415).json({ error: "File type not allowed. Use JPEG, PNG, WebP, GIF, or PDF." }); return; }
+          if (fileTooLarge) { res.status(413).json({ error: "File too large. Maximum size is 5MB." }); return; }
           const { storagePut } = await import("../storage");
           const buf = Buffer.concat(chunks);
           const ext = fileName.split(".").pop() ?? "bin";
@@ -318,7 +340,21 @@ async function startServer() {
   // IMPORTANT: this is DISPLAY-ONLY. It never touches payroll_records or payslips —
   // payroll is calculated externally in Python from the same sheets. Writing here
   // as well would double-count.
-  //
+  // ─── Agent credential check (FormerAgents restore flow) ─────────────────
+  app.get("/api/check-agent-creds", async (req, res) => {
+    const code = req.query.code as string;
+    if (!code) { res.json({ hasCredentials: false }); return; }
+    try {
+      const { getDb } = await import("./db");
+      const { agentCredentials } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) { res.json({ hasCredentials: false }); return; }
+      const [cred] = await db.select({ id: agentCredentials.id }).from(agentCredentials).where(eq(agentCredentials.traineeCode, code)).limit(1);
+      res.json({ hasCredentials: !!cred });
+    } catch { res.json({ hasCredentials: false }); }
+  });
+
   // Body: { kind: "adherence" | "ot" | "quality" | "coaching", rows: [...] }
   // Duplicates are skipped (matched on crdts + date + type + category), so it's safe to
   // re-run daily.

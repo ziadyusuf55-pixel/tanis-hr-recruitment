@@ -9,7 +9,7 @@ import {
 import {
   Users, UserCheck, CalendarClock, TrendingUp,
   MessageCircle, Mic, Video, Send, UserX, Timer, ArrowRight,
-  Briefcase, Activity, Inbox, CalendarDays, Building2, Wallet, CheckCircle2, ChevronRight,
+  Briefcase, Activity, Inbox, CalendarDays, Building2, Wallet, CheckCircle2, ChevronRight, AlertCircle,
 } from "lucide-react";
 import { useLocation } from "wouter";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -54,6 +54,21 @@ export default function Dashboard() {
   const incompleteAgents = (allAgents as Array<Record<string,unknown>>).filter(a =>
     a.agentStatus === "active" && (!a.phone || !a.nationalId || !a.dateOfBirth)
   ).length;
+  const thirtyDaysFromNow = Date.now() + 30 * 24 * 60 * 60 * 1000;
+  const expiringIds = (allAgents as Array<Record<string,unknown>>).filter(a => {
+    if (a.agentStatus !== "active") return false;
+    const expiry = a.nationalIdExpiry as string | null;
+    if (!expiry) return false;
+    const ms = new Date(expiry).getTime();
+    return ms > 0 && ms < thirtyDaysFromNow;
+  }).length;
+  const expiringContracts = (allAgents as Array<Record<string,unknown>>).filter(a => {
+    if (a.agentStatus !== "active") return false;
+    const end = a.contractEndDate as string | null;
+    if (!end) return false;
+    const ms = new Date(end).getTime();
+    return ms > 0 && ms < thirtyDaysFromNow;
+  }).length;
   const { data: pendingLeave = [] } = trpc.leave.listRequests.useQuery({ status: "pending" }, { refetchInterval: 120000 });
   const { data: bdDue = [] } = trpc.bd.dueReminders.useQuery(undefined, { refetchInterval: 120000 });
   const { data: bdDeals = [] } = trpc.bd.listDeals.useQuery({});
@@ -70,6 +85,8 @@ export default function Dashboard() {
     { count: (bdDue as unknown[]).length, label: "BD follow-ups due", sub: "Deals to chase today", icon: Building2, tint: "blue", path: "/business-development" },
     { count: pendingDeletion, label: "Former agents pending payout", sub: "Still owed final pay", icon: Wallet, tint: "red", path: "/operations" },
     { count: incompleteAgents, label: "Incomplete agent profiles", sub: "Missing phone, ID or DOB", icon: Users, tint: "amber", path: "/operations" },
+    { count: expiringIds, label: "National IDs expiring soon", sub: "Within the next 30 days", icon: AlertCircle, tint: "red", path: "/operations" },
+    { count: expiringContracts, label: "Contracts ending soon", sub: "Within the next 30 days", icon: AlertCircle, tint: "amber", path: "/operations" },
   ].filter(a => a.count > 0 && canAccessPath(role, a.path));
 
   const funnelData = kpis

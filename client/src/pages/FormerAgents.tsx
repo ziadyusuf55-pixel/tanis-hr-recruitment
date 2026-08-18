@@ -46,9 +46,18 @@ export default function FormerAgents() {
   const [statusFilter, setStatusFilter] = useState<"all" | "resigned" | "terminated" | "blacklisted">("all");
   const utils = trpc.useUtils();
   const restoreMutation = trpc.workforce.update.useMutation({
-    onSuccess: () => {
+    onSuccess: (_data, vars) => {
       utils.separation.listFormerAgents.invalidate();
-      toast.success("Agent restored to active status");
+      fetch(`/api/check-agent-creds?code=${encodeURIComponent(vars.traineeCode)}`)
+        .then(r => r.json())
+        .then((d: { hasCredentials: boolean }) => {
+          if (d.hasCredentials) {
+            toast.success("Agent restored. They can log in with their existing credentials.");
+          } else {
+            toast.success("Agent restored. ⚠️ No portal credentials — go to Training → Generate Credentials before they can log in.", { duration: 8000 });
+          }
+        })
+        .catch(() => toast.success("Agent restored to active status."));
     },
     onError: (e: unknown) => toast.error(getErrorMessage(e)),
   });

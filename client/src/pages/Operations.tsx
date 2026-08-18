@@ -1080,6 +1080,7 @@ export default function Operations() {
       workLocation: (editForm.workLocation as "office" | "wfh" | undefined) || undefined,
       nationalId: editForm.nationalId || undefined,
       nationalIdExpiry: editForm.nationalIdExpiry || undefined,
+      contractEndDate: (editForm as Record<string,unknown>).contractEndDate as string || undefined,
       dateOfBirth: editForm.dateOfBirth || undefined,
       gender: (editForm.gender as "male" | "female" | undefined) || undefined,
       nationality: editForm.nationality || undefined,
@@ -1756,6 +1757,10 @@ export default function Operations() {
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">ID Expiry</label>
               <Input type="date" value={editForm.nationalIdExpiry ?? ""} onChange={e => setEditForm(f => ({ ...f, nationalIdExpiry: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Contract End Date</label>
+              <Input type="date" value={(editForm as Record<string,unknown>).contractEndDate as string ?? ""} onChange={e => setEditForm(f => ({ ...f, contractEndDate: e.target.value }))} />
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Date of Birth</label>

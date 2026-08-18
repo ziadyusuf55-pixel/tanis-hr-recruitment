@@ -1170,8 +1170,10 @@ const agentRouter = router({
 
   deletePayroll: protectedProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN", message: "Only admins can delete payroll records." });
       await deletePayrollRecord(input.id);
+      await auditEntry(ctx.user, "delete_payroll_record", "payroll", String(input.id), JSON.stringify({ deletedBy: ctx.user.name ?? ctx.user.email }));
       return { success: true };
     }),
 
@@ -1220,7 +1222,8 @@ const agentRouter = router({
   // Admin: delete all payroll rows for a specific month (undo a bad import)
   deletePayrollForMonth: protectedProcedure
     .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN", message: "Only admins can delete payroll sheets." });
       const { getDb } = await import("./db");
       const { eq: eqOp } = await import("drizzle-orm");
       const db = await getDb();
@@ -1598,7 +1601,7 @@ const notificationsRouter = router({
 
 // ─── Campaigns Router ────────────────────────────────────────────────────────
 const campaignsRouter = router({
-  list: publicProcedure.query(() => listCampaigns()),
+  list: protectedProcedure.query(() => listCampaigns()),
 
   getById: publicProcedure
     .input(z.object({ id: z.number() }))
@@ -1876,6 +1879,20 @@ const workforceRouter = router({
       }
       // ─────────────────────────────────────────────────────────────────────
       await createWorkforceAgent(input);
+      // Auto-create leave balance for new agent (default: 6 casual, 21 annual)
+      try {
+        const { getDb: getDbLb } = await import("./db");
+        const { leaveBalances: lbTable } = await import("../drizzle/schema");
+        const { eq: eqLb, and: andLb } = await import("drizzle-orm");
+        const dbLb = await getDbLb();
+        const year = new Date().getFullYear();
+        if (dbLb) {
+          const existing = await dbLb.select({ id: lbTable.id }).from(lbTable).where(andLb(eqLb(lbTable.traineeCode, input.traineeCode), eqLb(lbTable.year, year))).limit(1);
+          if (!existing[0]) {
+            await dbLb.insert(lbTable).values({ traineeCode: input.traineeCode, year, casualTotal: 6, annualTotal: 21, casualUsed: 0, annualUsed: 0, updatedAt: Date.now() });
+          }
+        }
+      } catch (e) { console.error("[LeaveBalance] Auto-init failed:", e); }
       // Send campaign assignment notification if a campaign was specified
       if (input.campaignId) {
         try {
@@ -1912,6 +1929,7 @@ const workforceRouter = router({
       workLocation: z.enum(["office", "wfh"]).optional(),
       nationalId: z.string().max(50).optional(),
       nationalIdExpiry: z.string().max(20).optional(),
+      contractEndDate: z.string().max(20).optional(),
       dateOfBirth: z.string().max(20).optional(),
       gender: z.enum(["male", "female"]).optional(),
       nationality: z.string().max(100).optional(),
@@ -1980,6 +1998,7 @@ const workforceRouter = router({
     .input(z.object({
       nationalId: z.string().max(50).optional(),
       nationalIdExpiry: z.string().max(20).optional(),
+      contractEndDate: z.string().max(20).optional(),
       dateOfBirth: z.string().max(20).optional(),
       gender: z.enum(["male", "female"]).optional(),
       nationality: z.string().max(100).optional(),
@@ -3733,11 +3752,13 @@ const employeesRouter = router({
     .input(z.object({ type: z.string().optional() }).optional())
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
-      const { eq, desc } = await import("drizzle-orm");
+      const { eq, desc, or, isNull } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) return [];
       const { workforceAgents } = await import("../drizzle/schema");
-      const q = db.select().from(workforceAgents).$dynamic();
+      const q = db.select().from(workforceAgents)
+        .where(or(eq(workforceAgents.isDemo, false), isNull(workforceAgents.isDemo)))
+        .$dynamic();
       if (input?.type) q.where(eq(workforceAgents.employeeType, input.type as "agent"));
       return q.orderBy(desc(workforceAgents.createdAt));
     }),
@@ -6249,10 +6270,12 @@ const hrRouter = router({
         const year = parseInt(String(req.startDate).slice(0, 4)) || new Date().getFullYear();
         const bal = (await db.select().from(leaveBalances).where(and(eq(leaveBalances.traineeCode, req.traineeCode), eq(leaveBalances.year, year))).limit(1))[0];
         if (bal) {
+          const available = input.leaveType === "casual" ? bal.casualTotal - bal.casualUsed : bal.annualTotal - bal.annualUsed;
+          if (available < req.days) throw new TRPCError({ code: "BAD_REQUEST", message: `Insufficient ${input.leaveType === "casual" ? "casual" : "annual"} leave balance. Available: ${available} day(s), requested: ${req.days} day(s).` });
           const upd = input.leaveType === "casual" ? { casualUsed: bal.casualUsed + req.days } : { annualUsed: bal.annualUsed + req.days };
           await db.update(leaveBalances).set({ ...upd, updatedAt: Date.now() }).where(eq(leaveBalances.id, bal.id));
         } else {
-          await db.insert(leaveBalances).values({ traineeCode: req.traineeCode, year, casualTotal: 0, annualTotal: 0, casualUsed: input.leaveType === "casual" ? req.days : 0, annualUsed: input.leaveType === "annual" ? req.days : 0, updatedAt: Date.now() });
+          await db.insert(leaveBalances).values({ traineeCode: req.traineeCode, year, casualTotal: 6, annualTotal: 21, casualUsed: input.leaveType === "casual" ? req.days : 0, annualUsed: input.leaveType === "annual" ? req.days : 0, updatedAt: Date.now() });
         }
       }
       return { ok: true };
