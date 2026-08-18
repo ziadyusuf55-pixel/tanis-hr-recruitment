@@ -345,8 +345,8 @@ async function startServer() {
     const code = req.query.code as string;
     if (!code) { res.json({ hasCredentials: false }); return; }
     try {
-      const { getDb } = await import("./db");
-      const { agentCredentials } = await import("../drizzle/schema");
+      const { getDb } = await import("../db");
+      const { agentCredentials } = await import("../../drizzle/schema");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) { res.json({ hasCredentials: false }); return; }

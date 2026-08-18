@@ -1110,3 +1110,7 @@
 ## Workforce Contract Tracking
 - [x] Add workforce_agents.contractEndDate as nullable VARCHAR(20), verify the column, and validate TypeScript before publishing
 - [x] Restore the due-separation database import after the latest merge reintroduced the invalid core-relative path
+- [x] Reconfirm workforce_agents.contractEndDate exists and validate the latest deployment state
+- [x] Restore drizzle/schema.ts after the latest sync deleted required application schema definitions
+- [x] Correct the remaining server-core database and Drizzle schema import paths
+- [x] Add contractEndDate to the restored workforce_agents Drizzle schema definition
