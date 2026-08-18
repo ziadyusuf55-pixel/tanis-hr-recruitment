@@ -180,6 +180,7 @@ export default function AgentPortal() {
   const { data: _wfProfile } = trpc.workforce.getMyProfile.useQuery();
   const { data: _payMethods = [] } = trpc.paymentMethods.listMine.useQuery();
   const [activeTab, setActiveTab] = useState<Tab>("profile");
+  const [showMoreNav, setShowMoreNav] = useState(false);
   const markOrientationMutation = trpc.orientation.markShown.useMutation();
   const [isDark, setIsDark] = useState<boolean>(() => {
     const saved = localStorage.getItem(THEME_KEY);
@@ -248,7 +249,6 @@ export default function AgentPortal() {
     { id: "referrals",label: "Refer",         icon: <Users className="w-4 h-4" /> },
     { id: "comments", label: "Feedback",      icon: <Bell className="w-4 h-4" /> },
   ];
-  const [showMoreNav, setShowMoreNav] = useState(false);
   const navItems = [...primaryNavItems, ...secondaryNavItems];
 
   return (
