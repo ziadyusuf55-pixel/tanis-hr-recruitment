@@ -1098,3 +1098,4 @@
 - [x] Fix the undefined ctx reference at server/routers.ts line 5240 before deployment validation
 - [x] Pull latest changes with no migration and confirm npx tsc --noEmit succeeds before publishing
 - [x] Fix the FormerAgents cache invalidation reference to a registered workforce procedure
+- [x] Pull latest changes with no migration and confirm npx tsc --noEmit succeeds before urgent publishing
