@@ -1101,3 +1101,12 @@
 - [x] Pull latest changes with no migration and confirm npx tsc --noEmit succeeds before urgent publishing
 - [x] Pull latest changes with no migration and confirm npx tsc --noEmit succeeds before publishing
 - [x] Correct the server-core database import used by the due-separation processing task
+
+## Production Data Maintenance
+- [x] Synchronize workforce_agents.isActive with agentStatus and verify the resulting status counts
+- [x] Inspect legacy-table row counts before any irreversible schema cleanup
+- [x] Drop only the confirmed-empty legacy tables and preserve agent_quality_flags because it contains data
+
+## Workforce Contract Tracking
+- [x] Add workforce_agents.contractEndDate as nullable VARCHAR(20), verify the column, and validate TypeScript before publishing
+- [x] Restore the due-separation database import after the latest merge reintroduced the invalid core-relative path
