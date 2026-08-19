@@ -414,7 +414,10 @@ export default function PerformanceReports() {
                     <tr key={s.crdts} className="border-b hover:bg-muted/20 transition-colors cursor-pointer" onClick={() => toggleExpand(s.crdts)}>
                       <td className="px-4 py-3">{rankBadge(i)}</td>
                       <td className="px-4 py-3">
-                        <p className="font-semibold text-sm">{s.alias || s.crdts}</p>
+                        <p className="font-semibold text-sm">{s.alias || (s as unknown as Record<string,unknown>).fullName as string || s.crdts}</p>
+                        {(s as unknown as Record<string,unknown>).fullName as string && s.alias && (
+                          <p className="text-[10px] text-muted-foreground">{(s as unknown as Record<string,unknown>).fullName as string}</p>
+                        )}
                         <p className="text-[10px] text-muted-foreground font-mono">{s.crdts}{s.agentCode ? ` · ${s.agentCode}` : ""}</p>
                         {s.teamLeader && <p className="text-[10px] text-muted-foreground">TL: {s.teamLeader}</p>}
                       </td>

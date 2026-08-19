@@ -90,6 +90,16 @@ export default function AllDocuments() {
   const [commentText, setCommentText] = useState("");
   const [commentStatus, setCommentStatus] = useState<"approved" | "rejected">("approved");
 
+  // Contract signing state
+  const [contractDialog, setContractDialog] = useState(false);
+  const [selectedForContract, setSelectedForContract] = useState<string[]>([]);
+  const [contractStart, setContractStart] = useState("");
+  const [contractEnd, setContractEnd] = useState("");
+  const markContractMutation = trpc.documents.markContractSigned.useMutation({
+    onSuccess: (d) => { toast.success(`${d.updated} agent(s) marked as contract signed`); setContractDialog(false); setSelectedForContract([]); utils.documents.listAll.invalidate(); },
+    onError: (e) => toast.error(e.message),
+  });
+
   // Admin upload state
   const [uploadDialog, setUploadDialog] = useState(false);
   const [uploadCode, setUploadCode] = useState("");
@@ -222,6 +232,9 @@ export default function AllDocuments() {
               <h1 className="text-2xl font-bold">Agent Documents</h1>
               <p className="text-sm text-muted-foreground mt-0.5">All uploaded documents grouped by agent</p>
             </div>
+            <Button variant="outline" onClick={() => setContractDialog(true)} className="gap-2">
+              📄 Mark Contract Signed
+            </Button>
             <Button onClick={() => setUploadDialog(true)} className="gap-2">
               <Upload className="h-4 w-4" /> Upload for Agent
             </Button>
@@ -421,6 +434,49 @@ export default function AllDocuments() {
               disabled={reviewMutation.isPending}
             >
               {reviewMutation.isPending ? "Saving..." : "Save"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Contract Signing Dialog */}
+      <Dialog open={contractDialog} onOpenChange={setContractDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader><DialogTitle>📄 Mark Contract Signed</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">Contract Start Date</label>
+                <input type="date" value={contractStart} onChange={e => setContractStart(e.target.value)} className="h-9 w-full rounded-md border px-2 text-sm bg-background" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">Contract End Date</label>
+                <input type="date" value={contractEnd} onChange={e => setContractEnd(e.target.value)} className="h-9 w-full rounded-md border px-2 text-sm bg-background" />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground block mb-2">Select Agents ({selectedForContract.length} selected)</label>
+              <div className="max-h-64 overflow-y-auto rounded-lg border divide-y">
+                {agentList.map(a => (
+                  <label key={a.traineeCode} className="flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-muted/30">
+                    <input type="checkbox" checked={selectedForContract.includes(a.traineeCode)}
+                      onChange={e => setSelectedForContract(prev => e.target.checked ? [...prev, a.traineeCode] : prev.filter(c => c !== a.traineeCode))} />
+                    <span className="text-sm">{a.alias ?? a.fullName} <span className="text-xs text-muted-foreground font-mono ml-1">{a.traineeCode}</span></span>
+                  </label>
+                ))}
+              </div>
+              <div className="flex gap-2 mt-2">
+                <button className="text-xs text-blue-600 hover:underline" onClick={() => setSelectedForContract(agentList.map(a => a.traineeCode))}>Select all</button>
+                <span className="text-muted-foreground">·</span>
+                <button className="text-xs text-muted-foreground hover:underline" onClick={() => setSelectedForContract([])}>Clear</button>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setContractDialog(false)}>Cancel</Button>
+            <Button disabled={selectedForContract.length === 0 || markContractMutation.isPending}
+              onClick={() => markContractMutation.mutate({ traineeCodes: selectedForContract, contractStartDate: contractStart || undefined, contractEndDate: contractEnd || undefined })}>
+              {markContractMutation.isPending ? "Saving…" : `Mark ${selectedForContract.length} as Signed`}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -472,7 +472,9 @@ export const workforceAgents = mysqlTable("workforce_agents", {
   // ── Personal profile (agent self-fills once; then locked, edits go through HR) ──
   nationalId: varchar("nationalId", { length: 50 }),
   nationalIdExpiry: varchar("nationalIdExpiry", { length: 20 }),       // YYYY-MM-DD
-  contractEndDate: varchar("contractEndDate", { length: 20 }),         // YYYY-MM-DD
+  contractEndDate: varchar("contractEndDate", { length: 20 }),          // YYYY-MM-DD — for fixed-term contracts
+  contractStartDate: varchar("contractStartDate", { length: 20 }),        // YYYY-MM-DD — contract start date
+  contractSigned: boolean("contractSigned").default(false),               // HR marks as signed
   dateOfBirth: varchar("dateOfBirth", { length: 20 }),                 // YYYY-MM-DD
   gender: mysqlEnum("gender", ["male", "female"]),
   nationality: varchar("nationality", { length: 100 }),
@@ -1347,3 +1349,4 @@ export const slackPingLog = mysqlTable("slack_ping_log", {
   sentAt: bigint("sentAt", { mode: "number" }).notNull(),
   messageTs: varchar("messageTs", { length: 100 }),       // Slack message timestamp for threading
 });
+

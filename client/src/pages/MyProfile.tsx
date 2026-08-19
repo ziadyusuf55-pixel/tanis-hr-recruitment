@@ -126,6 +126,97 @@ export default function MyProfile() {
           {save.isPending ? "Saving…" : "Save changes"}
         </Button>
       </CardContent></Card>
+
+      {/* Leave requests section */}
+      <MyLeaveSection />
     </div>
+  );
+}
+
+function MyLeaveSection() {
+  const utils = trpc.useUtils();
+  const { data: leaveData } = trpc.leave.getMyLeaves.useQuery();
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ startDate: "", endDate: "", reason: "" });
+
+  const submitMutation = trpc.leave.requestMyLeave.useMutation({
+    onSuccess: () => { utils.leave.getMyLeaves.invalidate(); setShowForm(false); setForm({ startDate: "", endDate: "", reason: "" }); toast.success("Leave request submitted"); },
+    onError: (e: unknown) => toast.error((e as { message?: string }).message ?? "Error"),
+  });
+
+  const days = form.startDate && form.endDate
+    ? Math.max(1, Math.round((new Date(form.endDate).getTime() - new Date(form.startDate).getTime()) / 86400000) + 1)
+    : 0;
+
+  const bal = leaveData?.balance;
+  const reqs = leaveData?.requests ?? [];
+
+  return (
+    <Card><CardContent className="p-4 space-y-4">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-semibold">My Leave</p>
+        <Button size="sm" variant="outline" onClick={() => setShowForm(!showForm)}>
+          {showForm ? "Cancel" : "+ Request Leave"}
+        </Button>
+      </div>
+
+      {/* Balance */}
+      {bal && (
+        <div className="grid grid-cols-2 gap-3">
+          <div className="rounded-lg bg-muted/40 p-3 text-center">
+            <p className="text-xs text-muted-foreground">Casual Leave</p>
+            <p className="text-xl font-bold mt-0.5">{bal.casualTotal - bal.casualUsed} <span className="text-xs font-normal text-muted-foreground">/ {bal.casualTotal}</span></p>
+          </div>
+          <div className="rounded-lg bg-muted/40 p-3 text-center">
+            <p className="text-xs text-muted-foreground">Annual Leave</p>
+            <p className="text-xl font-bold mt-0.5">{bal.annualTotal - bal.annualUsed} <span className="text-xs font-normal text-muted-foreground">/ {bal.annualTotal}</span></p>
+          </div>
+        </div>
+      )}
+
+      {/* Request form */}
+      {showForm && (
+        <div className="rounded-xl border p-4 space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">Start Date</label>
+              <Input type="date" value={form.startDate} onChange={e => setForm(f => ({ ...f, startDate: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground block mb-1">End Date</label>
+              <Input type="date" value={form.endDate} onChange={e => setForm(f => ({ ...f, endDate: e.target.value }))} />
+            </div>
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground block mb-1">Reason (optional)</label>
+            <Input value={form.reason} onChange={e => setForm(f => ({ ...f, reason: e.target.value }))} placeholder="Reason for leave..." />
+          </div>
+          {days > 0 && <p className="text-xs text-muted-foreground">{days} day(s)</p>}
+          <Button size="sm" disabled={!form.startDate || !form.endDate || submitMutation.isPending}
+            onClick={() => submitMutation.mutate({ startDate: form.startDate, endDate: form.endDate, days, reason: form.reason || undefined })}>
+            {submitMutation.isPending ? "Submitting…" : "Submit Request"}
+          </Button>
+        </div>
+      )}
+
+      {/* Request history */}
+      {reqs.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground">Recent requests</p>
+          {(reqs as Array<Record<string,unknown>>).slice(0, 5).map((r, i) => (
+            <div key={i} className="flex items-center justify-between text-sm rounded-lg border px-3 py-2">
+              <div>
+                <p className="font-medium">{String(r.startDate ?? "")} → {String(r.endDate ?? "")}</p>
+                <p className="text-xs text-muted-foreground">{String(r.days ?? 1)} day(s){r.reason ? ` · ${String(r.reason)}` : ""}</p>
+              </div>
+              <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${r.status === "approved" ? "bg-emerald-100 text-emerald-700" : r.status === "rejected" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}>
+                {String(r.status ?? "pending")}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {reqs.length === 0 && !showForm && <p className="text-xs text-muted-foreground text-center py-2">No leave requests yet</p>}
+    </CardContent></Card>
   );
 }

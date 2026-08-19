@@ -6243,6 +6243,49 @@ const hrRouter = router({
       await db.insert(leaveRequests).values({ ...input, createdAt: Date.now() });
       return { ok: true };
     }),
+
+  /** Staff/admin submits their OWN leave request */
+  requestMyLeave: protectedProcedure
+    .input(z.object({ startDate: z.string(), endDate: z.string(), days: z.number().int().min(1), reason: z.string().optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { leaveRequests } = await import("../drizzle/schema");
+      const staffId = `STAFF-${ctx.user?.openId ?? "unknown"}`;
+      await db.insert(leaveRequests).values({ traineeCode: staffId, startDate: input.startDate, endDate: input.endDate, days: input.days, reason: input.reason ?? null, status: "pending", createdAt: Date.now() });
+      return { ok: true };
+    }),
+
+  /** Get own leave requests + balance (staff/admin) */
+  getMyLeaves: protectedProcedure.query(async ({ ctx }) => {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return { requests: [], balance: null };
+    const { leaveRequests, leaveBalances } = await import("../drizzle/schema");
+    const { eq, desc } = await import("drizzle-orm");
+    const staffId = `STAFF-${ctx.user?.openId ?? "unknown"}`;
+    const [requests, balRows] = await Promise.all([
+      db.select().from(leaveRequests).where(eq(leaveRequests.traineeCode, staffId)).orderBy(desc(leaveRequests.createdAt)),
+      db.select().from(leaveBalances).where(eq(leaveBalances.traineeCode, staffId)).limit(1),
+    ]);
+    return { requests, balance: balRows[0] ?? null };
+  }),
+
+  /** Decide on staff leave — only admin/owner can approve */
+  decideMyLeave: protectedProcedure
+    .input(z.object({ id: z.number(), decision: z.enum(["approved", "rejected"]), leaveType: z.enum(["casual", "annual"]).optional() }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN", message: "Only admins and owners can approve staff leave requests." });
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { leaveRequests } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      await db.update(leaveRequests).set({ status: input.decision, leaveType: input.leaveType ?? null, decidedBy: ctx.user?.name ?? null, decidedAt: Date.now() }).where(eq(leaveRequests.id, input.id));
+      await auditEntry(ctx.user, `staff_leave_${input.decision}`, "leave_request", String(input.id), JSON.stringify({ role: ctx.user?.role }));
+      return { ok: true };
+    }),
   myLeaveRequests: publicProcedure
     .input(z.object({ traineeCode: z.string() }))
     .query(async ({ input }) => {
