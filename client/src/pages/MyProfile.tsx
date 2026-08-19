@@ -135,12 +135,12 @@ export default function MyProfile() {
 
 function MyLeaveSection() {
   const utils = trpc.useUtils();
-  const { data: leaveData } = trpc.leave.getMyLeaves.useQuery();
+  const { data: leaveData } = trpc.hr.getMyLeaves.useQuery();
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ startDate: "", endDate: "", reason: "" });
 
-  const submitMutation = trpc.leave.requestMyLeave.useMutation({
-    onSuccess: () => { utils.leave.getMyLeaves.invalidate(); setShowForm(false); setForm({ startDate: "", endDate: "", reason: "" }); toast.success("Leave request submitted"); },
+  const submitMutation = trpc.hr.requestMyLeave.useMutation({
+    onSuccess: () => { utils.hr.getMyLeaves.invalidate(); setShowForm(false); setForm({ startDate: "", endDate: "", reason: "" }); toast.success("Leave request submitted"); },
     onError: (e: unknown) => toast.error((e as { message?: string }).message ?? "Error"),
   });
 

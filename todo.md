@@ -1114,3 +1114,8 @@
 - [x] Restore drizzle/schema.ts after the latest sync deleted required application schema definitions
 - [x] Correct the remaining server-core database and Drizzle schema import paths
 - [x] Add contractEndDate to the restored workforce_agents Drizzle schema definition
+- [x] Add contractStartDate and contractSigned to workforce_agents, align Drizzle schema definitions, and validate TypeScript before publishing
+- [x] Apply contractStartDate and contractSigned as sequential ALTER operations because the combined positional DDL failed
+- [x] Reconcile AllDocuments and MyProfile tRPC calls with the currently registered document and leave procedures
+- [x] Add documents.markContractSigned and direct MyProfile staff leave hooks to hr procedures
+- [x] Add and run a unit test covering the contract signing procedure registration and contract lifecycle schema fields

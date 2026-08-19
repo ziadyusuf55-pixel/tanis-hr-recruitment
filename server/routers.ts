@@ -2320,6 +2320,26 @@ const documentsRouter = router({
 
   listAll: protectedProcedure.query(() => listAllDocuments()),
 
+  markContractSigned: protectedProcedure
+    .input(z.object({
+      traineeCodes: z.array(z.string().min(1)).min(1),
+      contractStartDate: z.string().max(20).optional(),
+      contractEndDate: z.string().max(20).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable" });
+      const { workforceAgents } = await import("../drizzle/schema");
+      const { inArray } = await import("drizzle-orm");
+      const updates: { contractSigned: boolean; contractStartDate?: string | null; contractEndDate?: string | null } = { contractSigned: true };
+      if (input.contractStartDate !== undefined) updates.contractStartDate = input.contractStartDate || null;
+      if (input.contractEndDate !== undefined) updates.contractEndDate = input.contractEndDate || null;
+      await db.update(workforceAgents).set(updates).where(inArray(workforceAgents.traineeCode, input.traineeCodes));
+      await auditEntry(ctx.user, "mark_contract_signed", "workforce_agents", input.traineeCodes.join(","), JSON.stringify({ count: input.traineeCodes.length }));
+      return { updated: input.traineeCodes.length };
+    }),
+
   listByAgent: protectedProcedure
     .input(z.object({ traineeCode: z.string() }))
     .query(({ input }) => getDocumentsByCode(input.traineeCode)),
