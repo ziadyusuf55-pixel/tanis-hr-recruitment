@@ -2873,7 +2873,7 @@ export async function getFullLeaderboard(cycleKey: string) {
   const db = await getDb();
   if (!db) return [];
   const { commissionLeaderboard } = await import("../drizzle/schema");
-  const { eq, asc } = await import("drizzle-orm");
+  const { eq, asc, and, ne } = await import("drizzle-orm");
 
   // Read from the commission leaderboard table (uploaded from commission file Campaign tabs)
   const rows = await db.select({
@@ -2889,7 +2889,7 @@ export async function getFullLeaderboard(cycleKey: string) {
     commissionEgp: commissionLeaderboard.commissionEgp,
     performanceMonth: commissionLeaderboard.performanceMonth,
   }).from(commissionLeaderboard)
-    .where(eq(commissionLeaderboard.cycleKey, cycleKey))
+    .where(and(eq(commissionLeaderboard.cycleKey, cycleKey), ne(commissionLeaderboard.crdts, "999999")))
     .orderBy(asc(commissionLeaderboard.rank));
 
   return rows.map(r => ({

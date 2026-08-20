@@ -49,6 +49,9 @@ export default function Dashboard() {
 
   // ── Attention feeds (all existing endpoints) ──
   const { data: unreadRequests = 0 } = trpc.requests.countUnread.useQuery(undefined, { refetchInterval: 60000 });
+  const unsignedContracts = (allAgents as Array<Record<string,unknown>>).filter(a =>
+    a.agentStatus === "active" && !(a as Record<string,unknown>).contractSigned
+  ).length;
   const { data: allAgents = [] } = trpc.workforce.list.useQuery({});
   // Count agents missing required personal info
   const incompleteAgents = (allAgents as Array<Record<string,unknown>>).filter(a =>
@@ -85,6 +88,7 @@ export default function Dashboard() {
     { count: (bdDue as unknown[]).length, label: "BD follow-ups due", sub: "Deals to chase today", icon: Building2, tint: "blue", path: "/business-development" },
     { count: pendingDeletion, label: "Former agents pending payout", sub: "Still owed final pay", icon: Wallet, tint: "red", path: "/operations" },
     { count: incompleteAgents, label: "Incomplete agent profiles", sub: "Missing phone, ID or DOB", icon: Users, tint: "amber", path: "/operations" },
+    { count: unsignedContracts, label: "Contracts not signed", sub: "Active agents without signed contract", icon: AlertCircle, tint: "red", path: "/documents" },
     { count: expiringIds, label: "National IDs expiring soon", sub: "Within the next 30 days", icon: AlertCircle, tint: "red", path: "/operations" },
     { count: expiringContracts, label: "Contracts ending soon", sub: "Within the next 30 days", icon: AlertCircle, tint: "amber", path: "/operations" },
   ].filter(a => a.count > 0 && canAccessPath(role, a.path));

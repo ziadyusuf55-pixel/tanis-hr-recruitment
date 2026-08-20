@@ -53,6 +53,43 @@ const runDueSeparations = async () => {
 runDueSeparations(); // run on startup to catch any missed separations
 setInterval(runDueSeparations, 60 * 60 * 1000).unref(); // then every hour
 
+// Daily: auto-create leave balance for agents who reached 7 months of service
+const checkLeaveEligibility = async () => {
+  try {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return;
+    const { sql } = await import("drizzle-orm");
+    const sevenMonthsAgo = new Date();
+    sevenMonthsAgo.setMonth(sevenMonthsAgo.getMonth() - 7);
+    const year = new Date().getFullYear();
+    const rows = await db.execute(sql`
+      SELECT wa.traineeCode, wa.fullName
+      FROM workforce_agents wa
+      WHERE wa.agentStatus = 'active'
+        AND (wa.isDemo = false OR wa.isDemo IS NULL)
+        AND wa.joinDate IS NOT NULL
+        AND wa.joinDate <= ${sevenMonthsAgo.toISOString().slice(0,10)}
+        AND NOT EXISTS (
+          SELECT 1 FROM leave_balances lb
+          WHERE lb.traineeCode = wa.traineeCode AND lb.year = ${year}
+        )
+    `) as unknown as { rows?: Array<Record<string,unknown>> } | Array<Record<string,unknown>>;
+    const eligible = Array.isArray(rows) ? rows : ((rows as { rows?: Array<Record<string,unknown>> }).rows ?? []);
+    if (eligible.length > 0) {
+      console.log(`[LeaveEligibility] Creating leave balance for ${eligible.length} agent(s) who reached 7 months`);
+      const { leaveBalances } = await import("../drizzle/schema");
+      for (const agent of eligible) {
+        const code = String(agent.traineeCode ?? "");
+        if (!code) continue;
+        await db.insert(leaveBalances).values({ traineeCode: code, year, casualTotal: 6, annualTotal: 21, casualUsed: 0, annualUsed: 0, updatedAt: Date.now() }).catch(() => {});
+      }
+    }
+  } catch (e) { console.error("[LeaveEligibility] error:", e); }
+};
+checkLeaveEligibility();
+setInterval(checkLeaveEligibility, 24 * 60 * 60 * 1000).unref(); // daily
+
 async function startServer() {
   const app = express();
   const server = createServer(app);

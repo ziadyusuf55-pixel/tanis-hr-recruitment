@@ -4103,13 +4103,15 @@ const cycleTrackerRouter = router({
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
       const { cycleStats } = await import("../drizzle/schema");
-      const { eq } = await import("drizzle-orm");
+      const { eq, and } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) return [];
       // Empty or missing cycleKey = all-time (no date filter)
+      const { ne } = await import("drizzle-orm");
+      const DEMO_CRDTS = "999999";
       const rows = input.cycleKey
-        ? await db.select().from(cycleStats).where(eq(cycleStats.cycleKey, input.cycleKey))
-        : await db.select().from(cycleStats);
+        ? await db.select().from(cycleStats).where(and(eq(cycleStats.cycleKey, input.cycleKey), ne(cycleStats.crdts, DEMO_CRDTS)))
+        : await db.select().from(cycleStats).where(ne(cycleStats.crdts, DEMO_CRDTS));
       // Pull teamLeader from workforce_agents for TL filter
       const { workforceAgents } = await import("../drizzle/schema");
       const agentRows = await db.select({ crdts: workforceAgents.crdts, teamLeader: workforceAgents.teamLeader }).from(workforceAgents);
@@ -6164,7 +6166,8 @@ const hrRouter = router({
       assetsReturned: z.boolean().optional(), lastWorkingDay: z.string().optional(),
       settlementDone: z.boolean().optional(), notes: z.string().optional(),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      await auditEntry(ctx.user, "exit_process_update", "agent", input.traineeCode, JSON.stringify({ exitType: input.exitType, settlementDone: input.settlementDone }));
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
@@ -6329,6 +6332,7 @@ const hrRouter = router({
       if (!req) throw new TRPCError({ code: "NOT_FOUND", message: "Request not found" });
       if (input.decision === "approved" && !input.leaveType) throw new TRPCError({ code: "BAD_REQUEST", message: "Pick the leave type (عارضة / اعتيادية) before approving." });
       await db.update(leaveRequests).set({ status: input.decision, leaveType: input.leaveType ?? null, decidedBy: input.decidedBy ?? ctx.user?.name ?? null, decidedAt: Date.now() }).where(eq(leaveRequests.id, input.id));
+      await auditEntry(ctx.user, input.decision === "approved" ? "leave_approved" : "leave_rejected", "leave_request", String(input.id), JSON.stringify({ decidedBy: ctx.user?.name, leaveType: input.leaveType }));
       if (input.decision === "approved" && input.leaveType) {
         const year = parseInt(String(req.startDate).slice(0, 4)) || new Date().getFullYear();
         const bal = (await db.select().from(leaveBalances).where(and(eq(leaveBalances.traineeCode, req.traineeCode), eq(leaveBalances.year, year))).limit(1))[0];

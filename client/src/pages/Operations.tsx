@@ -1787,10 +1787,7 @@ export default function Operations() {
                 <option value="">—</option><option value="completed">Completed</option><option value="exempt">Exempt</option><option value="postponed">Postponed</option><option value="not_applicable">Not applicable</option>
               </select>
             </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Job Title</label>
-              <Input value={editForm.jobTitle ?? ""} onChange={e => setEditForm(f => ({ ...f, jobTitle: e.target.value }))} />
-            </div>
+
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">City</label>
               <Input value={editForm.city ?? ""} onChange={e => setEditForm(f => ({ ...f, city: e.target.value }))} />

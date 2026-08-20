@@ -22,9 +22,13 @@ export default function LeaveManagement() {
   const reqs = requests as LeaveReq[];
   const bals = balances as Bal[];
   const ags = agents as Agent[];
-  const agentName = (code: string) => { const a = ags.find(x => x.traineeCode === code); return a ? (a.alias || a.fullName || code) : code; };
+  const agentName = (code: string) => {
+    if (code.startsWith("STAFF-")) return "Staff / Admin";
+    const a = (ags as Agent[]).find(x => x.traineeCode === code);
+    return a ? (a.alias || a.fullName || code) : code;
+  };
 
-  const [tab, setTab] = useState<"requests" | "balances">("requests");
+  const [tab, setTab] = useState<"requests" | "balances" | "staff">("requests");
   const pending = reqs.filter(r => r.status === "pending");
   const decided = reqs.filter(r => r.status !== "pending").slice(0, 30);
 
@@ -72,6 +76,7 @@ export default function LeaveManagement() {
         <div className="flex gap-2">
           <button onClick={() => setTab("requests")} className={`text-sm px-3 py-1.5 rounded-lg border ${tab === "requests" ? "bg-foreground text-background" : "bg-background"}`}>Requests {pending.length > 0 && `(${pending.length})`}</button>
           <button onClick={() => setTab("balances")} className={`text-sm px-3 py-1.5 rounded-lg border ${tab === "balances" ? "bg-foreground text-background" : "bg-background"}`}>Balances</button>
+          <button onClick={() => setTab("staff")} className={`text-sm px-3 py-1.5 rounded-lg border ${tab === "staff" ? "bg-foreground text-background" : "bg-background"}`}>Staff Leave</button>
         </div>
       </div>
 
@@ -180,6 +185,8 @@ export default function LeaveManagement() {
         </div>
       )}
 
+      {tab === "staff" && <StaffLeaveSection />}
+
       <Dialog open={massOpen} onOpenChange={setMassOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Mass add leave balances ({new Date().getFullYear()})</DialogTitle></DialogHeader>
@@ -194,6 +201,65 @@ export default function LeaveManagement() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function StaffLeaveSection() {
+  const utils = trpc.useUtils();
+  const { data: allReqs = [] } = trpc.leave.listRequests.useQuery({});
+  const staffReqs = (allReqs as Array<Record<string,unknown>>).filter(r => String(r.traineeCode ?? "").startsWith("STAFF-"));
+  const pending = staffReqs.filter(r => r.status === "pending");
+  const decided = staffReqs.filter(r => r.status !== "pending");
+  const [types, setTypes] = useState<Record<number, "casual" | "annual">>({});
+  const decide = trpc.leave.decideMyLeave.useMutation({
+    onSuccess: () => { utils.leave.listRequests.invalidate(); toast.success("Decision saved"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const fmtDate = (d: unknown) => d ? new Date(String(d)).toLocaleDateString("en-EG") : "—";
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">{staffReqs.length} staff leave request(s) — {pending.length} pending</p>
+      {pending.length === 0 && <p className="text-center py-8 text-sm text-muted-foreground">No pending staff leave requests</p>}
+      {pending.map(r => (
+        <div key={String(r.id)} className="rounded-xl border p-4 space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="font-semibold text-sm">Staff / Admin</p>
+              <p className="text-xs text-muted-foreground">{fmtDate(r.startDate)} → {fmtDate(r.endDate)} · {String(r.days ?? 1)} day(s)</p>
+              {r.reason && <p className="text-xs text-muted-foreground mt-0.5">"{String(r.reason)}"</p>}
+            </div>
+            <Badge variant="outline" className="text-amber-600 bg-amber-50 border-amber-200">Pending</Badge>
+          </div>
+          <div className="flex items-center gap-2 flex-wrap">
+            <select value={types[Number(r.id)] ?? ""} onChange={e => setTypes(t => ({ ...t, [Number(r.id)]: e.target.value as "casual" | "annual" }))}
+              className="text-xs border rounded px-2 py-1.5 bg-background">
+              <option value="">Select type</option>
+              <option value="casual">Casual</option>
+              <option value="annual">Annual</option>
+            </select>
+            <button onClick={() => { if (!types[Number(r.id)]) return toast.error("Select leave type first"); decide.mutate({ id: Number(r.id), decision: "approved", leaveType: types[Number(r.id)] }); }}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-100 text-emerald-700 hover:bg-emerald-200">
+              <Check className="w-3 h-3" /> Approve
+            </button>
+            <button onClick={() => decide.mutate({ id: Number(r.id), decision: "rejected" })}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-100 text-red-700 hover:bg-red-200">
+              <X className="w-3 h-3" /> Reject
+            </button>
+          </div>
+        </div>
+      ))}
+      {decided.length > 0 && (
+        <div>
+          <p className="text-xs font-medium text-muted-foreground mb-2">Decided ({decided.length})</p>
+          {decided.slice(0, 10).map(r => (
+            <div key={String(r.id)} className="flex items-center justify-between py-2 border-b last:border-0 text-sm">
+              <span className="text-muted-foreground">{fmtDate(r.startDate)} ({String(r.days ?? 1)}d)</span>
+              <Badge variant="outline" className={String(r.status) === "approved" ? "text-emerald-600 bg-emerald-50 border-emerald-200" : "text-red-600 bg-red-50 border-red-200"}>{String(r.status)}</Badge>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
