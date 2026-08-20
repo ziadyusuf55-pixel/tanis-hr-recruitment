@@ -783,9 +783,8 @@ export default function Operations() {
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | "all">("all");
   const [search, setSearch] = useState("");
   const [tlFilter, setTlFilter] = useState<string>("all");
-  const [agentStatusFilter, setAgentStatusFilter] = useState<"active" | "terminated" | "resigned" | "all">("active");
-  // Note: "Former Agents" in the sidebar (/former-agents) shows ALL departed agents with full records.
-  // The filter here shows terminated/resigned agents whose salary hasn't been settled yet.
+  const [agentStatusFilter, setAgentStatusFilter] = useState<"active" | "all">("active");
+  // Note: Resigned and terminated agents are managed in Former Agents (/former-agents), not here.
 
   // Data
   const { data: campaigns = [], isLoading: loadingCampaigns } = trpc.campaigns.list.useQuery();
@@ -1005,6 +1004,8 @@ export default function Operations() {
       (a.crdts ?? "").toLowerCase().includes(q);
     const matchesTL = tlFilter === "all" || a.teamLeader === tlFilter;
     const status = a.agentStatus ?? "active";
+    // Operations only shows active, frozen, or inactive agents — resigned/terminated go to Former Agents
+    if (status === "resigned" || status === "terminated" || status === "blacklisted") return false;
     const matchesStatus = agentStatusFilter === "all" || status === agentStatusFilter;
     return matchesSearch && matchesTL && matchesStatus;
   });
@@ -1245,9 +1246,7 @@ export default function Operations() {
           <div className="flex gap-1 mb-3">
             {([
               { value: "active", label: "Active", color: "text-emerald-700 bg-emerald-50 border-emerald-200" },
-              { value: "terminated", label: "Terminated (unsettled)", color: "text-red-700 bg-red-50 border-red-200" },
-              { value: "resigned", label: "Resigned (unsettled)", color: "text-orange-700 bg-orange-50 border-orange-200" },
-              { value: "all", label: "All", color: "text-foreground bg-muted/40 border-border" },
+              { value: "all", label: "All Active", color: "text-foreground bg-muted/40 border-border" },
             ] as const).map(opt => {
               const count = (agents as WorkforceAgent[]).filter(a => opt.value === "all" || (a.agentStatus ?? "active") === opt.value).length;
               return (

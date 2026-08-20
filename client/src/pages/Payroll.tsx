@@ -344,8 +344,8 @@ export default function PayrollPage() {
   function exportStatusCSV() {
     const rows = (statusRecords as StatusRecord[]).map(r => ({
       CRDTS: r.crdts ?? "",
-      Alias: r.alias ?? "",
       "Agent Code": r.agentCode ?? "",
+      Alias: r.alias ?? "",
       "Working Hours": r.workingHours ?? "",
       "Base Salary (EGP)": r.baseSalary ?? "",
       "OT 1.5x Hours": r.ot1x5Hours ?? "",
@@ -355,9 +355,12 @@ export default function PayrollPage() {
       "OT 3x Hours": r.ot3xHours ?? "",
       "OT 3x Pay (EGP)": r.ot3xPay ?? "",
       "Coaching Bonus (EGP)": r.coachingBonus ?? "",
+      "Commission (EGP)": r.commissionEgp ?? "",
       "Total Deductions (EGP)": r.totalDeductions ?? "",
       "Net Pay (EGP)": r.netPay ?? "",
+      "Total (Net + Commission) (EGP)": ((n(r.netPay) + n(r.commissionEgp)) || "").toString() || "",
       Status: r.paymentStatus ?? "pending",
+      "Paid By": (r as Record<string,unknown>).paidBy as string ?? "",
       "Paid At": r.paidAt ? new Date(r.paidAt).toLocaleDateString("en-EG") : "",
     }));
     const ws = XLSX.utils.json_to_sheet(rows);
@@ -551,7 +554,8 @@ export default function PayrollPage() {
                             <td className="px-4 py-3">{r.fullName ?? "—"}</td>
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <span>{r.alias ?? "—"}</span>
+                                <span>{r.alias?.replace(/\s*\(\d+\)$/, "") || r.agentCode || "—"}</span>
+                                {r.agentCode && r.alias && <span className="text-xs text-muted-foreground font-mono">{r.agentCode}</span>}
                                 {r.agentStatus === "resigned" && <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-orange-100 text-orange-700 border border-orange-200">Resigned</span>}
                                 {r.agentStatus === "terminated" && <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-red-100 text-red-700 border border-red-200">Terminated</span>}
                                 {r.pendingLeave && <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-700 border border-amber-200">Leaving {r.pendingLeave.lastWorkingDay ?? ""}</span>}
