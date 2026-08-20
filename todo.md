@@ -1119,3 +1119,6 @@
 - [x] Reconcile AllDocuments and MyProfile tRPC calls with the currently registered document and leave procedures
 - [x] Add documents.markContractSigned and direct MyProfile staff leave hooks to hr procedures
 - [x] Add and run a unit test covering the contract signing procedure registration and contract lifecycle schema fields
+
+## Latest Deployment Request
+- [ ] Pull the latest GitHub changes without applying a database migration, verify TypeScript, and save a publishable checkpoint
