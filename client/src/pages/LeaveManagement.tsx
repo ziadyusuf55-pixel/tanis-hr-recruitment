@@ -227,7 +227,7 @@ function StaffLeaveSection() {
             <div>
               <p className="font-semibold text-sm">Staff / Admin</p>
               <p className="text-xs text-muted-foreground">{fmtDate(r.startDate)} → {fmtDate(r.endDate)} · {String(r.days ?? 1)} day(s)</p>
-              {r.reason && <p className="text-xs text-muted-foreground mt-0.5">"{String(r.reason)}"</p>}
+              {r.reason ? <p className="text-xs text-muted-foreground mt-0.5">"{String(r.reason)}"</p> : null}
             </div>
             <Badge variant="outline" className="text-amber-600 bg-amber-50 border-amber-200">Pending</Badge>
           </div>

@@ -1123,3 +1123,4 @@
 ## Latest Deployment Request
 - [x] Pull the latest GitHub changes without applying a database migration, verify TypeScript, and save a publishable checkpoint
 - [ ] Synchronize the newly requested GitHub version without migration, validate TypeScript, and save a fresh publishable checkpoint
+- [ ] Replace the previous attempt with the supplied fixed archive, commit and synchronize it, validate TypeScript, and save a publishable checkpoint

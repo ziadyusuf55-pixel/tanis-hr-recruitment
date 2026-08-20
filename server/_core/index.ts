@@ -56,7 +56,7 @@ setInterval(runDueSeparations, 60 * 60 * 1000).unref(); // then every hour
 // Daily: auto-create leave balance for agents who reached 7 months of service
 const checkLeaveEligibility = async () => {
   try {
-    const { getDb } = await import("./db");
+    const { getDb } = await import("../db");
     const db = await getDb();
     if (!db) return;
     const { sql } = await import("drizzle-orm");
@@ -78,7 +78,7 @@ const checkLeaveEligibility = async () => {
     const eligible = Array.isArray(rows) ? rows : ((rows as { rows?: Array<Record<string,unknown>> }).rows ?? []);
     if (eligible.length > 0) {
       console.log(`[LeaveEligibility] Creating leave balance for ${eligible.length} agent(s) who reached 7 months`);
-      const { leaveBalances } = await import("../drizzle/schema");
+      const { leaveBalances } = await import("../../drizzle/schema");
       for (const agent of eligible) {
         const code = String(agent.traineeCode ?? "");
         if (!code) continue;
