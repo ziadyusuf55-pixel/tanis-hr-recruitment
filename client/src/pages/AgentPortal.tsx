@@ -4306,7 +4306,7 @@ function PresencePanel({ traineeCode, theme }: { traineeCode: string; theme: The
       <button
         onClick={() => setOpen(!open)}
         className="fixed right-4 bottom-20 sm:bottom-6 z-40 flex items-center gap-2 px-3 py-2 rounded-full shadow-lg border text-sm font-medium transition-all"
-        style={{ background: theme.card, borderColor: theme.cardBorder, color: theme.text }}
+        style={{ background: theme.cardBg, borderColor: theme.cardBorder, color: theme.text }}
       >
         <span style={{ color: myStatusConfig.color }}>{myStatusConfig.emoji}</span>
         <span className="hidden sm:inline">{onlineAgents.length} online</span>
@@ -4316,7 +4316,7 @@ function PresencePanel({ traineeCode, theme }: { traineeCode: string; theme: The
       {/* Panel */}
       {open && (
         <div className="fixed right-4 bottom-28 sm:bottom-16 z-50 w-72 rounded-2xl shadow-2xl border overflow-hidden"
-          style={{ background: theme.card, borderColor: theme.cardBorder }}>
+          style={{ background: theme.cardBg, borderColor: theme.cardBorder }}>
 
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: theme.cardBorder }}>
