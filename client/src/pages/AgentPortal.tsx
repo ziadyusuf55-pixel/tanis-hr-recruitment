@@ -4306,7 +4306,7 @@ function PresencePanel({ traineeCode, theme }: { traineeCode: string; theme: The
       <button
         onClick={() => setOpen(!open)}
         className="fixed right-4 bottom-20 sm:bottom-6 z-40 flex items-center gap-2 px-3 py-2 rounded-full shadow-lg border text-sm font-medium transition-all"
-        style={{ background: theme.card, borderColor: theme.cardBorder, color: theme.text }}
+        style={{ background: theme.cardBg, borderColor: theme.cardBorder, color: theme.text }}
       >
         <span style={{ color: myStatusConfig.color }}>{myStatusConfig.emoji}</span>
         <span className="hidden sm:inline">{onlineAgents.length} online</span>
@@ -4316,7 +4316,7 @@ function PresencePanel({ traineeCode, theme }: { traineeCode: string; theme: The
       {/* Panel */}
       {open && (
         <div className="fixed right-4 bottom-28 sm:bottom-16 z-50 w-72 rounded-2xl shadow-2xl border overflow-hidden"
-          style={{ background: theme.card, borderColor: theme.cardBorder }}>
+          style={{ background: theme.cardBg, borderColor: theme.cardBorder }}>
 
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: theme.cardBorder }}>
@@ -4367,7 +4367,16 @@ function PresencePanel({ traineeCode, theme }: { traineeCode: string; theme: The
               const sc = STATUS_OPTIONS.find(s => s.value === p.status) ?? STATUS_OPTIONS[0];
               return (
                 <div key={p.traineeCode} className="flex items-center gap-2.5 px-4 py-2.5">
-                  <div className="w-2 h-2 rounded-full shrink-0" style={{ background: sc.color }} />
+                  <div className="relative shrink-0">
+                    {p.avatarUrl ? (
+                      <img src={p.avatarUrl} alt="" className="w-8 h-8 rounded-full object-cover" />
+                    ) : (
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: `${BRAND}22`, color: BRAND }}>
+                        {(p.alias || p.fullName || p.traineeCode).charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white" style={{ background: sc.color }} />
+                  </div>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate" style={{ color: theme.text }}>{p.alias || p.fullName || p.traineeCode}</p>
                     <p className="text-[10px] truncate" style={{ color: theme.textMuted }}>

@@ -392,7 +392,7 @@ export default function AgentProfilePage() {
               ["Nationality", agent.nationality],
               ["Marital Status", agent.maritalStatus ? agent.maritalStatus.charAt(0).toUpperCase() + agent.maritalStatus.slice(1) : ""],
               ["Military Status", agent.militaryStatus ? agent.militaryStatus.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()) : ""],
-              ["Job Title", agent.jobTitle],
+              // Job Title removed
               ["City", agent.city],
             ] as [string, string | null | undefined][]).map(([label, value]) => (
               <div key={label}>

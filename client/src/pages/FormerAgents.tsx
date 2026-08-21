@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
   UserX, Search, ChevronDown, ChevronRight, DollarSign,
-  TrendingUp, AlertTriangle, BookOpen, FileText, Calendar,
+  TrendingUp, AlertTriangle, BookOpen, FileText, Calendar, PhoneOff,
 } from "lucide-react";
 
 function fmt(v: unknown, prefix = "") {
@@ -161,6 +161,7 @@ export default function FormerAgents() {
                         { k: "violations", label: `Violations (${row.violations.length})`, icon: <AlertTriangle className="w-3.5 h-3.5" /> },
                         { k: "coaching", label: `Coaching (${row.coaching.length})`, icon: <BookOpen className="w-3.5 h-3.5" /> },
                         { k: "requests", label: `Requests (${row.requests.length})`, icon: <Calendar className="w-3.5 h-3.5" /> },
+                        { k: "logouts", label: `Client Logouts (${((row as Record<string,unknown>).logouts as unknown[] ?? []).length})`, icon: <PhoneOff className="w-3.5 h-3.5" /> },
                       ].map(s => (
                         <button key={s.k} onClick={() => setExpandedSection(s.k)}
                           className={`flex items-center gap-1.5 px-3 py-2.5 text-xs font-medium whitespace-nowrap border-b-2 ${expandedSection === s.k ? "border-foreground text-foreground" : "border-transparent text-muted-foreground"}`}>
@@ -217,12 +218,12 @@ export default function FormerAgents() {
                       {expandedSection === "performance" && (
                         <div className="overflow-x-auto rounded-lg border">
                           <table className="w-full text-xs">
-                            <thead><tr className="bg-muted/30 border-b"><th className="px-3 py-2 text-left">Cycle</th><th className="px-3 py-2 text-right">Revenue</th><th className="px-3 py-2 text-right">Login Hrs</th></tr></thead>
+                            <thead><tr className="bg-muted/30 border-b"><th className="px-3 py-2 text-left">Cycle</th><th className="px-3 py-2 text-right">Profit</th><th className="px-3 py-2 text-right">Login Hrs</th></tr></thead>
                             <tbody>
                               {row.performance.map((p, i) => (
                                 <tr key={i} className="border-b last:border-0">
                                   <td className="px-3 py-2">{p.cycleKey}</td>
-                                  <td className="px-3 py-2 text-right">{fmt(p.revenue, "$")}</td>
+                                  <td className="px-3 py-2 text-right" style={{ color: parseFloat(String(p.profit ?? 0)) >= 0 ? "#16a34a" : "#ef4444" }}>{fmt(p.profit, "$")}</td>
                                   <td className="px-3 py-2 text-right">{parseFloat(String(p.loginHours ?? 0)).toFixed(1)}h</td>
                                 </tr>
                               ))}
@@ -285,6 +286,35 @@ export default function FormerAgents() {
                           {row.requests.length === 0 && <p className="text-sm text-center py-4 text-muted-foreground">No requests on record.</p>}
                         </div>
                       )}
+
+                      {expandedSection === "logouts" && (() => {
+                        const logs = (row as Record<string,unknown>).logouts as Array<Record<string,unknown>> ?? [];
+                        return (
+                          <div className="space-y-2">
+                            {logs.length === 0 && <p className="text-sm text-center py-4 text-muted-foreground">No client logouts on record.</p>}
+                            {logs.length > 0 && (
+                              <div className="overflow-x-auto rounded-lg border">
+                                <table className="w-full text-xs">
+                                  <thead className="bg-muted/30"><tr>
+                                    <th className="px-3 py-2 text-left">Date</th>
+                                    <th className="px-3 py-2 text-left">Cycle</th>
+                                    <th className="px-3 py-2 text-left">Reason</th>
+                                  </tr></thead>
+                                  <tbody className="divide-y">
+                                    {logs.map((l, i) => (
+                                      <tr key={i}>
+                                        <td className="px-3 py-2 font-mono">{String(l.date ?? "")}</td>
+                                        <td className="px-3 py-2">{String(l.cycleKey ?? l.month ?? "")}</td>
+                                        <td className="px-3 py-2 text-muted-foreground">{String(l.reason ?? "—")}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 )}

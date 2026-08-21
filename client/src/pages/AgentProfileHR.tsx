@@ -216,7 +216,7 @@ function Profile({ agent }: { agent: Agent }) {
         <div className="grid sm:grid-cols-3 gap-3 text-sm">
           <TimelineItem label="Full name" value={agent.fullName || "—"} />
           <TimelineItem label="Alias" value={agent.alias || "—"} />
-          <TimelineItem label="Job title" value={agent.jobTitle || "—"} />
+
           <TimelineItem label="Phone" value={agent.phone || "—"} />
           <TimelineItem label="Email" value={agent.email || "—"} />
           <TimelineItem label="Date of birth" value={fmtFull(agent.dateOfBirth)} />

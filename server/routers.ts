@@ -1740,6 +1740,29 @@ const campaignsRouter = router({
 
 // ─── Workforce Router ─────────────────────────────────────────────────────────
 const workforceRouter = router({
+  /** Global search — by name, alias, T-code, or CRDTS */
+  globalSearch: protectedProcedure
+    .input(z.object({ q: z.string().min(1).max(100) }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { workforceAgents } = await import("../drizzle/schema");
+      const { or, like, eq, and, isNull } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      const q = `%${input.q.trim()}%`;
+      return db.select({
+        traineeCode: workforceAgents.traineeCode,
+        fullName: workforceAgents.fullName,
+        alias: workforceAgents.alias,
+        crdts: workforceAgents.crdts,
+        agentStatus: workforceAgents.agentStatus,
+      }).from(workforceAgents)
+        .where(and(
+          or(isNull(workforceAgents.isDemo), eq(workforceAgents.isDemo, false)),
+          or(like(workforceAgents.fullName, q), like(workforceAgents.alias, q), like(workforceAgents.traineeCode, q), like(workforceAgents.crdts, q))
+        )).limit(15);
+    }),
+
   // Manual "Mark as settled" — flips salarySettled; used when final pay is confirmed (exit checklist gates the full archive)
   // Unified HR profile: update address + emergency contact
   updateHrInfo: protectedProcedure
@@ -2704,7 +2727,7 @@ const separationRouter = router({
       const { eq, or, inArray, desc } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) return [];
-      const { workforceAgents, agentRequests, payrollRecords, cycleStats, agentViolations, coachingSessions } = await import("../drizzle/schema");
+      const { workforceAgents, agentRequests, payrollRecords, cycleStats, agentViolations, coachingSessions, clientLogouts } = await import("../drizzle/schema");
       // All non-active agents
       const agents = await db.select().from(workforceAgents).where(
         inArray(workforceAgents.agentStatus, ["resigned", "terminated", "blacklisted", "frozen", "inactive"])
@@ -2712,19 +2735,22 @@ const separationRouter = router({
       if (agents.length === 0) return [];
       const codes = agents.map(a => a.traineeCode);
       // Fetch supporting data in parallel
-      const [requests, payroll, cycles, violations, coaching] = await Promise.all([
+      const crdtsList = agents.map(a => a.crdts ?? "").filter(Boolean);
+      const [requests, payroll, cycles, violations, coaching, logouts] = await Promise.all([
         db.select().from(agentRequests).where(inArray(agentRequests.traineeCode, codes)).orderBy(desc(agentRequests.createdAt)),
         db.select().from(payrollRecords).where(inArray(payrollRecords.agentCode, codes)).orderBy(desc(payrollRecords.month)),
-        db.select().from(cycleStats).where(inArray(cycleStats.crdts, agents.map(a => a.crdts ?? "").filter(Boolean))),
+        crdtsList.length > 0 ? db.select().from(cycleStats).where(inArray(cycleStats.crdts, crdtsList)) : [],
         db.select().from(agentViolations).where(inArray(agentViolations.agentCode, codes)),
         db.select().from(coachingSessions).where(inArray(coachingSessions.agentCode, codes)),
+        crdtsList.length > 0 ? db.select().from(clientLogouts).where(inArray(clientLogouts.crdts, crdtsList)) : [],
       ]);
       // Group by traineeCode
       const reqByCode = requests.reduce((m, r) => { (m[r.traineeCode] = m[r.traineeCode] ?? []).push(r); return m; }, {} as Record<string, typeof requests>);
       const payByCode = payroll.reduce((m, r) => { const k = r.agentCode ?? ""; (m[k] = m[k] ?? []).push(r); return m; }, {} as Record<string, typeof payroll>);
       const violByCode = violations.reduce((m, r) => { const k = r.agentCode ?? ""; (m[k] = m[k] ?? []).push(r); return m; }, {} as Record<string, typeof violations>);
       const coachByCode = coaching.reduce((m, r) => { const k = r.agentCode ?? ""; (m[k] = m[k] ?? []).push(r); return m; }, {} as Record<string, typeof coaching>);
-      const crdtsCycles = cycles.reduce((m, r) => { (m[r.crdts] = m[r.crdts] ?? []).push(r); return m; }, {} as Record<string, typeof cycles>);
+      const crdtsCycles = (cycles as typeof cycleStats.$inferSelect[]).reduce((m, r) => { (m[r.crdts] = m[r.crdts] ?? []).push(r); return m; }, {} as Record<string, typeof cycleStats.$inferSelect[]>);
+      const logoutsByCrdts = (logouts as typeof clientLogouts.$inferSelect[]).reduce((m, r) => { const k = r.crdts ?? ""; (m[k] = m[k] ?? []).push(r); return m; }, {} as Record<string, typeof clientLogouts.$inferSelect[]>);
       return agents.map(a => ({
         agent: a,
         requests: reqByCode[a.traineeCode] ?? [],
@@ -2732,9 +2758,11 @@ const separationRouter = router({
         performance: crdtsCycles[a.crdts ?? ""] ?? [],
         violations: violByCode[a.traineeCode] ?? [],
         coaching: coachByCode[a.traineeCode] ?? [],
+        logouts: logoutsByCrdts[a.crdts ?? ""] ?? [],
         totalPaidEgp: (payByCode[a.traineeCode] ?? []).filter(p => p.paymentStatus === "paid").reduce((s, p) => s + parseFloat(String(p.netPay ?? 0)), 0),
         totalCycles: (crdtsCycles[a.crdts ?? ""] ?? []).length,
         totalRevenue: (crdtsCycles[a.crdts ?? ""] ?? []).reduce((s, r) => s + parseFloat(String(r.revenue ?? 0)), 0),
+        totalProfit: (crdtsCycles[a.crdts ?? ""] ?? []).reduce((s, r) => s + parseFloat(String(r.profit ?? 0)), 0),
       }));
     }),
   // Admin: get all terminated/resigned agents pending deletion
@@ -4119,7 +4147,7 @@ const cycleTrackerRouter = router({
       const nameByCrdts = new Map(agentRows.map(a => [a.crdts, { fullName: a.fullName ?? null, alias: a.alias ?? null }]));
       // Aggregate by CRDTS
       const byAgent = new Map<string, {
-        crdts: string; agentCode: string | null; alias: string | null; teamLeader: string | null;
+        crdts: string; agentCode: string | null; alias: string | null; fullName: string | null; teamLeader: string | null;
         totalRevenue: number; totalCalls: number; totalLoginHours: number;
         totalProfit: number; totalRevPerHr: number; days: number;
       }>();
@@ -4170,7 +4198,7 @@ const cycleTrackerRouter = router({
       const tlByCrdts = new Map(agentRows.map(a => [a.crdts, a.teamLeader ?? null]));
       const nameByCrdts = new Map(agentRows.map(a => [a.crdts, { fullName: a.fullName ?? null, alias: a.alias ?? null }]));
       const byAgent = new Map<string, {
-        crdts: string; agentCode: string | null; alias: string | null; teamLeader: string | null;
+        crdts: string; agentCode: string | null; alias: string | null; fullName: string | null; teamLeader: string | null;
         totalRevenue: number; totalCalls: number; totalLoginHours: number;
         totalProfit: number; totalRevPerHr: number; days: number;
       }>();
@@ -6888,12 +6916,13 @@ const presenceRouter = router({
       const db = await getDb();
       if (!db) return { ok: false };
       // Get agent info
-      const [agent] = await db.select({ alias: workforceAgents.alias, fullName: workforceAgents.fullName, campaignId: workforceAgents.campaignId })
+      const [agent] = await db.select({ alias: workforceAgents.alias, fullName: workforceAgents.fullName, campaignId: workforceAgents.campaignId, avatarUrl: workforceAgents.avatarUrl })
         .from(workforceAgents).where(eq(workforceAgents.traineeCode, input.traineeCode)).limit(1);
       await db.insert(agentPresence).values({
         traineeCode: input.traineeCode,
         alias: agent?.alias ?? null,
         fullName: agent?.fullName ?? null,
+        avatarUrl: agent?.avatarUrl ?? null,
         status: input.status ?? "available",
         customNote: input.customNote ?? null,
         lastSeen: Date.now(),
@@ -6905,6 +6934,7 @@ const presenceRouter = router({
           lastSeen: Date.now(),
           alias: agent?.alias ?? null,
           fullName: agent?.fullName ?? null,
+          avatarUrl: agent?.avatarUrl ?? null,
         }
       });
       return { ok: true };
