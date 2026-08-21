@@ -1350,3 +1350,14 @@ export const slackPingLog = mysqlTable("slack_ping_log", {
   messageTs: varchar("messageTs", { length: 100 }),       // Slack message timestamp for threading
 });
 
+// ─── Agent Presence ───────────────────────────────────────────────────────────
+export const agentPresence = mysqlTable("agent_presence", {
+  traineeCode: varchar("traineeCode", { length: 50 }).primaryKey(),
+  alias:       varchar("alias", { length: 100 }),
+  fullName:    varchar("fullName", { length: 255 }),
+  status:      mysqlEnum("status", ["available", "on_break", "on_call", "away"]).default("available").notNull(),
+  customNote:  varchar("customNote", { length: 30 }),
+  lastSeen:    bigint("lastSeen", { mode: "number" }).notNull(),
+  campaignId:  int("campaignId"),
+});
+export type AgentPresence = typeof agentPresence.$inferSelect;

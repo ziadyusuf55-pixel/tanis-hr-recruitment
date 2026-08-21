@@ -9,8 +9,6 @@ export const PIPELINE_STAGES = [
   "rejected",
   "blacklisted",
   // Separation statuses — ID permanently retired, never reusable
-  "resigned",
-  "terminated",
 ] as const;
 
 export type PipelineStage = (typeof PIPELINE_STAGES)[number];
@@ -38,8 +36,6 @@ export const STAGE_LABELS: Record<PipelineStage, string> = {
   whatsapp_group_added: "WhatsApp Group Added",
   rejected: "Rejected",
   blacklisted: "Blacklisted",
-  resigned: "Resigned",
-  terminated: "Terminated",
 };
 
 export const STAGE_SHORT_LABELS: Record<PipelineStage, string> = {
@@ -52,8 +48,6 @@ export const STAGE_SHORT_LABELS: Record<PipelineStage, string> = {
   whatsapp_group_added: "WA Group",
   rejected: "Rejected",
   blacklisted: "Blacklisted",
-  resigned: "Resigned",
-  terminated: "Terminated",
 };
 
 export const STAGE_DESCRIPTIONS: Record<PipelineStage, string> = {
@@ -66,8 +60,6 @@ export const STAGE_DESCRIPTIONS: Record<PipelineStage, string> = {
   whatsapp_group_added: "Added to WhatsApp training group",
   rejected: "Candidate rejected",
   blacklisted: "Candidate blacklisted — do not re-hire",
-  resigned: "Agent resigned — ID permanently retired",
-  terminated: "Agent terminated — ID permanently retired",
 };
 
 export const STAGE_COLORS: Record<PipelineStage, string> = {
@@ -80,8 +72,6 @@ export const STAGE_COLORS: Record<PipelineStage, string> = {
   whatsapp_group_added: "stage-whatsapp-group",
   rejected: "stage-rejected",
   blacklisted: "stage-blacklisted",
-  resigned: "stage-resigned",
-  terminated: "stage-terminated",
 };
 
 export const STAGE_BG: Record<PipelineStage, string> = {
@@ -94,8 +84,6 @@ export const STAGE_BG: Record<PipelineStage, string> = {
   whatsapp_group_added: "bg-teal-50 border-teal-200",
   rejected: "bg-red-50 border-red-200",
   blacklisted: "bg-gray-100 border-gray-300",
-  resigned: "bg-orange-50 border-orange-200",
-  terminated: "bg-red-100 border-red-300",
 };
 
 export const STAGE_HEADER: Record<PipelineStage, string> = {
@@ -108,8 +96,6 @@ export const STAGE_HEADER: Record<PipelineStage, string> = {
   whatsapp_group_added: "bg-teal-600",
   rejected: "bg-red-500",
   blacklisted: "bg-gray-700",
-  resigned: "bg-orange-600",
-  terminated: "bg-red-700",
 };
 
 export const STAGE_DOT: Record<PipelineStage, string> = {
@@ -122,8 +108,6 @@ export const STAGE_DOT: Record<PipelineStage, string> = {
   whatsapp_group_added: "bg-teal-500",
   rejected: "bg-red-500",
   blacklisted: "bg-gray-600",
-  resigned: "bg-orange-500",
-  terminated: "bg-red-700",
 };
 
 export const STAGE_BADGE: Record<PipelineStage, string> = {
@@ -136,8 +120,6 @@ export const STAGE_BADGE: Record<PipelineStage, string> = {
   whatsapp_group_added: "bg-teal-50 text-teal-700 border-teal-200",
   rejected: "bg-red-50 text-red-700 border-red-200",
   blacklisted: "bg-gray-100 text-gray-700 border-gray-300",
-  resigned: "bg-orange-50 text-orange-700 border-orange-200",
-  terminated: "bg-red-100 text-red-800 border-red-300",
 };
 
 /** Returns the next stage in the forward pipeline (excluding rejected/blacklisted/separation) */

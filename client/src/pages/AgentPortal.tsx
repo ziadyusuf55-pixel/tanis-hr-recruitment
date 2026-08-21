@@ -387,6 +387,7 @@ export default function AgentPortal() {
 
       {/* ── Content ── */}
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
+        <PresencePanel traineeCode={agent.traineeCode} theme={theme} />
         <ProfileCompletionBanner wfProfile={_wfProfile as Record<string,unknown> | null} payMethods={_payMethods as unknown[]} theme={theme} onGoToProfile={() => setActiveTab("profile")} onGoToPayment={() => setActiveTab("payment")} />
         {activeTab === "profile" && <ProfileTab agent={agent} theme={theme} />}
         {activeTab === "opplan" && <OperationPlanTab theme={theme} />}
@@ -4250,5 +4251,148 @@ function EnglishLevelQuiz({ theme, traineeCode }: { theme: Theme; traineeCode?: 
         {answered < 60 ? `Answer all questions (${60-answered} remaining)` : "Submit — See My Level"}
       </button>
     </div>
+  );
+}
+
+// ─── Presence Panel ────────────────────────────────────────────────────────────
+const STATUS_OPTIONS = [
+  { value: "available", label: "Available", color: "#22c55e", emoji: "🟢" },
+  { value: "on_break",  label: "On Break",  color: "#f59e0b", emoji: "🟡" },
+  { value: "on_call",   label: "On Call",   color: "#ef4444", emoji: "🔴" },
+  { value: "away",      label: "Away",      color: "#94a3b8", emoji: "⚪" },
+] as const;
+
+type PresenceStatus = "available" | "on_break" | "on_call" | "away";
+
+function PresencePanel({ traineeCode, theme }: { traineeCode: string; theme: Theme }) {
+  const [open, setOpen] = useState(false);
+  const [myStatus, setMyStatus] = useState<PresenceStatus>("available");
+  const [note, setNote] = useState("");
+  const [editingStatus, setEditingStatus] = useState(false);
+
+  const { data: presence = [] } = trpc.presence.listAll.useQuery(undefined, { refetchInterval: 30000 });
+  const heartbeat = trpc.presence.heartbeat.useMutation();
+  const setStatusMutation = trpc.presence.setStatus.useMutation();
+  const offlineMutation = trpc.presence.offline.useMutation();
+
+  // Heartbeat every 60s
+  useEffect(() => {
+    heartbeat.mutate({ traineeCode, status: myStatus, customNote: note || undefined });
+    const iv = setInterval(() => {
+      heartbeat.mutate({ traineeCode, status: myStatus, customNote: note || undefined });
+    }, 60000);
+    return () => {
+      clearInterval(iv);
+      offlineMutation.mutate({ traineeCode });
+    };
+  }, [traineeCode, myStatus, note]);
+
+  const onlineAgents = (presence as AgentPresenceRow[]).filter(p => Date.now() - p.lastSeen < 5 * 60 * 1000);
+  const offlineAgents = (presence as AgentPresenceRow[]).filter(p => Date.now() - p.lastSeen >= 5 * 60 * 1000);
+  const myPresence = onlineAgents.find(p => p.traineeCode === traineeCode);
+  const myStatusConfig = STATUS_OPTIONS.find(s => s.value === myStatus) ?? STATUS_OPTIONS[0];
+
+  type AgentPresenceRow = { traineeCode: string; alias?: string | null; fullName?: string | null; status: string; customNote?: string | null; lastSeen: number };
+
+  const handleSetStatus = (status: PresenceStatus) => {
+    setMyStatus(status);
+    setStatusMutation.mutate({ traineeCode, status, customNote: note || undefined });
+    setEditingStatus(false);
+  };
+
+  return (
+    <>
+      {/* Floating button */}
+      <button
+        onClick={() => setOpen(!open)}
+        className="fixed right-4 bottom-20 sm:bottom-6 z-40 flex items-center gap-2 px-3 py-2 rounded-full shadow-lg border text-sm font-medium transition-all"
+        style={{ background: theme.card, borderColor: theme.cardBorder, color: theme.text }}
+      >
+        <span style={{ color: myStatusConfig.color }}>{myStatusConfig.emoji}</span>
+        <span className="hidden sm:inline">{onlineAgents.length} online</span>
+        <span className="sm:hidden">{onlineAgents.length}</span>
+      </button>
+
+      {/* Panel */}
+      {open && (
+        <div className="fixed right-4 bottom-28 sm:bottom-16 z-50 w-72 rounded-2xl shadow-2xl border overflow-hidden"
+          style={{ background: theme.card, borderColor: theme.cardBorder }}>
+
+          {/* Header */}
+          <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: theme.cardBorder }}>
+            <p className="text-sm font-semibold" style={{ color: theme.text }}>Team Directory</p>
+            <button onClick={() => setOpen(false)} style={{ color: theme.textMuted }} className="text-lg leading-none">✕</button>
+          </div>
+
+          {/* My status */}
+          <div className="px-4 py-3 border-b" style={{ borderColor: theme.cardBorder }}>
+            <p className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: theme.textFaint }}>My Status</p>
+            {editingStatus ? (
+              <div className="space-y-1.5">
+                {STATUS_OPTIONS.map(s => (
+                  <button key={s.value} onClick={() => handleSetStatus(s.value)}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg text-left text-sm transition-colors hover:opacity-80"
+                    style={{ background: myStatus === s.value ? `${s.color}22` : "transparent", color: theme.text }}>
+                    <span>{s.emoji}</span> {s.label}
+                    {myStatus === s.value && <span className="ml-auto text-[10px]">✓</span>}
+                  </button>
+                ))}
+                <input maxLength={30} value={note} onChange={e => setNote(e.target.value)}
+                  placeholder="Custom note (30 chars)…"
+                  className="w-full text-xs px-2 py-1.5 rounded-lg border mt-1 bg-background outline-none"
+                  style={{ borderColor: theme.cardBorder, color: theme.text }} />
+                <button onClick={() => { setStatusMutation.mutate({ traineeCode, status: myStatus, customNote: note || undefined }); setEditingStatus(false); }}
+                  className="w-full text-xs py-1.5 rounded-lg font-medium text-white mt-1" style={{ background: BRAND }}>
+                  Save
+                </button>
+              </div>
+            ) : (
+              <button onClick={() => setEditingStatus(true)}
+                className="flex items-center gap-2 text-sm w-full text-left px-2 py-1 rounded-lg hover:opacity-80 transition-opacity"
+                style={{ color: theme.text }}>
+                <span>{myStatusConfig.emoji}</span>
+                <span>{myStatusConfig.label}</span>
+                {note && <span className="text-[11px]" style={{ color: theme.textMuted }}>· {note}</span>}
+                <span className="ml-auto text-[10px]" style={{ color: theme.textFaint }}>Edit</span>
+              </button>
+            )}
+          </div>
+
+          {/* Online agents */}
+          <div className="max-h-56 overflow-y-auto">
+            {onlineAgents.length === 0 && (
+              <p className="text-xs text-center py-4" style={{ color: theme.textMuted }}>No one else online right now</p>
+            )}
+            {onlineAgents.filter(p => p.traineeCode !== traineeCode).map(p => {
+              const sc = STATUS_OPTIONS.find(s => s.value === p.status) ?? STATUS_OPTIONS[0];
+              return (
+                <div key={p.traineeCode} className="flex items-center gap-2.5 px-4 py-2.5">
+                  <div className="w-2 h-2 rounded-full shrink-0" style={{ background: sc.color }} />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate" style={{ color: theme.text }}>{p.alias || p.fullName || p.traineeCode}</p>
+                    <p className="text-[10px] truncate" style={{ color: theme.textMuted }}>
+                      {sc.label}{p.customNote ? ` · ${p.customNote}` : ""}
+                    </p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Offline recently */}
+          {offlineAgents.length > 0 && (
+            <div className="border-t px-4 py-2" style={{ borderColor: theme.cardBorder }}>
+              <p className="text-[10px] uppercase tracking-wider mb-1.5" style={{ color: theme.textFaint }}>Recently offline</p>
+              {offlineAgents.slice(0, 5).map(p => (
+                <div key={p.traineeCode} className="flex items-center gap-2 py-1">
+                  <div className="w-2 h-2 rounded-full shrink-0 bg-gray-300" />
+                  <p className="text-xs truncate" style={{ color: theme.textMuted }}>{p.alias || p.fullName || p.traineeCode}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </>
   );
 }

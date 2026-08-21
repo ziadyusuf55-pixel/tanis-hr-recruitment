@@ -52,14 +52,28 @@ export function ViolationTracker({
     (all as ViolationRow[]).forEach(r => { if (r.month) s.add(r.month); });
     return Array.from(s).sort().reverse();
   }, [all]);
-  const cycles = months;
+  // Cycle helper: 26→25 boundary
+  const cycleOf = (dateStr: string) => {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return null;
+    if (d.getDate() >= 26) d.setMonth(d.getMonth() + 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  };
+  // Build cycle list from actual violation dates (not month field)
+  const cycles = useMemo(() => {
+    const s = new Set<string>();
+    (all as ViolationRow[]).forEach(r => { const c = r.date ? cycleOf(r.date) : null; if (c) s.add(c); });
+    return Array.from(s).sort().reverse();
+  }, [all]);
 
   const rows = useMemo(() => {
     let r = all as ViolationRow[];
-    if (viewMode !== "all") {
-      const period = viewMode === "cycle" ? cycle : month;
-      r = r.filter(x => x.month === period);
+    if (viewMode === "month") {
+      r = r.filter(x => x.month === month);
+    } else if (viewMode === "cycle") {
+      r = r.filter(x => x.date && cycleOf(x.date) === cycle);
     }
+    // viewMode === "all" → no filter
     if (q.trim()) {
       const t = q.toLowerCase();
       r = r.filter(x =>

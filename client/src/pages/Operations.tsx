@@ -474,7 +474,6 @@ type WorkforceAgent = {
   nationality?: string | null;
   maritalStatus?: string | null;
   militaryStatus?: string | null;
-  jobTitle?: string | null;
   city?: string | null;
   profileLocked?: boolean | null;
 };
@@ -830,7 +829,6 @@ export default function Operations() {
     nationality?: string;
     maritalStatus?: string;
     militaryStatus?: string;
-    jobTitle?: string;
     city?: string;
     profileLocked?: boolean;
   };
@@ -1038,7 +1036,6 @@ export default function Operations() {
       nationality: agent.nationality ?? "",
       maritalStatus: agent.maritalStatus ?? "",
       militaryStatus: agent.militaryStatus ?? "",
-      jobTitle: agent.jobTitle ?? "",
       city: agent.city ?? "",
       profileLocked: agent.profileLocked ?? false,
     });
@@ -1087,7 +1084,6 @@ export default function Operations() {
       nationality: editForm.nationality || undefined,
       maritalStatus: (editForm.maritalStatus as "single" | "married" | "divorced" | "widowed" | undefined) || undefined,
       militaryStatus: (editForm.militaryStatus as "completed" | "exempt" | "postponed" | "not_applicable" | undefined) || undefined,
-      jobTitle: editForm.jobTitle || undefined,
       city: editForm.city || undefined,
       profileLocked: editForm.profileLocked,
     };

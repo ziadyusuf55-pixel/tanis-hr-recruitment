@@ -1,5 +1,7 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { canAccessPath, hasAnyAccess, isFullAccess } from "@/lib/roleTabs";
+import { trpc } from "@/lib/trpc";
+import { useLocation as useWouter } from "wouter";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
@@ -425,9 +427,82 @@ function DashboardLayoutContent({
             </span>
           </div>
         )}
-        {!isMobile && <div className="flex justify-end px-6 pt-3 -mb-6"><BellBadge /></div>}
+        {!isMobile && (
+          <div className="flex justify-between items-center px-6 pt-3 -mb-6">
+            <GlobalSearch />
+            <BellBadge />
+          </div>
+        )}
         <main className="flex-1 min-h-screen p-6">{children}</main>
       </SidebarInset>
     </>
+  );
+}
+
+// ─── Global Search ──────────────────────────────────────────────────────────
+function GlobalSearch() {
+  const [, navigate] = useWouter();
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState(false);
+  const ref = React.useRef<HTMLDivElement>(null);
+
+  const { data: results = [] } = trpc.documents.globalSearch.useQuery(
+    { q: q.trim() },
+    { enabled: q.trim().length >= 2 }
+  );
+
+  React.useEffect(() => {
+    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const STATUS_COLOR: Record<string, string> = {
+    active: "text-emerald-600", resigned: "text-orange-500",
+    terminated: "text-red-500", blacklisted: "text-gray-700",
+  };
+
+  return (
+    <div ref={ref} className="relative w-64">
+      <div className="flex items-center gap-2 border rounded-lg px-3 py-1.5 bg-background text-sm">
+        <svg className="w-3.5 h-3.5 text-muted-foreground" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
+        <input
+          className="flex-1 outline-none bg-transparent placeholder:text-muted-foreground text-xs"
+          placeholder="Search agent, CRDTS, T-code…"
+          value={q}
+          onChange={e => { setQ(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+        />
+        {q && <button onClick={() => { setQ(""); setOpen(false); }} className="text-muted-foreground hover:text-foreground">✕</button>}
+      </div>
+      {open && q.trim().length >= 2 && (
+        <div className="absolute top-full mt-1 left-0 w-80 rounded-xl border bg-background shadow-lg z-50 overflow-hidden">
+          {(results as Array<Record<string,unknown>>).length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-4">No agents found</p>
+          ) : (
+            <div className="divide-y max-h-72 overflow-y-auto">
+              {(results as Array<Record<string,unknown>>).map((r, i) => (
+                <button key={i} className="w-full text-left px-4 py-2.5 hover:bg-muted/40 transition-colors"
+                  onClick={() => {
+                    navigate(`/operations?agent=${String(r.traineeCode ?? "")}`);
+                    setQ(""); setOpen(false);
+                  }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-medium">{String(r.alias ?? r.fullName ?? r.traineeCode)}</p>
+                      {r.alias && r.fullName && <p className="text-xs text-muted-foreground">{String(r.fullName)}</p>}
+                      <p className="text-xs text-muted-foreground font-mono">{String(r.traineeCode)} · {String(r.crdts ?? "")}</p>
+                    </div>
+                    <span className={`text-[10px] font-medium capitalize ${STATUS_COLOR[String(r.agentStatus ?? "")] ?? "text-muted-foreground"}`}>
+                      {String(r.agentStatus ?? "")}
+                    </span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

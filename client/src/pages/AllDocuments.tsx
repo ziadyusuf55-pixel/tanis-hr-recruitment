@@ -148,7 +148,8 @@ export default function AllDocuments() {
   });
 
   const agentList = useMemo(() =>
-    (agents as Array<{ traineeCode: string; fullName: string; alias?: string | null }>),
+    (agents as Array<{ traineeCode: string; fullName: string; alias?: string | null; agentStatus?: string | null; isDemo?: boolean | null }>)
+      .filter(a => !a.isDemo && a.agentStatus !== "resigned" && a.agentStatus !== "terminated" && a.agentStatus !== "blacklisted"),
     [agents]
   );
 

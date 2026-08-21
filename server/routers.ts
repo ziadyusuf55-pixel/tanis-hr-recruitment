@@ -4114,8 +4114,9 @@ const cycleTrackerRouter = router({
         : await db.select().from(cycleStats).where(ne(cycleStats.crdts, DEMO_CRDTS));
       // Pull teamLeader from workforce_agents for TL filter
       const { workforceAgents } = await import("../drizzle/schema");
-      const agentRows = await db.select({ crdts: workforceAgents.crdts, teamLeader: workforceAgents.teamLeader }).from(workforceAgents);
+      const agentRows = await db.select({ crdts: workforceAgents.crdts, teamLeader: workforceAgents.teamLeader, fullName: workforceAgents.fullName, alias: workforceAgents.alias }).from(workforceAgents);
       const tlByCrdts = new Map(agentRows.map(a => [a.crdts, a.teamLeader ?? null]));
+      const nameByCrdts = new Map(agentRows.map(a => [a.crdts, { fullName: a.fullName ?? null, alias: a.alias ?? null }]));
       // Aggregate by CRDTS
       const byAgent = new Map<string, {
         crdts: string; agentCode: string | null; alias: string | null; teamLeader: string | null;
@@ -4137,7 +4138,8 @@ const cycleTrackerRouter = router({
           byAgent.set(row.crdts, {
             crdts: row.crdts,
             agentCode: row.agentCode ?? null,
-            alias: row.alias ?? null,
+            alias: row.alias || nameByCrdts.get(row.crdts)?.alias || null,
+            fullName: nameByCrdts.get(row.crdts)?.fullName || null,
             teamLeader: tlByCrdts.get(row.crdts) ?? null,
             totalRevenue: Number(row.revenue ?? 0),
             totalCalls: Number(row.totalCalls ?? 0),
@@ -4164,8 +4166,9 @@ const cycleTrackerRouter = router({
       const db = await getDb();
       if (!db) return [];
       const rows = await db.select().from(cycleStats).where(sql`LEFT(${cycleStats.date}, 7) = ${input.month} AND ${cycleStats.crdts} != '999999'`);
-      const agentRows = await db.select({ crdts: workforceAgents.crdts, teamLeader: workforceAgents.teamLeader }).from(workforceAgents);
+      const agentRows = await db.select({ crdts: workforceAgents.crdts, teamLeader: workforceAgents.teamLeader, fullName: workforceAgents.fullName, alias: workforceAgents.alias }).from(workforceAgents);
       const tlByCrdts = new Map(agentRows.map(a => [a.crdts, a.teamLeader ?? null]));
+      const nameByCrdts = new Map(agentRows.map(a => [a.crdts, { fullName: a.fullName ?? null, alias: a.alias ?? null }]));
       const byAgent = new Map<string, {
         crdts: string; agentCode: string | null; alias: string | null; teamLeader: string | null;
         totalRevenue: number; totalCalls: number; totalLoginHours: number;
@@ -4184,8 +4187,8 @@ const cycleTrackerRouter = router({
           if (!existing.agentCode && row.agentCode) existing.agentCode = row.agentCode;
         } else {
           byAgent.set(row.crdts, {
-            crdts: row.crdts, agentCode: row.agentCode ?? null, alias: row.alias ?? null,
-            teamLeader: tlByCrdts.get(row.crdts) ?? null,
+            crdts: row.crdts, agentCode: row.agentCode ?? null, alias: row.alias || nameByCrdts.get(row.crdts)?.alias || null,
+            fullName: nameByCrdts.get(row.crdts)?.fullName || null, teamLeader: tlByCrdts.get(row.crdts) ?? null,
             totalRevenue: Number(row.revenue ?? 0), totalCalls: Number(row.totalCalls ?? 0),
             totalLoginHours: Number(row.loginHours ?? 0), totalProfit: Number(row.profit ?? 0),
             totalRevPerHr: Number(row.revPerHr ?? 0), days: 1,
@@ -6873,6 +6876,90 @@ const bdRouter = router({
 });
 
 // ─── #5 CRDTS reuse check + archive Router ───────────────────────────────────
+// ─── Presence Router ─────────────────────────────────────────────────────────
+const presenceRouter = router({
+  /** Agent calls this every 60s to mark themselves online */
+  heartbeat: publicProcedure
+    .input(z.object({ traineeCode: z.string(), status: z.enum(["available","on_break","on_call","away"]).optional(), customNote: z.string().max(30).optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { agentPresence, workforceAgents } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return { ok: false };
+      // Get agent info
+      const [agent] = await db.select({ alias: workforceAgents.alias, fullName: workforceAgents.fullName, campaignId: workforceAgents.campaignId })
+        .from(workforceAgents).where(eq(workforceAgents.traineeCode, input.traineeCode)).limit(1);
+      await db.insert(agentPresence).values({
+        traineeCode: input.traineeCode,
+        alias: agent?.alias ?? null,
+        fullName: agent?.fullName ?? null,
+        status: input.status ?? "available",
+        customNote: input.customNote ?? null,
+        lastSeen: Date.now(),
+        campaignId: agent?.campaignId ?? null,
+      }).onDuplicateKeyUpdate({
+        set: {
+          status: input.status ?? "available",
+          customNote: input.customNote ?? null,
+          lastSeen: Date.now(),
+          alias: agent?.alias ?? null,
+          fullName: agent?.fullName ?? null,
+        }
+      });
+      return { ok: true };
+    }),
+
+  /** Get all currently online agents (seen within last 5 minutes) */
+  list: publicProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const { agentPresence } = await import("../drizzle/schema");
+    const { gte } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return [];
+    const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+    return db.select().from(agentPresence).where(gte(agentPresence.lastSeen, fiveMinAgo));
+  }),
+
+  /** Get ALL agents presence (online + recent offline) for the directory */
+  listAll: publicProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const { agentPresence } = await import("../drizzle/schema");
+    const db = await getDb();
+    if (!db) return [];
+    const oneHourAgo = Date.now() - 60 * 60 * 1000;
+    const { gte } = await import("drizzle-orm");
+    return db.select().from(agentPresence).where(gte(agentPresence.lastSeen, oneHourAgo));
+  }),
+
+  /** Agent sets their own status */
+  setStatus: publicProcedure
+    .input(z.object({ traineeCode: z.string(), status: z.enum(["available","on_break","on_call","away"]), customNote: z.string().max(30).optional() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { agentPresence } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return { ok: false };
+      await db.update(agentPresence).set({ status: input.status, customNote: input.customNote ?? null, lastSeen: Date.now() }).where(eq(agentPresence.traineeCode, input.traineeCode));
+      return { ok: true };
+    }),
+
+  /** Agent goes offline */
+  offline: publicProcedure
+    .input(z.object({ traineeCode: z.string() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { agentPresence } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return { ok: false };
+      // Set lastSeen to 0 so they appear offline immediately
+      await db.update(agentPresence).set({ lastSeen: 0 }).where(eq(agentPresence.traineeCode, input.traineeCode));
+      return { ok: true };
+    }),
+});
+
 const crdtsArchiveRouter = router({
   // Is this CRDTS already held by another agent? Flags if that agent is resigned/terminated.
   checkReuse: protectedProcedure
@@ -7329,6 +7416,7 @@ export const appRouter = router({
   invites: invitesRouter,
   apiKeys: apiKeysRouter,
   bd: bdRouter,
+  presence: presenceRouter,
   crdtsArchive: crdtsArchiveRouter,
   hr: hrRouter,
   leave: leaveRouter,
