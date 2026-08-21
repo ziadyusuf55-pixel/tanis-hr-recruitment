@@ -1129,6 +1129,7 @@
 
 ## Agent Presence Migration
 - [x] Synchronize the latest code, apply and verify the agent_presence table migration, confirm Drizzle schema alignment, validate TypeScript, and save a publishable checkpoint
+- [ ] Synchronize the latest code, add and verify agent_presence.avatarUrl, confirm Drizzle schema alignment, validate TypeScript, and save a publishable checkpoint
 
 ## Archive-Based TypeScript Fix
 - [x] Overlay tanis_ts_fix.zip on the current checkpoint, synchronize the corrected files, validate TypeScript, and save a publishable checkpoint while preserving the agent_presence migration
