@@ -25,14 +25,14 @@ import {
 } from "@/components/ui/sidebar";
 import { getLoginUrl } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { trpc } from "@/lib/trpc";
 import {
   LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings,
   Briefcase, Banknote, CreditCard, BarChart2, AlertCircle, Star, Wallet,
   FileText, Activity, ChevronDown, ChevronRight, TrendingUp, BookOpen, PhoneOff, DollarSign, UserCog, Building2, Zap, UserCircle, CalendarDays, Bell,
   UserX,
 } from "lucide-react";
-import { CSSProperties, useEffect, useRef, useState } from "react";
+import { CSSProperties, useEffect, useRef, useState, useCallback } from "react";
+import React from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import { Button } from "./ui/button";
@@ -446,7 +446,7 @@ function GlobalSearch() {
   const [open, setOpen] = useState(false);
   const ref = React.useRef<HTMLDivElement>(null);
 
-  const { data: results = [] } = trpc.documents.globalSearch.useQuery(
+  const { data: results = [] } = trpc.workforce.globalSearch.useQuery(
     { q: q.trim() },
     { enabled: q.trim().length >= 2 }
   );
@@ -490,7 +490,7 @@ function GlobalSearch() {
                   <div className="flex items-center justify-between gap-2">
                     <div>
                       <p className="text-sm font-medium">{String(r.alias ?? r.fullName ?? r.traineeCode)}</p>
-                      {r.alias && r.fullName && <p className="text-xs text-muted-foreground">{String(r.fullName)}</p>}
+                      {r.alias && r.fullName ? <p className="text-xs text-muted-foreground">{String(r.fullName)}</p> : null}
                       <p className="text-xs text-muted-foreground font-mono">{String(r.traineeCode)} · {String(r.crdts ?? "")}</p>
                     </div>
                     <span className={`text-[10px] font-medium capitalize ${STATUS_COLOR[String(r.agentStatus ?? "")] ?? "text-muted-foreground"}`}>
