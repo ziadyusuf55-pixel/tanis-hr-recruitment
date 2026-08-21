@@ -49,10 +49,10 @@ export default function Dashboard() {
 
   // ── Attention feeds (all existing endpoints) ──
   const { data: unreadRequests = 0 } = trpc.requests.countUnread.useQuery(undefined, { refetchInterval: 60000 });
+  const { data: allAgents = [] } = trpc.workforce.list.useQuery({});
   const unsignedContracts = (allAgents as Array<Record<string,unknown>>).filter(a =>
     a.agentStatus === "active" && !(a as Record<string,unknown>).contractSigned
   ).length;
-  const { data: allAgents = [] } = trpc.workforce.list.useQuery({});
   // Count agents missing required personal info
   const incompleteAgents = (allAgents as Array<Record<string,unknown>>).filter(a =>
     a.agentStatus === "active" && (!a.phone || !a.nationalId || !a.dateOfBirth)

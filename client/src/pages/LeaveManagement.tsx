@@ -212,9 +212,9 @@ function StaffLeaveSection() {
   const pending = staffReqs.filter(r => r.status === "pending");
   const decided = staffReqs.filter(r => r.status !== "pending");
   const [types, setTypes] = useState<Record<number, "casual" | "annual">>({});
-  const decide = trpc.leave.decideMyLeave.useMutation({
+  const decide = trpc.leave.decide.useMutation({
     onSuccess: () => { utils.leave.listRequests.invalidate(); toast.success("Decision saved"); },
-    onError: (e) => toast.error(e.message),
+    onError: (e: { message?: string }) => toast.error(e.message ?? "Error"),
   });
   const fmtDate = (d: unknown) => d ? new Date(String(d)).toLocaleDateString("en-EG") : "—";
   return (
