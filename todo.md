@@ -1122,6 +1122,7 @@
 
 ## Latest Deployment Request
 - [x] Pull the latest GitHub changes without applying a database migration, verify TypeScript, and save a publishable checkpoint
-- [ ] Synchronize the newly requested GitHub version without migration, validate TypeScript, and save a fresh publishable checkpoint
+- [x] Supersede the newly requested no-migration synchronization attempt with the user-provided archive replacement
 - [ ] Replace the previous attempt with the supplied fixed archive, commit and synchronize it, validate TypeScript, and save a publishable checkpoint
 - [ ] Overlay the two-file corrective archive on checkpoint e440ac4c, synchronize it, validate TypeScript, and save a publishable checkpoint
+- [x] Correct the leave decision mutation payload from decision to status and rerun TypeScript validation

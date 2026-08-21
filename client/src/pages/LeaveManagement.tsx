@@ -238,11 +238,11 @@ function StaffLeaveSection() {
               <option value="casual">Casual</option>
               <option value="annual">Annual</option>
             </select>
-            <button onClick={() => { if (!types[Number(r.id)]) return toast.error("Select leave type first"); decide.mutate({ id: Number(r.id), decision: "approved", leaveType: types[Number(r.id)] }); }}
+            <button onClick={() => { if (!types[Number(r.id)]) return toast.error("Select leave type first"); decide.mutate({ id: Number(r.id), status: "approved", leaveType: types[Number(r.id)] }); }}
               className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-emerald-100 text-emerald-700 hover:bg-emerald-200">
               <Check className="w-3 h-3" /> Approve
             </button>
-            <button onClick={() => decide.mutate({ id: Number(r.id), decision: "rejected" })}
+            <button onClick={() => decide.mutate({ id: Number(r.id), status: "rejected" })}
               className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium bg-red-100 text-red-700 hover:bg-red-200">
               <X className="w-3 h-3" /> Reject
             </button>
