@@ -1132,3 +1132,4 @@
 
 ## Archive-Based TypeScript Fix
 - [ ] Overlay tanis_ts_fix.zip on the current checkpoint, synchronize the corrected files, validate TypeScript, and save a publishable checkpoint while preserving the agent_presence migration
+- [ ] Overlay tanis_ts_fix2.zip on checkpoint 43d06a9c, synchronize the corrected files, validate TypeScript, and save a publishable checkpoint while preserving the agent_presence migration

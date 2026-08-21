@@ -1740,6 +1740,29 @@ const campaignsRouter = router({
 
 // ─── Workforce Router ─────────────────────────────────────────────────────────
 const workforceRouter = router({
+  /** Global search — by name, alias, T-code, or CRDTS */
+  globalSearch: protectedProcedure
+    .input(z.object({ q: z.string().min(1).max(100) }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { workforceAgents } = await import("../drizzle/schema");
+      const { or, like, eq, and, isNull } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      const q = `%${input.q.trim()}%`;
+      return db.select({
+        traineeCode: workforceAgents.traineeCode,
+        fullName: workforceAgents.fullName,
+        alias: workforceAgents.alias,
+        crdts: workforceAgents.crdts,
+        agentStatus: workforceAgents.agentStatus,
+      }).from(workforceAgents)
+        .where(and(
+          or(isNull(workforceAgents.isDemo), eq(workforceAgents.isDemo, false)),
+          or(like(workforceAgents.fullName, q), like(workforceAgents.alias, q), like(workforceAgents.traineeCode, q), like(workforceAgents.crdts, q))
+        )).limit(15);
+    }),
+
   // Manual "Mark as settled" — flips salarySettled; used when final pay is confirmed (exit checklist gates the full archive)
   // Unified HR profile: update address + emergency contact
   updateHrInfo: protectedProcedure
