@@ -4142,7 +4142,7 @@ const cycleTrackerRouter = router({
       const nameByCrdts = new Map(agentRows.map(a => [a.crdts, { fullName: a.fullName ?? null, alias: a.alias ?? null }]));
       // Aggregate by CRDTS
       const byAgent = new Map<string, {
-        crdts: string; agentCode: string | null; alias: string | null; teamLeader: string | null;
+        crdts: string; agentCode: string | null; alias: string | null; fullName: string | null; teamLeader: string | null;
         totalRevenue: number; totalCalls: number; totalLoginHours: number;
         totalProfit: number; totalRevPerHr: number; days: number;
       }>();
@@ -4193,7 +4193,7 @@ const cycleTrackerRouter = router({
       const tlByCrdts = new Map(agentRows.map(a => [a.crdts, a.teamLeader ?? null]));
       const nameByCrdts = new Map(agentRows.map(a => [a.crdts, { fullName: a.fullName ?? null, alias: a.alias ?? null }]));
       const byAgent = new Map<string, {
-        crdts: string; agentCode: string | null; alias: string | null; teamLeader: string | null;
+        crdts: string; agentCode: string | null; alias: string | null; fullName: string | null; teamLeader: string | null;
         totalRevenue: number; totalCalls: number; totalLoginHours: number;
         totalProfit: number; totalRevPerHr: number; days: number;
       }>();
