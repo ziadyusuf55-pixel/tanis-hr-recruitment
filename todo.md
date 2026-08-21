@@ -1126,3 +1126,6 @@
 - [x] Replace the previous attempt with the supplied fixed archive, commit and synchronize it, validate TypeScript, and save a publishable checkpoint
 - [x] Overlay the two-file corrective archive on checkpoint e440ac4c, synchronize it, validate TypeScript, and save a publishable checkpoint
 - [x] Correct the leave decision mutation payload from decision to status and rerun TypeScript validation
+
+## Agent Presence Migration
+- [ ] Synchronize the latest code, apply and verify the agent_presence table migration, confirm Drizzle schema alignment, validate TypeScript, and save a publishable checkpoint
