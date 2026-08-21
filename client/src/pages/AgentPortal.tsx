@@ -4292,7 +4292,7 @@ function PresencePanel({ traineeCode, theme }: { traineeCode: string; theme: The
   const myPresence = onlineAgents.find(p => p.traineeCode === traineeCode);
   const myStatusConfig = STATUS_OPTIONS.find(s => s.value === myStatus) ?? STATUS_OPTIONS[0];
 
-  type AgentPresenceRow = { traineeCode: string; alias?: string | null; fullName?: string | null; status: string; customNote?: string | null; lastSeen: number };
+  type AgentPresenceRow = { traineeCode: string; alias?: string | null; fullName?: string | null; avatarUrl?: string | null; status: string; customNote?: string | null; lastSeen: number };
 
   const handleSetStatus = (status: PresenceStatus) => {
     setMyStatus(status);

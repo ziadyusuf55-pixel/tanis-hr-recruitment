@@ -1131,6 +1131,9 @@
 - [x] Synchronize the latest code, apply and verify the agent_presence table migration, confirm Drizzle schema alignment, validate TypeScript, and save a publishable checkpoint
 - [ ] Synchronize the latest code, add and verify agent_presence.avatarUrl, confirm Drizzle schema alignment, validate TypeScript, and save a publishable checkpoint
 
+## Avatar URL Type Correction
+- [ ] Overlay tanis_ts_fix4.zip on the current checkpoint, synchronize the Agent Portal and Former Agents type corrections, validate TypeScript, and save a publishable checkpoint
+
 ## Archive-Based TypeScript Fix
 - [x] Overlay tanis_ts_fix.zip on the current checkpoint, synchronize the corrected files, validate TypeScript, and save a publishable checkpoint while preserving the agent_presence migration
 - [x] Overlay tanis_ts_fix2.zip on checkpoint 43d06a9c, synchronize the corrected files, validate TypeScript, and save a publishable checkpoint while preserving the agent_presence migration

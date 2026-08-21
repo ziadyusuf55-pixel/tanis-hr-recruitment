@@ -220,7 +220,7 @@ export default function FormerAgents() {
                           <table className="w-full text-xs">
                             <thead><tr className="bg-muted/30 border-b"><th className="px-3 py-2 text-left">Cycle</th><th className="px-3 py-2 text-right">Profit</th><th className="px-3 py-2 text-right">Login Hrs</th></tr></thead>
                             <tbody>
-                              {row.performance.map((p, i) => (
+                              {(row.performance as Array<Record<string,unknown>>).map((p, i) => (
                                 <tr key={i} className="border-b last:border-0">
                                   <td className="px-3 py-2">{p.cycleKey}</td>
                                   <td className="px-3 py-2 text-right" style={{ color: parseFloat(String(p.profit ?? 0)) >= 0 ? "#16a34a" : "#ef4444" }}>{fmt(p.profit, "$")}</td>
