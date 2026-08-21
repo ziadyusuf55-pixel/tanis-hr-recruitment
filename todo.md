@@ -1128,9 +1128,9 @@
 - [x] Correct the leave decision mutation payload from decision to status and rerun TypeScript validation
 
 ## Agent Presence Migration
-- [ ] Synchronize the latest code, apply and verify the agent_presence table migration, confirm Drizzle schema alignment, validate TypeScript, and save a publishable checkpoint
+- [x] Synchronize the latest code, apply and verify the agent_presence table migration, confirm Drizzle schema alignment, validate TypeScript, and save a publishable checkpoint
 
 ## Archive-Based TypeScript Fix
-- [ ] Overlay tanis_ts_fix.zip on the current checkpoint, synchronize the corrected files, validate TypeScript, and save a publishable checkpoint while preserving the agent_presence migration
-- [ ] Overlay tanis_ts_fix2.zip on checkpoint 43d06a9c, synchronize the corrected files, validate TypeScript, and save a publishable checkpoint while preserving the agent_presence migration
-- [ ] Overlay tanis_ts_fix3.zip on checkpoint f9fa437c, synchronize the corrected router type fix, validate TypeScript, and save a publishable checkpoint while preserving the agent_presence migration
+- [x] Overlay tanis_ts_fix.zip on the current checkpoint, synchronize the corrected files, validate TypeScript, and save a publishable checkpoint while preserving the agent_presence migration
+- [x] Overlay tanis_ts_fix2.zip on checkpoint 43d06a9c, synchronize the corrected files, validate TypeScript, and save a publishable checkpoint while preserving the agent_presence migration
+- [x] Overlay tanis_ts_fix3.zip on checkpoint f9fa437c, synchronize the corrected router type fix, validate TypeScript, and save a publishable checkpoint while preserving the agent_presence migration
