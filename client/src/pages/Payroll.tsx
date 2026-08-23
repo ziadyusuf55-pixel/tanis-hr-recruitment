@@ -341,11 +341,18 @@ export default function PayrollPage() {
     XLSX.writeFile(wb, "payroll_template.xlsx");
   }
 
+  // Sanitize cell values to prevent CSV/Excel formula injection
+  const sanitizeCell = (val: unknown): string => {
+    const s = String(val ?? "");
+    // Strip leading =, +, -, @ which are Excel formula triggers
+    if (s.length > 0 && '=+-@'.includes(s[0])) return "'" + s; return s;
+  };
+
   function exportStatusCSV() {
     const rows = (statusRecords as StatusRecord[]).map(r => ({
-      CRDTS: r.crdts ?? "",
-      "Agent Code": r.agentCode ?? "",
-      Alias: r.alias ?? "",
+      CRDTS: sanitizeCell(r.crdts),
+      "Agent Code": sanitizeCell(r.agentCode),
+      Alias: sanitizeCell(r.alias),
       "Working Hours": r.workingHours ?? "",
       "Base Salary (EGP)": r.baseSalary ?? "",
       "OT 1.5x Hours": r.ot1x5Hours ?? "",

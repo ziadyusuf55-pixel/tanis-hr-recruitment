@@ -2044,7 +2044,28 @@ const workforceRouter = router({
 
   getCampaignAgents: publicProcedure
     .input(z.object({ campaignId: z.number() }))
-    .query(({ input }) => listWorkforceAgents(input.campaignId)),
+    .query(async ({ input, ctx }) => {
+      // Require either admin session or valid agent cookie
+      const agentToken = getAgentCookieFromReq(ctx.req);
+      const hasAgentSession = agentToken && (() => { try { jwt.verify(agentToken, ENV.cookieSecret); return true; } catch { return false; } })();
+      if (!ctx.user && !hasAgentSession) throw new TRPCError({ code: "UNAUTHORIZED" });
+      // Return limited fields only — no national ID, DOB, salary, emergency contacts
+      const agents = await listWorkforceAgents(input.campaignId) as Array<Record<string,unknown>>;
+      return agents.map(a => ({
+        traineeCode: a.traineeCode,
+        alias: a.alias,
+        fullName: a.fullName,
+        agentStatus: a.agentStatus,
+        isActive: a.isActive,
+        campaignId: a.campaignId,
+        teamLeader: a.teamLeader,
+        offDay1: a.offDay1,
+        offDay2: a.offDay2,
+        shiftHours: a.shiftHours,
+        crdts: a.crdts,
+        avatarUrl: a.avatarUrl,
+      }));
+    }),
   getEligibleCandidates: protectedProcedure.query(() => getEligibleCandidatesForOps()),
   getAgentFullProfile: protectedProcedure
     .input(z.object({ traineeCode: z.string() }))
@@ -2282,10 +2303,21 @@ const paymentMethodsRouter = router({
 
   delete: publicProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(({ ctx, input }) => {
+    .mutation(async ({ ctx, input }) => {
       const _pmDTok = getAgentCookieFromReq(ctx.req);
       if (!_pmDTok) throw new TRPCError({ code: "UNAUTHORIZED" });
-      try { jwt.verify(_pmDTok, ENV.cookieSecret); } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      let _pmDCode: string;
+      try { _pmDCode = (jwt.verify(_pmDTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; }
+      catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      // Verify ownership — only delete if this payment method belongs to the caller
+      const { getDb } = await import("./db");
+      const { agentPaymentMethods } = await import("../drizzle/schema");
+      const { eq, and } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const [pm] = await db.select({ id: agentPaymentMethods.id }).from(agentPaymentMethods)
+        .where(and(eq(agentPaymentMethods.id, input.id), eq(agentPaymentMethods.traineeCode, _pmDCode))).limit(1);
+      if (!pm) throw new TRPCError({ code: "FORBIDDEN", message: "You can only delete your own payment methods." });
       return deletePaymentMethod(input.id);
     }),
 
@@ -2499,9 +2531,15 @@ const scheduleChangeRouter = router({
     .mutation(async ({ ctx, input }) => {
       const _scRTok = getAgentCookieFromReq(ctx.req);
       if (!_scRTok) throw new TRPCError({ code: "UNAUTHORIZED" });
-      try { jwt.verify(_scRTok, ENV.cookieSecret); } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      let _scCallerCode: string;
+      try { _scCallerCode = (jwt.verify(_scRTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; }
+      catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
       const reqs = await listAllScheduleChangeRequests();
       const req = reqs.find(r => r.id === input.id);
+      // Verify caller is the target of this swap request
+      if (req && _scCallerCode !== req.targetCode) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "You can only approve schedule swaps where you are the target agent." });
+      }
       if (input.approve) {
         await updateScheduleChangeRequest(input.id, {
           status: "pending_manager",
@@ -6354,6 +6392,8 @@ const hrRouter = router({
   decideLeave: protectedProcedure
     .input(z.object({ id: z.number(), decision: z.enum(["approved", "rejected"]), leaveType: z.enum(["casual", "annual"]).optional(), decidedBy: z.string().optional() }))
     .mutation(async ({ input, ctx }) => {
+      const allowedRolesL = ["hr", "admin", "owner", "ops_manager", "manager"];
+      if (!allowedRolesL.includes(ctx.user?.role ?? "")) throw new TRPCError({ code: "FORBIDDEN", message: "Only HR and managers can approve leave requests." });
       const { getDb } = await import("./db");
       const { eq, and } = await import("drizzle-orm");
       const db = await getDb();

@@ -54,9 +54,14 @@ export default function Dashboard() {
     a.agentStatus === "active" && !(a as Record<string,unknown>).contractSigned
   ).length;
   // Count agents missing required personal info
-  const incompleteAgents = (allAgents as Array<Record<string,unknown>>).filter(a =>
-    a.agentStatus === "active" && (!a.phone || !a.nationalId || !a.dateOfBirth)
-  ).length;
+  const incompleteAgents = (allAgents as Array<Record<string,unknown>>).filter(a => {
+    if (a.agentStatus !== "active") return false;
+    if ((a as Record<string,unknown>).isDemo) return false;
+    const hasPhone = a.phone && String(a.phone).trim().length > 0;
+    const hasId = a.nationalId && String(a.nationalId).trim().length > 0;
+    const hasDob = a.dateOfBirth && String(a.dateOfBirth).trim().length > 0;
+    return !hasPhone || !hasId || !hasDob;
+  }).length;
   const thirtyDaysFromNow = Date.now() + 30 * 24 * 60 * 60 * 1000;
   const expiringIds = (allAgents as Array<Record<string,unknown>>).filter(a => {
     if (a.agentStatus !== "active") return false;
