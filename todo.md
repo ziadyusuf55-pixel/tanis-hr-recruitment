@@ -1138,10 +1138,10 @@
 - [x] Replace the Set spread in server/db.ts with an ES5-compatible Array.from conversion and rerun TypeScript validation
 
 ## Latest No-Migration Deployment
-- [ ] Synchronize the latest GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
+- [x] Synchronize the latest GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
 
 ## Agent Portal and Performance Reports Correction
-- [ ] Overlay tanis_ts_fix5.zip on the current checkpoint, synchronize the two corrected files, validate TypeScript, and save a publishable checkpoint
+- [x] Overlay tanis_ts_fix5.zip on the current checkpoint, synchronize the two corrected files, validate TypeScript, and save a publishable checkpoint
 
 ## Avatar URL Type Correction
 - [x] Overlay tanis_ts_fix4.zip on the current checkpoint, synchronize the Agent Portal and Former Agents type corrections, validate TypeScript, and save a publishable checkpoint
