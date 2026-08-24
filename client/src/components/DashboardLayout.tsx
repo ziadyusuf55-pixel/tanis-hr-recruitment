@@ -484,7 +484,7 @@ function GlobalSearch() {
               {(results as Array<Record<string,unknown>>).map((r, i) => (
                 <button key={i} className="w-full text-left px-4 py-2.5 hover:bg-muted/40 transition-colors"
                   onClick={() => {
-                    navigate(`/operations?agent=${String(r.traineeCode ?? "")}`);
+                    navigate(`/operations/agents/${encodeURIComponent(String(r.traineeCode ?? ""))}`);
                     setQ(""); setOpen(false);
                   }}>
                   <div className="flex items-center justify-between gap-2">

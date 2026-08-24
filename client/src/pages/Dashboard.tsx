@@ -56,11 +56,13 @@ export default function Dashboard() {
   // Count agents missing required personal info
   const incompleteAgents = (allAgents as Array<Record<string,unknown>>).filter(a => {
     if (a.agentStatus !== "active") return false;
-    if ((a as Record<string,unknown>).isDemo) return false;
-    const hasPhone = a.phone && String(a.phone).trim().length > 0;
+    // Exclude demo agents (isDemo may not be in workforce.list response — check by T-code prefix)
+    if (String(a.traineeCode ?? "").startsWith("T-DEMO")) return false;
+    // An agent is "incomplete" if they are missing national ID OR date of birth
+    // (phone is set by HR, not agents — excluded from self-completion check)
     const hasId = a.nationalId && String(a.nationalId).trim().length > 0;
     const hasDob = a.dateOfBirth && String(a.dateOfBirth).trim().length > 0;
-    return !hasPhone || !hasId || !hasDob;
+    return !hasId || !hasDob;
   }).length;
   const thirtyDaysFromNow = Date.now() + 30 * 24 * 60 * 60 * 1000;
   const expiringIds = (allAgents as Array<Record<string,unknown>>).filter(a => {

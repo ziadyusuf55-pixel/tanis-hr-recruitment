@@ -2766,9 +2766,10 @@ const separationRouter = router({
       const db = await getDb();
       if (!db) return [];
       const { workforceAgents, agentRequests, payrollRecords, cycleStats, agentViolations, coachingSessions, clientLogouts } = await import("../drizzle/schema");
-      // All non-active agents
+      // All non-active agents — use ne() instead of inArray to catch any status value
+      const { ne: neActive, or: orStatus, isNull: isNullStatus } = await import("drizzle-orm");
       const agents = await db.select().from(workforceAgents).where(
-        inArray(workforceAgents.agentStatus, ["resigned", "terminated", "blacklisted", "frozen", "inactive"])
+        orStatus(neActive(workforceAgents.agentStatus, "active"), isNullStatus(workforceAgents.agentStatus))
       );
       if (agents.length === 0) return [];
       const codes = agents.map(a => a.traineeCode);

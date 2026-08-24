@@ -19,6 +19,7 @@ import {
   User,
   CreditCard,
   MessageSquare,
+  MessageCircle,
   Users,
   LogOut,
   Paperclip,
@@ -37,6 +38,7 @@ import {
   XCircle,
   Clock,
   Star,
+  Download,
   TrendingUp,
   GraduationCap,
   Activity,
@@ -166,7 +168,7 @@ function fmtHM(decimalHours: number | string | null | undefined): string {
   return `${sign}${h}:${m.toString().padStart(2, "0")}`;
 }
 
-type Tab = "profile" | "opplan" | "performance" | "academy" | "payroll" | "commission" | "requests" | "referrals" | "documents" | "payment" | "comments";
+type Tab = "profile" | "opplan" | "performance" | "academy" | "payroll" | "commission" | "requests" | "referrals" | "documents" | "payment" | "comments" | "notifications";
 
 export default function AgentPortal() {
   const [, navigate] = useLocation();
@@ -239,6 +241,7 @@ export default function AgentPortal() {
     { id: "payroll",     label: "Payroll",      icon: <CreditCard className="w-4 h-4" /> },
     { id: "commission",  label: "Commission",   icon: <BarChart2 className="w-4 h-4" /> },
     { id: "requests",    label: "Requests",     icon: <MessageSquare className="w-4 h-4" /> },
+    { id: "notifications", label: "Alerts",      icon: <Bell className="w-4 h-4" /> },
     { id: "documents",   label: "Documents",    icon: <FileText className="w-4 h-4" /> },
   ];
   // Secondary nav (in "More" section)
@@ -247,7 +250,7 @@ export default function AgentPortal() {
     { id: "academy",  label: "Tanis Academy", icon: <GraduationCap className="w-4 h-4" /> },
     { id: "payment",  label: "Payment",       icon: <Wallet className="w-4 h-4" /> },
     { id: "referrals",label: "Refer",         icon: <Users className="w-4 h-4" /> },
-    { id: "comments", label: "Feedback",      icon: <Bell className="w-4 h-4" /> },
+    { id: "comments", label: "Feedback",      icon: <MessageCircle className="w-4 h-4" /> },
   ];
   const navItems = [...primaryNavItems, ...secondaryNavItems];
 
@@ -389,6 +392,7 @@ export default function AgentPortal() {
       <main className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
         <PresencePanel traineeCode={agent.traineeCode} theme={theme} />
         <ProfileCompletionBanner wfProfile={_wfProfile as Record<string,unknown> | null} payMethods={_payMethods as unknown[]} theme={theme} onGoToProfile={() => setActiveTab("profile")} onGoToPayment={() => setActiveTab("payment")} />
+        <MilestoneBanner wfProfile={_wfProfile as Record<string,unknown> | null} theme={theme} />
         {activeTab === "profile" && <ProfileTab agent={agent} theme={theme} />}
         {activeTab === "opplan" && <OperationPlanTab theme={theme} />}
         {activeTab === "performance" && <PerformanceTab theme={theme} />}
@@ -399,6 +403,7 @@ export default function AgentPortal() {
         {activeTab === "documents" && <DocumentsTab theme={theme} />}
         {activeTab === "payment" && <PaymentMethodsTab theme={theme} />}
         {activeTab === "referrals" && <ReferralTab referrerCandidateId={agent.candidateId} theme={theme} />}
+        {activeTab === "notifications" && <AgentNotificationsTab theme={theme} candidateId={agent.candidateId} />}
         {activeTab === "comments" && <AgentCommentsTab theme={theme} />}
       </main>
 
@@ -913,7 +918,7 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
           <p className="text-xs leading-relaxed" style={{ color: theme.textFaint }}>This tab shows your monthly salary breakdown — base pay, overtime (1.5×, 2×, 3×), commissions, and any deductions. Use the arrows to browse previous months. Payment status shows whether your salary has been processed.</p>
         </div>
       </div>
-      {/* Month selector */}
+      {/* Month selector + Download */}
       <div className="flex items-center gap-3">
         <button disabled={!prevMonth} onClick={() => setSelectedMonth(prevMonth!)}
           className="h-8 w-8 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30 text-lg"
@@ -924,6 +929,36 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
         <button disabled={!nextMonth} onClick={() => setSelectedMonth(nextMonth!)}
           className="h-8 w-8 rounded-lg flex items-center justify-center transition-colors disabled:opacity-30 text-lg"
           style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}>&#8250;</button>
+        {r && (
+          <button
+            onClick={() => {
+              const win = window.open("", "_blank");
+              if (!win) return;
+              win.document.write(`<!DOCTYPE html><html><head><title>Payslip - ${formatMonthLabel(activeMonth ?? "")}</title>
+              <style>body{font-family:sans-serif;max-width:600px;margin:40px auto;color:#111}h1{font-size:22px;margin-bottom:4px}h2{font-size:14px;font-weight:500;color:#666;margin-bottom:24px}.row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f0f0f0}.row.total{font-weight:700;font-size:16px;border-top:2px solid #111;border-bottom:none;padding-top:12px;margin-top:8px}.label{color:#555}.logo{font-weight:800;font-size:18px;color:#c84b31;margin-bottom:2px}@media print{button{display:none}}</style>
+              </head><body>
+              <div class="logo">Tanis Connect</div>
+              <h1>${formatMonthLabel(activeMonth ?? "")} Payslip</h1>
+              <h2>${String(r.alias ?? r.crdts ?? "")}</h2>
+              <div class="row"><span class="label">Base Salary</span><span>${fmtEGP(r.baseSalary)}</span></div>
+              <div class="row"><span class="label">Working Hours</span><span>${fmtNum(r.workingHours, "h")}</span></div>
+              ${parseFloat(String(r.ot1x5Pay ?? 0)) > 0 ? `<div class="row"><span class="label">OT 1.5x Pay</span><span>${fmtEGP(r.ot1x5Pay)}</span></div>` : ""}
+              ${parseFloat(String(r.ot2xPay ?? 0)) > 0 ? `<div class="row"><span class="label">OT 2x Pay</span><span>${fmtEGP(r.ot2xPay)}</span></div>` : ""}
+              ${parseFloat(String(r.ot3xPay ?? 0)) > 0 ? `<div class="row"><span class="label">OT 3x Pay</span><span>${fmtEGP(r.ot3xPay)}</span></div>` : ""}
+              ${parseFloat(String(r.coachingBonus ?? 0)) > 0 ? `<div class="row"><span class="label">Coaching Bonus</span><span>${fmtEGP(r.coachingBonus)}</span></div>` : ""}
+              ${parseFloat(String(r.commissionEgp ?? 0)) > 0 ? `<div class="row"><span class="label">Commission</span><span>${fmtEGP(r.commissionEgp)}</span></div>` : ""}
+              ${parseFloat(String(r.totalDeductions ?? 0)) > 0 ? `<div class="row"><span class="label" style="color:#ef4444">Total Deductions</span><span style="color:#ef4444">- ${fmtEGP(r.totalDeductions)}</span></div>` : ""}
+              <div class="row total"><span>Net Pay</span><span>${fmtEGP(r.netPay)}</span></div>
+              <p style="margin-top:32px;font-size:11px;color:#999">Generated by Tanis Hub · ${new Date().toLocaleDateString("en-EG")} · This document is for informational purposes only.</p>
+              <script>window.onload=()=>window.print()</script>
+              </body></html>`);
+              win.document.close();
+            }}
+            className="ml-auto h-8 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors"
+            style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, color: theme.text }}>
+            <Download className="w-3.5 h-3.5" /> PDF
+          </button>
+        )}
       </div>
 
       {loadingRecord ? (
@@ -3807,12 +3842,12 @@ function MyRecords({ theme, view }: { theme: Theme; view: "cycle" | "month" | "a
 }
 
 function PerformanceTab({ theme }: { theme: Theme }) {
-  const [view, setView] = useState<"cycle" | "month" | "all">("cycle");
+  const [view, setView] = useState<"cycle" | "month" | "all" | "compare">("cycle");
   return (
     <div className="space-y-5">
       {/* Time-range toggle: This Cycle (salary basis) · This Month (commission basis) · All-Time */}
       <div className="inline-flex rounded-xl p-1 flex-wrap" style={{ background: theme.inputBg, border: `1px solid ${theme.cardBorder}` }}>
-        {([["cycle", "This Cycle"], ["month", "This Month"], ["all", "All-Time"]] as const).map(([id, label]) => (
+        {([["cycle", "This Cycle"], ["month", "This Month"], ["compare", "↔ Compare"], ["all", "All-Time"]] as const).map(([id, label]) => (
           <button
             key={id}
             onClick={() => setView(id)}
@@ -3829,6 +3864,7 @@ function PerformanceTab({ theme }: { theme: Theme }) {
 
       {view === "cycle" && <CycleTrackerTab theme={theme} />}
       {view === "month" && <ThisMonthView theme={theme} />}
+      {view === "compare" && <MonthCompareView theme={theme} />}
       {view === "all" && <PerformanceHistoryTab theme={theme} />}
 
       {/* Records sit BELOW the performance cards, filtered by the same range toggle */}
@@ -4265,7 +4301,7 @@ const STATUS_OPTIONS = [
 type PresenceStatus = "available" | "on_break" | "on_call" | "away";
 
 function PresencePanel({ traineeCode, theme }: { traineeCode: string; theme: Theme }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true); // expanded by default
   const [myStatus, setMyStatus] = useState<PresenceStatus>("available");
   const [note, setNote] = useState("");
   const [editingStatus, setEditingStatus] = useState(false);
@@ -4315,12 +4351,17 @@ function PresencePanel({ traineeCode, theme }: { traineeCode: string; theme: The
 
       {/* Panel */}
       {open && (
-        <div className="fixed right-4 bottom-28 sm:bottom-16 z-50 w-72 rounded-2xl shadow-2xl border overflow-hidden"
+        <div className="fixed right-4 bottom-24 sm:bottom-6 z-50 w-80 rounded-2xl shadow-2xl border overflow-hidden"
           style={{ background: theme.cardBg, borderColor: theme.cardBorder }}>
 
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: theme.cardBorder }}>
-            <p className="text-sm font-semibold" style={{ color: theme.text }}>Team Directory</p>
+            <div>
+              <p className="text-sm font-semibold" style={{ color: theme.text }}>Team Directory</p>
+              <p className="text-[11px] mt-0.5" style={{ color: theme.textMuted }}>
+                <span style={{ color: "#22c55e" }}>●</span> {onlineAgents.length} online now · {(presence as AgentPresenceRow[]).length} active recently
+              </p>
+            </div>
             <button onClick={() => setOpen(false)} style={{ color: theme.textMuted }} className="text-lg leading-none">✕</button>
           </div>
 
@@ -4359,7 +4400,7 @@ function PresencePanel({ traineeCode, theme }: { traineeCode: string; theme: The
           </div>
 
           {/* Online agents */}
-          <div className="max-h-56 overflow-y-auto">
+          <div className="max-h-96 overflow-y-auto">
             {onlineAgents.length === 0 && (
               <p className="text-xs text-center py-4" style={{ color: theme.textMuted }}>No one else online right now</p>
             )}
@@ -4403,5 +4444,238 @@ function PresencePanel({ traineeCode, theme }: { traineeCode: string; theme: The
         </div>
       )}
     </>
+  );
+}
+
+// ─── Agent Notifications Tab ──────────────────────────────────────────────────
+function AgentNotificationsTab({ theme, candidateId }: { theme: Theme; candidateId: number | null }) {
+  const { data: notifs = [], isLoading } = trpc.agent.getMyNotifications.useQuery(
+    { candidateId: candidateId ?? 0 },
+    { enabled: !!candidateId, refetchInterval: 30000 }
+  );
+  const markShownMutation = trpc.agent.markShown.useMutation();
+
+  const typeConfig: Record<string, { emoji: string; color: string }> = {
+    request_reply: { emoji: "💬", color: "#3b82f6" },
+    referral_update: { emoji: "👥", color: "#8b5cf6" },
+    campaign_assigned: { emoji: "📋", color: "#f59e0b" },
+    profile_incomplete: { emoji: "⚠️", color: "#f59e0b" },
+    payment_missing: { emoji: "💳", color: "#ef4444" },
+    general: { emoji: "🔔", color: "#6b7280" },
+  };
+
+  const unread = (notifs as Array<Record<string,unknown>>).filter(n => !n.shown);
+
+  const markAllRead = () => {
+    for (const n of (notifs as Array<Record<string,unknown>>).filter(n2 => !n2.shown)) {
+      markShownMutation.mutate({ candidateId: candidateId ?? 0, notifId: Number(n.id) });
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm font-semibold" style={{ color: theme.text }}>Alerts & Notifications</p>
+          <p className="text-xs" style={{ color: theme.textMuted }}>
+            {unread.length > 0 ? `${unread.length} unread` : "All caught up ✓"}
+          </p>
+        </div>
+        {unread.length > 0 && (
+          <button onClick={markAllRead}
+            className="text-xs px-3 py-1.5 rounded-lg font-medium transition-colors"
+            style={{ background: `${BRAND}15`, color: BRAND }}>
+            Mark all read
+          </button>
+        )}
+      </div>
+
+      {isLoading && <div className="space-y-2">{[1,2,3].map(i => <div key={i} className="h-16 rounded-xl animate-pulse" style={{ background: theme.surface }} />)}</div>}
+
+      {!isLoading && (notifs as unknown[]).length === 0 && (
+        <div className="py-12 text-center">
+          <p className="text-2xl mb-2">🔔</p>
+          <p className="text-sm font-medium" style={{ color: theme.text }}>No notifications yet</p>
+          <p className="text-xs mt-1" style={{ color: theme.textMuted }}>Updates on requests, referrals, and your account will appear here</p>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        {(notifs as Array<Record<string,unknown>>).map((n, i) => {
+          const cfg = typeConfig[String(n.type ?? "general")] ?? typeConfig.general;
+          const isUnread = !n.shown;
+          return (
+            <div key={i}
+              className="flex items-start gap-3 rounded-xl p-3.5 transition-all"
+              style={{ background: isUnread ? `${cfg.color}10` : theme.surface, border: `1px solid ${isUnread ? cfg.color + "30" : theme.cardBorder}` }}>
+              <span className="text-lg shrink-0 mt-0.5">{cfg.emoji}</span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm" style={{ color: theme.text, fontWeight: isUnread ? 600 : 400 }}>
+                  {String(n.message ?? "")}
+                </p>
+                <p className="text-[10px] mt-1" style={{ color: theme.textFaint }}>
+                  {n.createdAt ? new Date(Number(n.createdAt)).toLocaleString("en-EG", { dateStyle: "short", timeStyle: "short" }) : ""}
+                </p>
+              </div>
+              {isUnread && <div className="w-2 h-2 rounded-full shrink-0 mt-1" style={{ background: cfg.color }} />}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Month Compare View (Previous vs Current Month) ───────────────────────────
+function MonthCompareView({ theme }: { theme: Theme }) {
+  const now = new Date();
+  const currPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prevPrefix = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}`;
+
+  // Current month: need two cycles (same logic as ThisMonthView)
+  const nextDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const cycleB2 = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, "0")}`;
+  const qCurrA = trpc.cycleTracker.getMyDailyStats.useQuery({ cycleKey: currPrefix });
+  const qCurrB = trpc.cycleTracker.getMyDailyStats.useQuery({ cycleKey: cycleB2 });
+
+  // Previous month
+  const prevNextDate = new Date(prevDate.getFullYear(), prevDate.getMonth() + 1, 1);
+  const prevCycleB = `${prevNextDate.getFullYear()}-${String(prevNextDate.getMonth() + 1).padStart(2, "0")}`;
+  const qPrevA = trpc.cycleTracker.getMyDailyStats.useQuery({ cycleKey: prevPrefix });
+  const qPrevB = trpc.cycleTracker.getMyDailyStats.useQuery({ cycleKey: prevCycleB });
+
+  type DRow = { date?: string | null; revenue?: string | number | null; profit?: string | number | null; loginHours?: string | number | null; clientLogouts?: number | null };
+
+  const filterToMonth = (rows: DRow[], prefix: string) =>
+    rows.filter(r => typeof r.date === "string" && r.date.startsWith(prefix));
+
+  const currRows = [
+    ...filterToMonth((qCurrA.data ?? []) as DRow[], currPrefix),
+    ...filterToMonth((qCurrB.data ?? []) as DRow[], currPrefix),
+  ];
+  const prevRows = [
+    ...filterToMonth((qPrevA.data ?? []) as DRow[], prevPrefix),
+    ...filterToMonth((qPrevB.data ?? []) as DRow[], prevPrefix),
+  ];
+
+  const sum = (rows: DRow[], key: keyof DRow) => rows.reduce((s, r) => s + parseFloat(String(r[key] ?? 0)), 0);
+  const fmt$ = (v: number) => v === 0 ? "—" : `$${v.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  const fmtH = (v: number) => v === 0 ? "—" : `${v.toFixed(1)}h`;
+  const delta = (curr: number, prev: number) => {
+    const d = curr - prev;
+    const pct = prev > 0 ? Math.round((d / prev) * 100) : null;
+    return { d, pct, color: d >= 0 ? "#16a34a" : "#ef4444" };
+  };
+
+  const metrics = [
+    { label: "Revenue", curr: sum(currRows, "revenue"), prev: sum(prevRows, "revenue"), fmt: fmt$ },
+    { label: "Profit", curr: sum(currRows, "profit"), prev: sum(prevRows, "profit"), fmt: fmt$ },
+    { label: "Login Hours", curr: sum(currRows, "loginHours"), prev: sum(prevRows, "loginHours"), fmt: fmtH },
+    { label: "Client Logouts", curr: sum(currRows, "clientLogouts"), prev: sum(prevRows, "clientLogouts"), fmt: (v: number) => v === 0 ? "—" : String(Math.round(v)) },
+  ];
+
+  const prevLabel = prevDate.toLocaleString("en-US", { month: "long", year: "numeric" });
+  const currLabel = now.toLocaleString("en-US", { month: "long", year: "numeric" });
+
+  const isLoading = qCurrA.isLoading || qPrevA.isLoading;
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 text-xs" style={{ color: theme.textMuted }}>
+        <span className="w-3 h-3 rounded-sm inline-block" style={{ background: "#3b82f6" }} /> {prevLabel}
+        <span className="w-3 h-3 rounded-sm inline-block ml-2" style={{ background: BRAND }} /> {currLabel}
+      </div>
+      {isLoading ? (
+        <div className="space-y-3">{[1,2,3,4].map(i => <div key={i} className="h-20 rounded-xl animate-pulse" style={{ background: theme.surface }} />)}</div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {metrics.map(m => {
+            const d = delta(m.curr, m.prev);
+            return (
+              <div key={m.label} className="rounded-xl p-4 space-y-2" style={{ background: theme.surface, border: `1px solid ${theme.cardBorder}` }}>
+                <p className="text-xs font-semibold uppercase tracking-wide" style={{ color: theme.textFaint }}>{m.label}</p>
+                <div className="flex items-end gap-3">
+                  <div>
+                    <p className="text-[10px]" style={{ color: "#3b82f6" }}>{prevLabel}</p>
+                    <p className="text-base font-bold" style={{ color: theme.text }}>{m.fmt(m.prev)}</p>
+                  </div>
+                  <div className="text-muted-foreground text-sm">→</div>
+                  <div>
+                    <p className="text-[10px]" style={{ color: BRAND }}>{currLabel}</p>
+                    <p className="text-base font-bold" style={{ color: theme.text }}>{m.fmt(m.curr)}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-sm font-semibold" style={{ color: d.color }}>
+                    {d.d >= 0 ? "+" : ""}{m.fmt(d.d)}
+                  </span>
+                  {d.pct !== null && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: `${d.color}18`, color: d.color }}>
+                      {d.d >= 0 ? "+" : ""}{d.pct}%
+                    </span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      {!isLoading && currRows.length === 0 && prevRows.length === 0 && (
+        <p className="text-center py-6 text-sm" style={{ color: theme.textMuted }}>No performance data for these months yet.</p>
+      )}
+    </div>
+  );
+}
+
+// ─── Milestone / Birthday Banner ──────────────────────────────────────────────
+function MilestoneBanner({ wfProfile, theme }: { wfProfile: Record<string,unknown> | null; theme: Theme }) {
+  if (!wfProfile) return null;
+
+  const today = new Date();
+  const todayMMDD = `${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+
+  // Birthday check
+  const dob = wfProfile.dateOfBirth as string | null;
+  const isBirthday = dob && typeof dob === "string" && dob.length >= 10 && dob.slice(5) === todayMMDD;
+
+  // Work anniversary check
+  const joinDate = wfProfile.joinDate as number | null;
+  let anniversaryYears: number | null = null;
+  if (joinDate) {
+    const joined = new Date(joinDate);
+    const joinMMDD = `${String(joined.getMonth() + 1).padStart(2, "0")}-${String(joined.getDate()).padStart(2, "0")}`;
+    if (joinMMDD === todayMMDD) {
+      const years = today.getFullYear() - joined.getFullYear();
+      if (years >= 1) anniversaryYears = years;
+    }
+  }
+
+  // 6-month milestone
+  let isSixMonths = false;
+  if (joinDate && !anniversaryYears) {
+    const joined = new Date(joinDate);
+    const sixMonthsLater = new Date(joined);
+    sixMonthsLater.setMonth(sixMonthsLater.getMonth() + 6);
+    isSixMonths = sixMonthsLater.toDateString() === today.toDateString();
+  }
+
+  if (!isBirthday && !anniversaryYears && !isSixMonths) return null;
+
+  const banner = isBirthday
+    ? { emoji: "🎂", title: `Happy Birthday, ${String(wfProfile.alias ?? wfProfile.fullName ?? "Champ")}!`, sub: "Wishing you a wonderful day from the Tanis team! 🎉", color: "#f59e0b" }
+    : anniversaryYears
+    ? { emoji: "🎊", title: `${anniversaryYears} Year${anniversaryYears > 1 ? "s" : ""} at Tanis!`, sub: `Congratulations on ${anniversaryYears} year${anniversaryYears > 1 ? "s" : ""} with us — thank you for everything you bring to the team.`, color: BRAND }
+    : { emoji: "⭐", title: "6 Months Strong!", sub: "You've hit your 6-month milestone at Tanis — you're officially eligible for annual leave. Keep it up!", color: "#16a34a" };
+
+  return (
+    <div className="rounded-2xl p-4 flex items-start gap-3 mb-4"
+      style={{ background: `${banner.color}15`, border: `1.5px solid ${banner.color}40` }}>
+      <span className="text-3xl">{banner.emoji}</span>
+      <div>
+        <p className="font-bold text-sm" style={{ color: banner.color }}>{banner.title}</p>
+        <p className="text-xs mt-0.5" style={{ color: theme.textMuted }}>{banner.sub}</p>
+      </div>
+    </div>
   );
 }

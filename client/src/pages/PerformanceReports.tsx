@@ -122,10 +122,14 @@ export default function PerformanceReports() {
   const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"revenue" | "calls" | "revPerHr" | "profit">("revenue");
-  const [viewMode, setViewMode] = useState<"cycle" | "month" | "all">("month");
+  const [viewMode, setViewMode] = useState<"cycle" | "month" | "all" | "compare">("month");
   const [cycleKey, setCycleKey] = useState<string>("");
   const [monthKey, setMonthKey] = useState<string>(() => new Date().toISOString().slice(0, 7));
   const [tlFilter, setTlFilter] = useState<string>("all");
+  // Comparison mode: compare two periods side by side
+  const [compareA, setCompareA] = useState<string>(() => { const d = new Date(); d.setMonth(d.getMonth()-1); return d.toISOString().slice(0,7); });
+  const [compareB, setCompareB] = useState<string>(() => new Date().toISOString().slice(0,7));
+  const [compareType, setCompareType] = useState<"month" | "cycle">("month");
   const [expandedCrdts, setExpandedCrdts] = useState<Set<string>>(new Set());
 
   const { data: cycleInfo } = trpc.cycleTracker.getCurrentCycle.useQuery();
@@ -142,6 +146,24 @@ export default function PerformanceReports() {
     { month: activeMonth },
     { enabled: viewMode === "month" }
   );
+  // Comparison period A and B
+  const { data: rawCompareA = [] } = trpc.cycleTracker.getMonthlyTeamStats.useQuery(
+    { month: compareA },
+    { enabled: viewMode === "compare" && compareType === "month" }
+  );
+  const { data: rawCompareB = [] } = trpc.cycleTracker.getMonthlyTeamStats.useQuery(
+    { month: compareB },
+    { enabled: viewMode === "compare" && compareType === "month" }
+  );
+  const { data: rawCompareCycleA = [] } = trpc.cycleTracker.getTeamStats.useQuery(
+    { cycleKey: compareA },
+    { enabled: viewMode === "compare" && compareType === "cycle" && !!compareA }
+  );
+  const { data: rawCompareCycleB = [] } = trpc.cycleTracker.getTeamStats.useQuery(
+    { cycleKey: compareB },
+    { enabled: viewMode === "compare" && compareType === "cycle" && !!compareB }
+  );
+
   // All-time: no cycleKey filter — fetches everything
   const { data: rawAllStats = [], isLoading: loadingAll } = trpc.cycleTracker.getTeamStats.useQuery(
     { cycleKey: undefined },
@@ -344,6 +366,7 @@ export default function PerformanceReports() {
           <button onClick={() => setViewMode("month")} className={`px-3 py-1.5 text-xs font-medium ${viewMode === "month" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Monthly</button>
           <button onClick={() => setViewMode("cycle")} className={`px-3 py-1.5 text-xs font-medium ${viewMode === "cycle" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Cycle</button>
           <button onClick={() => setViewMode("all")} className={`px-3 py-1.5 text-xs font-medium ${viewMode === "all" ? "bg-foreground text-background" : "text-muted-foreground"}`}>All Time</button>
+          <button onClick={() => setViewMode("compare")} className={`px-3 py-1.5 text-xs font-medium ${viewMode === "compare" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Compare</button>
         </div>
         {viewMode === "month" ? (
           <select value={activeMonth} onChange={e => setMonthKey(e.target.value)} className="h-9 rounded-md border px-2 text-xs bg-background">
@@ -377,7 +400,99 @@ export default function PerformanceReports() {
         <Badge variant="outline" className="text-xs"><Users className="h-3 w-3 mr-1" />{filtered.length} agents</Badge>
       </div>
 
-      {isLoading ? (
+      {viewMode === "compare" && (
+        <div className="space-y-4">
+          {/* Compare period pickers */}
+          <div className="flex flex-wrap gap-3 items-center">
+            <div className="inline-flex rounded-lg border overflow-hidden">
+              <button onClick={() => setCompareType("month")} className={`px-3 py-1.5 text-xs font-medium ${compareType === "month" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Calendar Month</button>
+              <button onClick={() => setCompareType("cycle")} className={`px-3 py-1.5 text-xs font-medium ${compareType === "cycle" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Pay Cycle</button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground font-medium">Period A:</span>
+              <input type="month" value={compareA} onChange={e => setCompareA(e.target.value)} className="h-9 rounded-md border px-2 text-xs bg-background" />
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground font-medium">Period B:</span>
+              <input type="month" value={compareB} onChange={e => setCompareB(e.target.value)} className="h-9 rounded-md border px-2 text-xs bg-background" />
+            </div>
+          </div>
+          {/* Side-by-side comparison table */}
+          {(() => {
+            const statsA = (compareType === "month" ? rawCompareA : rawCompareCycleA) as AgentStat[];
+            const statsB = (compareType === "month" ? rawCompareB : rawCompareCycleB) as AgentStat[];
+            const allCrdts = [...new Set([...statsA.map(s => s.crdts), ...statsB.map(s => s.crdts)])];
+            return (
+              <div className="overflow-x-auto rounded-xl border">
+                <table className="w-full text-xs">
+                  <thead className="bg-muted/40 border-b">
+                    <tr>
+                      <th className="text-left px-3 py-2.5 font-medium">Agent</th>
+                      <th className="text-right px-3 py-2.5 font-medium text-blue-600">Revenue A</th>
+                      <th className="text-right px-3 py-2.5 font-medium text-purple-600">Revenue B</th>
+                      <th className="text-right px-3 py-2.5 font-medium">Δ Revenue</th>
+                      <th className="text-right px-3 py-2.5 font-medium text-blue-600">Profit A</th>
+                      <th className="text-right px-3 py-2.5 font-medium text-purple-600">Profit B</th>
+                      <th className="text-right px-3 py-2.5 font-medium">Δ Profit</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {allCrdts.length === 0 && (
+                      <tr><td colSpan={7} className="px-3 py-8 text-center text-muted-foreground">No data for selected periods</td></tr>
+                    )}
+                    {allCrdts.sort().map(crdts => {
+                      const a = statsA.find(s => s.crdts === crdts);
+                      const b = statsB.find(s => s.crdts === crdts);
+                      const deltaRev = (b?.totalRevenue ?? 0) - (a?.totalRevenue ?? 0);
+                      const deltaProfit = (b?.totalProfit ?? 0) - (a?.totalProfit ?? 0);
+                      const name = a?.alias || b?.alias || (a?.fullName ?? b?.fullName as string | null) || crdts;
+                      return (
+                        <tr key={crdts} className="hover:bg-muted/20">
+                          <td className="px-3 py-2.5">
+                            <p className="font-medium">{String(name)}</p>
+                            <p className="text-[10px] text-muted-foreground font-mono">{crdts}</p>
+                          </td>
+                          <td className="px-3 py-2.5 text-right text-blue-600">{a ? fmt$(a.totalRevenue) : "—"}</td>
+                          <td className="px-3 py-2.5 text-right text-purple-600">{b ? fmt$(b.totalRevenue) : "—"}</td>
+                          <td className={`px-3 py-2.5 text-right font-semibold ${deltaRev > 0 ? "text-emerald-600" : deltaRev < 0 ? "text-red-500" : "text-muted-foreground"}`}>
+                            {deltaRev > 0 ? "+" : ""}{fmt$(deltaRev)}
+                          </td>
+                          <td className="px-3 py-2.5 text-right text-blue-600">{a ? fmt$(a.totalProfit) : "—"}</td>
+                          <td className="px-3 py-2.5 text-right text-purple-600">{b ? fmt$(b.totalProfit) : "—"}</td>
+                          <td className={`px-3 py-2.5 text-right font-semibold ${deltaProfit > 0 ? "text-emerald-600" : deltaProfit < 0 ? "text-red-500" : "text-muted-foreground"}`}>
+                            {deltaProfit > 0 ? "+" : ""}{fmt$(deltaProfit)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  {allCrdts.length > 0 && (() => {
+                    const totRevA = statsA.reduce((s, r) => s + r.totalRevenue, 0);
+                    const totRevB = statsB.reduce((s, r) => s + r.totalRevenue, 0);
+                    const totProfA = statsA.reduce((s, r) => s + r.totalProfit, 0);
+                    const totProfB = statsB.reduce((s, r) => s + r.totalProfit, 0);
+                    return (
+                      <tfoot className="border-t bg-muted/30">
+                        <tr>
+                          <td className="px-3 py-2 font-semibold">Total</td>
+                          <td className="px-3 py-2 text-right text-blue-600 font-bold">{fmt$(totRevA)}</td>
+                          <td className="px-3 py-2 text-right text-purple-600 font-bold">{fmt$(totRevB)}</td>
+                          <td className={`px-3 py-2 text-right font-bold ${totRevB - totRevA > 0 ? "text-emerald-600" : "text-red-500"}`}>{totRevB - totRevA > 0 ? "+" : ""}{fmt$(totRevB - totRevA)}</td>
+                          <td className="px-3 py-2 text-right text-blue-600 font-bold">{fmt$(totProfA)}</td>
+                          <td className="px-3 py-2 text-right text-purple-600 font-bold">{fmt$(totProfB)}</td>
+                          <td className={`px-3 py-2 text-right font-bold ${totProfB - totProfA > 0 ? "text-emerald-600" : "text-red-500"}`}>{totProfB - totProfA > 0 ? "+" : ""}{fmt$(totProfB - totProfA)}</td>
+                        </tr>
+                      </tfoot>
+                    );
+                  })()}
+                </table>
+              </div>
+            );
+          })()}
+        </div>
+      )}
+
+      {viewMode !== "compare" && isLoading ? (
         <div className="space-y-2">{[1,2,3,4,5].map(i => <div key={i} className="h-14 rounded-xl bg-muted/40 animate-pulse" />)}</div>
       ) : filtered.length === 0 ? (
         <Card className="border-0 shadow-sm">
