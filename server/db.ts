@@ -1908,7 +1908,7 @@ export async function upsertPayrollFromExcel(rows: Array<{
   const results: Array<{ agentCode: string; status: "ok" | "not_found" }> = [];
 
   // Batch-fetch all candidateIds in one query (avoid N+1)
-  const codes = [...new Set(rows.map(r => r.agentCode))];
+  const codes = Array.from(new Set(rows.map(r => r.agentCode)));
   const agentRows = await db.select({ traineeCode: workforceAgents.traineeCode, candidateId: workforceAgents.candidateId })
     .from(workforceAgents).where(inArray(workforceAgents.traineeCode, codes));
   const candidateIdMap = new Map(agentRows.map(a => [a.traineeCode, a.candidateId ?? 0]));
