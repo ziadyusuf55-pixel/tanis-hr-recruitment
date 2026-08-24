@@ -1134,6 +1134,8 @@
 
 ## Payroll Agent-Month Uniqueness Migration
 - [ ] Synchronize the latest code, preflight payroll data, add and verify uq_payroll_agentcode_month, validate TypeScript, and save a publishable checkpoint
+- [x] Convert only blank payroll agentCode values to NULL before creating the requested unique index
+- [x] Replace the Set spread in server/db.ts with an ES5-compatible Array.from conversion and rerun TypeScript validation
 
 ## Avatar URL Type Correction
 - [x] Overlay tanis_ts_fix4.zip on the current checkpoint, synchronize the Agent Portal and Former Agents type corrections, validate TypeScript, and save a publishable checkpoint
