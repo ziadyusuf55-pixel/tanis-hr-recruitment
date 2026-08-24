@@ -216,7 +216,7 @@ async function startServer() {
     // Preserve userId from frontend state if provided, otherwise build fresh state
     let stateObj: Record<string, string> = { origin };
     if (incomingState) {
-      try { stateObj = { ...JSON.parse(Buffer.from(incomingState, "base64").toString()), origin }; } catch {}
+      try { stateObj = { ...JSON.parse(Buffer.from(incomingState, "base64").toString()), origin }; } catch (e) { console.warn("[OAuth] Invalid state param:", e instanceof Error ? e.message : e); }
     }
     const state = Buffer.from(JSON.stringify(stateObj)).toString("base64");
     const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
@@ -241,7 +241,7 @@ async function startServer() {
       try {
         stateParam = JSON.parse(Buffer.from(stateRaw, "base64").toString());
         origin = stateParam.origin ?? "";
-      } catch {}
+      } catch (e) { console.warn("[OAuth callback] Token verification failed:", e instanceof Error ? e.message : e); }
       const redirectUri = `${origin}/api/oauth/google/callback`;
 
       // Exchange code for tokens
@@ -299,7 +299,7 @@ async function startServer() {
     const redirectUri = `${origin}/api/oauth/microsoft/callback`;
     let stateObj: Record<string, string> = { origin };
     if (incomingState) {
-      try { stateObj = { ...JSON.parse(Buffer.from(incomingState, "base64").toString()), origin }; } catch {}
+      try { stateObj = { ...JSON.parse(Buffer.from(incomingState, "base64").toString()), origin }; } catch (e) { console.warn("[OAuth] Invalid state param:", e instanceof Error ? e.message : e); }
     }
     const state = Buffer.from(JSON.stringify(stateObj)).toString("base64");
     const authUrl = new URL(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize`);
@@ -322,7 +322,7 @@ async function startServer() {
       try {
         stateParam = JSON.parse(Buffer.from(stateRaw, "base64").toString());
         origin = stateParam.origin ?? "";
-      } catch {}
+      } catch (e) { console.warn("[OAuth callback] Token verification failed:", e instanceof Error ? e.message : e); }
       const tenantId = process.env.MICROSOFT_TENANT_ID ?? "common";
       const redirectUri = `${origin}/api/oauth/microsoft/callback`;
 

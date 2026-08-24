@@ -1907,41 +1907,35 @@ export async function upsertPayrollFromExcel(rows: Array<{
   const uploadedAt = Date.now();
   const results: Array<{ agentCode: string; status: "ok" | "not_found" }> = [];
 
-  for (const row of rows) {
-    // Resolve candidateId from workforceAgents by traineeCode
-    const [wa] = await db.select({ candidateId: workforceAgents.candidateId })
-      .from(workforceAgents)
-      .where(eq(workforceAgents.traineeCode, row.agentCode))
-      .limit(1);
+  // Batch-fetch all candidateIds in one query (avoid N+1)
+  const codes = [...new Set(rows.map(r => r.agentCode))];
+  const agentRows = await db.select({ traineeCode: workforceAgents.traineeCode, candidateId: workforceAgents.candidateId })
+    .from(workforceAgents).where(inArray(workforceAgents.traineeCode, codes));
+  const candidateIdMap = new Map(agentRows.map(a => [a.traineeCode, a.candidateId ?? 0]));
 
-    const candidateId = wa?.candidateId ?? 0;
-
-    const existing = await db.select({ id: payrollRecords.id })
-      .from(payrollRecords)
-      .where(and(eq(payrollRecords.agentCode, row.agentCode), eq(payrollRecords.month, row.month)))
-      .limit(1);
-
-    const values = {
-      agentCode: row.agentCode,
-      month: row.month,
-      candidateId,
-      baseSalary: row.baseSalary != null ? String(row.baseSalary) : null,
-      workingHours: row.workingHours != null ? String(row.workingHours) : null,
-      overtimeHours: row.overtimeHours != null ? String(row.overtimeHours) : null,
-      commission: row.commission != null ? String(row.commission) : "0",
-      deductions: row.deductions != null ? String(row.deductions) : "0",
-      netPay: row.netPay != null ? String(row.netPay) : null,
-      uploadedBy: row.uploadedBy,
-      uploadedAt,
-    };
-
-    if (existing[0]) {
-      await db.update(payrollRecords).set(values).where(eq(payrollRecords.id, existing[0].id));
-    } else {
-      await db.insert(payrollRecords).values({ ...values });
+  // Wrap all inserts/updates in a transaction — if any row fails, nothing is committed
+  await db.transaction(async (tx) => {
+    for (const row of rows) {
+      const candidateId = candidateIdMap.get(row.agentCode) ?? 0;
+      const values = {
+        agentCode: row.agentCode,
+        month: row.month,
+        candidateId,
+        baseSalary: row.baseSalary != null ? String(row.baseSalary) : null,
+        workingHours: row.workingHours != null ? String(row.workingHours) : null,
+        overtimeHours: row.overtimeHours != null ? String(row.overtimeHours) : null,
+        commission: row.commission != null ? String(row.commission) : "0",
+        deductions: row.deductions != null ? String(row.deductions) : "0",
+        netPay: row.netPay != null ? String(row.netPay) : null,
+        uploadedBy: row.uploadedBy,
+        uploadedAt,
+      };
+      // upsert: update if exists, insert if not — prevents duplicates
+      await tx.insert(payrollRecords).values({ ...values })
+        .onDuplicateKeyUpdate({ set: { ...values, uploadedAt } });
+      results.push({ agentCode: row.agentCode, status: "ok" });
     }
-    results.push({ agentCode: row.agentCode, status: "ok" });
-  }
+  });
   return results;
 }
 

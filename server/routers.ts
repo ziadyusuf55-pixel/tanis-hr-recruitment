@@ -5825,6 +5825,7 @@ const commissionRouter = router({
           warnings.push({ crdts: row.crdts, type: "insert_error", message: String(err) });
         }
       }
+      await auditEntry(ctx.user, "commission_upload", "commission", "commission", JSON.stringify({ count, warnings: warnings.length, uploadedBy: ctx.user?.name ?? ctx.user?.email }));
       return { count, warnings };
     }),
 
@@ -7306,7 +7307,7 @@ const exitRouter = router({
       // Mark agent as archived in workforce (keep row, just mark completedAt)
       const ag = (await db.select().from(workforceAgents).where(eq(workforceAgents.traineeCode, input.traineeCode)).limit(1))[0];
       if (ag?.candidateId) {
-        try { await db.update(candidates).set({ status: ag.agentStatus as "resigned" | "terminated" }).where(eq(candidates.id, ag.candidateId)); } catch (_) {}
+        try { await db.update(candidates).set({ status: ag.agentStatus as "resigned" | "terminated" }).where(eq(candidates.id, ag.candidateId)); } catch (e) { console.warn("[Separation] Failed to update candidates table:", e instanceof Error ? e.message : e); }
       }
       return { ok: true };
     }),
