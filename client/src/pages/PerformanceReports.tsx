@@ -421,7 +421,7 @@ export default function PerformanceReports() {
           {(() => {
             const statsA = (compareType === "month" ? rawCompareA : rawCompareCycleA) as AgentStat[];
             const statsB = (compareType === "month" ? rawCompareB : rawCompareCycleB) as AgentStat[];
-            const allCrdts = [...new Set([...statsA.map(s => s.crdts), ...statsB.map(s => s.crdts)])];
+            const allCrdts = Array.from(new Set([...statsA.map(s => s.crdts), ...statsB.map(s => s.crdts)]));
             return (
               <div className="overflow-x-auto rounded-xl border">
                 <table className="w-full text-xs">
@@ -445,7 +445,7 @@ export default function PerformanceReports() {
                       const b = statsB.find(s => s.crdts === crdts);
                       const deltaRev = (b?.totalRevenue ?? 0) - (a?.totalRevenue ?? 0);
                       const deltaProfit = (b?.totalProfit ?? 0) - (a?.totalProfit ?? 0);
-                      const name = a?.alias || b?.alias || (a?.fullName ?? b?.fullName as string | null) || crdts;
+                      const name = a?.alias || b?.alias || (a as unknown as Record<string,unknown>)?.fullName as string | null || (b as unknown as Record<string,unknown>)?.fullName as string | null || crdts;
                       return (
                         <tr key={crdts} className="hover:bg-muted/20">
                           <td className="px-3 py-2.5">
@@ -558,7 +558,7 @@ export default function PerformanceReports() {
                               Daily charts are unavailable for the all-time view. Select a calendar month or pay cycle to view daily details.
                             </div>
                           ) : (
-                            <AgentDetailChart crdts={s.crdts} cycleKey={activePeriod} viewMode={viewMode} />
+                            <AgentDetailChart crdts={s.crdts} cycleKey={activePeriod} viewMode={viewMode === "month" ? "month" : "cycle"} />
                           )}
                         </td>
                       </tr>

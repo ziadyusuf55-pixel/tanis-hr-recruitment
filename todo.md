@@ -1140,6 +1140,9 @@
 ## Latest No-Migration Deployment
 - [ ] Synchronize the latest GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
 
+## Agent Portal and Performance Reports Correction
+- [ ] Overlay tanis_ts_fix5.zip on the current checkpoint, synchronize the two corrected files, validate TypeScript, and save a publishable checkpoint
+
 ## Avatar URL Type Correction
 - [x] Overlay tanis_ts_fix4.zip on the current checkpoint, synchronize the Agent Portal and Former Agents type corrections, validate TypeScript, and save a publishable checkpoint
 - [x] Convert the Former Agents performance cycleKey display to a React-safe string and rerun TypeScript validation
