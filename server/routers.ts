@@ -1968,6 +1968,11 @@ const workforceRouter = router({
       agentStatus: z.enum(["active", "inactive", "frozen", "resigned", "terminated", "blacklisted"]).optional(),
     }))
      .mutation(async ({ ctx, input }) => {
+      // Role guard — only HR, managers, admins and owners can edit agent profiles
+      const allowedRoles = ["hr", "admin", "owner", "ops_manager", "manager"];
+      if (!allowedRoles.includes(ctx.user?.role ?? "")) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Only HR and managers can edit agent profiles." });
+      }
       const { traineeCode, ...rest } = input;
       // If campaignId is being set, fetch the old agent to check if it changed
       if (input.campaignId !== undefined) {
