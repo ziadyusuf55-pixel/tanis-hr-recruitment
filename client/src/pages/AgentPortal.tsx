@@ -3752,7 +3752,7 @@ function AgentQuiz({ theme, courseId, passMark, modulesDone, status, savedScore 
   );
 }
 
-function MyRecords({ theme, view }: { theme: Theme; view: "cycle" | "month" | "all" }) {
+function MyRecords({ theme, view }: { theme: Theme; view: "cycle" | "month" | "all" | "compare" }) {
   const { data } = trpc.agent.myRecords.useQuery();
   // Match the range toggle above exactly:
   //   cycle = the 26th→25th payroll cycle we're currently in
@@ -4449,11 +4449,11 @@ function PresencePanel({ traineeCode, theme }: { traineeCode: string; theme: The
 
 // ─── Agent Notifications Tab ──────────────────────────────────────────────────
 function AgentNotificationsTab({ theme, candidateId }: { theme: Theme; candidateId: number | null }) {
-  const { data: notifs = [], isLoading } = trpc.agent.getMyNotifications.useQuery(
+  const { data: notifs = [], isLoading } = trpc.notifications.listMine.useQuery(
     { candidateId: candidateId ?? 0 },
     { enabled: !!candidateId, refetchInterval: 30000 }
   );
-  const markShownMutation = trpc.agent.markShown.useMutation();
+  const markShownMutation = trpc.notifications.markRead.useMutation();
 
   const typeConfig: Record<string, { emoji: string; color: string }> = {
     request_reply: { emoji: "💬", color: "#3b82f6" },
@@ -4468,7 +4468,7 @@ function AgentNotificationsTab({ theme, candidateId }: { theme: Theme; candidate
 
   const markAllRead = () => {
     for (const n of (notifs as Array<Record<string,unknown>>).filter(n2 => !n2.shown)) {
-      markShownMutation.mutate({ candidateId: candidateId ?? 0, notifId: Number(n.id) });
+      markShownMutation.mutate({ candidateId: candidateId ?? 0 });
     }
   };
 
