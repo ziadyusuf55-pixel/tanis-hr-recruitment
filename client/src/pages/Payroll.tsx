@@ -168,6 +168,19 @@ export default function PayrollPage() {
   const [adjDialog, setAdjDialog] = useState(false);
   // active roster -> options for the CRDTS dropdown in Manual Adjustments (#8)
   const { data: wfAgents = [] } = trpc.workforce.list.useQuery({});
+  const { data: allForDisplay = [] } = trpc.workforce.listForDisplay.useQuery();
+  const statusBadge = (status: string | null | undefined) => {
+    if (!status || status === "active") return null;
+    const cfg: Record<string, { label: string; color: string; bg: string }> = {
+      resigned: { label: "Resigned", color: "#f97316", bg: "#fff7ed" },
+      terminated: { label: "Terminated", color: "#ef4444", bg: "#fef2f2" },
+      blacklisted: { label: "Blacklisted", color: "#374151", bg: "#f3f4f6" },
+      frozen: { label: "Frozen", color: "#0ea5e9", bg: "#f0f9ff" },
+      inactive: { label: "Inactive", color: "#6b7280", bg: "#f9fafb" },
+    };
+    const c = cfg[status] ?? { label: status, color: "#6b7280", bg: "#f9fafb" };
+    return <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ml-1" style={{ color: c.color, background: c.bg }}>{c.label}</span>;
+  };
   const agentOptions = (wfAgents as Array<{ crdts: string | null; alias: string | null; fullName: string }>)
     .filter(a => a.crdts && String(a.crdts).trim())
     .map(a => { const primary = String(a.crdts).split(",")[0].trim(); return { crdts: primary, label: `${a.alias || a.fullName} — ${String(a.crdts).trim()}` }; })
@@ -561,7 +574,8 @@ export default function PayrollPage() {
                             <td className="px-4 py-3">{r.fullName ?? "—"}</td>
                             <td className="px-4 py-3">
                               <div className="flex items-center gap-1.5 flex-wrap">
-                                <span>{r.alias?.replace(/\s*\(\d+\)$/, "") || r.agentCode || "—"}</span>
+                                <span>{r.alias?.replace(/\s*\(\d+\)$/, "") || (() => { const a = (allForDisplay as Array<Record<string,unknown>>).find(x => x.crdts === r.crdts || x.traineeCode === r.agentCode); return a ? String(a.alias ?? a.fullName ?? "") : ""; })() || r.agentCode || "—"}</span>
+                        {statusBadge((allForDisplay as Array<Record<string,unknown>>).find(x => x.crdts === r.crdts || x.traineeCode === r.agentCode)?.agentStatus as string | null)}
                                 {r.agentCode && r.alias && <span className="text-xs text-muted-foreground font-mono">{r.agentCode}</span>}
                                 {r.agentStatus === "resigned" && <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-orange-100 text-orange-700 border border-orange-200">Resigned</span>}
                                 {r.agentStatus === "terminated" && <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-red-100 text-red-700 border border-red-200">Terminated</span>}

@@ -72,11 +72,27 @@ export default function CoachingAdmin() {
   const activePeriod = viewMode === "cycle" ? cycle : month;
   const { data: all = [], isLoading } = trpc.coaching.listByCycle.useQuery({ cycleKey: activePeriod, viewMode });
   const { data: agents = [] } = trpc.workforce.list.useQuery({});
+  const { data: allForDisplay = [] } = trpc.workforce.listForDisplay.useQuery();
+  const statusBadge = (status: string | null | undefined) => {
+    if (!status || status === "active") return null;
+    const cfg: Record<string, { label: string; color: string; bg: string }> = {
+      resigned: { label: "Resigned", color: "#f97316", bg: "#fff7ed" },
+      terminated: { label: "Terminated", color: "#ef4444", bg: "#fef2f2" },
+      blacklisted: { label: "Blacklisted", color: "#374151", bg: "#f3f4f6" },
+      frozen: { label: "Frozen", color: "#0ea5e9", bg: "#f0f9ff" },
+      inactive: { label: "Inactive", color: "#6b7280", bg: "#f9fafb" },
+    };
+    const c = cfg[status] ?? { label: status, color: "#6b7280", bg: "#f9fafb" };
+    return <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ml-1" style={{ color: c.color, background: c.bg }}>{c.label}</span>;
+  };
 
   const nameOf = useMemo(() => {
     const m = new Map<string, string>();
     (agents as { crdts: string | null; alias: string | null; fullName: string | null }[])
       .forEach(a => { if (a.crdts) m.set(a.crdts, a.alias || a.fullName || a.crdts); });
+    // Also add former agents to name map
+    (allForDisplay as Array<{ crdts: string | null; alias: string | null; fullName: string | null; agentStatus: string | null }>)
+      .forEach(a => { if (a.crdts && !m.has(a.crdts)) m.set(a.crdts, a.alias || a.fullName || a.crdts); });
     return m;
   }, [agents]);
 
@@ -225,7 +241,7 @@ export default function CoachingAdmin() {
                       <tr key={r.id} className="border-t hover:bg-muted/20">
                         <td className="px-3 py-2 text-xs whitespace-nowrap">{r.sessionDate}</td>
                         <td className="px-3 py-2">
-                          <span className="font-medium">{r.alias || nameOf.get(r.crdts) || "—"}</span>
+                          <span className="font-medium">{r.alias || nameOf.get(r.crdts) || "—"}</span>{statusBadge((allForDisplay as Array<Record<string,unknown>>).find(x => x.crdts === r.crdts)?.agentStatus as string | null)}
                           <span className="text-muted-foreground text-xs"> · {r.crdts}</span>
                         </td>
                         <td className="px-3 py-2">

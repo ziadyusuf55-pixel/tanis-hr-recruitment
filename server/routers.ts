@@ -1740,6 +1740,24 @@ const campaignsRouter = router({
 
 // ─── Workforce Router ─────────────────────────────────────────────────────────
 const workforceRouter = router({
+  /** All agents for display purposes — includes former agents, returns name/alias/status only */
+  listForDisplay: protectedProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const { workforceAgents } = await import("../drizzle/schema");
+    const { or, isNull, eq } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return [];
+    return db.select({
+      traineeCode: workforceAgents.traineeCode,
+      crdts: workforceAgents.crdts,
+      fullName: workforceAgents.fullName,
+      alias: workforceAgents.alias,
+      agentStatus: workforceAgents.agentStatus,
+      isDemo: workforceAgents.isDemo,
+    }).from(workforceAgents)
+      .where(or(isNull(workforceAgents.isDemo), eq(workforceAgents.isDemo, false)));
+  }),
+
   /** Global search — by name, alias, T-code, or CRDTS */
   globalSearch: protectedProcedure
     .input(z.object({ q: z.string().min(1).max(100) }))

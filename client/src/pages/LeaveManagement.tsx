@@ -19,13 +19,28 @@ export default function LeaveManagement() {
   const { data: requests = [] } = trpc.leave.listRequests.useQuery({});
   const { data: balances = [] } = trpc.leave.listBalances.useQuery({});
   const { data: agents = [] } = trpc.workforce.list.useQuery({});
+  const { data: allAgentsDisplay = [] } = trpc.workforce.listForDisplay.useQuery();
   const reqs = requests as LeaveReq[];
   const bals = balances as Bal[];
   const ags = agents as Agent[];
+  type DisplayAgent = { traineeCode: string; crdts: string | null; fullName: string | null; alias: string | null; agentStatus: string | null };
+  const agentForCode = (code: string) => (allAgentsDisplay as DisplayAgent[]).find(x => x.traineeCode === code) || (ags as Agent[]).find(x => x.traineeCode === code) || null;
   const agentName = (code: string) => {
     if (code.startsWith("STAFF-")) return "Staff / Admin";
-    const a = (ags as Agent[]).find(x => x.traineeCode === code);
-    return a ? (a.alias || a.fullName || code) : code;
+    const a = agentForCode(code);
+    return a ? ((a as Record<string,unknown>).alias as string || (a as Record<string,unknown>).fullName as string || code) : code;
+  };
+  const statusBadge = (status: string | null | undefined) => {
+    if (!status || status === "active") return null;
+    const cfg: Record<string, { label: string; color: string; bg: string }> = {
+      resigned: { label: "Resigned", color: "#f97316", bg: "#fff7ed" },
+      terminated: { label: "Terminated", color: "#ef4444", bg: "#fef2f2" },
+      blacklisted: { label: "Blacklisted", color: "#374151", bg: "#f3f4f6" },
+      frozen: { label: "Frozen", color: "#0ea5e9", bg: "#f0f9ff" },
+      inactive: { label: "Inactive", color: "#6b7280", bg: "#f9fafb" },
+    };
+    const c = cfg[status] ?? { label: status, color: "#6b7280", bg: "#f9fafb" };
+    return <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium ml-1" style={{ color: c.color, background: c.bg }}>{c.label}</span>;
   };
 
   const [tab, setTab] = useState<"requests" | "balances" | "staff">("requests");
@@ -92,7 +107,7 @@ export default function LeaveManagement() {
               <tbody>
                 {pending.map(r => (
                   <tr key={r.id} className="border-b last:border-0">
-                    <td className="px-3 py-2 font-medium">{agentName(r.traineeCode)} <span className="text-xs text-muted-foreground">({r.traineeCode})</span></td>
+                    <td className="px-3 py-2 font-medium">{agentName(r.traineeCode)}{statusBadge(agentForCode(r.traineeCode)?.agentStatus as string | null)} <span className="text-xs text-muted-foreground">({r.traineeCode})</span></td>
                     <td className="px-3 py-2">{r.startDate} → {r.endDate}</td>
                     <td className="px-3 py-2">{r.days}</td>
                     <td className="px-3 py-2 text-muted-foreground max-w-[220px] truncate">{r.reason || "—"}</td>
@@ -159,7 +174,7 @@ export default function LeaveManagement() {
                   const totalRemain = casRemain + annRemain;
                   return (
                     <tr key={b.id} className="border-b last:border-0 hover:bg-muted/30">
-                      <td className="px-3 py-2 font-medium">{agentName(b.traineeCode)} <span className="text-xs text-muted-foreground">({b.traineeCode})</span></td>
+                      <td className="px-3 py-2 font-medium">{agentName(b.traineeCode)}{statusBadge(agentForCode(b.traineeCode)?.agentStatus as string | null)} <span className="text-xs text-muted-foreground">({b.traineeCode})</span></td>
                       <td className="px-3 py-2">{editing ? nInput("casualTotal") : b.casualTotal}</td>
                       <td className="px-3 py-2">{editing ? nInput("casualUsed") : b.casualUsed}</td>
                       <td className="px-3 py-2">{editing ? nInput("annualTotal") : b.annualTotal}</td>
