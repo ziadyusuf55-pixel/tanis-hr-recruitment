@@ -1142,6 +1142,7 @@
 - [x] Synchronize the newly requested GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
 - [x] Synchronize the current GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
 - [ ] Synchronize the latest requested GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
+- [x] Replace the Business Development stale-deal Set spread with an ES5-compatible Array.from conversion and rerun TypeScript validation
 
 ## Agent Portal and Performance Reports Correction
 - [x] Overlay tanis_ts_fix5.zip on the current checkpoint, synchronize the two corrected files, validate TypeScript, and save a publishable checkpoint
