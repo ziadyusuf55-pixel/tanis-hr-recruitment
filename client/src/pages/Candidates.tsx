@@ -398,7 +398,8 @@ export default function Candidates() {
   const rejectedOnly = allCandidates.filter((c) => c.status === "rejected").length;
   const blacklistedOnly = allCandidates.filter((c) => c.status === "blacklisted").length;
   const rejectedCount = rejectedOnly + blacklistedOnly;
-  const separatedCount = allCandidates.filter((c) => c.status === "resigned" || c.status === "terminated").length;
+  // Resigned/terminated candidates belong in Former Agents page — don't show here
+  const separatedCount = 0;
 
   const handleAddSubmit = () => {
     if (!form.name.trim()) { toast.error("Name is required"); return; }

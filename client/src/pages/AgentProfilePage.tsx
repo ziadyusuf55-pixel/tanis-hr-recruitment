@@ -1065,7 +1065,7 @@ function CoachingTab({ crdts, traineeCode, navigate }: { crdts: string; traineeC
   // Use CRDTS if available, fall back to traineeCode for agents without a dialer ID
   const queryId = crdts || traineeCode;
   const { data: sessions = [], isLoading } = trpc.coaching.listByCrdts.useQuery(
-    { crdts: queryId },
+    { crdts: queryId, agentCode: traineeCode },
     { enabled: !!queryId }
   );
   if (!queryId) return (

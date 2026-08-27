@@ -4789,15 +4789,19 @@ const coachingRouter = router({
 
   // List coaching sessions for a specific agent (by CRDTS)
   listByCrdts: protectedProcedure
-    .input(z.object({ crdts: z.string() }))
+    .input(z.object({ crdts: z.string(), agentCode: z.string().optional() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
-      const { eq: eqOp, desc } = await import("drizzle-orm");
+      const { eq: eqOp, desc, or: orOp } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) return [];
       const { coachingSessions } = await import("../drizzle/schema");
+      // Search by CRDTS first, also try agentCode as fallback for uploads with CRDTS mismatch
+      const conditions = input.agentCode
+        ? orOp(eqOp(coachingSessions.crdts, input.crdts), eqOp(coachingSessions.agentCode, input.agentCode))
+        : eqOp(coachingSessions.crdts, input.crdts);
       return db.select().from(coachingSessions)
-        .where(eqOp(coachingSessions.crdts, input.crdts))
+        .where(conditions)
         .orderBy(desc(coachingSessions.sessionDate));
     }),
 

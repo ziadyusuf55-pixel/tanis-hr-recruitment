@@ -367,6 +367,7 @@ export default function PerformanceReports() {
           <button onClick={() => setViewMode("cycle")} className={`px-3 py-1.5 text-xs font-medium ${viewMode === "cycle" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Cycle</button>
           <button onClick={() => setViewMode("all")} className={`px-3 py-1.5 text-xs font-medium ${viewMode === "all" ? "bg-foreground text-background" : "text-muted-foreground"}`}>All Time</button>
           <button onClick={() => setViewMode("compare")} className={`px-3 py-1.5 text-xs font-medium ${viewMode === "compare" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Compare</button>
+          <button onClick={() => setViewMode("campaign" as typeof viewMode)} className={`px-3 py-1.5 text-xs font-medium ${viewMode === ("campaign" as string) ? "bg-foreground text-background" : "text-muted-foreground"}`}>Campaigns</button>
         </div>
         {viewMode === "month" ? (
           <select value={activeMonth} onChange={e => setMonthKey(e.target.value)} className="h-9 rounded-md border px-2 text-xs bg-background">
@@ -492,7 +493,8 @@ export default function PerformanceReports() {
         </div>
       )}
 
-      {viewMode !== "compare" && isLoading ? (
+      {viewMode === ("campaign" as string) && <CampaignCompareView stats={stats} agents={[]} theme={undefined} />}
+      {viewMode !== "compare" && viewMode !== ("campaign" as string) && isLoading ? (
         <div className="space-y-2">{[1,2,3,4,5].map(i => <div key={i} className="h-14 rounded-xl bg-muted/40 animate-pulse" />)}</div>
       ) : filtered.length === 0 ? (
         <Card className="border-0 shadow-sm">
@@ -570,6 +572,111 @@ export default function PerformanceReports() {
           </table>
         </Card>
       )}
+    </div>
+  );
+}
+
+// ─── Campaign Compare View ────────────────────────────────────────────────────
+function CampaignCompareView({ stats }: { stats: AgentStat[]; agents: unknown[]; theme: unknown }) {
+  const { data: campaigns = [] } = trpc.campaigns.list.useQuery();
+  type Campaign = { id: number; name: string };
+
+  // Group stats by campaignId via workforce agents lookup
+  const { data: allAgents = [] } = trpc.workforce.listForDisplay.useQuery();
+  type DisplayAgent = { traineeCode: string; crdts: string | null; alias: string | null; fullName: string | null; agentStatus: string | null; campaignId?: number | null };
+
+  // Build CRDTS → campaignId map
+  const crdtsToCampaign = new Map<string, number>();
+  (allAgents as DisplayAgent[]).forEach(a => { if (a.crdts && a.campaignId) crdtsToCampaign.set(a.crdts, a.campaignId); });
+
+  // Group stats by campaign
+  type CampaignStats = { campaignId: number; name: string; agentCount: number; totalRevenue: number; totalProfit: number; totalHours: number; revPerHr: number };
+  const bycamp = new Map<number, CampaignStats>();
+
+  stats.forEach(s => {
+    const campId = crdtsToCampaign.get(s.crdts);
+    if (!campId) return;
+    const existing = bycamp.get(campId);
+    if (existing) {
+      existing.agentCount += 1;
+      existing.totalRevenue += s.totalRevenue;
+      existing.totalProfit += s.totalProfit;
+      existing.totalHours += s.totalLoginHours;
+      existing.revPerHr = existing.totalHours > 0 ? existing.totalRevenue / existing.totalHours : 0;
+    } else {
+      const camp = (campaigns as Campaign[]).find(c => c.id === campId);
+      bycamp.set(campId, {
+        campaignId: campId,
+        name: camp?.name ?? `Campaign ${campId}`,
+        agentCount: 1,
+        totalRevenue: s.totalRevenue,
+        totalProfit: s.totalProfit,
+        totalHours: s.totalLoginHours,
+        revPerHr: s.totalLoginHours > 0 ? s.totalRevenue / s.totalLoginHours : 0,
+      });
+    }
+  });
+
+  const rows = Array.from(bycamp.values()).sort((a, b) => b.totalProfit - a.totalProfit);
+  const fmt$ = (v: number) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`;
+  const fmtH = (v: number) => `${v.toFixed(1)}h`;
+
+  if (rows.length === 0) {
+    return <div className="py-16 text-center text-sm text-muted-foreground">No campaign data available. Make sure agents are assigned to campaigns and stats are uploaded.</div>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-muted-foreground">Campaigns ranked by profit — showing aggregated stats from current filter period</p>
+      <div className="overflow-x-auto rounded-xl border">
+        <table className="w-full text-xs">
+          <thead className="bg-muted/40 border-b">
+            <tr>
+              <th className="text-left px-4 py-3 font-semibold">Campaign</th>
+              <th className="text-right px-4 py-3 font-semibold">Agents</th>
+              <th className="text-right px-4 py-3 font-semibold">Revenue</th>
+              <th className="text-right px-4 py-3 font-semibold">Profit</th>
+              <th className="text-right px-4 py-3 font-semibold">Login Hrs</th>
+              <th className="text-right px-4 py-3 font-semibold">Rev/Hr</th>
+              <th className="px-4 py-3 font-semibold">Profit Bar</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y">
+            {rows.map((r, i) => {
+              const maxProfit = rows[0].totalProfit || 1;
+              const pct = Math.max(0, Math.min(100, (r.totalProfit / maxProfit) * 100));
+              const profitColor = r.totalProfit >= 0 ? "#16a34a" : "#ef4444";
+              return (
+                <tr key={r.campaignId} className={i % 2 === 0 ? "" : "bg-muted/20"}>
+                  <td className="px-4 py-3 font-semibold">{r.name}</td>
+                  <td className="px-4 py-3 text-right text-muted-foreground">{r.agentCount}</td>
+                  <td className="px-4 py-3 text-right">{fmt$(r.totalRevenue)}</td>
+                  <td className="px-4 py-3 text-right font-bold" style={{ color: profitColor }}>{fmt$(r.totalProfit)}</td>
+                  <td className="px-4 py-3 text-right text-muted-foreground">{fmtH(r.totalHours)}</td>
+                  <td className="px-4 py-3 text-right">{r.totalHours > 0 ? fmt$(r.revPerHr) : "—"}</td>
+                  <td className="px-4 py-3 w-40">
+                    <div className="h-2 rounded-full bg-muted overflow-hidden">
+                      <div className="h-2 rounded-full transition-all" style={{ width: `${pct}%`, background: profitColor }} />
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot className="border-t bg-muted/30">
+            <tr>
+              <td className="px-4 py-2 font-bold">Total</td>
+              <td className="px-4 py-2 text-right font-bold">{rows.reduce((s, r) => s + r.agentCount, 0)}</td>
+              <td className="px-4 py-2 text-right font-bold">{fmt$(rows.reduce((s, r) => s + r.totalRevenue, 0))}</td>
+              <td className="px-4 py-2 text-right font-bold" style={{ color: rows.reduce((s, r) => s + r.totalProfit, 0) >= 0 ? "#16a34a" : "#ef4444" }}>
+                {fmt$(rows.reduce((s, r) => s + r.totalProfit, 0))}
+              </td>
+              <td className="px-4 py-2 text-right font-bold">{fmtH(rows.reduce((s, r) => s + r.totalHours, 0))}</td>
+              <td colSpan={2} />
+            </tr>
+          </tfoot>
+        </table>
+      </div>
     </div>
   );
 }

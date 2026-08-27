@@ -59,9 +59,11 @@ export default function BusinessDevelopment() {
   const typedDeals = deals as Deal[];
   const typedContacts = contacts as Contact[];
   const typedCompanies = companies as Company[];
+  const [ignoredStale, setIgnoredStale] = useState<Set<number>>(new Set());
   const staleDeals = (stale as (Deal & { daysStale: number })[])
     .filter(d => d.stage !== "closed_won" && d.stage !== "closed_lost")
-    .filter(d => ownerId === "all" || d.ownerId === ownerId);
+    .filter(d => ownerId === "all" || d.ownerId === ownerId)
+    .filter(d => !ignoredStale.has(d.id));
 
   const seedUsers = trpc.bd.seedUsers.useMutation({
     onSuccess: () => { utils.bd.listUsers.invalidate(); toast.success("BD team ready"); },
@@ -185,16 +187,22 @@ export default function BusinessDevelopment() {
               <p className="text-xs font-semibold text-red-900 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> Going cold — no activity for {COLD_DAYS}+ days ({staleDeals.length})</p>
               <div className="space-y-1.5">
                 {staleDeals.map(d => (
-                  <button key={d.id} onClick={() => { const full = typedDeals.find(x => x.id === d.id); if (full) setOpenDeal(full); }} className="w-full text-left flex items-center justify-between gap-2 rounded-lg bg-background border px-2.5 py-1.5 hover:bg-muted/50">
-                    <span className="text-sm">
-                      <span className="font-medium">{d.title}</span>
-                      {dealCompany(d) && <span className="text-muted-foreground"> · {dealCompany(d)}</span>}
-                    </span>
+                  <div key={d.id} className="w-full flex items-center justify-between gap-2 rounded-lg bg-background border px-2.5 py-1.5">
+                    <button onClick={() => { const full = typedDeals.find(x => x.id === d.id); if (full) setOpenDeal(full); }} className="flex-1 text-left">
+                      <span className="text-sm">
+                        <span className="font-medium">{d.title}</span>
+                        {dealCompany(d) && <span className="text-muted-foreground"> · {dealCompany(d)}</span>}
+                      </span>
+                    </button>
                     <span className="flex items-center gap-2 shrink-0">
                       <Badge variant="outline" className="text-[10px]">{ownerName(d.ownerId)}</Badge>
                       <span className="text-[10px] text-red-600 font-semibold">{d.daysStale}d silent</span>
+                      <button onClick={() => setIgnoredStale(prev => new Set([...prev, d.id]))}
+                        className="text-[10px] px-2 py-0.5 rounded border text-muted-foreground hover:bg-muted/50">Ignore</button>
+                      <button onClick={() => { if (confirm(`Delete "${d.title}"?`)) deleteDeal.mutate({ id: d.id }); }}
+                        className="text-[10px] px-2 py-0.5 rounded border text-red-600 hover:bg-red-50">Delete</button>
                     </span>
-                  </button>
+                  </div>
                 ))}
               </div>
             </div>
