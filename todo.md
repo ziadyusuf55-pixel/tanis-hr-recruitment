@@ -1163,3 +1163,4 @@
 
 ## Current No-Migration Deployment
 - [x] Synchronize the latest GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
+- [ ] Synchronize the newly requested GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
