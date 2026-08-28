@@ -1159,3 +1159,4 @@
 
 ## Dashboard Layout Lock Correction
 - [ ] Overlay tanis_lock_fix.zip on the current checkpoint, synchronize the Dashboard Layout fixes, validate TypeScript, and save a publishable checkpoint
+- [ ] Overlay tanis_lock_fix2.zip on checkpoint 13e44862, synchronize the documents-router correction, validate TypeScript, and save a publishable checkpoint

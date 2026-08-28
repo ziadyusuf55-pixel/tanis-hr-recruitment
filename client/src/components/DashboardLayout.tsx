@@ -512,8 +512,8 @@ function GlobalSearch() {
 function PortalLockToggle() {
   const [showForm, setShowForm] = useState(false);
   const [message, setMessage] = useState("");
-  const { data: lockState } = trpc.workforce.getPortalLock.useQuery(undefined, { refetchInterval: 30000 });
-  const setLock = trpc.workforce.setPortalLock.useMutation({ onSuccess: () => setShowForm(false) });
+  const { data: lockState } = trpc.documents.getPortalLock.useQuery(undefined, { refetchInterval: 30000 });
+  const setLock = trpc.documents.setPortalLock.useMutation({ onSuccess: () => setShowForm(false) });
   const isLocked = lockState?.locked ?? false;
   return (
     <div className="px-2 py-2 border-t">
