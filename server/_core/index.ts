@@ -377,6 +377,20 @@ async function startServer() {
   // IMPORTANT: this is DISPLAY-ONLY. It never touches payroll_records or payslips —
   // payroll is calculated externally in Python from the same sheets. Writing here
   // as well would double-count.
+  // ─── Public portal lock status — no auth needed, polled by agent portal ────
+  app.get("/api/portal-status", async (_req, res) => {
+    try {
+      const { getDb } = await import("../db");
+      const { appSettings } = await import("../../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) { res.json({ locked: false, message: "" }); return; }
+      const [row] = await db.select().from(appSettings).where(eq(appSettings.key, "portal_locked")).limit(1);
+      const [msgRow] = await db.select().from(appSettings).where(eq(appSettings.key, "portal_lock_message")).limit(1);
+      res.json({ locked: row?.value === "true", message: msgRow?.value ?? "" });
+    } catch { res.json({ locked: false, message: "" }); }
+  });
+
   // ─── Agent credential check (FormerAgents restore flow) ─────────────────
   app.get("/api/check-agent-creds", async (req, res) => {
     const code = req.query.code as string;

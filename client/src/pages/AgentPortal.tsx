@@ -172,12 +172,26 @@ type Tab = "profile" | "opplan" | "performance" | "academy" | "payroll" | "commi
 
 export default function AgentPortal() {
   const [, navigate] = useLocation();
-  const { data: agent, isLoading, isFetching, error: agentError } = trpc.agent.me.useQuery(undefined, {
+  const { data: agent, isLoading, isFetching } = trpc.agent.me.useQuery(undefined, {
     retry: false,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: false,
     staleTime: 0,
-    refetchInterval: 20000, // poll every 20s — picks up portal lock within one cycle
   });
+
+  // Dedicated lock poller — completely independent of auth state
+  // Polls /api/portal-status every 10s so lock/unlock takes effect quickly
+  const [portalLock, setPortalLock] = useState<{ locked: boolean; message: string } | null>(null);
+  useEffect(() => {
+    const check = () => {
+      fetch("/api/portal-status")
+        .then(r => r.json())
+        .then((d: { locked: boolean; message: string }) => setPortalLock(d))
+        .catch(() => {}); // ignore network errors — keep showing whatever state we had
+    };
+    check(); // immediate check on mount
+    const iv = setInterval(check, 10000); // then every 10 seconds
+    return () => clearInterval(iv);
+  }, []);
   const logoutMutation = trpc.agent.logout.useMutation();
   // Shared data for banner — fetched once at top level
   const { data: _wfProfile } = trpc.workforce.getMyProfile.useQuery();
@@ -233,16 +247,14 @@ export default function AgentPortal() {
     );
   }
 
-  // Show lock screen if portal is locked (FORBIDDEN error from agent.me)
-  const lockMessage = (agentError as { data?: { code?: string }; message?: string } | null)?.message;
-  const lockCode = (agentError as { data?: { code?: string } } | null)?.data?.code;
-  if (agentError && (lockMessage?.toLowerCase().includes("lock") || lockCode === "FORBIDDEN")) {
+  // Show lock screen if portal is locked — driven by dedicated poller, works regardless of auth state
+  if (portalLock?.locked) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6" style={{ background: "#0f0f0f" }}>
         <div className="text-center max-w-sm space-y-4">
           <div className="text-6xl">🔒</div>
           <h1 className="text-xl font-bold text-white">Portal Temporarily Unavailable</h1>
-          <p className="text-sm text-gray-400">{lockMessage ?? "The agent portal is temporarily locked. Please contact your manager."}</p>
+          <p className="text-sm text-gray-400">{portalLock.message || "The agent portal is temporarily locked. Please contact your manager."}</p>
           <p className="text-xs text-gray-600 mt-6">Tanis Connect · hub.tanis-eg.com</p>
         </div>
       </div>
