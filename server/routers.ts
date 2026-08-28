@@ -1094,6 +1094,11 @@ const agentRouter = router({
   me: publicProcedure.query(async ({ ctx }) => {
     const token = getAgentCookieFromReq(ctx.req);
     if (!token) return null;
+    // Check portal lock — kicks active sessions within one poll cycle
+    const { locked: _meLocked, message: _meMsg } = await isPortalLocked();
+    if (_meLocked) {
+      throw new TRPCError({ code: "FORBIDDEN", message: _meMsg || "The agent portal is temporarily locked. Please contact your manager." });
+    }
     try {
       const payload = jwt.verify(token, ENV.cookieSecret) as { candidateId: number; traineeCode: string; type: string; iat?: number };
       if (payload.type !== "agent") return null;
