@@ -306,7 +306,7 @@ export default function PayrollPage() {
           return {
             crdts: String(get("CRDTS") ?? "").trim(),
             alias: String(get("Alias") ?? "").trim(),
-            agentCode: String(get("Agent Code") ?? "").trim(),
+            agentCode: (String(get("Agent Code") ?? "").trim() || String(get("CRDTS") ?? "").trim()),
             workingHours: num(get("Working Hours")),
             baseSalary: num(get("Base Salary (EGP)")),
             ot1x5Hours: num(get("OT 1.5x Hours")),
