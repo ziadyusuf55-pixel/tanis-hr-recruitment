@@ -172,7 +172,7 @@ type Tab = "profile" | "opplan" | "performance" | "academy" | "payroll" | "commi
 
 export default function AgentPortal() {
   const [, navigate] = useLocation();
-  const { data: agent, isLoading, isFetching } = trpc.agent.me.useQuery(undefined, {
+  const { data: agent, isLoading, isFetching, error: agentError } = trpc.agent.me.useQuery(undefined, {
     retry: false,
     refetchOnWindowFocus: false,
     staleTime: 0,
@@ -227,6 +227,21 @@ export default function AgentPortal() {
             style={{ borderColor: BRAND_LIGHT, borderTopColor: "transparent" }}
           />
           <p className="text-sm" style={{ color: theme.textMuted }}>Loading your portal...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show lock screen if portal is locked (FORBIDDEN error from agent.me)
+  const lockMessage = (agentError as { message?: string } | null)?.message;
+  if (agentError && lockMessage?.toLowerCase().includes("lock")) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6" style={{ background: "#0f0f0f" }}>
+        <div className="text-center max-w-sm space-y-4">
+          <div className="text-6xl">🔒</div>
+          <h1 className="text-xl font-bold text-white">Portal Temporarily Unavailable</h1>
+          <p className="text-sm text-gray-400">{lockMessage ?? "The agent portal is temporarily locked. Please contact your manager."}</p>
+          <p className="text-xs text-gray-600 mt-6">Tanis Connect · hub.tanis-eg.com</p>
         </div>
       </div>
     );

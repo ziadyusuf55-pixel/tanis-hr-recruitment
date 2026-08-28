@@ -377,6 +377,7 @@ function DashboardLayoutContent({
             </SidebarMenu>
           </SidebarContent>
 
+          {(role === "admin" || role === "owner") && <PortalLockToggle />}
           <SidebarFooter className="p-3 border-t border-sidebar-border">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>

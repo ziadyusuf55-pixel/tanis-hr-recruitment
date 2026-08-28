@@ -809,8 +809,32 @@ const dashboardRouter = router({
 /// ─── Agent Portal Router ─────────────────────────────────────────────────────
 const AGENT_COOKIE = "tanis_agent_session";
 // Helper: parse a named cookie from req.headers.cookie (no cookie-parser needed)
+// In-memory cache for portal lock — refreshed every 30s from DB
+let _portalLocked: boolean = process.env.AGENT_PORTAL_LOCKED === "true";
+let _lockMessage: string = "The agent portal is temporarily locked. Please contact your manager.";
+let _lockLastCheck: number = 0;
+async function isPortalLocked(): Promise<{ locked: boolean; message: string }> {
+  const now = Date.now();
+  if (now - _lockLastCheck > 30_000) {
+    _lockLastCheck = now;
+    try {
+      const { getDb } = await import("./db");
+      const { appSettings } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (db) {
+        const [row] = await db.select().from(appSettings).where(eq(appSettings.key, "portal_locked")).limit(1);
+        if (row) { _portalLocked = row.value === "true"; }
+        const [msgRow] = await db.select().from(appSettings).where(eq(appSettings.key, "portal_lock_message")).limit(1);
+        if (msgRow) { _lockMessage = msgRow.value; }
+      }
+    } catch { /* use cached value */ }
+  }
+  return { locked: _portalLocked, message: _lockMessage };
+}
+
 function getAgentCookieFromReq(req: { headers: { cookie?: string } }): string | undefined {
-  // Global lock — when set, no agent request resolves (kicks active sessions, not just new logins)
+  // Sync check only — async lock is checked in each endpoint individually
   if (process.env.AGENT_PORTAL_LOCKED === "true") return undefined;
   if (!req.headers.cookie) return undefined;
   const parsed = parseCookieHeader(req.headers.cookie);
@@ -892,11 +916,12 @@ const agentRouter = router({
   login: publicProcedure
     .input(z.object({ traineeCode: z.string().min(1), password: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
-      // Global portal lock — set env AGENT_PORTAL_LOCKED=true to block ALL agent logins
-      if (process.env.AGENT_PORTAL_LOCKED === "true") {
+      // Global portal lock — check env AND DB setting
+      const { locked: _isLocked, message: _lockMsg } = await isPortalLocked();
+      if (_isLocked) {
         throw new TRPCError({
           code: "FORBIDDEN",
-          message: "The agent portal is temporarily locked. Please contact your manager.",
+          message: _lockMsg || "The agent portal is temporarily locked. Please contact your manager.",
         });
       }
       // Check lockout before any credential lookup
@@ -2397,6 +2422,37 @@ const documentsRouter = router({
   }),
 
   listAll: protectedProcedure.query(() => listAllDocuments()),
+
+  /** Get/set agent portal lock state — admin/owner only */
+  getPortalLock: protectedProcedure.query(async () => {
+    const { getDb } = await import("./db");
+    const { appSettings } = await import("../drizzle/schema");
+    const { eq } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return { locked: false, message: "" };
+    const [row] = await db.select().from(appSettings).where(eq(appSettings.key, "portal_locked")).limit(1);
+    const [msgRow] = await db.select().from(appSettings).where(eq(appSettings.key, "portal_lock_message")).limit(1);
+    return { locked: row?.value === "true", message: msgRow?.value ?? "" };
+  }),
+
+  setPortalLock: protectedProcedure
+    .input(z.object({ locked: z.boolean(), message: z.string().max(200).optional() }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN", message: "Only admins can lock the portal." });
+      const { getDb } = await import("./db");
+      const { appSettings } = await import("../drizzle/schema");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      const now = Date.now();
+      await db.insert(appSettings).values({ key: "portal_locked", value: String(input.locked), updatedAt: now, updatedBy: ctx.user?.name ?? ctx.user?.email ?? "admin" })
+        .onDuplicateKeyUpdate({ set: { value: String(input.locked), updatedAt: now, updatedBy: ctx.user?.name ?? ctx.user?.email ?? "admin" } });
+      if (input.message !== undefined) {
+        await db.insert(appSettings).values({ key: "portal_lock_message", value: input.message, updatedAt: now, updatedBy: ctx.user?.name ?? ctx.user?.email ?? "admin" })
+          .onDuplicateKeyUpdate({ set: { value: input.message, updatedAt: now } });
+      }
+      await auditEntry(ctx.user, input.locked ? "portal_locked" : "portal_unlocked", "system", "portal", JSON.stringify({ message: input.message, by: ctx.user?.name }));
+      return { ok: true };
+    }),
 
   markContractSigned: protectedProcedure
     .input(z.object({
