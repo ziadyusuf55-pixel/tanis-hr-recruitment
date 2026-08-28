@@ -1158,5 +1158,5 @@
 - [x] Overlay tanis_ts_fix3.zip on checkpoint f9fa437c, synchronize the corrected router type fix, validate TypeScript, and save a publishable checkpoint while preserving the agent_presence migration
 
 ## Dashboard Layout Lock Correction
-- [ ] Overlay tanis_lock_fix.zip on the current checkpoint, synchronize the Dashboard Layout fixes, validate TypeScript, and save a publishable checkpoint
-- [ ] Overlay tanis_lock_fix2.zip on checkpoint 13e44862, synchronize the documents-router correction, validate TypeScript, and save a publishable checkpoint
+- [x] Supersede tanis_lock_fix.zip with the documents-router correction after the original archive targeted the wrong router
+- [x] Overlay tanis_lock_fix2.zip on checkpoint 13e44862, synchronize the documents-router correction, validate TypeScript, and save a publishable checkpoint
