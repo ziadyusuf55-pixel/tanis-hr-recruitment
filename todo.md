@@ -1142,6 +1142,7 @@
 - [x] Synchronize the newly requested GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
 - [x] Synchronize the current GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
 - [x] Synchronize the latest requested GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
+- [ ] Synchronize the newly requested latest GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
 - [x] Replace the Business Development stale-deal Set spread with an ES5-compatible Array.from conversion and rerun TypeScript validation
 
 ## Agent Portal and Performance Reports Correction
@@ -1155,3 +1156,7 @@
 - [x] Overlay tanis_ts_fix.zip on the current checkpoint, synchronize the corrected files, validate TypeScript, and save a publishable checkpoint while preserving the agent_presence migration
 - [x] Overlay tanis_ts_fix2.zip on checkpoint 43d06a9c, synchronize the corrected files, validate TypeScript, and save a publishable checkpoint while preserving the agent_presence migration
 - [x] Overlay tanis_ts_fix3.zip on checkpoint f9fa437c, synchronize the corrected router type fix, validate TypeScript, and save a publishable checkpoint while preserving the agent_presence migration
+
+## Dashboard Layout Lock Correction
+- [x] Supersede tanis_lock_fix.zip with the documents-router correction after the original archive targeted the wrong router
+- [x] Overlay tanis_lock_fix2.zip on checkpoint 13e44862, synchronize the documents-router correction, validate TypeScript, and save a publishable checkpoint
