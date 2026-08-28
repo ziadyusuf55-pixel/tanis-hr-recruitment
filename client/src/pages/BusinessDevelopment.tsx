@@ -197,7 +197,7 @@ export default function BusinessDevelopment() {
                     <span className="flex items-center gap-2 shrink-0">
                       <Badge variant="outline" className="text-[10px]">{ownerName(d.ownerId)}</Badge>
                       <span className="text-[10px] text-red-600 font-semibold">{d.daysStale}d silent</span>
-                      <button onClick={() => setIgnoredStale(prev => new Set([...prev, d.id]))}
+                      <button onClick={() => setIgnoredStale(prev => new Set(Array.from(prev).concat(d.id)))}
                         className="text-[10px] px-2 py-0.5 rounded border text-muted-foreground hover:bg-muted/50">Ignore</button>
                       <button onClick={() => { if (confirm(`Delete "${d.title}"?`)) deleteDeal.mutate({ id: d.id }); }}
                         className="text-[10px] px-2 py-0.5 rounded border text-red-600 hover:bg-red-50">Delete</button>
