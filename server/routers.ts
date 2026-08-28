@@ -2952,19 +2952,28 @@ const payrollV2Router = router({
         .filter(([, count]) => count > 1)
         .map(([crdts, count]) => ({ crdts, alias: null, type: "duplicate_crdts", message: `CRDTS ${crdts} appears ${count} times — only the last row will be saved.` }));
 
-      // Commission attachment: commission is stored under the PAY CYCLE month
-      // (the month it's actually paid). For August payroll (2026-08), look for
-      // commission with cycleKey = "2026-08" — same month, not previous.
+      // Commission attachment: try both the payroll month AND the previous month as cycleKey.
+      // Commission may be stored under performanceMonth (e.g. "2026-07" for July work)
+      // OR under the pay cycle month (e.g. "2026-08" for August payroll).
+      // Whichever has data wins; if both have data, payroll month takes priority.
       const { getDb: _getDbComm } = await import("./db");
       const _dbComm = await _getDbComm();
       const commissionMap = new Map<string, number>();
-      const commissionCycle = input.month; // same month — commission cycleKey = pay month
+      let commissionCycle = input.month; // default label for warning
       if (_dbComm) {
+        const [py, pm] = input.month.split("-").map(Number);
+        // Previous month (performance month e.g. July for August payroll)
+        const prevDate = new Date(py, pm - 2, 1); // pm-2 because JS months are 0-indexed
+        const prevMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}`;
         const { commissionLeaderboard } = await import("../drizzle/schema");
-        const { eq: _eqComm } = await import("drizzle-orm");
-        const comms = await _dbComm.select({ crdts: commissionLeaderboard.crdts, amt: commissionLeaderboard.commissionEgp })
-          .from(commissionLeaderboard).where(_eqComm(commissionLeaderboard.cycleKey, commissionCycle));
+        const { eq: _eqComm, or: _orComm, inArray: _inComm } = await import("drizzle-orm");
+        // Fetch from both months in one query
+        const comms = await _dbComm.select({ crdts: commissionLeaderboard.crdts, amt: commissionLeaderboard.commissionEgp, cycleKey: commissionLeaderboard.cycleKey })
+          .from(commissionLeaderboard)
+          .where(_orComm(_eqComm(commissionLeaderboard.cycleKey, input.month), _eqComm(commissionLeaderboard.cycleKey, prevMonth)));
+        // Build map — same month entries override previous month entries
         for (const c of comms) if (c.crdts) commissionMap.set(c.crdts, Number(c.amt || 0));
+        commissionCycle = comms.length > 0 ? (comms[0].cycleKey ?? input.month) : input.month;
       }
 
       for (const row of input.rows) {
