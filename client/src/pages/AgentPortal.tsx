@@ -174,8 +174,9 @@ export default function AgentPortal() {
   const [, navigate] = useLocation();
   const { data: agent, isLoading, isFetching, error: agentError } = trpc.agent.me.useQuery(undefined, {
     retry: false,
-    refetchOnWindowFocus: false,
+    refetchOnWindowFocus: true,
     staleTime: 0,
+    refetchInterval: 20000, // poll every 20s — picks up portal lock within one cycle
   });
   const logoutMutation = trpc.agent.logout.useMutation();
   // Shared data for banner — fetched once at top level
@@ -233,8 +234,9 @@ export default function AgentPortal() {
   }
 
   // Show lock screen if portal is locked (FORBIDDEN error from agent.me)
-  const lockMessage = (agentError as { message?: string } | null)?.message;
-  if (agentError && lockMessage?.toLowerCase().includes("lock")) {
+  const lockMessage = (agentError as { data?: { code?: string }; message?: string } | null)?.message;
+  const lockCode = (agentError as { data?: { code?: string } } | null)?.data?.code;
+  if (agentError && (lockMessage?.toLowerCase().includes("lock") || lockCode === "FORBIDDEN")) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6" style={{ background: "#0f0f0f" }}>
         <div className="text-center max-w-sm space-y-4">
