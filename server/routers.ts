@@ -2952,17 +2952,14 @@ const payrollV2Router = router({
         .filter(([, count]) => count > 1)
         .map(([crdts, count]) => ({ crdts, alias: null, type: "duplicate_crdts", message: `CRDTS ${crdts} appears ${count} times — only the last row will be saved.` }));
 
-      // Auto-attach commission: the payroll for month M is paid together with the
-      // commission earned the PREVIOUS calendar month (June payroll / July 1 salary
-      // carries May's commission). Pull it from commission_leaderboard by CRDTS.
+      // Commission attachment: commission is stored under the PAY CYCLE month
+      // (the month it's actually paid). For August payroll (2026-08), look for
+      // commission with cycleKey = "2026-08" — same month, not previous.
       const { getDb: _getDbComm } = await import("./db");
       const _dbComm = await _getDbComm();
       const commissionMap = new Map<string, number>();
-      let commissionCycle = "";
+      const commissionCycle = input.month; // same month — commission cycleKey = pay month
       if (_dbComm) {
-        const [py, pm] = input.month.split("-").map(Number);
-        const prev = new Date(py, pm - 1, 1);   // the payroll month itself = the commission's pay cycle
-        commissionCycle = `${prev.getFullYear()}-${String(prev.getMonth() + 1).padStart(2, "0")}`;
         const { commissionLeaderboard } = await import("../drizzle/schema");
         const { eq: _eqComm } = await import("drizzle-orm");
         const comms = await _dbComm.select({ crdts: commissionLeaderboard.crdts, amt: commissionLeaderboard.commissionEgp })
