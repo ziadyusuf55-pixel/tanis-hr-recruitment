@@ -377,7 +377,7 @@ function DashboardLayoutContent({
             </SidebarMenu>
           </SidebarContent>
 
-          {(role === "admin" || role === "owner") && <PortalLockToggle />}
+          {(userRole === "admin" || userRole === "owner") && <PortalLockToggle />}
           <SidebarFooter className="p-3 border-t border-sidebar-border">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -502,6 +502,49 @@ function GlobalSearch() {
               ))}
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Portal Lock Toggle ───────────────────────────────────────────────────────
+function PortalLockToggle() {
+  const [showForm, setShowForm] = useState(false);
+  const [message, setMessage] = useState("");
+  const { data: lockState } = trpc.workforce.getPortalLock.useQuery(undefined, { refetchInterval: 30000 });
+  const setLock = trpc.workforce.setPortalLock.useMutation({ onSuccess: () => setShowForm(false) });
+  const isLocked = lockState?.locked ?? false;
+  return (
+    <div className="px-2 py-2 border-t">
+      <button onClick={() => setShowForm(!showForm)}
+        className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium transition-colors ${isLocked ? "bg-red-100 text-red-700 hover:bg-red-200" : "bg-muted/40 text-muted-foreground hover:bg-muted/70"}`}>
+        <span className="text-base">{isLocked ? "🔒" : "🔓"}</span>
+        <span>{isLocked ? "Portal LOCKED" : "Lock Agent Portal"}</span>
+        {isLocked && <span className="ml-auto w-2 h-2 rounded-full bg-red-500 animate-pulse" />}
+      </button>
+      {showForm && (
+        <div className="mt-2 p-3 rounded-xl border bg-background shadow-lg space-y-2">
+          <p className="text-xs font-semibold">{isLocked ? "🔒 Portal is locked" : "🔓 Portal is open"}</p>
+          <textarea className="w-full text-xs border rounded-lg px-2 py-1.5 resize-none bg-background" rows={2}
+            placeholder="Message agents see (optional)" defaultValue={lockState?.message ?? ""}
+            onChange={e => setMessage(e.target.value)} />
+          <div className="flex gap-2">
+            {!isLocked && (
+              <button onClick={() => setLock.mutate({ locked: true, message: message || "The agent portal is temporarily locked. Please contact your manager." })}
+                disabled={setLock.isPending}
+                className="flex-1 py-1.5 rounded-lg text-xs font-semibold bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">
+                🔒 Lock Now
+              </button>
+            )}
+            {isLocked && (
+              <button onClick={() => setLock.mutate({ locked: false })} disabled={setLock.isPending}
+                className="flex-1 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
+                🔓 Unlock
+              </button>
+            )}
+            <button onClick={() => setShowForm(false)} className="px-3 py-1.5 rounded-lg text-xs border hover:bg-muted/50">Cancel</button>
+          </div>
         </div>
       )}
     </div>
