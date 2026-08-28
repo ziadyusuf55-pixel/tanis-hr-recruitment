@@ -74,7 +74,14 @@ function fmt(val: string | number | null | undefined, prefix = ""): string {
   return `${prefix}${n.toLocaleString("en-EG", { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`;
 }
 function fmtEGP(val: string | number | null | undefined): string { return fmt(val, "EGP "); }
-function fmtHrs(val: string | number | null | undefined): string { return fmt(val, "") + (val != null && val !== "" ? " hrs" : ""); }
+function fmtHrs(val: string | number | null | undefined): string {
+  if (val == null || val === "") return "—";
+  const dec = parseFloat(String(val));
+  if (isNaN(dec)) return String(val);
+  const h = Math.floor(dec);
+  const m = Math.round((dec - h) * 60);
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
 
 function formatMonthLabel(m: string) {
   const [y, mo] = m.split("-");

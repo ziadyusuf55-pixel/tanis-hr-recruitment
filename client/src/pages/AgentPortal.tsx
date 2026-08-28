@@ -2724,7 +2724,7 @@ function MonthlyLogsView({ theme, monthKey }: { theme: Theme; monthKey: string }
                   return (
                     <tr key={d.date} style={{ background: bg, borderBottom: `1px solid ${theme.cardBorder}` }}>
                       <td className="px-3 py-2 font-medium" style={{ color: theme.text }}>{d.date}</td>
-                      <td className="px-3 py-2" style={{ color: theme.text }}>{d.loginHours.toFixed(1)}h</td>
+                      <td className="px-3 py-2" style={{ color: theme.text }}>{fmtHM(d.loginHours)}</td>
                       <td className="px-3 py-2 font-semibold" style={{ color: d.revenue > 0 ? "oklch(0.55 0.18 145)" : theme.textMuted }}>
                         {d.revenue > 0 ? `$${d.revenue.toLocaleString(undefined,{maximumFractionDigits:2})}` : "—"}
                       </td>
