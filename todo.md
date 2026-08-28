@@ -1160,3 +1160,6 @@
 ## Dashboard Layout Lock Correction
 - [x] Supersede tanis_lock_fix.zip with the documents-router correction after the original archive targeted the wrong router
 - [x] Overlay tanis_lock_fix2.zip on checkpoint 13e44862, synchronize the documents-router correction, validate TypeScript, and save a publishable checkpoint
+
+## Current No-Migration Deployment
+- [ ] Synchronize the latest GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
