@@ -787,7 +787,20 @@ export default function PayrollPage() {
                         <td className="px-3 py-2 text-center">
                           {r.paymentStatus !== "paid" && <input type="checkbox" checked={selectedIds.has(r.id)} onChange={e => { const s = new Set(selectedIds); e.target.checked ? s.add(r.id) : s.delete(r.id); setSelectedIds(s); }} />}
                         </td>
-                        <td className="px-3 py-2"><span className="font-medium">{r.alias ?? r.crdts}</span><span className="text-xs text-muted-foreground ml-1">{r.crdts}</span></td>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-medium">
+                              {(() => {
+                                const cleanAlias = r.alias?.replace(/\s*\(\d+\)$/, "").trim();
+                                if (cleanAlias) return cleanAlias;
+                                const found = (allForDisplay as Array<Record<string,unknown>>).find(x => x.crdts === r.crdts || x.traineeCode === r.agentCode);
+                                return found ? String(found.alias ?? found.fullName ?? r.crdts ?? "—") : (r.agentCode || r.crdts || "—");
+                              })()}
+                            </span>
+                            {statusBadge((allForDisplay as Array<Record<string,unknown>>).find(x => x.crdts === r.crdts || x.traineeCode === r.agentCode)?.agentStatus as string | null)}
+                            <span className="text-xs text-muted-foreground font-mono">{r.crdts}</span>
+                          </div>
+                        </td>
                         <td className="px-3 py-2 text-right font-medium">EGP {net.toLocaleString()}</td>
                         <td className="px-3 py-2 text-right text-xs text-muted-foreground">{amtPaid > 0 ? `EGP ${amtPaid.toLocaleString()}` : "—"}</td>
                         <td className="px-3 py-2 text-center">
@@ -898,7 +911,7 @@ export default function PayrollPage() {
                   <div className="grid sm:grid-cols-2 gap-3">
                     <div className="rounded-xl border p-4">
                       <p className="text-xs text-muted-foreground mb-1">🏆 Top Earner</p>
-                      <p className="text-sm font-semibold">{String((s.topEarner as Record<string,unknown>).alias ?? (s.topEarner as Record<string,unknown>).crdts)}</p>
+                      <p className="text-sm font-semibold">{String((s.topEarner as Record<string,unknown>).alias ?? "").replace(/\s*\(\d+\)$/,"") || String((s.topEarner as Record<string,unknown>).crdts ?? "—")}</p>
                       <p className="text-xs text-muted-foreground">{fmtStat((s.topEarner as Record<string,unknown>).netPay)}</p>
                     </div>
                     <div className="rounded-xl border p-4">
