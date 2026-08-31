@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import { getErrorMessage } from "@/lib/errorMessage";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -783,6 +783,11 @@ export default function Operations() {
   const [search, setSearch] = useState("");
   const [tlFilter, setTlFilter] = useState<string>("all");
   const [agentStatusFilter, setAgentStatusFilter] = useState<"active" | "all">("active");
+  const searchStr = useSearch();
+  const highlightCodes = new Set(
+    new URLSearchParams(searchStr).get("highlight")?.split(",").filter(Boolean) ?? []
+  );
+  const isHighlightMode = highlightCodes.size > 0;
   // Note: Resigned and terminated agents are managed in Former Agents (/former-agents), not here.
 
   // Data

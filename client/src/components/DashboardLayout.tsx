@@ -37,7 +37,7 @@ import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 import { Button } from "./ui/button";
 
-type NavLeaf = { icon: React.ElementType; label: string; path: string };
+type NavLeaf = { icon: React.ElementType; label: string; path: string; roles?: string[] };
 type NavGroup = { icon: React.ElementType; label: string; key: string; children: NavLeaf[] };
 type NavItem = NavLeaf | NavGroup;
 const isGroup = (item: NavItem): item is NavGroup => "children" in item;

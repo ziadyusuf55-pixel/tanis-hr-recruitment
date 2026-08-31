@@ -1171,3 +1171,4 @@
 - [x] Synchronize the latest requested GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
 - [x] Synchronize the newest requested GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
 - [ ] Synchronize the restored workspace's latest GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
+- [ ] Overlay tanis_audit_fix.zip on the current checkpoint, synchronize the Dashboard, Operations, and Dashboard Layout corrections, validate TypeScript, and save a publishable checkpoint

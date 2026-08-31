@@ -50,35 +50,39 @@ export default function Dashboard() {
   // ── Attention feeds (all existing endpoints) ──
   const { data: unreadRequests = 0 } = trpc.requests.countUnread.useQuery(undefined, { refetchInterval: 60000 });
   const { data: allAgents = [] } = trpc.workforce.list.useQuery({});
-  const unsignedContracts = (allAgents as Array<Record<string,unknown>>).filter(a =>
+  const thirtyDaysFromNow = Date.now() + 30 * 24 * 60 * 60 * 1000;
+
+  const unsignedContractsList = (allAgents as Array<Record<string,unknown>>).filter(a =>
     a.agentStatus === "active" && !(a as Record<string,unknown>).contractSigned
-  ).length;
-  // Count agents missing required personal info
-  const incompleteAgents = (allAgents as Array<Record<string,unknown>>).filter(a => {
+  ).map(a => String(a.traineeCode ?? ""));
+  const unsignedContracts = unsignedContractsList.length;
+
+  const incompleteAgentsList = (allAgents as Array<Record<string,unknown>>).filter(a => {
     if (a.agentStatus !== "active") return false;
-    // Exclude demo agents (isDemo may not be in workforce.list response — check by T-code prefix)
     if (String(a.traineeCode ?? "").startsWith("T-DEMO")) return false;
-    // An agent is "incomplete" if they are missing national ID OR date of birth
-    // (phone is set by HR, not agents — excluded from self-completion check)
     const hasId = a.nationalId && String(a.nationalId).trim().length > 0;
     const hasDob = a.dateOfBirth && String(a.dateOfBirth).trim().length > 0;
     return !hasId || !hasDob;
-  }).length;
-  const thirtyDaysFromNow = Date.now() + 30 * 24 * 60 * 60 * 1000;
-  const expiringIds = (allAgents as Array<Record<string,unknown>>).filter(a => {
+  }).map(a => String(a.traineeCode ?? ""));
+  const incompleteAgents = incompleteAgentsList.length;
+
+  const expiringIdsList = (allAgents as Array<Record<string,unknown>>).filter(a => {
     if (a.agentStatus !== "active") return false;
     const expiry = a.nationalIdExpiry as string | null;
     if (!expiry) return false;
     const ms = new Date(expiry).getTime();
     return ms > 0 && ms < thirtyDaysFromNow;
-  }).length;
-  const expiringContracts = (allAgents as Array<Record<string,unknown>>).filter(a => {
+  }).map(a => String(a.traineeCode ?? ""));
+  const expiringIds = expiringIdsList.length;
+
+  const expiringContractsList = (allAgents as Array<Record<string,unknown>>).filter(a => {
     if (a.agentStatus !== "active") return false;
     const end = a.contractEndDate as string | null;
     if (!end) return false;
     const ms = new Date(end).getTime();
     return ms > 0 && ms < thirtyDaysFromNow;
-  }).length;
+  }).map(a => String(a.traineeCode ?? ""));
+  const expiringContracts = expiringContractsList.length;
   const { data: pendingLeave = [] } = trpc.leave.listRequests.useQuery({ status: "pending" }, { refetchInterval: 120000 });
   const { data: bdDue = [] } = trpc.bd.dueReminders.useQuery(undefined, { refetchInterval: 120000 });
   const { data: bdDeals = [] } = trpc.bd.listDeals.useQuery({});
