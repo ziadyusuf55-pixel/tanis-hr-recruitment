@@ -1200,6 +1200,20 @@ export default function Operations() {
         ))}
       </div>
 
+      {/* Highlight mode banner — shown when navigated from a dashboard attention card */}
+      {isHighlightMode && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-2.5 flex items-center justify-between gap-3 mb-2">
+          <p className="text-sm text-amber-800">
+            <span className="font-semibold">⚠ Attention: </span>
+            Showing {highlightCodes.size} agent{highlightCodes.size > 1 ? "s" : ""} that need action.
+          </p>
+          <button onClick={() => window.history.replaceState({}, "", "/operations")}
+            className="text-xs text-amber-700 hover:underline shrink-0">
+            Show all agents ✕
+          </button>
+        </div>
+      )}
+
       {/* Agents Tab */}
       {activeTab === "agents" && (
         <div>
@@ -1314,7 +1328,7 @@ export default function Operations() {
                 </thead>
                 <tbody className="divide-y">
                   {filteredAgents.map(agent => (
-                    <tr key={agent.traineeCode ?? agent.crdts} className="hover:bg-muted/20 transition-colors cursor-pointer" onClick={() => { const id = agent.traineeCode || agent.crdts; if (id) navigate(`/operations/agents/${encodeURIComponent(String(id))}`); else toast.error("Agent has no ID — edit the agent to assign a T-code or CRDTS first."); }}>
+                    <tr key={agent.traineeCode ?? agent.crdts} className={`hover:bg-muted/20 transition-colors cursor-pointer${isHighlightMode && highlightCodes.has(agent.traineeCode) ? " bg-amber-50 border-l-4 border-l-amber-400" : ""}`} onClick={() => { const id = agent.traineeCode || agent.crdts; if (id) navigate(`/operations/agents/${encodeURIComponent(String(id))}`); else toast.error("Agent has no ID — edit the agent to assign a T-code or CRDTS first."); }}>
                       <td className="px-4 py-3">
                         <div className="font-medium">{agent.fullName}</div>
                         <div className="flex items-center gap-1.5 mt-0.5">

@@ -1770,6 +1770,79 @@ const campaignsRouter = router({
 
 // ─── Workforce Router ─────────────────────────────────────────────────────────
 const workforceRouter = router({
+  /** AUDIT: Payroll reconciliation — compare payroll_records vs what agents would see */
+  auditPayrollReconciliation: protectedProcedure
+    .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .query(async ({ ctx, input }) => {
+      if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const { payrollRecords, payrollAdjustments, workforceAgents } = await import("../drizzle/schema");
+      const { eq, and, or, isNull } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      const [records, agents] = await Promise.all([
+        db.select().from(payrollRecords).where(eq(payrollRecords.month, input.month)),
+        db.select({ traineeCode: workforceAgents.traineeCode, crdts: workforceAgents.crdts, alias: workforceAgents.alias, fullName: workforceAgents.fullName, agentStatus: workforceAgents.agentStatus })
+          .from(workforceAgents).where(or(isNull(workforceAgents.isDemo), eq(workforceAgents.isDemo, false))),
+      ]);
+      const agentByCrdts = new Map(agents.map(a => [a.crdts ?? "", a]));
+      const agentByCode = new Map(agents.map(a => [a.traineeCode ?? "", a]));
+      return records.map(r => {
+        const agent = agentByCrdts.get(r.crdts ?? "") ?? agentByCode.get(r.agentCode ?? "");
+        const net = parseFloat(String(r.netPay ?? 0));
+        const comm = parseFloat(String(r.commissionEgp ?? 0));
+        const coaching = parseFloat(String(r.coachingBonus ?? 0));
+        const ded = parseFloat(String(r.totalDeductions ?? 0));
+        const expectedNet = parseFloat(String(r.baseSalary ?? 0))
+          + parseFloat(String(r.ot1x5Pay ?? 0))
+          + parseFloat(String(r.ot2xPay ?? 0))
+          + parseFloat(String(r.ot3xPay ?? 0))
+          + coaching - ded;
+        const discrepancy = Math.abs(net - expectedNet) > 0.5;
+        return {
+          id: r.id,
+          crdts: r.crdts,
+          agentCode: r.agentCode,
+          alias: r.alias || agent?.alias || null,
+          fullName: agent?.fullName || null,
+          agentStatus: agent?.agentStatus || "unknown",
+          netPay: net,
+          commissionEgp: comm,
+          baseSalary: parseFloat(String(r.baseSalary ?? 0)),
+          totalDeductions: ded,
+          paymentStatus: r.paymentStatus,
+          discrepancy,
+          expectedNet: Math.round(expectedNet * 100) / 100,
+        };
+      });
+    }),
+
+  /** AUDIT: Check which agents can still log into portal despite being terminated */
+  auditPortalAccess: protectedProcedure.query(async ({ ctx }) => {
+    if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN" });
+    const { getDb } = await import("./db");
+    const { agentCredentials, workforceAgents } = await import("../drizzle/schema");
+    const { eq, ne, and, or, inArray } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return [];
+    // Find agents with credentials that are NOT active
+    const creds = await db.select({ traineeCode: agentCredentials.traineeCode }).from(agentCredentials);
+    const codes = creds.map(c => c.traineeCode ?? "").filter(Boolean);
+    if (codes.length === 0) return [];
+    const risks = await db.select({
+      traineeCode: workforceAgents.traineeCode,
+      alias: workforceAgents.alias,
+      fullName: workforceAgents.fullName,
+      agentStatus: workforceAgents.agentStatus,
+      isActive: workforceAgents.isActive,
+    }).from(workforceAgents)
+      .where(and(
+        inArray(workforceAgents.traineeCode, codes),
+        ne(workforceAgents.agentStatus, "active")
+      ));
+    return risks;
+  }),
+
   /** All agents for display purposes — includes former agents, returns name/alias/status only */
   listForDisplay: protectedProcedure.query(async () => {
     const { getDb } = await import("./db");

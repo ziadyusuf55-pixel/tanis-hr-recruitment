@@ -94,11 +94,11 @@ export default function Dashboard() {
     { count: (pendingLeave as unknown[]).length, label: "Leave approvals", sub: "Awaiting HR classification", icon: CalendarDays, tint: "violet", path: "/leave-management" },
     { count: (bdDue as unknown[]).length, label: "BD follow-ups due", sub: "Deals to chase today", icon: Building2, tint: "blue", path: "/business-development" },
     { count: pendingDeletion, label: "Former agents pending payout", sub: "Still owed final pay", icon: Wallet, tint: "red", path: "/operations" },
-    { count: incompleteAgents, label: "Incomplete agent profiles", sub: "Missing phone, ID or DOB", icon: Users, tint: "amber", path: "/operations" },
+    { count: incompleteAgents, label: "Incomplete agent profiles", sub: "Missing ID or DOB", icon: Users, tint: "amber", path: `/operations?highlight=${encodeURIComponent(incompleteAgentsList.join(","))}` },
     { count: unsignedContracts, label: "Contracts not signed", sub: "Active agents without signed contract", icon: AlertCircle, tint: "red", path: "/documents" },
-    { count: expiringIds, label: "National IDs expiring soon", sub: "Within the next 30 days", icon: AlertCircle, tint: "red", path: "/operations" },
-    { count: expiringContracts, label: "Contracts ending soon", sub: "Within the next 30 days", icon: AlertCircle, tint: "amber", path: "/operations" },
-  ].filter(a => a.count > 0 && canAccessPath(role, a.path));
+    { count: expiringIds, label: "National IDs expiring soon", sub: "Within the next 30 days", icon: AlertCircle, tint: "red", path: `/operations?highlight=${encodeURIComponent(expiringIdsList.join(","))}` },
+    { count: expiringContracts, label: "Contracts ending soon", sub: "Within the next 30 days", icon: AlertCircle, tint: "amber", path: `/operations?highlight=${encodeURIComponent(expiringContractsList.join(","))}` },
+  ].filter(a => a.count > 0 && canAccessPath(role, "/operations"));
 
   const funnelData = kpis
     ? ACTIVE_STAGES.map((stage) => ({

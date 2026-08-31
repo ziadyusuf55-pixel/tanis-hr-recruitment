@@ -17,6 +17,7 @@ import AgentPortal from "./pages/AgentPortal";
 import Operations from "./pages/Operations";
 import FormerAgents from "./pages/FormerAgents";
 import Payroll from "./pages/Payroll";
+import AdminAudit from "./pages/AdminAudit";
 import PerformanceDashboard from "./pages/PerformanceDashboard";
 import AdherenceLog from "./pages/AdherenceLog";
 import QualityLog from "./pages/QualityLog";
@@ -99,6 +100,7 @@ function Router() {
       <Route path="/former-agents" component={() => <ProtectedRoute component={FormerAgents} />} />
       <Route path="/operations/agents/:code" component={() => <ProtectedRoute component={AgentProfilePage} />} />
       <Route path="/payroll" component={() => <ProtectedRoute component={Payroll} />} />
+      <Route path="/admin-audit" component={() => <ProtectedRoute component={AdminAudit} />} />
       <Route path="/commission" component={() => <ProtectedRoute component={CommissionAdmin} />} />
       <Route path="/business-development" component={() => <ProtectedRoute component={BusinessDevelopment} />} />
       <Route path="/agent-profiles" component={() => <ProtectedRoute component={AgentProfileHR} />} />

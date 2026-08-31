@@ -29,7 +29,7 @@ import {
   LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings,
   Briefcase, Banknote, CreditCard, BarChart2, AlertCircle, Star, Wallet,
   FileText, Activity, ChevronDown, ChevronRight, TrendingUp, BookOpen, PhoneOff, DollarSign, UserCog, Building2, Zap, UserCircle, CalendarDays, Bell,
-  UserX,
+  UserX, ShieldAlert,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState, useCallback } from "react";
 import React from "react";
@@ -64,6 +64,7 @@ const NAV: NavItem[] = [
       { icon: UserCog,     label: "Agent Profiles",      path: "/agent-profiles" },
       { icon: CalendarDays,label: "Leave Management",    path: "/leave-management" },
       { icon: Banknote,    label: "Salary",              path: "/payroll" },
+      { icon: ShieldAlert, label: "Audit",                path: "/admin-audit",        roles: ["admin","owner"] },
       { icon: DollarSign,  label: "Commission",          path: "/commission" },
       { icon: Wallet,      label: "Payment Preferences", path: "/payment-preferences" },
       { icon: FileText,    label: "Documents",           path: "/all-documents" },
