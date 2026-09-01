@@ -474,6 +474,7 @@ export default function AgentProfilePage() {
           { id: "payment",   label: "Payment Preferences", icon: CreditCard, count: paymentMethods.length },
           { id: "comments",  label: "Comments / Issues", icon: MessageSquare, count: comments.length },
           { id: "coaching",  label: "Coaching", icon: GraduationCap, count: 0 },
+          { id: "warnings",  label: "Warnings", icon: AlertTriangle, count: 0 },
           { id: "history",   label: "History",  icon: History, count: 0 },
         ] as const).map(tab => (
           <button
@@ -643,6 +644,11 @@ export default function AgentProfilePage() {
       {/* ── Coaching Tab ──────────────────────────────────────────────────── */}
       {activeTab === "coaching" && (
         <CoachingTab crdts={agent.crdts ?? ""} traineeCode={agent.traineeCode ?? ""} navigate={navigate} />
+      )}
+
+      {/* ── Warnings Tab ─────────────────────────────────────────────────── */}
+      {activeTab === "warnings" && (
+        <WarningsTab traineeCode={agent.traineeCode ?? ""} agentName={agent.alias || agent.fullName || agent.traineeCode || ""} />
       )}
 
       {/* ── History Tab ───────────────────────────────────────────────────────────────────── */}
@@ -1344,6 +1350,110 @@ function AgentHistoryTab({ crdts }: { crdts: string }) {
         </div>
       )}
     </div>
+    </div>
+  );
+}
+
+// ─── Warnings Tab ─────────────────────────────────────────────────────────────
+function WarningsTab({ traineeCode, agentName }: { traineeCode: string; agentName: string }) {
+  const utils = trpc.useUtils();
+  const { data: warnings = [], isLoading } = trpc.warnings.list.useQuery({ traineeCode });
+  const [showForm, setShowForm] = useState(false);
+  const [type, setType] = useState<"verbal"|"written"|"final">("verbal");
+  const [reason, setReason] = useState("");
+  const [note, setNote] = useState("");
+
+  const issue = trpc.warnings.issue.useMutation({
+    onSuccess: () => { utils.warnings.list.invalidate(); setShowForm(false); setReason(""); setNote(""); toast.success("Warning issued"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const del = trpc.warnings.delete.useMutation({
+    onSuccess: () => { utils.warnings.list.invalidate(); toast.success("Warning deleted"); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const TYPE_CONFIG = {
+    verbal:  { label: "Verbal Warning",  color: "bg-yellow-100 text-yellow-800 border-yellow-300" },
+    written: { label: "Written Warning", color: "bg-orange-100 text-orange-800 border-orange-300" },
+    final:   { label: "Final Warning",   color: "bg-red-100 text-red-800 border-red-300" },
+  };
+
+  type Warning = { id: number; warningType: "verbal"|"written"|"final"; reason: string; issuedBy: string | null; issuedAt: number; note: string | null };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold">Disciplinary Warnings</h3>
+          <p className="text-xs text-muted-foreground mt-0.5">Warning history for {agentName} — {(warnings as Warning[]).length} record{(warnings as Warning[]).length !== 1 ? "s" : ""}</p>
+        </div>
+        <button onClick={() => setShowForm(!showForm)}
+          className="text-xs px-3 py-1.5 rounded-lg font-medium bg-red-100 text-red-700 hover:bg-red-200 transition-colors">
+          + Issue Warning
+        </button>
+      </div>
+
+      {showForm && (
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 space-y-3">
+          <p className="text-sm font-semibold text-red-800">Issue Warning to {agentName}</p>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Warning Type *</label>
+            <select value={type} onChange={e => setType(e.target.value as "verbal"|"written"|"final")}
+              className="w-full h-9 rounded-lg border px-2 text-sm bg-background">
+              <option value="verbal">Verbal Warning</option>
+              <option value="written">Written Warning</option>
+              <option value="final">Final Warning</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Reason * (minimum 10 characters)</label>
+            <textarea rows={3} value={reason} onChange={e => setReason(e.target.value)}
+              placeholder="Describe the reason for this warning in detail..."
+              className="w-full rounded-lg border px-3 py-2 text-sm bg-background resize-none" />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-muted-foreground block mb-1">Additional Notes (optional)</label>
+            <input value={note} onChange={e => setNote(e.target.value)} placeholder="Follow-up actions, conditions, etc."
+              className="w-full h-9 rounded-lg border px-2 text-sm bg-background" />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => issue.mutate({ traineeCode, warningType: type, reason, note: note || undefined })}
+              disabled={issue.isPending || reason.length < 10}
+              className="flex-1 py-2 rounded-lg text-sm font-semibold bg-red-600 text-white hover:bg-red-700 disabled:opacity-50">
+              {issue.isPending ? "Issuing…" : "Issue Warning"}
+            </button>
+            <button onClick={() => setShowForm(false)} className="px-4 py-2 rounded-lg text-sm border hover:bg-muted/50">Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {isLoading && <div className="h-24 rounded-xl animate-pulse bg-muted/40" />}
+
+      {!isLoading && (warnings as Warning[]).length === 0 && (
+        <div className="text-center py-10 text-sm text-muted-foreground">No warnings on record for this agent.</div>
+      )}
+
+      <div className="space-y-3">
+        {(warnings as Warning[]).map((w, i) => (
+          <div key={w.id} className="rounded-xl border p-4 space-y-2">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${TYPE_CONFIG[w.warningType].color}`}>
+                  #{i + 1} {TYPE_CONFIG[w.warningType].label}
+                </span>
+                <span className="text-xs text-muted-foreground">{new Date(w.issuedAt).toLocaleDateString("en-EG", { dateStyle: "medium" })}</span>
+                {w.issuedBy && <span className="text-xs text-muted-foreground">by {w.issuedBy}</span>}
+              </div>
+              <button onClick={() => { if (confirm("Delete this warning?")) del.mutate({ id: w.id }); }}
+                className="text-muted-foreground hover:text-red-500 transition-colors shrink-0">
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+            <p className="text-sm">{w.reason}</p>
+            {w.note && <p className="text-xs text-muted-foreground italic">Note: {w.note}</p>}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

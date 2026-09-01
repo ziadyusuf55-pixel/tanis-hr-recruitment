@@ -2074,6 +2074,10 @@ const workforceRouter = router({
       nationalId: z.string().max(50).optional(),
       nationalIdExpiry: z.string().max(20).optional(),
       contractEndDate: z.string().max(20).optional(),
+      probationEndDate: z.string().max(20).optional(),
+      isOnProbation: z.boolean().optional(),
+      rehireEligible: z.boolean().optional(),
+      rehireNote: z.string().max(500).optional(),
       dateOfBirth: z.string().max(20).optional(),
       gender: z.enum(["male", "female"]).optional(),
       nationality: z.string().max(100).optional(),
@@ -2148,6 +2152,10 @@ const workforceRouter = router({
       nationalId: z.string().max(50).optional(),
       nationalIdExpiry: z.string().max(20).optional(),
       contractEndDate: z.string().max(20).optional(),
+      probationEndDate: z.string().max(20).optional(),
+      isOnProbation: z.boolean().optional(),
+      rehireEligible: z.boolean().optional(),
+      rehireNote: z.string().max(500).optional(),
       dateOfBirth: z.string().max(20).optional(),
       gender: z.enum(["male", "female"]).optional(),
       nationality: z.string().max(100).optional(),
@@ -2537,6 +2545,10 @@ const documentsRouter = router({
       traineeCodes: z.array(z.string().min(1)).min(1),
       contractStartDate: z.string().max(20).optional(),
       contractEndDate: z.string().max(20).optional(),
+      probationEndDate: z.string().max(20).optional(),
+      isOnProbation: z.boolean().optional(),
+      rehireEligible: z.boolean().optional(),
+      rehireNote: z.string().max(500).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
@@ -7199,6 +7211,62 @@ const presenceRouter = router({
     }),
 });
 
+// ─── Warnings Router ─────────────────────────────────────────────────────────
+const warningsRouter = router({
+  /** List all warnings for an agent */
+  list: protectedProcedure
+    .input(z.object({ traineeCode: z.string() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const { agentWarnings } = await import("../drizzle/schema");
+      const { eq, desc } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      return db.select().from(agentWarnings).where(eq(agentWarnings.traineeCode, input.traineeCode)).orderBy(desc(agentWarnings.issuedAt));
+    }),
+
+  /** Issue a warning — HR/manager only */
+  issue: protectedProcedure
+    .input(z.object({
+      traineeCode: z.string(),
+      warningType: z.enum(["verbal", "written", "final"]),
+      reason: z.string().min(10),
+      note: z.string().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const allowed = ["hr", "admin", "owner", "ops_manager", "manager"];
+      if (!allowed.includes(ctx.user?.role ?? "")) throw new TRPCError({ code: "FORBIDDEN", message: "Only HR and managers can issue warnings." });
+      const { getDb } = await import("./db");
+      const { agentWarnings } = await import("../drizzle/schema");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      await db.insert(agentWarnings).values({
+        traineeCode: input.traineeCode,
+        warningType: input.warningType,
+        reason: input.reason,
+        issuedBy: ctx.user?.name ?? ctx.user?.email ?? "HR",
+        issuedAt: Date.now(),
+        note: input.note ?? null,
+      });
+      await auditEntry(ctx.user, `warning_issued_${input.warningType}`, "agent", input.traineeCode, JSON.stringify({ reason: input.reason, issuedBy: ctx.user?.name }));
+      return { ok: true };
+    }),
+
+  /** Delete a warning — admin/owner only */
+  delete: protectedProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN" });
+      const { getDb } = await import("./db");
+      const { agentWarnings } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
+      await db.delete(agentWarnings).where(eq(agentWarnings.id, input.id));
+      return { ok: true };
+    }),
+});
+
 const crdtsArchiveRouter = router({
   // Is this CRDTS already held by another agent? Flags if that agent is resigned/terminated.
   checkReuse: protectedProcedure
@@ -7655,6 +7723,7 @@ export const appRouter = router({
   invites: invitesRouter,
   apiKeys: apiKeysRouter,
   bd: bdRouter,
+  warnings: warningsRouter,
   presence: presenceRouter,
   crdtsArchive: crdtsArchiveRouter,
   hr: hrRouter,

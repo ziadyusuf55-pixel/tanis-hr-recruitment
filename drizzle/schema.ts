@@ -476,6 +476,10 @@ export const workforceAgents = mysqlTable("workforce_agents", {
   contractEndDate: varchar("contractEndDate", { length: 20 }),          // YYYY-MM-DD — for fixed-term contracts
   contractStartDate: varchar("contractStartDate", { length: 20 }),        // YYYY-MM-DD — contract start date
   contractSigned: boolean("contractSigned").default(false),               // HR marks as signed
+  probationEndDate: varchar("probationEndDate", { length: 20 }),              // YYYY-MM-DD — 3-month probation end date
+  isOnProbation: boolean("isOnProbation").default(false),                      // true = still in probation period
+  rehireEligible: boolean("rehireEligible").default(true),                     // false = do not rehire (blacklist for future)
+  rehireNote: varchar("rehireNote", { length: 500 }),                          // reason for rehire ineligibility
   dateOfBirth: varchar("dateOfBirth", { length: 20 }),                 // YYYY-MM-DD
   gender: mysqlEnum("gender", ["male", "female"]),
   nationality: varchar("nationality", { length: 100 }),
@@ -1350,6 +1354,20 @@ export const slackPingLog = mysqlTable("slack_ping_log", {
   sentAt: bigint("sentAt", { mode: "number" }).notNull(),
   messageTs: varchar("messageTs", { length: 100 }),       // Slack message timestamp for threading
 });
+
+// ─── Agent Warnings (Disciplinary) ──────────────────────────────────────────
+export const agentWarnings = mysqlTable("agent_warnings", {
+  id:           int("id").autoincrement().primaryKey(),
+  traineeCode:  varchar("traineeCode", { length: 100 }).notNull(),
+  warningType:  mysqlEnum("warningType", ["verbal", "written", "final"]).notNull(),
+  reason:       text("reason").notNull(),
+  issuedBy:     varchar("issuedBy", { length: 255 }),
+  issuedAt:     bigint("issuedAt", { mode: "number" }).notNull(),
+  acknowledged: boolean("acknowledged").default(false),       // agent acknowledged in portal
+  acknowledgedAt: bigint("acknowledgedAt", { mode: "number" }),
+  note:         varchar("note", { length: 500 }),             // follow-up notes
+});
+export type AgentWarning = typeof agentWarnings.$inferSelect;
 
 // ─── Agent Presence ───────────────────────────────────────────────────────────
 export const agentPresence = mysqlTable("agent_presence", {

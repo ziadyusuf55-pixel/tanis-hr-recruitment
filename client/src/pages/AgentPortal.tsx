@@ -196,6 +196,13 @@ export default function AgentPortal() {
   // Shared data for banner — fetched once at top level
   const { data: _wfProfile } = trpc.workforce.getMyProfile.useQuery();
   const { data: _payMethods = [] } = trpc.paymentMethods.listMine.useQuery();
+  // Mandatory profile completion — check if agent has filled required fields
+  const _profileComplete = !!(
+    (_wfProfile as Record<string,unknown> | null)?.nationalId &&
+    String((_wfProfile as Record<string,unknown> | null)?.nationalId ?? "").trim().length > 0 &&
+    (_wfProfile as Record<string,unknown> | null)?.dateOfBirth &&
+    String((_wfProfile as Record<string,unknown> | null)?.dateOfBirth ?? "").trim().length > 0
+  );
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const [showMoreNav, setShowMoreNav] = useState(false);
   const markOrientationMutation = trpc.orientation.markShown.useMutation();
@@ -262,6 +269,11 @@ export default function AgentPortal() {
   }
 
   if (!agent) return null;
+
+  // Mandatory profile completion wall — agent must fill national ID + DOB before accessing portal
+  if (_wfProfile !== undefined && !_profileComplete) {
+    return <ProfileCompletionWall agent={agent} wfProfile={_wfProfile as Record<string,unknown> | null} />;
+  }
 
   // Primary nav (shown prominently) — 6 tabs max
   const primaryNavItems: { id: Tab; label: string; icon: React.ReactNode }[] = [
@@ -4704,6 +4716,77 @@ function MilestoneBanner({ wfProfile, theme }: { wfProfile: Record<string,unknow
       <div>
         <p className="font-bold text-sm" style={{ color: banner.color }}>{banner.title}</p>
         <p className="text-xs mt-0.5" style={{ color: theme.textMuted }}>{banner.sub}</p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Mandatory Profile Completion Wall ───────────────────────────────────────
+function ProfileCompletionWall({ agent, wfProfile }: { agent: { traineeCode: string; candidateId: number }; wfProfile: Record<string,unknown> | null }) {
+  const utils = trpc.useUtils();
+  const [nationalId, setNationalId] = useState(String(wfProfile?.nationalId ?? ""));
+  const [dob, setDob] = useState(String(wfProfile?.dateOfBirth ?? ""));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const save = trpc.workforce.updateMyProfile.useMutation({
+    onSuccess: () => { utils.workforce.getMyProfile.invalidate(); },
+    onError: (e) => { setError(e.message); setSaving(false); },
+  });
+
+  const handleSave = () => {
+    if (!nationalId.trim()) { setError("National ID is required."); return; }
+    if (!dob) { setError("Date of birth is required."); return; }
+    setSaving(true);
+    setError("");
+    save.mutate({ traineeCode: agent.traineeCode, nationalId: nationalId.trim(), dateOfBirth: dob });
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-6" style={{ background: "#0f0f0f" }}>
+      <div className="w-full max-w-sm space-y-6">
+        <div className="text-center">
+          <div className="text-5xl mb-3">📋</div>
+          <h1 className="text-xl font-bold text-white">Complete Your Profile</h1>
+          <p className="text-sm text-gray-400 mt-2">
+            Please fill in your required personal information before accessing the portal.
+            This is required by HR policy.
+          </p>
+        </div>
+
+        <div className="rounded-2xl p-5 space-y-4" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>
+          <div>
+            <label className="text-xs font-medium text-gray-400 block mb-1.5">National ID Number *</label>
+            <input
+              type="text"
+              value={nationalId}
+              onChange={e => setNationalId(e.target.value)}
+              placeholder="Enter your national ID"
+              className="w-full h-10 rounded-xl px-3 text-sm bg-white/10 text-white border border-white/20 outline-none focus:border-white/50 placeholder:text-gray-600"
+            />
+          </div>
+          <div>
+            <label className="text-xs font-medium text-gray-400 block mb-1.5">Date of Birth *</label>
+            <input
+              type="date"
+              value={dob}
+              onChange={e => setDob(e.target.value)}
+              className="w-full h-10 rounded-xl px-3 text-sm bg-white/10 text-white border border-white/20 outline-none focus:border-white/50"
+            />
+          </div>
+          {error && <p className="text-xs text-red-400">{error}</p>}
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="w-full h-10 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-50"
+            style={{ background: BRAND }}>
+            {saving ? "Saving…" : "Save & Continue →"}
+          </button>
+        </div>
+
+        <p className="text-center text-xs text-gray-600">
+          Tanis Connect · This information is kept confidential and used for HR purposes only.
+        </p>
       </div>
     </div>
   );

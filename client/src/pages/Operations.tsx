@@ -784,9 +784,11 @@ export default function Operations() {
   const [tlFilter, setTlFilter] = useState<string>("all");
   const [agentStatusFilter, setAgentStatusFilter] = useState<"active" | "all">("active");
   const searchStr = useSearch();
-  const highlightCodes = new Set(
-    new URLSearchParams(searchStr).get("highlight")?.split(",").filter(Boolean) ?? []
-  );
+  // Read highlight from URL param — if present, save to sessionStorage so it persists after back navigation
+  const urlHighlight = new URLSearchParams(searchStr).get("highlight");
+  if (urlHighlight) sessionStorage.setItem("ops_highlight", urlHighlight);
+  const storedHighlight = sessionStorage.getItem("ops_highlight") ?? "";
+  const highlightCodes = new Set(storedHighlight.split(",").filter(Boolean));
   const isHighlightMode = highlightCodes.size > 0;
   // Note: Resigned and terminated agents are managed in Former Agents (/former-agents), not here.
 
@@ -1212,7 +1214,7 @@ export default function Operations() {
             <span className="font-semibold">⚠ Attention: </span>
             Showing {highlightCodes.size} agent{highlightCodes.size > 1 ? "s" : ""} that need action.
           </p>
-          <button onClick={() => window.history.replaceState({}, "", "/operations")}
+          <button onClick={() => { sessionStorage.removeItem("ops_highlight"); window.history.replaceState({}, "", "/operations"); window.location.reload(); }}
             className="text-xs text-amber-700 hover:underline shrink-0">
             Show all agents ✕
           </button>
@@ -1775,6 +1777,26 @@ export default function Operations() {
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Contract End Date</label>
               <Input type="date" value={(editForm as Record<string,unknown>).contractEndDate as string ?? ""} onChange={e => setEditForm(f => ({ ...f, contractEndDate: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Probation End Date</label>
+              <Input type="date" value={(editForm as Record<string,unknown>).probationEndDate as string ?? ""} onChange={e => setEditForm(f => ({ ...f, probationEndDate: e.target.value }))} />
+            </div>
+            <div className="col-span-2 space-y-2">
+              <label className="flex items-center gap-2 cursor-pointer text-sm">
+                <input type="checkbox" checked={!!((editForm as Record<string,unknown>).isOnProbation)} onChange={e => setEditForm(f => ({ ...f, isOnProbation: e.target.checked }))} />
+                <span className="text-muted-foreground">Currently on probation</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer text-sm">
+                <input type="checkbox" checked={!!((editForm as Record<string,unknown>).rehireEligible ?? true)} onChange={e => setEditForm(f => ({ ...f, rehireEligible: e.target.checked }))} />
+                <span className="text-muted-foreground">Eligible for rehire</span>
+              </label>
+              {!((editForm as Record<string,unknown>).rehireEligible ?? true) && (
+                <div>
+                  <label className="text-xs font-medium text-muted-foreground mb-1 block">Reason (not eligible for rehire)</label>
+                  <Input value={(editForm as Record<string,unknown>).rehireNote as string ?? ""} onChange={e => setEditForm(f => ({ ...f, rehireNote: e.target.value }))} placeholder="e.g. Performance issues, conduct..." />
+                </div>
+              )}
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Date of Birth</label>
