@@ -1174,3 +1174,15 @@
 - [x] Overlay tanis_audit_fix.zip on the current checkpoint, synchronize the Dashboard, Operations, and Dashboard Layout corrections, validate TypeScript, and save a publishable checkpoint
 - [x] Synchronize the latest GitHub state, add and verify workforce probation fields and the agent_warnings table, align Drizzle schema, validate TypeScript, and save a publishable checkpoint
 - [x] Overlay tanis_ts_fix6.zip on the current migrated state, commit and synchronize the supplied TypeScript corrections, validate TypeScript, and save a publishable checkpoint
+
+## Payroll Commission Data Correction
+- [x] Set the specified commissionEgp amounts for 11 August 2026 payroll records and verify every stored value
+- [x] Clear August 2026 commissions, restore the specified 11 values, and verify the final total
+- [x] Clear July 2026 commissions, apply the specified 18 values, and verify the final total and non-zero record count
+- [x] Replace July 2026 commissions with the corrected eight-value list, replace August with the earlier 18-value list, and verify both totals
+
+## Payroll Adjustment Recovery Investigation
+- [x] Check available backup, transaction-history, and audit sources for July 2026 payroll_adjustments rows removed during today’s re-upload
+
+## Synchronization and Deployment Validation
+- [ ] Synchronize the latest GitHub state without a database migration, run TypeScript validation, and prepare a publishable checkpoint
