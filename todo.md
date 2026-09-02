@@ -1185,4 +1185,4 @@
 - [x] Check available backup, transaction-history, and audit sources for July 2026 payroll_adjustments rows removed during today’s re-upload
 
 ## Synchronization and Deployment Validation
-- [ ] Synchronize the latest GitHub state without a database migration, run TypeScript validation, and prepare a publishable checkpoint
+- [x] Synchronize the latest GitHub state without a database migration, run TypeScript validation, and prepare a publishable checkpoint
