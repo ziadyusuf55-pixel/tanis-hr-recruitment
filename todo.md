@@ -1172,3 +1172,5 @@
 - [x] Synchronize the newest requested GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
 - [x] Synchronize the restored workspace's latest GitHub state without a database migration, validate TypeScript, and save a publishable checkpoint
 - [x] Overlay tanis_audit_fix.zip on the current checkpoint, synchronize the Dashboard, Operations, and Dashboard Layout corrections, validate TypeScript, and save a publishable checkpoint
+- [x] Synchronize the latest GitHub state, add and verify workforce probation fields and the agent_warnings table, align Drizzle schema, validate TypeScript, and save a publishable checkpoint
+- [x] Overlay tanis_ts_fix6.zip on the current migrated state, commit and synchronize the supplied TypeScript corrections, validate TypeScript, and save a publishable checkpoint

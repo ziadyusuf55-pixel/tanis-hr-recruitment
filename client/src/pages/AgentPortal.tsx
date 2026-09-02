@@ -4739,7 +4739,7 @@ function ProfileCompletionWall({ agent, wfProfile }: { agent: { traineeCode: str
     if (!dob) { setError("Date of birth is required."); return; }
     setSaving(true);
     setError("");
-    save.mutate({ traineeCode: agent.traineeCode, nationalId: nationalId.trim(), dateOfBirth: dob });
+    save.mutate({ nationalId: nationalId.trim(), dateOfBirth: dob });
   };
 
   return (

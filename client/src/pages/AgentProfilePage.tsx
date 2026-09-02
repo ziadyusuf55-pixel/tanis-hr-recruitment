@@ -32,7 +32,7 @@ const moneyEGP = (v: unknown) => {
 };
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-type Tab = "recruitment" | "payroll" | "commission" | "documents" | "payment" | "comments" | "coaching" | "history";
+type Tab = "recruitment" | "payroll" | "commission" | "documents" | "payment" | "comments" | "coaching" | "history" | "warnings";
 
 const TAG_CONFIG = {
   note:     { label: "Note",     icon: Info,          color: "bg-blue-100 text-blue-700 border-blue-200" },
