@@ -2099,7 +2099,19 @@ export async function upsertPayrollRecordV2(data: {
     uploadedAt: data.uploadedAt,
   };
   if (existing.length > 0) {
-    await db.update(payrollRecords).set(vals)
+    // IMPORTANT: Never overwrite commissionEgp if the incoming value is null/0 and an existing value is set.
+    // Commission is entered manually — payroll re-uploads must never wipe it.
+    const existingFull = await db.select({ commissionEgp: payrollRecords.commissionEgp, coachingBonus: payrollRecords.coachingBonus })
+      .from(payrollRecords)
+      .where(and(eq(payrollRecords.crdts, data.crdts), eq(payrollRecords.month, data.month)))
+      .limit(1);
+    const preservedCommission = (data.commissionEgp == null || data.commissionEgp === 0)
+      ? (existingFull[0]?.commissionEgp ?? null)
+      : toStr(data.commissionEgp);
+    const preservedCoaching = (data.coachingBonus == null || data.coachingBonus === 0)
+      ? (existingFull[0]?.coachingBonus ?? null)
+      : toStr(data.coachingBonus);
+    await db.update(payrollRecords).set({ ...vals, commissionEgp: preservedCommission, coachingBonus: preservedCoaching })
       .where(and(eq(payrollRecords.crdts, data.crdts), eq(payrollRecords.month, data.month)));
   } else {
     await db.insert(payrollRecords).values({ ...vals, candidateId: null });

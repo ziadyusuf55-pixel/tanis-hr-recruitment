@@ -3037,33 +3037,12 @@ const payrollV2Router = router({
         .filter(([, count]) => count > 1)
         .map(([crdts, count]) => ({ crdts, alias: null, type: "duplicate_crdts", message: `CRDTS ${crdts} appears ${count} times — only the last row will be saved.` }));
 
-      // Commission attachment: try both the payroll month AND the previous month as cycleKey.
-      // Commission may be stored under performanceMonth (e.g. "2026-07" for July work)
-      // OR under the pay cycle month (e.g. "2026-08" for August payroll).
-      // Whichever has data wins; if both have data, payroll month takes priority.
-      const { getDb: _getDbComm } = await import("./db");
-      const _dbComm = await _getDbComm();
-      const commissionMap = new Map<string, number>();
-      let commissionCycle = input.month; // default label for warning
-      if (_dbComm) {
-        const [py, pm] = input.month.split("-").map(Number);
-        // Previous month (performance month e.g. July for August payroll)
-        const prevDate = new Date(py, pm - 2, 1); // pm-2 because JS months are 0-indexed
-        const prevMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}`;
-        const { commissionLeaderboard } = await import("../drizzle/schema");
-        const { eq: _eqComm, or: _orComm, inArray: _inComm } = await import("drizzle-orm");
-        // Fetch from both months in one query
-        const comms = await _dbComm.select({ crdts: commissionLeaderboard.crdts, amt: commissionLeaderboard.commissionEgp, cycleKey: commissionLeaderboard.cycleKey })
-          .from(commissionLeaderboard)
-          .where(_orComm(_eqComm(commissionLeaderboard.cycleKey, input.month), _eqComm(commissionLeaderboard.cycleKey, prevMonth)));
-        // Build map — same month entries override previous month entries
-        for (const c of comms) if (c.crdts) commissionMap.set(c.crdts, Number(c.amt || 0));
-        commissionCycle = comms.length > 0 ? (comms[0].cycleKey ?? input.month) : input.month;
-      }
+      // Commission is NEVER auto-attached during payroll upload.
+      // Commission must be entered manually in the Salary tab by HR.
+      // This prevents commission data from being overwritten during payroll re-uploads.
 
       for (const row of input.rows) {
-        const commissionEgp = commissionMap.get(row.crdts) ?? row.commissionEgp;
-        await upsertPayrollRecordV2({ ...row, commissionEgp, month: input.month, uploadedBy, uploadedAt });
+        await upsertPayrollRecordV2({ ...row, commissionEgp: row.commissionEgp, month: input.month, uploadedBy, uploadedAt });
       }
 
       // Anomaly detection
@@ -3079,26 +3058,19 @@ const payrollV2Router = router({
 
         for (const row of input.rows) {
           const alias = crdtsToAlias.get(row.crdts) ?? row.crdts;
-          // Agent not in workforce
           if (!knownCrdts.has(row.crdts)) {
             warnings.push({ crdts: row.crdts, alias, type: "unknown_agent", message: `CRDTS "${row.crdts}" not found in workforce roster` });
           }
-          // Negative net pay
           if (row.netPay !== undefined && row.netPay < 0) {
             warnings.push({ crdts: row.crdts, alias, type: "negative_net_pay", message: `Net pay is negative (${row.netPay.toFixed(2)} EGP) — check deductions` });
           }
-          // Total deductions exceed base salary
           if (row.totalDeductions !== undefined && row.baseSalary !== undefined && row.baseSalary > 0 && row.totalDeductions > row.baseSalary) {
             warnings.push({ crdts: row.crdts, alias, type: "deductions_exceed_salary", message: `Total deductions (${row.totalDeductions.toFixed(0)} EGP) exceed base salary (${row.baseSalary.toFixed(0)} EGP)` });
           }
         }
       }
 
-      if (commissionCycle && commissionMap.size === 0) {
-        warnings.push({ crdts: "—", type: "no_commission", message: `No commission found for ${commissionCycle} — upload that month's commission file first, then re-upload payroll to attach it.` });
-      }
-
-      return { success: true, count: input.rows.length, commissionCycle, commissionAttached: commissionMap.size, warnings: [...dupWarnings, ...warnings] };
+      return { success: true, count: input.rows.length, commissionCycle: "", commissionAttached: 0, warnings: [...dupWarnings, ...warnings] };
     }),
 
   getStatusPage: protectedProcedure
