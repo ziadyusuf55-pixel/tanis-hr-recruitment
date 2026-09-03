@@ -1194,4 +1194,4 @@
 - [x] Overlay `tanis_ts_fix7.zip` on checkpoint `685bc8ee`, commit and synchronize the fix, run `npx tsc --noEmit`, and prepare a publishable checkpoint
 
 ## Hook Fix Archive
-- [ ] Extract `tanis_hook_fix.zip`, commit and push the supplied changes, run `npx tsc --noEmit`, and prepare a publishable checkpoint
+- [x] Extract `tanis_hook_fix.zip`, commit and push the supplied changes, run `npx tsc --noEmit`, and prepare a publishable checkpoint
