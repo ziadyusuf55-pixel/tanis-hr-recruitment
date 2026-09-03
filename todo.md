@@ -1188,4 +1188,7 @@
 - [x] Synchronize the latest GitHub state without a database migration, run TypeScript validation, and prepare a publishable checkpoint
 
 ## Synchronization and Deployment Validation
-- [ ] Pull latest GitHub state without a database migration, run `npx tsc --noEmit`, and prepare a publishable checkpoint
+- [x] Pull latest GitHub state without a database migration, run `npx tsc --noEmit`, and prepare a publishable checkpoint
+
+## Archive TypeScript Correction
+- [x] Overlay `tanis_ts_fix7.zip` on checkpoint `685bc8ee`, commit and synchronize the fix, run `npx tsc --noEmit`, and prepare a publishable checkpoint
