@@ -1186,3 +1186,6 @@
 
 ## Synchronization and Deployment Validation
 - [x] Synchronize the latest GitHub state without a database migration, run TypeScript validation, and prepare a publishable checkpoint
+
+## Synchronization and Deployment Validation
+- [ ] Pull latest GitHub state without a database migration, run `npx tsc --noEmit`, and prepare a publishable checkpoint
