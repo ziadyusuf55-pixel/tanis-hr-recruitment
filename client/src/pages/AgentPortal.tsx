@@ -193,12 +193,6 @@ export default function AgentPortal() {
     return () => clearInterval(iv);
   }, []);
   const logoutMutation = trpc.agent.logout.useMutation();
-  // Auto-redirect to profile if profile is incomplete
-  useEffect(() => {
-    if (_wfProfile !== undefined && !_profileComplete && activeTab !== "profile") {
-      setActiveTab("profile");
-    }
-  }, [_wfProfile, _profileComplete]);
   // Shared data for banner — fetched once at top level
   const { data: _wfProfile } = trpc.workforce.getMyProfile.useQuery();
   const { data: _payMethods = [] } = trpc.paymentMethods.listMine.useQuery();
@@ -211,6 +205,12 @@ export default function AgentPortal() {
   );
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const [showMoreNav, setShowMoreNav] = useState(false);
+  // Auto-redirect to profile if profile is incomplete
+  useEffect(() => {
+    if (_wfProfile !== undefined && !_profileComplete && activeTab !== "profile") {
+      setActiveTab("profile");
+    }
+  }, [_wfProfile, _profileComplete]);
   const markOrientationMutation = trpc.orientation.markShown.useMutation();
   const [isDark, setIsDark] = useState<boolean>(() => {
     const saved = localStorage.getItem(THEME_KEY);
