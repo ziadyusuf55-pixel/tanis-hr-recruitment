@@ -193,6 +193,12 @@ export default function AgentPortal() {
     return () => clearInterval(iv);
   }, []);
   const logoutMutation = trpc.agent.logout.useMutation();
+  // Auto-redirect to profile if profile is incomplete
+  useEffect(() => {
+    if (_wfProfile !== undefined && !_profileComplete && activeTab !== "profile") {
+      setActiveTab("profile");
+    }
+  }, [_wfProfile, _profileComplete]);
   // Shared data for banner — fetched once at top level
   const { data: _wfProfile } = trpc.workforce.getMyProfile.useQuery();
   const { data: _payMethods = [] } = trpc.paymentMethods.listMine.useQuery();
@@ -270,9 +276,12 @@ export default function AgentPortal() {
 
   if (!agent) return null;
 
-  // Mandatory profile completion wall — agent must fill national ID + DOB before accessing portal
-  if (_wfProfile !== undefined && !_profileComplete) {
-    return <ProfileCompletionWall agent={agent} wfProfile={_wfProfile as Record<string,unknown> | null} />;
+  // Mandatory profile: if incomplete, force profile tab open and show banner
+  // Agent can still navigate but sees a persistent warning until completed
+  const [profileBannerDismissed, setProfileBannerDismissed] = useState(false);
+  if (_wfProfile !== undefined && !_profileComplete && activeTab !== "profile" && !profileBannerDismissed) {
+    // Auto-navigate to profile tab if not complete
+    // We don't block — we just redirect and show banner
   }
 
   // Primary nav (shown prominently) — 6 tabs max
@@ -434,6 +443,16 @@ export default function AgentPortal() {
         <PresencePanel traineeCode={agent.traineeCode} theme={theme} />
         <ProfileCompletionBanner wfProfile={_wfProfile as Record<string,unknown> | null} payMethods={_payMethods as unknown[]} theme={theme} onGoToProfile={() => setActiveTab("profile")} onGoToPayment={() => setActiveTab("payment")} />
         <MilestoneBanner wfProfile={_wfProfile as Record<string,unknown> | null} theme={theme} />
+        {_wfProfile !== undefined && !_profileComplete && (
+          <div className="rounded-2xl px-4 py-3 flex items-center gap-3 mb-2" style={{ background: "#fff3cd", border: "1.5px solid #ffc107" }}>
+            <span className="text-xl">⚠️</span>
+            <div className="flex-1">
+              <p className="text-sm font-semibold text-amber-800">Complete your profile</p>
+              <p className="text-xs text-amber-700 mt-0.5">Your National ID and Date of Birth are required. Go to Profile tab to complete.</p>
+            </div>
+            <button onClick={() => setActiveTab("profile")} className="text-xs px-3 py-1.5 rounded-lg font-semibold bg-amber-500 text-white hover:bg-amber-600">Complete now</button>
+          </div>
+        )}
         {activeTab === "profile" && <ProfileTab agent={agent} theme={theme} />}
         {activeTab === "opplan" && <OperationPlanTab theme={theme} />}
         {activeTab === "performance" && <PerformanceTab theme={theme} />}
@@ -4451,9 +4470,9 @@ function PresencePanel({ traineeCode, theme }: { traineeCode: string; theme: The
                 <div key={p.traineeCode} className="flex items-center gap-2.5 px-4 py-2.5">
                   <div className="relative shrink-0">
                     {p.avatarUrl ? (
-                      <img src={p.avatarUrl} alt="" className="w-8 h-8 rounded-full object-cover" />
+                      <img src={p.avatarUrl} alt="" className="w-12 h-12 rounded-full object-cover" />
                     ) : (
-                      <div className="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold" style={{ background: `${BRAND}22`, color: BRAND }}>
+                      <div className="w-12 h-12 rounded-full flex items-center justify-center text-sm font-bold" style={{ background: `${BRAND}22`, color: BRAND }}>
                         {(p.alias || p.fullName || p.traineeCode).charAt(0).toUpperCase()}
                       </div>
                     )}
@@ -4586,18 +4605,25 @@ function MonthCompareView({ theme }: { theme: Theme }) {
   const qPrevA = trpc.cycleTracker.getMyDailyStats.useQuery({ cycleKey: prevPrefix });
   const qPrevB = trpc.cycleTracker.getMyDailyStats.useQuery({ cycleKey: prevCycleB });
 
+  // getMyDailyStats returns { daily: [], logoutDates: [] } — extract the daily array
   type DRow = { date?: string | null; revenue?: string | number | null; profit?: string | number | null; loginHours?: string | number | null; clientLogouts?: number | null };
+  const extractDaily = (data: unknown): DRow[] => {
+    if (!data) return [];
+    if (Array.isArray(data)) return data as DRow[];
+    if (typeof data === "object" && data !== null && "daily" in data) return (data as { daily: DRow[] }).daily ?? [];
+    return [];
+  };
 
   const filterToMonth = (rows: DRow[], prefix: string) =>
     rows.filter(r => typeof r.date === "string" && r.date.startsWith(prefix));
 
   const currRows = [
-    ...filterToMonth((qCurrA.data ?? []) as DRow[], currPrefix),
-    ...filterToMonth((qCurrB.data ?? []) as DRow[], currPrefix),
+    ...filterToMonth(extractDaily(qCurrA.data), currPrefix),
+    ...filterToMonth(extractDaily(qCurrB.data), currPrefix),
   ];
   const prevRows = [
-    ...filterToMonth((qPrevA.data ?? []) as DRow[], prevPrefix),
-    ...filterToMonth((qPrevB.data ?? []) as DRow[], prevPrefix),
+    ...filterToMonth(extractDaily(qPrevA.data), prevPrefix),
+    ...filterToMonth(extractDaily(qPrevB.data), prevPrefix),
   ];
 
   const sum = (rows: DRow[], key: keyof DRow) => rows.reduce((s, r) => s + parseFloat(String(r[key] ?? 0)), 0);

@@ -2253,6 +2253,8 @@ const workforceRouter = router({
       try { _opCode = (jwt.verify(_opTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; } catch { return null; }
       const agent = await getWorkforceAgentByCode(_opCode);
       if (!agent || !agent.campaignId) return null;
+      // Only show op plan for active agents — resigned/terminated don't appear here
+      if (agent.agentStatus && !["active", "inactive", "frozen"].includes(agent.agentStatus)) return null;
       const campaign = await getCampaignById(agent.campaignId as number);
       const now = new Date();
       const dayOfWeek = now.getDay();

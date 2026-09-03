@@ -79,7 +79,13 @@ export default function CommissionAdmin() {
   type LbRow = { rank: number; crdts: string; alias: string; campaignName: string; profit: number; revenue: number; commissionEgp: number };
   const lbRows = lbData as LbRow[];
   const lbCampaigns = ["all", ...Array.from(new Set(lbRows.map(r => r.campaignName))).sort()];
-  const lbFiltered = lbCampaign === "all" ? lbRows : lbRows.filter(r => r.campaignName === lbCampaign);
+  // When viewing a specific campaign: re-rank within that campaign only
+  // When viewing all: use overall rank as-is
+  const lbFiltered = lbCampaign === "all"
+    ? lbRows
+    : lbRows
+        .filter(r => r.campaignName === lbCampaign)
+        .map((r, i) => ({ ...r, rank: i + 1 })); // re-rank 1,2,3... within campaign
 
   // Slack message generator state
   const [slackDialog, setSlackDialog] = useState(false);
