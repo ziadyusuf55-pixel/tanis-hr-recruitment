@@ -42,7 +42,9 @@ function rateLimit(key: string, maxPerMinute: number): boolean {
 // Clean stale keys every 5 min
 setInterval(() => { const now = Date.now(); rateLimitStore.forEach((v, k) => { if (now > v.resetAt) rateLimitStore.delete(k); }); }, 5 * 60 * 1000).unref();
 
-// Process due separations every hour — applies scheduled resignations/terminations whose effectiveDate has passed
+// ─── Hourly scheduled jobs ────────────────────────────────────────────────────
+
+// 1. Apply scheduled resignations/terminations whose effectiveDate has passed
 const runDueSeparations = async () => {
   try {
     const { processDueSeparations } = await import("../db");
@@ -50,8 +52,116 @@ const runDueSeparations = async () => {
     if (n > 0) console.log(`[separations] Applied ${n} due separation(s)`);
   } catch (e) { console.error("[separations] processDueSeparations error:", e); }
 };
-runDueSeparations(); // run on startup to catch any missed separations
-setInterval(runDueSeparations, 60 * 60 * 1000).unref(); // then every hour
+
+// 2. Auto-clear probation when probationEndDate has passed
+const runProbationCheck = async () => {
+  try {
+    const { getDb } = await import("../db");
+    const { workforceAgents } = await import("../../drizzle/schema");
+    const { and, eq, lte, isNotNull } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return;
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    // Find agents still flagged as on probation but whose probation end date has passed
+    const expired = await db.select({ traineeCode: workforceAgents.traineeCode, alias: workforceAgents.alias })
+      .from(workforceAgents)
+      .where(and(
+        eq(workforceAgents.isOnProbation, true),
+        isNotNull(workforceAgents.probationEndDate),
+        lte(workforceAgents.probationEndDate, today)
+      ));
+    if (expired.length > 0) {
+      for (const ag of expired) {
+        await db.update(workforceAgents)
+          .set({ isOnProbation: false, updatedAt: new Date() })
+          .where(eq(workforceAgents.traineeCode, ag.traineeCode));
+        console.log(`[probation] Cleared probation for ${ag.alias ?? ag.traineeCode}`);
+      }
+      console.log(`[probation] Auto-cleared ${expired.length} agent(s) from probation`);
+    }
+  } catch (e) { console.error("[probation] probation check error:", e); }
+};
+
+// 3. Flag agents with expired contracts (mark contractSigned as needing renewal)
+const runContractExpiryCheck = async () => {
+  try {
+    const { getDb } = await import("../db");
+    const { workforceAgents, appSettings } = await import("../../drizzle/schema");
+    const { and, eq, lte, isNotNull, ne } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return;
+    const today = new Date().toISOString().slice(0, 10);
+    // Find active agents whose contract has expired
+    const expired = await db.select({ traineeCode: workforceAgents.traineeCode, alias: workforceAgents.alias, contractEndDate: workforceAgents.contractEndDate })
+      .from(workforceAgents)
+      .where(and(
+        eq(workforceAgents.agentStatus, "active"),
+        isNotNull(workforceAgents.contractEndDate),
+        lte(workforceAgents.contractEndDate, today)
+      ));
+    if (expired.length > 0) {
+      console.log(`[contracts] ${expired.length} agent(s) with expired contracts: ${expired.map(a => a.alias ?? a.traineeCode).join(", ")}`);
+      // Store in app_settings as a JSON list so dashboard can surface it
+      await db.insert(appSettings).values({ key: "expired_contracts", value: JSON.stringify(expired.map(a => a.traineeCode)), updatedAt: Date.now(), updatedBy: "system" })
+        .onDuplicateKeyUpdate({ set: { value: JSON.stringify(expired.map(a => a.traineeCode)), updatedAt: Date.now() } });
+    } else {
+      await db.insert(appSettings).values({ key: "expired_contracts", value: "[]", updatedAt: Date.now(), updatedBy: "system" })
+        .onDuplicateKeyUpdate({ set: { value: "[]", updatedAt: Date.now() } });
+    }
+  } catch (e) { console.error("[contracts] contract expiry check error:", e); }
+};
+
+// 4. Auto-revert one-time schedule swaps after the swap week ends
+const runScheduleSwapRevert = async () => {
+  try {
+    const { getDb } = await import("../db");
+    const { scheduleChangeRequests, workforceAgents } = await import("../../drizzle/schema");
+    const { and, eq, isNull, lte, isNotNull } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return;
+    const today = new Date().toISOString().slice(0, 10);
+    // Find approved swaps whose swapWeekOf + 7 days has passed and haven't been reverted yet
+    const dueReverts = await db.select().from(scheduleChangeRequests)
+      .where(and(
+        eq(scheduleChangeRequests.status, "approved"),
+        isNull(scheduleChangeRequests.revertedAt),
+        isNotNull(scheduleChangeRequests.swapWeekOf),
+      ));
+    for (const swap of dueReverts) {
+      if (!swap.swapWeekOf) continue;
+      // Revert after the swap week ends (swapWeekOf + 7 days)
+      const revertDate = new Date(swap.swapWeekOf);
+      revertDate.setDate(revertDate.getDate() + 7);
+      if (revertDate.toISOString().slice(0, 10) > today) continue; // not yet
+      // Restore original off days
+      if (swap.requesterOrigOff1 !== null && swap.requesterOrigOff1 !== undefined) {
+        await db.update(workforceAgents)
+          .set({ offDay1: swap.requesterOrigOff1, offDay2: swap.requesterOrigOff2 ?? undefined, updatedAt: new Date() })
+          .where(eq(workforceAgents.traineeCode, swap.requesterCode));
+      }
+      if (swap.targetOrigOff1 !== null && swap.targetOrigOff1 !== undefined) {
+        await db.update(workforceAgents)
+          .set({ offDay1: swap.targetOrigOff1, offDay2: swap.targetOrigOff2 ?? undefined, updatedAt: new Date() })
+          .where(eq(workforceAgents.traineeCode, swap.targetCode));
+      }
+      await db.update(scheduleChangeRequests)
+        .set({ status: "reverted", revertedAt: Date.now() })
+        .where(eq(scheduleChangeRequests.id, swap.id));
+      console.log(`[schedule] Reverted swap #${swap.id} (${swap.requesterCode} ↔ ${swap.targetCode}) — swap week ended`);
+    }
+  } catch (e) { console.error("[schedule] swap revert error:", e); }
+};
+
+// Run all hourly jobs on startup then every hour
+const runHourlyJobs = async () => {
+  await runDueSeparations();
+  await runProbationCheck();
+  await runContractExpiryCheck();
+  await runScheduleSwapRevert();
+};
+
+runHourlyJobs();
+setInterval(runHourlyJobs, 60 * 60 * 1000).unref(); // every hour
 
 // Daily: auto-create leave balance for agents who reached 7 months of service
 const checkLeaveEligibility = async () => {

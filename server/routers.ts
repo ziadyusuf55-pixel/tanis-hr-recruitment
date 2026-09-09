@@ -1413,7 +1413,7 @@ const requestsRouter = router({
       status: z.enum(["pending", "in_progress", "resolved", "rejected"]),
       adminReply: z.string().optional(),
     }))
-    .mutation(({ input }) => updateAgentRequestStatus(input.id, input.status, input.adminReply ?? null)),
+    .mutation(({ input, ctx }) => updateAgentRequestStatus(input.id, input.status, input.adminReply ?? null, ctx.user?.name ?? ctx.user?.email ?? "Admin")),
 
   // Admin: count unread requests (for red dot badge)
   countUnread: protectedProcedure.query(({ ctx }) => countUnreadAgentRequests(ctx.user?.openId ?? undefined)),
@@ -2763,7 +2763,23 @@ const scheduleChangeRouter = router({
       const req = requests.find(r => r.id === input.id);
       if (!req) throw new TRPCError({ code: "NOT_FOUND" });
       if (input.approve) {
-        // Update off days for both agents
+        // Fetch current off days BEFORE swapping — needed for auto-revert after swap week
+        const requesterAgent = await getWorkforceAgentByCode(req.requesterCode);
+        const targetAgent = await getWorkforceAgentByCode(req.targetCode);
+        const { getDb: _scDb } = await import("./db");
+        const { scheduleChangeRequests: _scTable } = await import("../drizzle/schema");
+        const { eq: _scEq } = await import("drizzle-orm");
+        const _db = await _scDb();
+        // Store original off days for revert
+        if (_db) {
+          await _db.update(_scTable).set({
+            requesterOrigOff1: requesterAgent?.offDay1 ?? null,
+            requesterOrigOff2: requesterAgent?.offDay2 ?? null,
+            targetOrigOff1: targetAgent?.offDay1 ?? null,
+            targetOrigOff2: targetAgent?.offDay2 ?? null,
+          }).where(_scEq(_scTable.id, input.id));
+        }
+        // Apply the ONE-TIME swap (temporary — will be reverted by hourly job after swap week)
         if (req.requesterNewOff1 !== null && req.requesterNewOff1 !== undefined) {
           await updateWorkforceAgent(req.requesterCode, { offDay1: req.requesterNewOff1, offDay2: req.requesterNewOff2 ?? undefined });
         }
@@ -6402,6 +6418,15 @@ const hrRouter = router({
       const existing = await db.select().from(exitProcess).where(eq(exitProcess.traineeCode, traineeCode)).limit(1);
       if (existing[0]) await db.update(exitProcess).set({ ...rest, updatedAt: now }).where(eq(exitProcess.traineeCode, traineeCode));
       else await db.insert(exitProcess).values({ traineeCode, ...rest, updatedAt: now });
+      // If lastWorkingDay is being set, sync effectiveAt in agentSeparations so auto-separation fires on the right date
+      if (input.lastWorkingDay) {
+        const { agentSeparations } = await import("../drizzle/schema");
+        const { isNull: _isNull2 } = await import("drizzle-orm");
+        const lwdMs = (() => { const d = new Date(input.lastWorkingDay); d.setHours(23,59,59,999); return d.getTime(); })();
+        await db.update(agentSeparations)
+          .set({ effectiveAt: lwdMs, lastWorkingDay: input.lastWorkingDay })
+          .where(and(eq(agentSeparations.agentCode, traineeCode), _isNull2(agentSeparations.appliedAt)));
+      }
       return { ok: true };
     }),
   // Archive: exit checklist must be complete → labels the linked candidate + closes out the agent.

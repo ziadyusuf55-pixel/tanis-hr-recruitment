@@ -906,13 +906,19 @@ export async function listAllAgentRequests() {
 export async function updateAgentRequestStatus(
   id: number,
   status: "pending" | "in_progress" | "resolved" | "rejected",
-  adminReply?: string | null
+  adminReply?: string | null,
+  resolvedBy?: string | null
 ) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
+  const isResolved = status === "resolved" || status === "rejected";
   await db
     .update(agentRequests)
-    .set({ status, ...(adminReply !== undefined ? { adminReply } : {}) })
+    .set({
+      status,
+      ...(adminReply !== undefined ? { adminReply } : {}),
+      ...(isResolved && resolvedBy ? { resolvedBy, resolvedAt: Date.now() } : {}),
+    })
     .where(eq(agentRequests.id, id));
 }
 
@@ -1613,13 +1619,23 @@ export async function approveResignationRequest(agentCode: string, lastWorkingDa
     .from(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode)).limit(1);
   if (!agent[0]) throw new Error("Agent not found");
   // Store separation record
+  // Set effectiveAt to end of lastWorkingDay (23:59:59) so processDueSeparations applies it on that date
+  const lwdMs = lastWorkingDay ? (() => { const d = new Date(lastWorkingDay); d.setHours(23,59,59,999); return d.getTime(); })() : now;
+  const alreadyDue = lwdMs <= now;
   await db.insert(agentSeparations).values({
     agentCode, type: "resignation_request", reason, lastWorkingDay,
-    requestedAt, effectiveAt: now, approvedBy: adminName, approvedAt: now, appliedAt: now,
+    requestedAt, effectiveAt: lwdMs, approvedBy: adminName, approvedAt: now,
+    appliedAt: alreadyDue ? now : null, // only mark as applied if date already passed
   });
-  // Mark agent as resigned — keep in workforceAgents for historical records
-  await db.update(workforceAgents).set({ agentStatus: "resigned", salarySettled: false, isActive: false, updatedAt: new Date() })
-    .where(eq(workforceAgents.traineeCode, agentCode));
+  // Only mark as resigned immediately if last working day is today or in the past
+  if (alreadyDue) {
+    await db.update(workforceAgents).set({ agentStatus: "resigned", salarySettled: false, isActive: false, updatedAt: new Date() })
+      .where(eq(workforceAgents.traineeCode, agentCode));
+  } else {
+    // Future date — mark as "inactive" to indicate pending separation, not yet resigned
+    await db.update(workforceAgents).set({ agentStatus: "inactive", isActive: true, updatedAt: new Date() })
+      .where(eq(workforceAgents.traineeCode, agentCode));
+  }
   // Remove only portal credentials — agent stays in DB indefinitely
   await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, agentCode));
   // Mark candidate as resigned — ID permanently retired, never reusable
@@ -1738,11 +1754,20 @@ export async function createScheduleChangeRequest(data: {
   requesterCode: string; targetCode: string;
   requesterNewOff1?: number; requesterNewOff2?: number;
   targetNewOff1?: number; targetNewOff2?: number; message?: string;
+  swapWeekOf?: string; // YYYY-MM-DD of Monday of the swap week
 }) {
   const db = await getDb();
   if (!db) return;
   const { scheduleChangeRequests } = await import("../drizzle/schema");
-  await db.insert(scheduleChangeRequests).values({ ...data, status: "pending_peer" });
+  // Default swapWeekOf to next Monday if not specified
+  const swapWeekOf = data.swapWeekOf ?? (() => {
+    const d = new Date();
+    const day = d.getDay();
+    const daysToMonday = day === 0 ? 1 : (8 - day) % 7 || 7;
+    d.setDate(d.getDate() + daysToMonday);
+    return d.toISOString().slice(0, 10);
+  })();
+  await db.insert(scheduleChangeRequests).values({ ...data, swapWeekOf, status: "pending_peer" });
 }
 
 export async function listScheduleChangeRequestsByCode(traineeCode: string) {

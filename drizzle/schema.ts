@@ -554,7 +554,14 @@ export const scheduleChangeRequests = mysqlTable("schedule_change_requests", {
   targetNewOff1: int("targetNewOff1"),
   targetNewOff2: int("targetNewOff2"),
   message: text("message"),
-  status: mysqlEnum("status", ["pending_peer", "pending_manager", "approved", "rejected"]).default("pending_peer").notNull(),
+  swapWeekOf: varchar("swapWeekOf", { length: 10 }),              // YYYY-MM-DD of the Monday of the swap week
+  // Original off days stored at approval time — used for auto-revert after swap week
+  requesterOrigOff1: int("requesterOrigOff1"),
+  requesterOrigOff2: int("requesterOrigOff2"),
+  targetOrigOff1: int("targetOrigOff1"),
+  targetOrigOff2: int("targetOrigOff2"),
+  revertedAt: bigint("revertedAt", { mode: "number" }),           // set when auto-revert fires
+  status: mysqlEnum("status", ["pending_peer", "pending_manager", "approved", "rejected", "reverted"]).default("pending_peer").notNull(),
   peerApprovedAt: bigint("peerApprovedAt", { mode: "number" }),
   managerApprovedAt: bigint("managerApprovedAt", { mode: "number" }),
   managerComment: text("managerComment"),
@@ -1156,6 +1163,7 @@ export type LeaveBalance = typeof leaveBalances.$inferSelect;
 export const leaveRequests = mysqlTable("leave_requests", {
   id: int("id").autoincrement().primaryKey(),
   traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
+  requesterName: varchar("requesterName", { length: 255 }),   // display name — set for staff/admin leave requests
   startDate: varchar("startDate", { length: 20 }).notNull(),  // YYYY-MM-DD
   endDate: varchar("endDate", { length: 20 }).notNull(),
   days: int("days").default(1).notNull(),

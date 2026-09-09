@@ -25,8 +25,8 @@ export default function LeaveManagement() {
   const ags = agents as Agent[];
   type DisplayAgent = { traineeCode: string; crdts: string | null; fullName: string | null; alias: string | null; agentStatus: string | null };
   const agentForCode = (code: string) => (allAgentsDisplay as DisplayAgent[]).find(x => x.traineeCode === code) || (ags as Agent[]).find(x => x.traineeCode === code) || null;
-  const agentName = (code: string) => {
-    if (code.startsWith("STAFF-")) return "Staff / Admin";
+  const agentName = (code: string, requesterName?: string | null) => {
+    if (code.startsWith("STAFF-")) return requesterName || "Staff / Admin";
     const a = agentForCode(code);
     return a ? ((a as Record<string,unknown>).alias as string || (a as Record<string,unknown>).fullName as string || code) : code;
   };
@@ -107,7 +107,7 @@ export default function LeaveManagement() {
               <tbody>
                 {pending.map(r => (
                   <tr key={r.id} className="border-b last:border-0">
-                    <td className="px-3 py-2 font-medium">{agentName(r.traineeCode)}{statusBadge(agentForCode(r.traineeCode)?.agentStatus as string | null)} <span className="text-xs text-muted-foreground">({r.traineeCode})</span></td>
+                    <td className="px-3 py-2 font-medium">{agentName(r.traineeCode, (r as Record<string,unknown>).requesterName as string | null)}{statusBadge(agentForCode(r.traineeCode)?.agentStatus as string | null)} <span className="text-xs text-muted-foreground">({r.traineeCode})</span></td>
                     <td className="px-3 py-2">{r.startDate} → {r.endDate}</td>
                     <td className="px-3 py-2">{r.days}</td>
                     <td className="px-3 py-2 text-muted-foreground max-w-[220px] truncate">{r.reason || "—"}</td>
@@ -139,7 +139,7 @@ export default function LeaveManagement() {
                 {decided.map(r => (
                   <p key={r.id} className="text-xs flex items-center gap-2">
                     <Badge variant={r.status === "approved" ? "outline" : "destructive"} className="capitalize text-[10px]">{r.status}</Badge>
-                    <span className="font-medium">{agentName(r.traineeCode)}</span> {r.startDate} → {r.endDate} ({r.days}d)
+                    <span className="font-medium">{agentName(r.traineeCode, (r as Record<string,unknown>).requesterName as string | null)}</span> {r.startDate} → {r.endDate} ({r.days}d)
                     {r.leaveType && <span className="text-muted-foreground">· {r.leaveType === "casual" ? "عارضة" : "اعتيادية"}</span>}
                   </p>
                 ))}

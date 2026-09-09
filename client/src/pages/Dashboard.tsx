@@ -83,6 +83,20 @@ export default function Dashboard() {
     return ms > 0 && ms < thirtyDaysFromNow;
   }).map(a => String(a.traineeCode ?? ""));
   const expiringContracts = expiringContractsList.length;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const expiredContractsList = (allAgents as Array<Record<string,unknown>>).filter(a => {
+    if (a.agentStatus !== "active") return false;
+    const end = a.contractEndDate as string | null;
+    if (!end) return false;
+    return end <= today;
+  }).map(a => String(a.traineeCode ?? ""));
+  const expiredContracts = expiredContractsList.length;
+
+  const onProbationList = (allAgents as Array<Record<string,unknown>>).filter(a =>
+    a.agentStatus === "active" && a.isOnProbation
+  ).map(a => String(a.traineeCode ?? ""));
+  const onProbationCount = onProbationList.length;
   const { data: pendingLeave = [] } = trpc.leave.listRequests.useQuery({ status: "pending" }, { refetchInterval: 120000 });
   const { data: bdDue = [] } = trpc.bd.dueReminders.useQuery(undefined, { refetchInterval: 120000 });
   const { data: bdDeals = [] } = trpc.bd.listDeals.useQuery({});
@@ -102,6 +116,8 @@ export default function Dashboard() {
     { count: unsignedContracts, label: "Contracts not signed", sub: "Active agents without signed contract", icon: AlertCircle, tint: "red", path: "/documents" },
     { count: expiringIds, label: "National IDs expiring soon", sub: "Within the next 30 days", icon: AlertCircle, tint: "red", path: `/operations?highlight=${encodeURIComponent(expiringIdsList.join(","))}` },
     { count: expiringContracts, label: "Contracts ending soon", sub: "Within the next 30 days", icon: AlertCircle, tint: "amber", path: `/operations?highlight=${encodeURIComponent(expiringContractsList.join(","))}` },
+    { count: expiredContracts, label: "Contracts already expired", sub: "Active agents with expired contracts", icon: AlertCircle, tint: "red", path: `/operations?highlight=${encodeURIComponent(expiredContractsList.join(","))}` },
+    { count: onProbationCount, label: "Agents on probation", sub: "Probation period active", icon: Users, tint: "amber", path: `/operations?highlight=${encodeURIComponent(onProbationList.join(","))}` },
   ].filter(a => a.count > 0 && canAccessPath(role, "/operations"));
 
   const funnelData = kpis
