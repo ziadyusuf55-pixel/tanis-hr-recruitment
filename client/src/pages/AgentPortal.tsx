@@ -276,14 +276,6 @@ export default function AgentPortal() {
 
   if (!agent) return null;
 
-  // Mandatory profile: if incomplete, force profile tab open and show banner
-  // Agent can still navigate but sees a persistent warning until completed
-  const [profileBannerDismissed, setProfileBannerDismissed] = useState(false);
-  if (_wfProfile !== undefined && !_profileComplete && activeTab !== "profile" && !profileBannerDismissed) {
-    // Auto-navigate to profile tab if not complete
-    // We don't block — we just redirect and show banner
-  }
-
   // Primary nav (shown prominently) — 6 tabs max
   const primaryNavItems: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: "profile",     label: "Profile",      icon: <User className="w-4 h-4" /> },
