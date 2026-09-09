@@ -1,4 +1,5 @@
 import { COOKIE_NAME } from "@shared/const";
+import { and } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
