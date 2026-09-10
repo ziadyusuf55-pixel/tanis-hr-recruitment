@@ -1195,3 +1195,6 @@
 
 ## Hook Fix Archive
 - [x] Extract `tanis_hook_fix.zip`, commit and push the supplied changes, run `npx tsc --noEmit`, and prepare a publishable checkpoint
+
+## Schedule Swap Request Metadata Migration
+- [x] Apply `drizzle/0009_schedule_swap_request_metadata.sql` to production, verify the schema, and prepare a publishable checkpoint
