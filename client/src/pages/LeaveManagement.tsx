@@ -240,7 +240,7 @@ function StaffLeaveSection() {
         <div key={String(r.id)} className="rounded-xl border p-4 space-y-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="font-semibold text-sm">Staff / Admin</p>
+              <p className="font-semibold text-sm">{(r as Record<string,unknown>).requesterName ? String((r as Record<string,unknown>).requesterName) : "Staff / Admin"}</p>
               <p className="text-xs text-muted-foreground">{fmtDate(r.startDate)} → {fmtDate(r.endDate)} · {String(r.days ?? 1)} day(s)</p>
               {r.reason ? <p className="text-xs text-muted-foreground mt-0.5">"{String(r.reason)}"</p> : null}
             </div>

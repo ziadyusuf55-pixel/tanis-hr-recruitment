@@ -1828,27 +1828,46 @@ function ReferralTab({ referrerCandidateId, theme }: { referrerCandidateId: numb
           subtitle="Know someone great for outbound sales? Refer them to Tanis."
           theme={theme}
         />
-      ) : (
-        <div className="space-y-3">
-          {(referrals as ReferralItem[]).map((ref) => {
-            const st = REFERRAL_STATUS[ref.status] ?? REFERRAL_STATUS.pending;
-            return (
-              <div key={ref.id} className="rounded-xl p-5" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="font-semibold text-sm" style={{ color: theme.text }}>{ref.refereeName}</p>
-                    <p className="text-xs mt-0.5" style={{ color: theme.textFaint }}>
-                      {ref.refereePhone} · Referred {new Date(ref.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                    </p>
-                    {ref.refereeNote && <p className="text-xs mt-1 italic" style={{ color: theme.textFaint }}>"{ref.refereeNote}"</p>}
-                  </div>
-                  <span className={`text-xs font-medium px-2.5 py-1 rounded-full shrink-0 ${st.className}`}>{st.label}</span>
-                </div>
+      ) : (() => {
+        const priorityOrder: Record<string, number> = { pending: 0, contacted: 1, hired: 2, rejected: 3 };
+        const sorted = [...(referrals as ReferralItem[])].sort((a, b) =>
+          (priorityOrder[a.status] ?? 9) - (priorityOrder[b.status] ?? 9)
+        );
+        const pendingCount = sorted.filter(r => r.status === "pending").length;
+        return (
+          <div className="space-y-3">
+            {pendingCount > 0 && (
+              <div className="rounded-xl px-3 py-2 text-xs font-medium" style={{ background: `${BRAND}15`, color: BRAND }}>
+                ⚡ {pendingCount} referral{pendingCount > 1 ? "s" : ""} waiting to be contacted
               </div>
-            );
-          })}
-        </div>
-      )}
+            )}
+            {sorted.map((ref) => {
+              const st = REFERRAL_STATUS[ref.status] ?? REFERRAL_STATUS.pending;
+              const isPending = ref.status === "pending";
+              return (
+                <div key={ref.id} className="rounded-xl p-4" style={{
+                  background: theme.cardBg,
+                  border: `1.5px solid ${isPending ? BRAND + "40" : theme.cardBorder}`
+                }}>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <p className="font-semibold text-sm" style={{ color: theme.text }}>{ref.refereeName}</p>
+                        {isPending && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: `${BRAND}20`, color: BRAND }}>Not contacted yet</span>}
+                      </div>
+                      <p className="text-xs mt-0.5" style={{ color: theme.textFaint }}>
+                        📞 {ref.refereePhone} · Referred {new Date(ref.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                      </p>
+                      {ref.refereeNote && <p className="text-xs mt-1 italic" style={{ color: theme.textFaint }}>"{ref.refereeNote}"</p>}
+                    </div>
+                    <span className={`text-xs font-medium px-2.5 py-1 rounded-full shrink-0 ${st.className}`}>{st.label}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      })()}
     </div>
   );
 }

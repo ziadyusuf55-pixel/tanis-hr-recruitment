@@ -1946,6 +1946,8 @@ export async function upsertPayrollFromExcel(rows: Array<{
         agentCode: row.agentCode,
         month: row.month,
         candidateId,
+        // If agentName not provided (CRDTS-only push), look up alias from workforce
+        alias: row.agentName || aliasByCrdts.get(row.agentCode) || row.agentCode,
         baseSalary: row.baseSalary != null ? String(row.baseSalary) : null,
         workingHours: row.workingHours != null ? String(row.workingHours) : null,
         overtimeHours: row.overtimeHours != null ? String(row.overtimeHours) : null,

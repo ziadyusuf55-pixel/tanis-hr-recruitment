@@ -83,10 +83,13 @@ export default function OTLog() {
       </div>
 
       <div className="flex flex-wrap gap-2 items-center">
-        <select className="border rounded-md px-2 py-1.5 text-sm bg-background" value={month} onChange={e => setMonth(e.target.value)}>
-          {months.length === 0 && <option value={month}>{mLabel(month)}</option>}
-          {months.map(m => <option key={m} value={m}>{mLabel(m)}</option>)}
-        </select>
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-medium text-muted-foreground">Pay Cycle:</label>
+          <select className="border rounded-md px-2 py-1.5 text-sm bg-background" value={month} onChange={e => setMonth(e.target.value)}>
+            {months.length === 0 && <option value={month}>{mLabel(month)}</option>}
+            {months.map(m => <option key={m} value={m}>{mLabel(m)}</option>)}
+          </select>
+        </div>
         <div className="relative flex-1 min-w-[200px] max-w-xs">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
           <Input className="pl-8 h-9" placeholder="Agent or CRDTS…" value={q} onChange={e => setQ(e.target.value)} />

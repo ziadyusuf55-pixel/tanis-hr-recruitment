@@ -314,6 +314,8 @@ export default function PayrollPage() {
             crdts: String(get("CRDTS") ?? "").trim(),
             alias: String(get("Alias") ?? "").trim(),
             agentCode: (String(get("Agent Code") ?? "").trim() || String(get("CRDTS") ?? "").trim()),
+            // If alias is missing, look it up from workforce list by CRDTS
+            agentName: String(get("Alias") ?? get("alias") ?? get("Agent Name") ?? get("agent name") ?? "").trim() || undefined,
             workingHours: num(get("Working Hours")),
             baseSalary: num(get("Base Salary (EGP)")),
             ot1x5Hours: num(get("OT 1.5x Hours")),

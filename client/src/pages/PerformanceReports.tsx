@@ -121,7 +121,7 @@ function fmtYM(m: string) {
 export default function PerformanceReports() {
   const [, navigate] = useLocation();
   const [search, setSearch] = useState("");
-  const [sortBy, setSortBy] = useState<"revenue" | "calls" | "revPerHr" | "profit">("revenue");
+  const [sortBy, setSortBy] = useState<"revenue" | "calls" | "revPerHr" | "profit">("profit");
   const [viewMode, setViewMode] = useState<"cycle" | "month" | "all" | "compare">("month");
   const [cycleKey, setCycleKey] = useState<string>("");
   const [monthKey, setMonthKey] = useState<string>(() => new Date().toISOString().slice(0, 7));
@@ -513,9 +513,9 @@ export default function PerformanceReports() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide w-8">#</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-muted-foreground uppercase tracking-wide">Agent</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide">Revenue</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide">Profit</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide hidden md:table-cell">Login Hrs</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide hidden md:table-cell">Rev/Hr</th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide hidden lg:table-cell">Profit</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-muted-foreground uppercase tracking-wide hidden lg:table-cell">Days</th>
                 <th className="px-4 py-3 w-8"></th>
               </tr>
@@ -539,6 +539,7 @@ export default function PerformanceReports() {
                         {s.teamLeader && <p className="text-[10px] text-muted-foreground">TL: {s.teamLeader}</p>}
                       </td>
                       <td className="px-4 py-3 text-right font-semibold text-xs text-emerald-700">{fmt$(s.totalRevenue)}</td>
+                      <td className="px-4 py-3 text-right text-xs font-semibold" style={{ color: s.totalProfit >= 0 ? "#16a34a" : "#ef4444" }}>{fmt$(s.totalProfit)}</td>
                       <td className="px-4 py-3 text-right text-xs text-muted-foreground hidden md:table-cell">{fmtHr(s.totalLoginHours)}</td>
                       <td className="px-4 py-3 text-right hidden md:table-cell">
                         <div className="flex items-center justify-end gap-1">
@@ -546,7 +547,6 @@ export default function PerformanceReports() {
                           <TrendIcon className={`h-3 w-3 ${trendColor}`} />
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-right text-xs text-muted-foreground hidden lg:table-cell">{fmt$(s.totalProfit)}</td>
                       <td className="px-4 py-3 text-right text-xs text-muted-foreground hidden lg:table-cell">{s.days}</td>
                       <td className="px-4 py-3 text-right">
                         {isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
