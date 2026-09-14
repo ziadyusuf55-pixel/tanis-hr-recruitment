@@ -1198,3 +1198,6 @@
 
 ## Schedule Swap Request Metadata Migration
 - [x] Apply `drizzle/0009_schedule_swap_request_metadata.sql` to production, verify the schema, and prepare a publishable checkpoint
+
+## Latest Synchronization Validation
+- [ ] Pull latest GitHub state without a database migration, run `npx tsc --noEmit`, and prepare a publishable checkpoint
