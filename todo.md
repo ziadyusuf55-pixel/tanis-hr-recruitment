@@ -1201,3 +1201,6 @@
 
 ## Latest Synchronization Validation
 - [ ] Pull latest GitHub state without a database migration, run `npx tsc --noEmit`, and prepare a publishable checkpoint
+
+## Database Fix Archive
+- [x] Overlay `tanis_db_fix.zip` on checkpoint `927da62b`, commit and push the fix, run `npx tsc --noEmit`, and prepare a publishable checkpoint
