@@ -1932,11 +1932,12 @@ export async function upsertPayrollFromExcel(rows: Array<{
   const uploadedAt = Date.now();
   const results: Array<{ agentCode: string; status: "ok" | "not_found" }> = [];
 
-  // Batch-fetch all candidateIds in one query (avoid N+1)
+  // Batch-fetch all candidateIds AND aliases in one query (avoid N+1)
   const codes = Array.from(new Set(rows.map(r => r.agentCode)));
-  const agentRows = await db.select({ traineeCode: workforceAgents.traineeCode, candidateId: workforceAgents.candidateId })
+  const agentRows = await db.select({ traineeCode: workforceAgents.traineeCode, candidateId: workforceAgents.candidateId, alias: workforceAgents.alias, fullName: workforceAgents.fullName })
     .from(workforceAgents).where(inArray(workforceAgents.traineeCode, codes));
   const candidateIdMap = new Map(agentRows.map(a => [a.traineeCode, a.candidateId ?? 0]));
+  const aliasByCrdts = new Map(agentRows.map(a => [a.traineeCode, a.alias || a.fullName || a.traineeCode]));
 
   // Wrap all inserts/updates in a transaction — if any row fails, nothing is committed
   await db.transaction(async (tx) => {
