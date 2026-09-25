@@ -131,6 +131,7 @@ export default function PerformanceReports() {
   const [compareB, setCompareB] = useState<string>(() => new Date().toISOString().slice(0,7));
   const [compareType, setCompareType] = useState<"month" | "cycle">("month");
   const [expandedCrdts, setExpandedCrdts] = useState<Set<string>>(new Set());
+  const [perfClientFilter, setPerfClientFilter] = useState<number | "all">("all");
 
   const { data: cycleInfo } = trpc.cycleTracker.getCurrentCycle.useQuery();
   const currentCycle = cycleInfo?.cycleKey ?? "";
@@ -217,14 +218,32 @@ export default function PerformanceReports() {
   const logouts = rawLogouts as LogoutRow[];
   const logoutCountByCrdts = logouts.reduce((acc, l) => { acc[l.crdts] = (acc[l.crdts] ?? 0) + 1; return acc; }, {} as Record<string, number>);
 
+  // Client filter support
+  const { data: wfAgentsList = [] } = trpc.workforce.list.useQuery({});
+  const { data: campaignsList = [] } = trpc.campaigns.list.useQuery();
+  const { data: clientsList = [] } = trpc.clients.list.useQuery();
+
   const stats = rawStats as AgentStat[];
   const uniqueTLs = Array.from(new Set(stats.map(s => s.teamLeader).filter(Boolean) as string[])).sort();
+
+  // Build crdts → clientId lookup
+  type PerfWfAgent = { crdts?: string | null; campaignId?: number | null };
+  type PerfCampaign = { id: number; clientId?: number | null };
+  type PerfClient = { id: number; name: string; shortCode: string; colorHex: string; isActive: boolean };
+  const camClientMap = new Map<number, number | null | undefined>(
+    (campaignsList as PerfCampaign[]).map(c => [c.id, c.clientId])
+  );
+  const crdtsToClientId = new Map<string, number | null | undefined>();
+  (wfAgentsList as PerfWfAgent[]).forEach(a => {
+    if (a.crdts) crdtsToClientId.set(a.crdts, a.campaignId != null ? camClientMap.get(a.campaignId) : null);
+  });
 
   const filtered = stats
     .filter(s => {
       const matchesSearch = !search || [s.crdts, s.alias ?? "", s.agentCode ?? ""].some(v => v.toLowerCase().includes(search.toLowerCase()));
       const matchesTL = tlFilter === "all" || s.teamLeader === tlFilter;
-      return matchesSearch && matchesTL;
+      const matchesClient = perfClientFilter === "all" || crdtsToClientId.get(s.crdts) === perfClientFilter;
+      return matchesSearch && matchesTL && matchesClient;
     })
     .sort((a, b) => {
       if (sortBy === "revenue") return b.totalRevenue - a.totalRevenue;
@@ -355,6 +374,29 @@ export default function PerformanceReports() {
             </Card>
           </div>
         </>
+      )}
+
+      {(clientsList as PerfClient[]).filter(cl => cl.isActive).length > 1 && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          <button
+            onClick={() => setPerfClientFilter("all")}
+            className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${perfClientFilter === "all" ? "bg-foreground text-background border-foreground" : "text-muted-foreground border-border hover:border-foreground/50"}`}
+          >
+            All Clients
+          </button>
+          {(clientsList as PerfClient[]).filter(cl => cl.isActive).map(cl => (
+            <button
+              key={cl.id}
+              onClick={() => setPerfClientFilter(cl.id)}
+              className="px-3 py-1 rounded-full text-xs font-medium border transition-colors"
+              style={perfClientFilter === cl.id
+                ? { backgroundColor: cl.colorHex, borderColor: cl.colorHex, color: "#fff" }
+                : {}}
+            >
+              {cl.name}
+            </button>
+          ))}
+        </div>
       )}
 
       <div className="flex flex-wrap gap-2 items-center">

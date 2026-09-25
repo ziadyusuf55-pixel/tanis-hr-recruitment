@@ -31,9 +31,12 @@ import CommissionAdmin from "./pages/CommissionAdmin";
 import BusinessDevelopment from "./pages/BusinessDevelopment";
 import AgentProfileHR from "./pages/AgentProfileHR";
 import LeaveManagement from "./pages/LeaveManagement";
+import Contracts from "./pages/Contracts";
+import Advances from "./pages/Advances";
 import OTLog from "./pages/OTLog";
 import MyProfile from "./pages/MyProfile";
 import Academy from "./pages/Academy";
+import Clients from "./pages/Clients";
 import { trpc as trpcClient } from "@/lib/trpc";
 import ClientLogoutsAdmin from "./pages/ClientLogoutsAdmin";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
@@ -104,6 +107,8 @@ function Router() {
       <Route path="/commission" component={() => <ProtectedRoute component={CommissionAdmin} />} />
       <Route path="/business-development" component={() => <ProtectedRoute component={BusinessDevelopment} />} />
       <Route path="/agent-profiles" component={() => <ProtectedRoute component={AgentProfileHR} />} />
+      <Route path="/contracts" component={() => <ProtectedRoute component={Contracts} />} />
+      <Route path="/advances"  component={() => <ProtectedRoute component={Advances} />} />
       <Route path="/leave-management" component={() => <ProtectedRoute component={LeaveManagement} />} />
       <Route path="/ot" component={() => <ProtectedRoute component={OTLog} />} />
       <Route path="/my-profile" component={() => <ProtectedRoute component={MyProfile} />} />
@@ -118,6 +123,7 @@ function Router() {
       <Route path="/performance-reports" component={() => <ProtectedRoute component={PerformanceReports} />} />
       <Route path="/coaching-admin" component={() => <ProtectedRoute component={CoachingAdmin} />} />
       <Route path="/client-logouts" component={() => <ProtectedRoute component={ClientLogoutsAdmin} />} />
+      <Route path="/clients" component={() => <ProtectedRoute component={Clients} />} />
       <Route path="/requests" component={() => <ProtectedRoute component={Requests} />} />
       <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
       <Route path="/admin-invite" component={AdminInviteAccept} />

@@ -1218,14 +1218,14 @@ export async function getCampaignById(id: number) {
   return rows[0] ?? null;
 }
 
-export async function createCampaign(data: { name: string; minHeadcount: number; workDays: "all" | "weekdays"; notes?: string }) {
+export async function createCampaign(data: { name: string; clientId?: number | null; minHeadcount: number; workDays: "all" | "weekdays"; notes?: string }) {
   const db = await getDb();
   if (!db) return;
   const { campaigns } = await import("../drizzle/schema");
   await db.insert(campaigns).values(data);
 }
 
-export async function updateCampaign(id: number, data: Partial<{ name: string; minHeadcount: number; workDays: "all" | "weekdays"; notes: string }>) {
+export async function updateCampaign(id: number, data: Partial<{ name: string; clientId: number | null; minHeadcount: number; workDays: "all" | "weekdays"; notes: string }>) {
   const db = await getDb();
   if (!db) return;
   const { campaigns } = await import("../drizzle/schema");
@@ -1237,6 +1237,40 @@ export async function deleteCampaign(id: number) {
   if (!db) return;
   const { campaigns } = await import("../drizzle/schema");
   await db.delete(campaigns).where(eq(campaigns.id, id));
+}
+
+// ─── Clients ──────────────────────────────────────────────────────────────────
+
+export async function listClients() {
+  const db = await getDb();
+  if (!db) return [];
+  const { clients } = await import("../drizzle/schema");
+  return db.select().from(clients).orderBy(clients.name);
+}
+
+export async function createClient(data: { name: string; shortCode: string; colorHex?: string }) {
+  const db = await getDb();
+  if (!db) return;
+  const { clients } = await import("../drizzle/schema");
+  await db.insert(clients).values({
+    name: data.name,
+    shortCode: data.shortCode,
+    colorHex: data.colorHex ?? "#6366f1",
+  });
+}
+
+export async function updateClient(id: number, data: Partial<{ name: string; shortCode: string; colorHex: string; isActive: boolean }>) {
+  const db = await getDb();
+  if (!db) return;
+  const { clients } = await import("../drizzle/schema");
+  await db.update(clients).set(data).where(eq(clients.id, id));
+}
+
+export async function assignCampaignToClient(campaignId: number, clientId: number | null) {
+  const db = await getDb();
+  if (!db) return;
+  const { campaigns } = await import("../drizzle/schema");
+  await db.update(campaigns).set({ clientId }).where(eq(campaigns.id, campaignId));
 }
 
 // ─── Workforce Agents ─────────────────────────────────────────────────────────
@@ -3159,4 +3193,193 @@ export async function processDueSeparations(): Promise<number> {
     count++;
   }
   return count;
+}
+
+// ─── Agent Contracts ──────────────────────────────────────────────────────────
+
+export async function upsertAgentContract(data: {
+  traineeCode: string;
+  contractType: "permanent" | "fixed_term" | "freelance";
+  startDate?: string | null;
+  endDate?: string | null;
+  probationEndDate?: string | null;
+  isMedicallyInsured: boolean;
+  isSociallyInsured: boolean;
+  notes?: string | null;
+  actorName: string;
+}) {
+  const db = await getDb();
+  if (!db) return;
+  const { agentContracts } = await import("../drizzle/schema");
+  const now = Date.now();
+  const existing = await db.select({ id: agentContracts.id })
+    .from(agentContracts)
+    .where(eq(agentContracts.traineeCode, data.traineeCode))
+    .limit(1);
+  if (existing[0]) {
+    await db.update(agentContracts).set({
+      contractType: data.contractType,
+      startDate: data.startDate ?? null,
+      endDate: data.endDate ?? null,
+      probationEndDate: data.probationEndDate ?? null,
+      isMedicallyInsured: data.isMedicallyInsured,
+      isSociallyInsured: data.isSociallyInsured,
+      notes: data.notes ?? null,
+      updatedBy: data.actorName,
+      updatedAt: now,
+    }).where(eq(agentContracts.traineeCode, data.traineeCode));
+  } else {
+    await db.insert(agentContracts).values({
+      traineeCode: data.traineeCode,
+      contractType: data.contractType,
+      startDate: data.startDate ?? null,
+      endDate: data.endDate ?? null,
+      probationEndDate: data.probationEndDate ?? null,
+      isMedicallyInsured: data.isMedicallyInsured,
+      isSociallyInsured: data.isSociallyInsured,
+      notes: data.notes ?? null,
+      createdBy: data.actorName,
+      updatedBy: data.actorName,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+}
+
+export async function getContractByCode(traineeCode: string) {
+  const db = await getDb();
+  if (!db) return null;
+  const { agentContracts } = await import("../drizzle/schema");
+  const rows = await db.select().from(agentContracts)
+    .where(eq(agentContracts.traineeCode, traineeCode))
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+export async function listAllContracts() {
+  const db = await getDb();
+  if (!db) return [];
+  const { agentContracts, workforceAgents } = await import("../drizzle/schema");
+  return db.select({
+    id: agentContracts.id,
+    traineeCode: agentContracts.traineeCode,
+    contractType: agentContracts.contractType,
+    startDate: agentContracts.startDate,
+    endDate: agentContracts.endDate,
+    probationEndDate: agentContracts.probationEndDate,
+    isMedicallyInsured: agentContracts.isMedicallyInsured,
+    isSociallyInsured: agentContracts.isSociallyInsured,
+    notes: agentContracts.notes,
+    createdBy: agentContracts.createdBy,
+    updatedBy: agentContracts.updatedBy,
+    updatedAt: agentContracts.updatedAt,
+    alias: workforceAgents.alias,
+    fullName: workforceAgents.fullName,
+    campaignId: workforceAgents.campaignId,
+    agentStatus: workforceAgents.agentStatus,
+  }).from(agentContracts)
+    .leftJoin(workforceAgents, eq(agentContracts.traineeCode, workforceAgents.traineeCode));
+}
+
+// ─── Agent Advances (سلفة) ───────────────────────────────────────────────────
+
+export async function createAdvance(input: {
+  traineeCode: string;
+  amountEgp: string;
+  issuedDate: string;
+  reason?: string | null;
+  deductCycle?: string | null;
+  notes?: string | null;
+  createdBy?: string | null;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const { agentAdvances } = await import("../drizzle/schema");
+  const now = Date.now();
+  await db.insert(agentAdvances).values({
+    traineeCode: input.traineeCode,
+    amountEgp:   input.amountEgp,
+    issuedDate:  input.issuedDate,
+    reason:      input.reason ?? null,
+    status:      "pending",
+    deductCycle: input.deductCycle ?? null,
+    notes:       input.notes ?? null,
+    createdBy:   input.createdBy ?? null,
+    createdAt:   now,
+    updatedAt:   now,
+  });
+}
+
+export async function listAdvances(traineeCode?: string) {
+  const db = await getDb();
+  if (!db) return [];
+  const { agentAdvances, workforceAgents } = await import("../drizzle/schema");
+  const { eq, desc } = await import("drizzle-orm");
+  const query = db
+    .select({
+      id:          agentAdvances.id,
+      traineeCode: agentAdvances.traineeCode,
+      amountEgp:   agentAdvances.amountEgp,
+      issuedDate:  agentAdvances.issuedDate,
+      reason:      agentAdvances.reason,
+      status:      agentAdvances.status,
+      deductCycle: agentAdvances.deductCycle,
+      deductedAt:  agentAdvances.deductedAt,
+      notes:       agentAdvances.notes,
+      createdBy:   agentAdvances.createdBy,
+      createdAt:   agentAdvances.createdAt,
+      alias:       workforceAgents.alias,
+      fullName:    workforceAgents.fullName,
+    })
+    .from(agentAdvances)
+    .leftJoin(workforceAgents, eq(agentAdvances.traineeCode, workforceAgents.traineeCode))
+    .orderBy(desc(agentAdvances.createdAt));
+  if (traineeCode) {
+    return query.where(eq(agentAdvances.traineeCode, traineeCode));
+  }
+  return query;
+}
+
+export async function deductAdvance(id: number, deductCycle: string) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const { agentAdvances } = await import("../drizzle/schema");
+  const { eq } = await import("drizzle-orm");
+  await db.update(agentAdvances)
+    .set({ status: "deducted", deductCycle, deductedAt: Date.now(), updatedAt: Date.now() })
+    .where(eq(agentAdvances.id, id));
+}
+
+export async function cancelAdvance(id: number) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const { agentAdvances } = await import("../drizzle/schema");
+  const { eq } = await import("drizzle-orm");
+  await db.update(agentAdvances)
+    .set({ status: "cancelled", updatedAt: Date.now() })
+    .where(eq(agentAdvances.id, id));
+}
+
+// ─── Contracts (existing) ─────────────────────────────────────────────────────
+
+/** Active workforce agents that do NOT yet have a contract row. */
+export async function listAgentsWithoutContracts() {
+  const db = await getDb();
+  if (!db) return [];
+  const { workforceAgents, agentContracts } = await import("../drizzle/schema");
+  const { notInArray } = await import("drizzle-orm");
+  const contracted = await db.select({ tc: agentContracts.traineeCode }).from(agentContracts);
+  const contractedCodes = contracted.map(r => r.tc);
+  const cols = {
+    traineeCode: workforceAgents.traineeCode,
+    alias: workforceAgents.alias,
+    fullName: workforceAgents.fullName,
+    campaignId: workforceAgents.campaignId,
+  };
+  if (contractedCodes.length === 0) {
+    return db.select(cols).from(workforceAgents).where(eq(workforceAgents.agentStatus, "active"));
+  }
+  return db.select(cols).from(workforceAgents).where(
+    and(eq(workforceAgents.agentStatus, "active"), notInArray(workforceAgents.traineeCode, contractedCodes))
+  );
 }

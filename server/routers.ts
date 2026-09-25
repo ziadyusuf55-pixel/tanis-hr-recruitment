@@ -93,6 +93,11 @@ import {
   getNotificationsByCandidate,
   markNotificationsRead,
   countUnreadNotifications,
+  // Clients
+  listClients,
+  createClient,
+  updateClient,
+  assignCampaignToClient,
   // Campaigns
   listCampaigns,
   getCampaignById,
@@ -1641,6 +1646,7 @@ const campaignsRouter = router({
   create: protectedProcedure
     .input(z.object({
       name: z.string().min(1),
+      clientId: z.number().int().positive().nullable().optional(),
       minHeadcount: z.number().int().min(1),
       workDays: z.enum(["all", "weekdays"]),
       notes: z.string().optional(),
@@ -1651,6 +1657,7 @@ const campaignsRouter = router({
     .input(z.object({
       id: z.number(),
       name: z.string().min(1).optional(),
+      clientId: z.number().int().positive().nullable().optional(),
       minHeadcount: z.number().int().min(1).optional(),
       workDays: z.enum(["all", "weekdays"]).optional(),
       notes: z.string().optional(),
@@ -6878,8 +6885,19 @@ const bdRouter = router({
     const db = await getDb();
     if (!db) return [];
     const { bdDeals } = await import("../drizzle/schema");
-    const { notInArray } = await import("drizzle-orm");
-    const deals = await db.select().from(bdDeals).where(notInArray(bdDeals.stage, ["closed_won", "closed_lost"]));
+    const { and, notInArray, isNull, or, sql } = await import("drizzle-orm");
+    // Exclude ignored deals. An ignore is "active" when coldIgnoredAt is set AND
+    // no newer activity has been logged since (lastContactedAt > coldIgnoredAt resets it).
+    const deals = await db.select().from(bdDeals).where(
+      and(
+        notInArray(bdDeals.stage, ["closed_won", "closed_lost"]),
+        or(
+          isNull(bdDeals.coldIgnoredAt),
+          // New activity logged after the ignore → deal can go cold again
+          sql`${bdDeals.lastContactedAt} > ${bdDeals.coldIgnoredAt}`
+        )
+      )
+    );
     const cutoff = Date.now() - 14 * 24 * 60 * 60 * 1000;
     return deals
       .map(d => {
@@ -6889,6 +6907,21 @@ const bdRouter = router({
       .filter(d => d.lastTouch < cutoff)
       .sort((a, b) => a.lastTouch - b.lastTouch);
   }),
+
+  /** Permanently ignore a deal's "going cold" alert. Resets automatically if new activity is logged. */
+  ignoreStale: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { bdDeals } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      await db.update(bdDeals)
+        .set({ coldIgnoredAt: Date.now(), updatedAt: Date.now() })
+        .where(eq(bdDeals.id, input.id));
+      return { ok: true } as const;
+    }),
   /** Full company timeline: its own notes + every activity on its deals. */
   listCompanyActivity: publicProcedure
     .input(z.object({ companyId: z.number() }))
@@ -7590,6 +7623,159 @@ const sessionRouter = router({
     }),
 });
 
+// ─── Clients Router ───────────────────────────────────────────────────────────
+const clientsRouter = router({
+  list: protectedProcedure.query(() => listClients()),
+
+  create: protectedProcedure
+    .input(z.object({
+      name: z.string().min(1),
+      shortCode: z.string().min(1).max(20),
+      colorHex: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+    }))
+    .mutation(({ input }) => createClient(input)),
+
+  update: protectedProcedure
+    .input(z.object({
+      id: z.number().int().positive(),
+      name: z.string().min(1).optional(),
+      shortCode: z.string().min(1).max(20).optional(),
+      colorHex: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+      isActive: z.boolean().optional(),
+    }))
+    .mutation(({ input }) => { const { id, ...rest } = input; return updateClient(id, rest); }),
+
+  assignCampaign: protectedProcedure
+    .input(z.object({
+      campaignId: z.number().int().positive(),
+      clientId: z.number().int().positive().nullable(),
+    }))
+    .mutation(({ input }) => assignCampaignToClient(input.campaignId, input.clientId)),
+});
+
+// ─── Salary Advances (سلفة) ───────────────────────────────────────────────────
+const advancesRouter = router({
+  /** HR: list all advances (optional filter by traineeCode). */
+  list: protectedProcedure
+    .input(z.object({ traineeCode: z.string().optional() }))
+    .query(async ({ input }) => {
+      const { listAdvances } = await import("./db");
+      return listAdvances(input.traineeCode);
+    }),
+
+  /** Agent portal: list own advances (reads agent JWT cookie). */
+  listMine: publicProcedure
+    .query(async ({ ctx }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) return [];
+      let traineeCode = "";
+      try {
+        const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+        if (payload.type !== "agent") return [];
+        traineeCode = payload.traineeCode;
+      } catch { return []; }
+      const { listAdvances } = await import("./db");
+      return listAdvances(traineeCode);
+    }),
+
+  /** HR: create a new salary advance. */
+  create: protectedProcedure
+    .input(z.object({
+      traineeCode: z.string().min(1),
+      amountEgp:   z.string().regex(/^\d+(\.\d{1,2})?$/, "Must be a valid amount"),
+      issuedDate:  z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Must be YYYY-MM-DD"),
+      reason:      z.string().max(500).nullable().optional(),
+      deductCycle: z.string().regex(/^\d{4}-\d{2}$/).nullable().optional(),
+      notes:       z.string().max(2000).nullable().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { createAdvance } = await import("./db");
+      await createAdvance({ ...input, createdBy: ctx.user?.name ?? ctx.user?.email ?? "unknown" });
+      return { ok: true } as const;
+    }),
+
+  /** HR: mark an advance as deducted (links to pay cycle). */
+  deduct: protectedProcedure
+    .input(z.object({
+      id:          z.number().int().positive(),
+      deductCycle: z.string().regex(/^\d{4}-\d{2}$/),
+    }))
+    .mutation(async ({ input }) => {
+      const { deductAdvance } = await import("./db");
+      await deductAdvance(input.id, input.deductCycle);
+      return { ok: true } as const;
+    }),
+
+  /** HR: cancel / write off an advance. */
+  cancel: protectedProcedure
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ input }) => {
+      const { cancelAdvance } = await import("./db");
+      await cancelAdvance(input.id);
+      return { ok: true } as const;
+    }),
+});
+
+// ─── Contracts ────────────────────────────────────────────────────────────────
+const contractsRouter = router({
+  /** Create or update a contract for an agent. Any authenticated user. */
+  upsert: protectedProcedure
+    .input(z.object({
+      traineeCode:        z.string().min(1),
+      contractType:       z.enum(["permanent", "fixed_term", "freelance"]),
+      startDate:          z.string().nullable().optional(),
+      endDate:            z.string().nullable().optional(),
+      probationEndDate:   z.string().nullable().optional(),
+      isMedicallyInsured: z.boolean(),
+      isSociallyInsured:  z.boolean(),
+      notes:              z.string().max(2000).nullable().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const { upsertAgentContract } = await import("./db");
+      const actorName = ctx.user?.name ?? ctx.user?.email ?? "unknown";
+      await upsertAgentContract({ ...input, actorName });
+      await auditEntry(ctx.user, "contract_upsert", "agent", input.traineeCode, JSON.stringify({ contractType: input.contractType }));
+      return { ok: true } as const;
+    }),
+
+  /** Get contract for a specific agent (by traineeCode). */
+  getByCode: protectedProcedure
+    .input(z.object({ traineeCode: z.string() }))
+    .query(async ({ input }) => {
+      const { getContractByCode } = await import("./db");
+      return getContractByCode(input.traineeCode);
+    }),
+
+  /** List all contracts with agent info joined. */
+  listAll: protectedProcedure
+    .query(async () => {
+      const { listAllContracts } = await import("./db");
+      return listAllContracts();
+    }),
+
+  /** List active agents who have no contract yet. */
+  listMissing: protectedProcedure
+    .query(async () => {
+      const { listAgentsWithoutContracts } = await import("./db");
+      return listAgentsWithoutContracts();
+    }),
+
+  /** Agent portal: get own contract (reads agent JWT cookie). */
+  getMine: publicProcedure
+    .query(async ({ ctx }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) return null;
+      let traineeCode = "";
+      try {
+        const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+        if (payload.type !== "agent") return null;
+        traineeCode = payload.traineeCode;
+      } catch { return null; }
+      const { getContractByCode } = await import("./db");
+      return getContractByCode(traineeCode);
+    }),
+});
+
 export const appRouter = router({
   auth: authRouter,
   candidates: candidatesRouter,
@@ -7730,5 +7916,8 @@ export const appRouter = router({
   leave: leaveRouter,
   exit: exitRouter,
   session: sessionRouter,
+  contracts: contractsRouter,
+  advances: advancesRouter,
+  clients: clientsRouter,
 });
 export type AppRouter = typeof appRouter;

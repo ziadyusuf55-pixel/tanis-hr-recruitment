@@ -421,6 +421,21 @@ export type AgentNotification = typeof agentNotifications.$inferSelect;
 export type InsertAgentNotification = typeof agentNotifications.$inferInsert;
 
 /**
+ * Clients — companies Tanis provides BPO services to.
+ */
+export const clients = mysqlTable("clients", {
+  id: int("id").autoincrement().primaryKey(),
+  name: varchar("name", { length: 255 }).notNull(),
+  shortCode: varchar("shortCode", { length: 20 }).notNull(),
+  colorHex: varchar("colorHex", { length: 7 }).notNull().default("#6366f1"),
+  isActive: boolean("isActive").notNull().default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+export type Client = typeof clients.$inferSelect;
+export type InsertClient = typeof clients.$inferInsert;
+
+/**
  * Campaigns — operational client campaigns that workforce agents are assigned to.
  * minHeadcount is the minimum number of agents that must be logged in daily.
  * workDays: 'all' = 7 days, 'weekdays' = Mon-Fri only.
@@ -428,6 +443,7 @@ export type InsertAgentNotification = typeof agentNotifications.$inferInsert;
 export const campaigns = mysqlTable("campaigns", {
   id: int("id").autoincrement().primaryKey(),
   name: varchar("name", { length: 255 }).notNull(),
+  clientId: int("clientId"),
   minHeadcount: int("minHeadcount").notNull().default(1),
   workDays: mysqlEnum("workDays", ["all", "weekdays"]).default("all").notNull(),
   notes: text("notes"),
@@ -1123,6 +1139,7 @@ export const bdDeals = mysqlTable("bd_deals", {
   reminderNote: varchar("reminderNote", { length: 255 }),
   outcomeReason: varchar("outcomeReason", { length: 255 }),        // why won / lost
   stageChangedAt: bigint("stageChangedAt", { mode: "number" }),    // for time-in-stage
+  coldIgnoredAt: bigint("coldIgnoredAt", { mode: "number" }),      // when user hit "Ignore" on cold alert; null = not ignored
   createdAt: bigint("createdAt", { mode: "number" }).notNull(),
   updatedAt: bigint("updatedAt", { mode: "number" }).notNull(),
   closedAt: bigint("closedAt", { mode: "number" }),
@@ -1389,3 +1406,44 @@ export const agentPresence = mysqlTable("agent_presence", {
   campaignId:  int("campaignId"),
 });
 export type AgentPresence = typeof agentPresence.$inferSelect;
+
+// ─── Agent Contracts ─────────────────────────────────────────────────────────
+/** One row per agent — updated in place. Tracks employment contract metadata. */
+export const agentContracts = mysqlTable("agent_contracts", {
+  id:                 int("id").autoincrement().primaryKey(),
+  traineeCode:        varchar("traineeCode", { length: 100 }).notNull().unique(),
+  contractType:       mysqlEnum("contractType", ["permanent", "fixed_term", "freelance"]).notNull(),
+  startDate:          varchar("startDate", { length: 10 }),          // YYYY-MM-DD
+  endDate:            varchar("endDate", { length: 10 }),             // YYYY-MM-DD (null for permanent/open)
+  probationEndDate:   varchar("probationEndDate", { length: 10 }),    // YYYY-MM-DD
+  isMedicallyInsured: boolean("isMedicallyInsured").default(false).notNull(),
+  isSociallyInsured:  boolean("isSociallyInsured").default(false).notNull(),
+  notes:              text("notes"),
+  createdBy:          varchar("createdBy", { length: 255 }),
+  updatedBy:          varchar("updatedBy", { length: 255 }),
+  createdAt:          bigint("createdAt", { mode: "number" }).notNull(),
+  updatedAt:          bigint("updatedAt", { mode: "number" }).notNull(),
+});
+export type AgentContract = typeof agentContracts.$inferSelect;
+
+// ─── Agent Salary Advances (سلفة) ────────────────────────────────────────────
+/**
+ * agentAdvances — tracks money borrowed by an agent from the company.
+ * HR creates the record; when the advance is recovered via payroll,
+ * status moves to 'deducted'. 'cancelled' = forgiven / written off.
+ */
+export const agentAdvances = mysqlTable("agent_advances", {
+  id:          int("id").autoincrement().primaryKey(),
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
+  amountEgp:   decimal("amountEgp", { precision: 10, scale: 2 }).notNull(),
+  issuedDate:  varchar("issuedDate", { length: 10 }).notNull(),   // YYYY-MM-DD
+  reason:      varchar("reason", { length: 500 }),                // why the advance was granted
+  status:      mysqlEnum("status", ["pending", "deducted", "cancelled"]).default("pending").notNull(),
+  deductCycle: varchar("deductCycle", { length: 7 }),             // YYYY-MM — pay cycle it will/was deducted from
+  deductedAt:  bigint("deductedAt", { mode: "number" }),          // timestamp when marked deducted
+  notes:       text("notes"),
+  createdBy:   varchar("createdBy", { length: 255 }),
+  createdAt:   bigint("createdAt", { mode: "number" }).notNull(),
+  updatedAt:   bigint("updatedAt", { mode: "number" }).notNull(),
+});
+export type AgentAdvance = typeof agentAdvances.$inferSelect;

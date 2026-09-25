@@ -13,19 +13,19 @@ export type AppRole =
 
 // Every page in the app, grouped the way the sidebar groups them.
 const OPERATIONS = ["/operations", "/adherence", "/quality", "/coaching-admin", "/client-logouts", "/cycle-tracker"];
-const HR_TABS    = ["/candidates", "/performance-reports", "/payroll", "/commission", "/payment-preferences", "/all-documents", "/agent-profiles", "/leave-management", "/academy"];
+const HR_TABS    = ["/candidates", "/performance-reports", "/payroll", "/commission", "/payment-preferences", "/all-documents", "/agent-profiles", "/leave-management", "/academy", "/contracts", "/advances"];
 const FINANCE    = ["/payroll", "/commission", "/payment-preferences"];
 const EXTRAS     = ["/requests", "/training"];
 
 // A "manager" can reach everything except /settings.
 const EVERYTHING_BUT_SETTINGS = [
-  "/", ...OPERATIONS, ...HR_TABS, ...EXTRAS, "/business-development", "/my-profile",
+  "/", ...OPERATIONS, ...HR_TABS, ...EXTRAS, "/business-development", "/clients", "/my-profile",
 ];
 
 const ROLE_PATHS: Record<string, string[]> = {
   manager: EVERYTHING_BUT_SETTINGS,
   hr: ["/", ...HR_TABS, "/requests", "/training", "/my-profile"],
-  ops_manager: ["/", ...OPERATIONS, "/performance-reports", "/training", "/requests", "/my-profile"],
+  ops_manager: ["/", ...OPERATIONS, "/performance-reports", "/clients", "/training", "/requests", "/my-profile"],
   // Near-admin: Operations + HR + Finance (no Settings, no BD)
   team_lead: ["/", ...OPERATIONS, ...HR_TABS, ...FINANCE, ...EXTRAS, "/my-profile"],
   finance: ["/", ...FINANCE, "/my-profile"],
