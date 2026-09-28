@@ -176,6 +176,9 @@ export default function PayrollPage() {
   // active roster -> options for the CRDTS dropdown in Manual Adjustments (#8)
   const { data: wfAgents = [] } = trpc.workforce.list.useQuery({});
   const { data: allForDisplay = [] } = trpc.workforce.listForDisplay.useQuery();
+  // Client filter data
+  const { data: campaignsList = [] } = trpc.campaigns.list.useQuery();
+  const { data: clientsList = [] } = trpc.clients.list.useQuery();
   const statusBadge = (status: string | null | undefined) => {
     if (!status || status === "active") return null;
     const cfg: Record<string, { label: string; color: string; bg: string }> = {
@@ -220,6 +223,7 @@ export default function PayrollPage() {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   });
+  const [payrollClientFilter, setPayrollClientFilter] = useState<number | "all">("all");
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
   const [editingRow, setEditingRow] = useState<number | null>(null);
   const [editingPaidAt, setEditingPaidAt] = useState<number | null>(null);
@@ -398,7 +402,28 @@ export default function PayrollPage() {
     XLSX.writeFile(wb2, `payroll_status_${statusMonth}.xlsx`);
   }
 
-  const records = statusRecords as StatusRecord[];
+  // Build traineeCode → clientId lookup for client filter
+  const tcToClientId = (() => {
+    type WfAgent = { traineeCode: string; campaignId?: number | null };
+    type CampaignItem = { id: number; clientId?: number | null };
+    const camMap = new Map<number, number | null | undefined>(
+      (campaignsList as CampaignItem[]).map(c => [c.id, c.clientId])
+    );
+    const m = new Map<string, number | null | undefined>();
+    (wfAgents as WfAgent[]).forEach(a => {
+      if (a.traineeCode) m.set(a.traineeCode, a.campaignId != null ? camMap.get(a.campaignId) : null);
+    });
+    return m;
+  })();
+
+  const allRecords = statusRecords as StatusRecord[];
+  const records = payrollClientFilter === "all"
+    ? allRecords
+    : allRecords.filter(r => {
+        const clientId = r.traineeCode ? tcToClientId.get(r.traineeCode) : undefined;
+        return clientId === payrollClientFilter;
+      });
+
   // Net manual adjustment for a record: + bonuses − deductions.
   const adjNet = (r: StatusRecord) => (r.adjustments ?? []).reduce(
     (s, a) => s + (a.type === "deduction" ? -1 : 1) * (n(a.amount) || 0), 0);
@@ -467,6 +492,36 @@ export default function PayrollPage() {
       {/* ── Payment Status Tab ── */}
       {activeTab === "status" && (
         <div className="space-y-4">
+          {/* Client filter chips (show only when more than one client exists) */}
+          {(clientsList as Array<{ id: number; name: string; colorHex: string; isActive: boolean }>).filter(cl => cl.isActive).length > 1 && (
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => setPayrollClientFilter("all")}
+                className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${
+                  payrollClientFilter === "all"
+                    ? "bg-primary text-primary-foreground border-primary"
+                    : "border-border text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                All Clients
+              </button>
+              {(clientsList as Array<{ id: number; name: string; colorHex: string; isActive: boolean }>)
+                .filter(cl => cl.isActive)
+                .map(cl => (
+                  <button
+                    key={cl.id}
+                    onClick={() => setPayrollClientFilter(cl.id)}
+                    className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${
+                      payrollClientFilter === cl.id ? "text-white border-transparent" : "border-border text-muted-foreground hover:text-foreground"
+                    }`}
+                    style={payrollClientFilter === cl.id ? { backgroundColor: cl.colorHex } : {}}
+                  >
+                    {cl.name}
+                  </button>
+                ))}
+            </div>
+          )}
+
           {/* Month picker */}
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div className="flex items-center gap-3">

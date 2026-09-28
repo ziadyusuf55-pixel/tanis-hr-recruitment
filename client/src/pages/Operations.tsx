@@ -439,9 +439,18 @@ const DAY_FULL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Frida
 type Campaign = {
   id: number;
   name: string;
+  clientId?: number | null;
   minHeadcount: number;
   workDays: "all" | "weekdays";
   notes?: string | null;
+};
+
+type ClientItem = {
+  id: number;
+  name: string;
+  shortCode: string;
+  colorHex: string;
+  isActive: boolean;
 };
 
 type WorkforceAgent = {
@@ -780,6 +789,7 @@ export default function Operations() {
     { enabled: planCampaignId !== null }
   );
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | "all">("all");
+  const [clientFilter, setClientFilter] = useState<number | "all">("all");
   const [search, setSearch] = useState("");
   const [tlFilter, setTlFilter] = useState<string>("all");
   const [agentStatusFilter, setAgentStatusFilter] = useState<"active" | "all">("active");
@@ -794,6 +804,7 @@ export default function Operations() {
 
   // Data
   const { data: campaigns = [], isLoading: loadingCampaigns } = trpc.campaigns.list.useQuery();
+  const { data: clients = [] } = trpc.clients.list.useQuery();
   const { data: agents = [], isLoading: loadingAgents } = trpc.workforce.list.useQuery({
     campaignId: selectedCampaignId === "all" ? undefined : selectedCampaignId,
   });
@@ -1000,6 +1011,12 @@ export default function Operations() {
     return Array.from(tls).sort();
   }, [agents]);
 
+  // Campaigns filtered by selected client
+  const visibleCampaigns = clientFilter === "all"
+    ? (campaigns as Campaign[])
+    : (campaigns as Campaign[]).filter(c => c.clientId === clientFilter);
+  const visibleCampaignIds = new Set(visibleCampaigns.map(c => c.id));
+
   const filteredAgents = (agents as WorkforceAgent[]).filter(a => {
     const q = search.toLowerCase();
     const matchesSearch = !q ||
@@ -1012,7 +1029,11 @@ export default function Operations() {
     // Operations only shows active, frozen, or inactive agents — resigned/terminated go to Former Agents
     if (status === "resigned" || status === "terminated" || status === "blacklisted") return false;
     const matchesStatus = agentStatusFilter === "all" || status === agentStatusFilter;
-    return matchesSearch && matchesTL && matchesStatus;
+    // Client filter: when "all campaigns" + a client is selected, restrict to that client's campaigns
+    const matchesClient = clientFilter === "all" || selectedCampaignId !== "all"
+      ? true
+      : (a.campaignId != null && visibleCampaignIds.has(a.campaignId));
+    return matchesSearch && matchesTL && matchesStatus && matchesClient;
   });
 
   // Former agents (resigned/terminated/blacklisted) still visible ONLY because salary isn't settled
@@ -1141,6 +1162,36 @@ export default function Operations() {
         </div>
       </div>
 
+      {/* Client filter chips */}
+      {(clients as ClientItem[]).length > 1 && (
+        <div className="flex flex-wrap gap-2 mb-4">
+          <button
+            onClick={() => { setClientFilter("all"); setSelectedCampaignId("all"); }}
+            className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${
+              clientFilter === "all"
+                ? "bg-primary text-primary-foreground border-primary"
+                : "border-border text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            All Clients
+          </button>
+          {(clients as ClientItem[]).filter(cl => cl.isActive).map(cl => (
+            <button
+              key={cl.id}
+              onClick={() => { setClientFilter(cl.id); setSelectedCampaignId("all"); }}
+              className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${
+                clientFilter === cl.id
+                  ? "text-white border-transparent"
+                  : "border-border text-muted-foreground hover:text-foreground"
+              }`}
+              style={clientFilter === cl.id ? { backgroundColor: cl.colorHex } : {}}
+            >
+              {cl.name}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Campaign summary cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div
@@ -1151,10 +1202,12 @@ export default function Operations() {
             <Users className="h-4 w-4 text-muted-foreground" />
             <span className="text-xs font-medium text-muted-foreground">All Campaigns</span>
           </div>
-          <div className="text-2xl font-bold">{(agents as WorkforceAgent[]).filter(a => a.isActive).length}</div>
+          <div className="text-2xl font-bold">
+            {(agents as WorkforceAgent[]).filter(a => a.isActive && (clientFilter === "all" || (a.campaignId != null && visibleCampaignIds.has(a.campaignId)))).length}
+          </div>
           <div className="text-xs text-muted-foreground">active agents</div>
         </div>
-        {(campaigns as Campaign[]).map(c => {
+        {visibleCampaigns.map(c => {
           const count = (agents as WorkforceAgent[]).filter(a => a.campaignId === c.id && a.isActive).length;
           return (
             <div
