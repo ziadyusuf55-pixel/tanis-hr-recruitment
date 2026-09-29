@@ -206,15 +206,29 @@ export default function PayrollPage() {
   const adjRows = adjustments as AdjRow[];
 
   const addAdjMutation = trpc.adjustments.add.useMutation({
-    onSuccess: () => { refetchAdj(); setAdjDialog(false); setAdjForm({ crdts: "", type: "bonus", label: "", amount: "" }); setAdjEditId(null); toast.success("Adjustment added"); },
+    onSuccess: () => {
+      refetchAdj();
+      utils.payrollV2.getStatusPage.invalidate({ month: adjMonth });
+      setAdjDialog(false); setAdjForm({ crdts: "", type: "bonus", label: "", amount: "" }); setAdjEditId(null);
+      toast.success("Adjustment added");
+    },
     onError: (e) => toast.error(e.message),
   });
   const updateAdjMutation = trpc.adjustments.update.useMutation({
-    onSuccess: () => { refetchAdj(); setAdjDialog(false); setAdjForm({ crdts: "", type: "bonus", label: "", amount: "" }); setAdjEditId(null); toast.success("Adjustment updated"); },
+    onSuccess: () => {
+      refetchAdj();
+      utils.payrollV2.getStatusPage.invalidate({ month: adjMonth });
+      setAdjDialog(false); setAdjForm({ crdts: "", type: "bonus", label: "", amount: "" }); setAdjEditId(null);
+      toast.success("Adjustment updated");
+    },
     onError: (e) => toast.error(e.message),
   });
   const deleteAdjMutation = trpc.adjustments.delete.useMutation({
-    onSuccess: () => { refetchAdj(); toast.success("Adjustment deleted"); },
+    onSuccess: () => {
+      refetchAdj();
+      utils.payrollV2.getStatusPage.invalidate({ month: adjMonth });
+      toast.success("Adjustment deleted");
+    },
     onError: (e) => toast.error(e.message),
   });
 
@@ -1430,37 +1444,56 @@ export default function PayrollPage() {
                 ["commissionEgp", "Commission (EGP)"],
                 ["totalDeductions", "Total Deductions (EGP)"],
                 ["netPay", "Net Pay (EGP)"],
-              ] as [keyof StatusRecord, string][]).map(([field, label]) => (
-                <div key={field} className="flex flex-col gap-1">
-                  <label className="text-xs font-medium text-muted-foreground">{label}</label>
-                  <Input
-                    type="number"
-                    value={editValues[field] as string ?? ""}
-                    onChange={e => setEditValues(prev => ({ ...prev, [field]: e.target.value }))}
-                    className="h-8 text-sm"
-                  />
-                </div>
-              ))}
+              ] as [keyof StatusRecord, string][]).map(([field, label]) => {
+                // Fields that affect net pay (excluding netPay itself and commissionEgp which is separate)
+                const NET_PAY_COMPONENTS: (keyof StatusRecord)[] = ["baseSalary", "ot1x5Pay", "ot2xPay", "ot3xPay", "coachingBonus", "totalDeductions"];
+                const isAutoCalcField = NET_PAY_COMPONENTS.includes(field);
+                return (
+                  <div key={field} className="flex flex-col gap-1">
+                    <label className="text-xs font-medium text-muted-foreground">
+                      {label}
+                      {field === "netPay" && <span className="ml-1 text-[10px] text-blue-500">(auto-calculated)</span>}
+                    </label>
+                    <Input
+                      type="number"
+                      value={editValues[field] as string ?? ""}
+                      readOnly={field === "netPay"}
+                      onChange={e => {
+                        setEditValues(prev => {
+                          const updated = { ...prev, [field]: e.target.value };
+                          // Auto-recalculate netPay whenever a salary component changes
+                          if (isAutoCalcField) {
+                            const nf = (v: unknown) => parseFloat(String(v ?? "0")) || 0;
+                            const computed =
+                              nf(updated.baseSalary) +
+                              nf(updated.ot1x5Pay) +
+                              nf(updated.ot2xPay) +
+                              nf(updated.ot3xPay) +
+                              nf(updated.coachingBonus) -
+                              nf(updated.totalDeductions);
+                            updated.netPay = String(+computed.toFixed(2));
+                          }
+                          return updated;
+                        });
+                      }}
+                      className={`h-8 text-sm ${field === "netPay" ? "bg-muted/40 font-semibold text-emerald-700 cursor-not-allowed" : ""}`}
+                    />
+                  </div>
+                );
+              })}
             </div>
-            {/* Live netPay preview */}
+            {/* Final total preview including commission */}
             {(() => {
-              const n = (v: unknown) => parseFloat(String(v ?? "0").replace(/,/g,"")) || 0;
-              const base  = n(editValues.baseSalary);
-              const ot    = n(editValues.ot1x5Pay) + n(editValues.ot2xPay) + n(editValues.ot3xPay);
-              const bonus = n(editValues.coachingBonus) + n(editValues.commissionEgp);
-              const ded   = n(editValues.totalDeductions);
-              const prev  = base + ot + bonus - ded;
-              const orig  = n(editValues.netPay);
-              const changed = Math.abs(prev - orig) > 0.01;
-              return (
-                <div className={`rounded-lg px-4 py-3 flex items-center justify-between ${changed ? "bg-amber-50 border border-amber-200" : "bg-muted/40"}`}>
-                  <span className="text-xs font-medium text-muted-foreground">Projected Net Pay</span>
-                  <span className={`text-sm font-bold ${changed ? "text-amber-700" : "text-foreground"}`}>
-                    EGP {prev.toLocaleString("en-EG", { maximumFractionDigits: 2 })}
-                    {changed && <span className="text-xs font-normal ml-2">(was EGP {orig.toLocaleString()})</span>}
-                  </span>
+              const nf = (v: unknown) => parseFloat(String(v ?? "0")) || 0;
+              const netPay = nf(editValues.netPay);
+              const commission = nf(editValues.commissionEgp);
+              const finalTotal = netPay + commission;
+              return commission > 0 ? (
+                <div className="rounded-lg px-4 py-3 flex items-center justify-between bg-blue-50 border border-blue-200">
+                  <span className="text-xs font-medium text-muted-foreground">Final Total (incl. commission)</span>
+                  <span className="text-sm font-bold text-blue-700">EGP {finalTotal.toLocaleString("en-EG", { maximumFractionDigits: 2 })}</span>
                 </div>
-              );
+              ) : null;
             })()}
           </div>
           <DialogFooter>
