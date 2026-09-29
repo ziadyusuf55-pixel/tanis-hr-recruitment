@@ -508,6 +508,7 @@ export const workforceAgents = mysqlTable("workforce_agents", {
   orientationShown: boolean("orientationShown").default(false).notNull(), // true after agent completes orientation tour
   sessionRevokedAt: bigint("sessionRevokedAt", { mode: "number" }),    // set on terminate/resign — any session JWT issued BEFORE this timestamp is rejected
   isDemo: boolean("isDemo").default(false), // demo/test accounts — excluded from all reports and headcount
+  promotedAt: bigint("promotedAt", { mode: "number" }),               // set when agent is promoted to a Hub role — removes from roster, revokes portal access
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });

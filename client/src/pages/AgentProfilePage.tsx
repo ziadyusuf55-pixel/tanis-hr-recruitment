@@ -83,6 +83,12 @@ export default function AgentProfilePage() {
   const [resetPwDialog, setResetPwDialog] = useState(false);
   const [newPwResult, setNewPwResult] = useState<string | null>(null);
 
+  // ── Promote to Hub ────────────────────────────────────────────────────────
+  const [promoteDialog, setPromoteDialog] = useState(false);
+  const [promoteRole, setPromoteRole] = useState<"team_lead" | "manager" | "hr" | "ops_manager" | "finance" | "admin">("team_lead");
+  const [promoteEmail, setPromoteEmail] = useState("");
+  const [promoteResult, setPromoteResult] = useState<{ hubUserFound: boolean; hubUserEmail: string | null } | null>(null);
+
   const resignOnSpot = trpc.separation.resignOnSpot.useMutation({
     onSuccess: () => {
       toast.success("Agent marked as resigned and removed from system");
@@ -138,6 +144,15 @@ export default function AgentProfilePage() {
     onSuccess: (data) => {
       setNewPwResult(data.password);
       setResetPwDialog(true);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+
+  const promoteToHub = trpc.workforce.promoteToHub.useMutation({
+    onSuccess: (result) => {
+      setPromoteResult(result);
+      utils.workforce.list.invalidate();
+      refetch();
     },
     onError: (e) => toast.error(e.message),
   });
@@ -337,6 +352,18 @@ export default function AgentProfilePage() {
                 <DropdownMenuContent align="end" className="w-52">
                   {isActive && (
                     <>
+                      <DropdownMenuItem
+                        className="gap-2 text-emerald-700 focus:text-emerald-700 focus:bg-emerald-50"
+                        onClick={() => {
+                          setPromoteEmail(agent.email ?? "");
+                          setPromoteRole("team_lead");
+                          setPromoteResult(null);
+                          setPromoteDialog(true);
+                        }}
+                      >
+                        <TrendingUp className="h-4 w-4" /> Promote to Hub
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
                       <DropdownMenuItem
                         className="gap-2 text-amber-700 focus:text-amber-700 focus:bg-amber-50"
                         onClick={() => { setSeparationReason(""); setSeparationDialog("resign"); }}
@@ -812,6 +839,101 @@ export default function AgentProfilePage() {
               Save Changes
             </Button>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Promote to Hub Dialog ────────────────────────────────────────────── */}
+      <Dialog open={promoteDialog} onOpenChange={(open) => { if (!open) { setPromoteDialog(false); setPromoteResult(null); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-emerald-700">
+              <TrendingUp className="h-5 w-5" /> Promote to Hub Role
+            </DialogTitle>
+          </DialogHeader>
+          {promoteResult ? (
+            /* ── Success state ── */
+            <div className="space-y-4">
+              <div className="p-4 rounded-lg bg-emerald-50 border border-emerald-200 space-y-2">
+                <p className="text-sm font-semibold text-emerald-800">
+                  ✅ {agent.fullName} has been promoted
+                </p>
+                <p className="text-xs text-emerald-700">
+                  The agent has been removed from the Operations roster and their portal access has been fully revoked.
+                </p>
+                {promoteResult.hubUserFound ? (
+                  <p className="text-xs text-emerald-700">
+                    Their existing Hub account (<strong>{promoteResult.hubUserEmail}</strong>) has been assigned the new role — they can log in immediately.
+                  </p>
+                ) : (
+                  <p className="text-xs text-emerald-700">
+                    No existing Hub account was found. When they sign in to the Hub with <strong>{promoteEmail || "their email"}</strong>, their role will be assigned automatically.
+                  </p>
+                )}
+              </div>
+              <div className="flex justify-end">
+                <Button onClick={() => { setPromoteDialog(false); setPromoteResult(null); navigate("/operations"); }}>
+                  Back to Operations
+                </Button>
+              </div>
+            </div>
+          ) : (
+            /* ── Form state ── */
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                This will permanently remove <strong>{agent.fullName}</strong> from the agent roster and revoke all portal access. They will gain access to the Hub under the selected role.
+              </p>
+              <div>
+                <Label className="text-xs font-medium text-muted-foreground mb-1.5 block">Hub Role</Label>
+                <Select value={promoteRole} onValueChange={(v) => setPromoteRole(v as typeof promoteRole)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="team_lead">Team Lead</SelectItem>
+                    <SelectItem value="manager">Manager</SelectItem>
+                    <SelectItem value="hr">HR</SelectItem>
+                    <SelectItem value="ops_manager">Ops Manager</SelectItem>
+                    <SelectItem value="finance">Finance</SelectItem>
+                    <SelectItem value="admin">Admin</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label className="text-xs font-medium text-muted-foreground mb-1.5 block">
+                  Hub Email <span className="text-muted-foreground font-normal">(optional — the email they'll use to sign in to the Hub)</span>
+                </Label>
+                <Input
+                  type="email"
+                  placeholder={agent.email ?? "name@example.com"}
+                  value={promoteEmail}
+                  onChange={e => setPromoteEmail(e.target.value)}
+                />
+                <p className="text-[11px] text-muted-foreground mt-1">
+                  If they already have a Hub account, their role will be updated immediately. Otherwise it will be assigned on their first login.
+                </p>
+              </div>
+              <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200">
+                <AlertTriangle className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
+                <p className="text-xs text-amber-700">
+                  This action cannot be undone. The agent will be removed from the roster and their portal credentials will be deleted.
+                </p>
+              </div>
+              <div className="flex justify-end gap-2 pt-1">
+                <Button variant="outline" onClick={() => setPromoteDialog(false)}>Cancel</Button>
+                <Button
+                  disabled={promoteToHub.isPending}
+                  className="bg-emerald-700 hover:bg-emerald-800 text-white"
+                  onClick={() => promoteToHub.mutate({
+                    traineeCode,
+                    hubRole: promoteRole,
+                    email: promoteEmail.trim() || undefined,
+                  })}
+                >
+                  {promoteToHub.isPending ? "Promoting…" : "Promote to Hub"}
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

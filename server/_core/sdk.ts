@@ -297,6 +297,16 @@ class SDKServer {
       lastSignedIn: signedInAt,
     });
 
+    // Auto-assign Hub role for promoted agents (first login after promotion)
+    if (user.role === "user" && user.email) {
+      try {
+        await db.applyPendingHubPromotion(user.openId, user.email);
+        // Reload user to pick up the new role
+        const updated = await db.getUserByOpenId(user.openId);
+        if (updated) return updated;
+      } catch { /* non-fatal */ }
+    }
+
     return user;
   }
 }

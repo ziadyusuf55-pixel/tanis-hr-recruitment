@@ -75,6 +75,111 @@ export async function getUserByOpenId(openId: string) {
   return result[0] ?? undefined;
 }
 
+export async function getUserByEmail(email: string) {
+  const db = await getDb();
+  if (!db) return undefined;
+  const result = await db.select().from(users).where(eq(users.email, email)).limit(1);
+  return result[0] ?? undefined;
+}
+
+/**
+ * Promote an agent to a Hub role. Atomically:
+ *  1. Revokes all agent-portal sessions (sessionRevokedAt = now)
+ *  2. Disables portal login (isActive = false)
+ *  3. Marks the record as promoted (promotedAt = now)
+ *  4. Updates employeeType to reflect the new Hub role
+ *  5. Deletes agent credentials so portal login is fully cut
+ *  6. If a Hub user with the supplied email exists, sets their Hub role
+ *     and links workforceAgents.openId to that Hub user.
+ */
+export async function promoteAgentToHub(
+  traineeCode: string,
+  hubRole: "team_lead" | "manager" | "hr" | "ops_manager" | "finance" | "admin",
+  email?: string | null,
+): Promise<{ hubUserFound: boolean; hubUserEmail: string | null }> {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const { workforceAgents, agentCredentials } = await import("../drizzle/schema");
+
+  const now = Date.now();
+
+  // 1-4: Update the workforce agent record
+  await db.update(workforceAgents)
+    .set({
+      isActive: false,
+      sessionRevokedAt: now,
+      promotedAt: now,
+      employeeType: hubRole,
+    })
+    .where(eq(workforceAgents.traineeCode, traineeCode));
+
+  // 5: Delete portal credentials (fully cuts portal access)
+  await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, traineeCode));
+
+  // 6: Optionally link to Hub user by email
+  let hubUserFound = false;
+  let hubUserEmail: string | null = null;
+
+  if (email) {
+    const hubUser = await getUserByEmail(email);
+    if (hubUser) {
+      hubUserFound = true;
+      hubUserEmail = hubUser.email ?? email;
+      // Assign Hub role
+      await db.update(users)
+        .set({ role: hubRole })
+        .where(eq(users.openId, hubUser.openId));
+      // Link the workforce record to their Hub account
+      await db.update(workforceAgents)
+        .set({ openId: hubUser.openId })
+        .where(eq(workforceAgents.traineeCode, traineeCode));
+    }
+  }
+
+  return { hubUserFound, hubUserEmail };
+}
+
+/**
+ * When a Hub user logs in via OAuth, check if their email matches a
+ * promoted workforce agent that hasn't been linked yet. If so, auto-assign
+ * the employeeType role and link the openId.
+ */
+export async function applyPendingHubPromotion(openId: string, email: string | null): Promise<void> {
+  if (!email) return;
+  const db = await getDb();
+  if (!db) return;
+  const { workforceAgents } = await import("../drizzle/schema");
+  const { isNotNull, isNull } = await import("drizzle-orm");
+
+  // Find a promoted agent whose email matches and hasn't been linked yet
+  const [pending] = await db.select({
+    traineeCode: workforceAgents.traineeCode,
+    employeeType: workforceAgents.employeeType,
+    openId: workforceAgents.openId,
+  })
+    .from(workforceAgents)
+    .where(and(
+      eq(workforceAgents.email, email),
+      isNotNull(workforceAgents.promotedAt),
+      isNull(workforceAgents.openId),
+    ))
+    .limit(1);
+
+  if (!pending) return;
+
+  const role = pending.employeeType as "team_lead" | "manager" | "hr" | "ops_manager" | "finance" | "admin" | "agent";
+  const hubRole = role === "agent" ? "user" : role;
+
+  await Promise.all([
+    // Assign role in Hub
+    db.update(users).set({ role: hubRole as any }).where(eq(users.openId, openId)),
+    // Link workforce record to Hub user
+    db.update(workforceAgents)
+      .set({ openId })
+      .where(eq(workforceAgents.traineeCode, pending.traineeCode)),
+  ]);
+}
+
 // ─── Candidates ───────────────────────────────────────────────────────────────
 
 export async function listCandidates() {
@@ -1317,6 +1422,8 @@ export async function listWorkforceAgents(campaignId?: number, teamLeader?: stri
     jobTitle: workforceAgents.jobTitle,
     city: workforceAgents.city,
     profileLocked: workforceAgents.profileLocked,
+    promotedAt: workforceAgents.promotedAt,
+    employeeType: workforceAgents.employeeType,
   }).from(workforceAgents)
     .leftJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
     .orderBy(workforceAgents.fullName);
@@ -1328,12 +1435,14 @@ export async function listWorkforceAgents(campaignId?: number, teamLeader?: stri
   return _wfFilterFormer(await base, includeFormer);
 }
 
-// Lifecycle rule: resigned/terminated/blacklisted agents leave Operations and all
+// Lifecycle rule: resigned/terminated/blacklisted/promoted agents leave Operations and all
 // counts/plans — UNLESS their salary hasn't been settled yet (they stay visible,
 // flagged, until "Mark as settled"). Pass includeFormer=true to get everyone (HR views).
-function _wfFilterFormer<T extends { agentStatus?: string | null; salarySettled?: boolean | null }>(rows: T[], includeFormer?: boolean): T[] {
+function _wfFilterFormer<T extends { agentStatus?: string | null; salarySettled?: boolean | null; promotedAt?: number | null }>(rows: T[], includeFormer?: boolean): T[] {
   if (includeFormer) return rows;
   return rows.filter(r => {
+    // Promoted agents are moved to Hub — hidden from agent roster
+    if (r.promotedAt) return false;
     const former = r.agentStatus === "resigned" || r.agentStatus === "terminated" || r.agentStatus === "blacklisted";
     if (!former) return true;
     return r.salarySettled === false;   // unpaid former agent stays until settled

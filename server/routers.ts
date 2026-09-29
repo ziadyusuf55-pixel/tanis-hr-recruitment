@@ -2370,6 +2370,28 @@ const workforceRouter = router({
       const code = await generateUniqueTraineeCode();
       return { code };
     }),
+
+  /**
+   * Promote an agent to a Hub role.
+   * - Fully cuts agent portal access (deletes credentials, revokes sessions)
+   * - Removes agent from the Operations roster (promotedAt flag)
+   * - If the agent's email matches an existing Hub user, auto-assigns their Hub role
+   * - Otherwise they should sign in to Hub and the role will be auto-assigned on first login
+   */
+  promoteToHub: protectedProcedure
+    .input(z.object({
+      traineeCode: z.string(),
+      hubRole: z.enum(["team_lead", "manager", "hr", "ops_manager", "finance", "admin"]),
+      email: z.string().email().optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Only admins and owners can promote agents." });
+      }
+      const { promoteAgentToHub } = await import("./db");
+      const result = await promoteAgentToHub(input.traineeCode, input.hubRole, input.email);
+      return result;
+    }),
 });
 // ─── Agent Comments Router ────────────────────────────────────────────────────
 const agentCommentsRouter = router({
