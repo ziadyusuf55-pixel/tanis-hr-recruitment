@@ -895,7 +895,7 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
 
       {/* ── Contract Info ─────────────────────────────────────────────── */}
       {myContract && (
-        <div className="mt-4 rounded-xl p-4 border" style={{ background: theme.cardBg, borderColor: theme.border }}>
+        <div className="mt-4 rounded-xl p-4 border" style={{ background: theme.cardBg, borderColor: theme.cardBorder }}>
           <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: theme.textMuted }}>Contract</p>
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
@@ -940,7 +940,7 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
 
       {/* Salary Advances (سلفة) */}
       {(myAdvances as any[]).length > 0 && (
-        <div className="mt-4 rounded-xl p-4 border" style={{ background: theme.cardBg, borderColor: theme.border }}>
+        <div className="mt-4 rounded-xl p-4 border" style={{ background: theme.cardBg, borderColor: theme.cardBorder }}>
           <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: theme.textMuted }}>
             Salary Advances (سلفة)
           </p>

@@ -107,7 +107,7 @@ export default function ClientDashboardPage() {
     );
   }
 
-  const { client, campaigns, activeAgents, allAgents, payroll, adherence, month } = data as {
+  const { client, campaigns, activeAgents, allAgents, payroll, adherence, month } = data as unknown as {
     client: { id: number; name: string; shortCode: string; colorHex: string; isActive: boolean };
     campaigns: { id: number; name: string }[];
     activeAgents: Agent[];
@@ -142,7 +142,7 @@ export default function ClientDashboardPage() {
     }
   };
 
-  const categories = [...new Set(SCORECARD_KPIS.map(k => k.category))];
+  const categories = Array.from(new Set(SCORECARD_KPIS.map(k => k.category)));
 
   function KpiRow({ kpi }: { kpi: typeof SCORECARD_KPIS[0] }) {
     const computed = getComputedValue(kpi.key);

@@ -2250,7 +2250,7 @@ const workforceRouter = router({
         agent.candidateId ? getPayrollByCandidateId(agent.candidateId) : Promise.resolve([]),
       ]);
       // Fetch manual adjustments (bonus/deduction entries) for this agent
-      let adjustments: Array<{ id: number; crdts: string; month: string; type: string; amount: number; note: string | null; createdAt: number; createdBy: string | null }> = [];
+      let adjustments: Array<{ id: number; crdts: string; month: string; type: string; amount: string; label: string; createdAt: number; createdBy: string | null }> = [];
       if (agent.crdts) {
         try {
           const { getDb } = await import("./db");
