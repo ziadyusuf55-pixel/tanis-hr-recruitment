@@ -1448,3 +1448,61 @@ export const agentAdvances = mysqlTable("agent_advances", {
   updatedAt:   bigint("updatedAt", { mode: "number" }).notNull(),
 });
 export type AgentAdvance = typeof agentAdvances.$inferSelect;
+
+// ─── Time Tracking ────────────────────────────────────────────────────────────
+
+/**
+ * agent_aux_logs — agents log their AUX time (breaks, training, etc.)
+ */
+export const agentAuxLogs = mysqlTable("agent_aux_logs", {
+  id: int("id").autoincrement().primaryKey(),
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
+  auxType: varchar("auxType", { length: 50 }).notNull(),
+  startTime: bigint("startTime", { mode: "number" }).notNull(),
+  endTime: bigint("endTime", { mode: "number" }),
+  durationMs: int("durationMs"),
+  note: text("note"),
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+});
+export type AgentAuxLog = typeof agentAuxLogs.$inferSelect;
+export type InsertAgentAuxLog = typeof agentAuxLogs.$inferInsert;
+
+/**
+ * pto_requests — PTO requests from agents.
+ */
+export const ptoRequests = mysqlTable("pto_requests", {
+  id: int("id").autoincrement().primaryKey(),
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
+  agentName: varchar("agentName", { length: 255 }),
+  requestType: varchar("requestType", { length: 50 }).notNull(),
+  startDate: varchar("startDate", { length: 10 }).notNull(),
+  endDate: varchar("endDate", { length: 10 }).notNull(),
+  halfDay: boolean("halfDay").default(false),
+  status: mysqlEnum("ptoStatus", ["pending", "approved", "rejected"]).default("pending").notNull(),
+  reason: text("reason"),
+  reviewedBy: varchar("reviewedBy", { length: 255 }),
+  reviewedAt: bigint("reviewedAt", { mode: "number" }),
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+});
+export type PtoRequest = typeof ptoRequests.$inferSelect;
+export type InsertPtoRequest = typeof ptoRequests.$inferInsert;
+
+/**
+ * attendance_exceptions — lateness / early departure records submitted by agents.
+ */
+export const attendanceExceptions = mysqlTable("attendance_exceptions", {
+  id: int("id").autoincrement().primaryKey(),
+  traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
+  agentName: varchar("agentName", { length: 255 }),
+  date: varchar("date", { length: 10 }).notNull(),
+  exceptionType: varchar("exceptionType", { length: 50 }).notNull(),
+  scheduledTime: varchar("scheduledTime", { length: 8 }),
+  actualTime: varchar("actualTime", { length: 8 }),
+  minutesLate: int("minutesLate"),
+  note: text("note"),
+  status: mysqlEnum("exStatus", ["pending", "reviewed"]).default("pending").notNull(),
+  reviewedBy: varchar("reviewedBy", { length: 255 }),
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+});
+export type AttendanceException = typeof attendanceExceptions.$inferSelect;
+export type InsertAttendanceException = typeof attendanceExceptions.$inferInsert;

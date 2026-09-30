@@ -2249,7 +2249,20 @@ const workforceRouter = router({
         agent.candidateId ? getCandidateById(agent.candidateId) : Promise.resolve(undefined),
         agent.candidateId ? getPayrollByCandidateId(agent.candidateId) : Promise.resolve([]),
       ]);
-      return { agent, documents, paymentMethods, comments, candidate: candidate ?? null, payroll: payroll ?? [] };
+      // Fetch manual adjustments (bonus/deduction entries) for this agent
+      let adjustments: Array<{ id: number; crdts: string; month: string; type: string; amount: number; note: string | null; createdAt: number; createdBy: string | null }> = [];
+      if (agent.crdts) {
+        try {
+          const { getDb } = await import("./db");
+          const { payrollAdjustments } = await import("../drizzle/schema");
+          const { eq } = await import("drizzle-orm");
+          const db = await getDb();
+          if (db) {
+            adjustments = await db.select().from(payrollAdjustments).where(eq(payrollAdjustments.crdts, agent.crdts));
+          }
+        } catch { /* non-fatal */ }
+      }
+      return { agent, documents, paymentMethods, comments, candidate: candidate ?? null, payroll: payroll ?? [], adjustments };
     }),
 
   getMyOperationPlan: publicProcedure
@@ -7673,6 +7686,61 @@ const clientsRouter = router({
       clientId: z.number().int().positive().nullable(),
     }))
     .mutation(({ input }) => assignCampaignToClient(input.campaignId, input.clientId)),
+
+  getDashboard: protectedProcedure
+    .input(z.object({
+      clientId: z.number().int().positive(),
+      month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
+    }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+
+      const month = input.month || new Date().toISOString().slice(0, 7);
+      const { clients, campaigns, payrollRecords, adherenceLog } = await import("../drizzle/schema");
+      const { eq, and, inArray } = await import("drizzle-orm");
+
+      // Get client
+      const [client] = await db.select().from(clients).where(eq(clients.id, input.clientId)).limit(1);
+      if (!client) throw new Error("Client not found");
+
+      // Get campaigns for this client
+      const clientCampaigns = await db.select().from(campaigns).where(eq(campaigns.clientId, input.clientId));
+
+      // Get agents via db helper
+      const { listWorkforceAgentsByClient } = await import("./db");
+      const activeAgents = await listWorkforceAgentsByClient(input.clientId);
+      const allAgents = await listWorkforceAgentsByClient(input.clientId, true);
+
+      // Payroll for this month
+      const agentCodes = allAgents.map(a => a.traineeCode).filter((c): c is string => Boolean(c));
+      let payroll: typeof payrollRecords.$inferSelect[] = [];
+      if (agentCodes.length > 0) {
+        payroll = await db.select().from(payrollRecords)
+          .where(and(eq(payrollRecords.month, month), inArray(payrollRecords.agentCode, agentCodes)));
+      }
+
+      // Adherence violations for this month
+      const agentCodesList = allAgents.map(a => a.traineeCode).filter((c): c is string => Boolean(c));
+      let adherence: typeof adherenceLog.$inferSelect[] = [];
+      if (agentCodesList.length > 0) {
+        adherence = await db.select().from(adherenceLog)
+          .where(inArray(adherenceLog.agentCode, agentCodesList));
+        const prefix = month + "-";
+        adherence = adherence.filter(a => a.date?.startsWith(prefix));
+      }
+
+      return {
+        client,
+        campaigns: clientCampaigns,
+        activeAgents,
+        allAgents,
+        payroll,
+        adherence,
+        month,
+      };
+    }),
 });
 
 // ─── Salary Advances (سلفة) ───────────────────────────────────────────────────
@@ -7795,6 +7863,233 @@ const contractsRouter = router({
       } catch { return null; }
       const { getContractByCode } = await import("./db");
       return getContractByCode(traineeCode);
+    }),
+});
+
+// ─── Time Tracking Router ──────────────────────────────────────────────────────
+const timeTrackingRouter = router({
+  /** Returns whether the current agent belongs to a Quantum campaign. */
+  checkAccess: publicProcedure.query(async ({ ctx }) => {
+    const token = getAgentCookieFromReq(ctx.req);
+    if (!token) return { allowed: false, clientName: null as string | null };
+    try {
+      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+      if (payload.type !== "agent") return { allowed: false, clientName: null as string | null };
+      const { getAgentClientName } = await import("./db");
+      const clientName = await getAgentClientName(payload.traineeCode);
+      const allowed = !!clientName && clientName.toLowerCase().includes("quantum");
+      return { allowed, clientName };
+    } catch { return { allowed: false, clientName: null as string | null }; }
+  }),
+
+  startAux: publicProcedure
+    .input(z.object({ auxType: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) throw new Error("Not authenticated");
+      let traineeCode = "";
+      try {
+        const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+        if (payload.type !== "agent") throw new Error("Not agent");
+        traineeCode = payload.traineeCode;
+      } catch { throw new Error("Invalid session"); }
+      const { agentAuxLogs } = await import("../drizzle/schema");
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+      await db.insert(agentAuxLogs).values({ traineeCode, auxType: input.auxType, startTime: Date.now(), createdAt: Date.now() });
+      return { ok: true };
+    }),
+
+  endAux: publicProcedure
+    .mutation(async ({ ctx }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) throw new Error("Not authenticated");
+      let traineeCode = "";
+      try {
+        const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+        if (payload.type !== "agent") throw new Error("Not agent");
+        traineeCode = payload.traineeCode;
+      } catch { throw new Error("Invalid session"); }
+      const { agentAuxLogs } = await import("../drizzle/schema");
+      const { getDb } = await import("./db");
+      const { eq, and, isNull } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+      const [active] = await db.select().from(agentAuxLogs)
+        .where(and(eq(agentAuxLogs.traineeCode, traineeCode), isNull(agentAuxLogs.endTime)))
+        .orderBy(agentAuxLogs.startTime)
+        .limit(1);
+      if (!active) return { ok: true, durationMs: 0 };
+      const endTime = Date.now();
+      const durationMs = endTime - active.startTime;
+      await db.update(agentAuxLogs).set({ endTime, durationMs }).where(eq(agentAuxLogs.id, active.id));
+      return { ok: true, durationMs };
+    }),
+
+  myAuxLogs: publicProcedure.query(async ({ ctx }) => {
+    const token = getAgentCookieFromReq(ctx.req);
+    if (!token) return [];
+    let traineeCode = "";
+    try {
+      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+      if (payload.type !== "agent") return [];
+      traineeCode = payload.traineeCode;
+    } catch { return []; }
+    const { agentAuxLogs } = await import("../drizzle/schema");
+    const { getDb } = await import("./db");
+    const { eq, and, gte, lt } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return [];
+    const today = new Date().toISOString().slice(0, 10);
+    const todayStart = new Date(today).getTime();
+    const todayEnd = todayStart + 86400000;
+    return db.select().from(agentAuxLogs)
+      .where(and(eq(agentAuxLogs.traineeCode, traineeCode), gte(agentAuxLogs.startTime, todayStart), lt(agentAuxLogs.startTime, todayEnd)))
+      .orderBy(agentAuxLogs.startTime);
+  }),
+
+  submitPto: publicProcedure
+    .input(z.object({
+      requestType: z.enum(["annual", "sick", "emergency", "unpaid"]),
+      startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      halfDay: z.boolean().optional(),
+      reason: z.string().max(1000).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) throw new Error("Not authenticated");
+      let traineeCode = "";
+      let agentName = "";
+      try {
+        const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string; name?: string };
+        if (payload.type !== "agent") throw new Error("Not agent");
+        traineeCode = payload.traineeCode;
+        agentName = payload.name ?? "";
+      } catch { throw new Error("Invalid session"); }
+      const { ptoRequests } = await import("../drizzle/schema");
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+      await db.insert(ptoRequests).values({
+        traineeCode, agentName, requestType: input.requestType,
+        startDate: input.startDate, endDate: input.endDate,
+        halfDay: input.halfDay ?? false, reason: input.reason ?? null,
+        status: "pending", createdAt: Date.now(),
+      });
+      return { ok: true };
+    }),
+
+  logException: publicProcedure
+    .input(z.object({
+      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      exceptionType: z.enum(["late", "early_departure", "absent"]),
+      scheduledTime: z.string().optional(),
+      actualTime: z.string().optional(),
+      minutesLate: z.number().int().optional(),
+      note: z.string().max(500).optional(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      const token = getAgentCookieFromReq(ctx.req);
+      if (!token) throw new Error("Not authenticated");
+      let traineeCode = "";
+      let agentName = "";
+      try {
+        const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string; name?: string };
+        if (payload.type !== "agent") throw new Error("Not agent");
+        traineeCode = payload.traineeCode;
+        agentName = payload.name ?? "";
+      } catch { throw new Error("Invalid session"); }
+      const { attendanceExceptions } = await import("../drizzle/schema");
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+      await db.insert(attendanceExceptions).values({
+        traineeCode, agentName, date: input.date,
+        exceptionType: input.exceptionType,
+        scheduledTime: input.scheduledTime ?? null,
+        actualTime: input.actualTime ?? null,
+        minutesLate: input.minutesLate ?? null,
+        note: input.note ?? null,
+        status: "pending", createdAt: Date.now(),
+      });
+      return { ok: true };
+    }),
+
+  myPtoRequests: publicProcedure.query(async ({ ctx }) => {
+    const token = getAgentCookieFromReq(ctx.req);
+    if (!token) return [];
+    let traineeCode = "";
+    try {
+      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+      if (payload.type !== "agent") return [];
+      traineeCode = payload.traineeCode;
+    } catch { return []; }
+    const { ptoRequests } = await import("../drizzle/schema");
+    const { getDb } = await import("./db");
+    const { eq } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return [];
+    return db.select().from(ptoRequests).where(eq(ptoRequests.traineeCode, traineeCode)).orderBy(ptoRequests.createdAt);
+  }),
+
+  allPtoRequests: protectedProcedure
+    .input(z.object({ status: z.enum(["pending", "approved", "rejected", "all"]).optional() }))
+    .query(async ({ input }) => {
+      const { ptoRequests } = await import("../drizzle/schema");
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      if (input.status && input.status !== "all") {
+        return db.select().from(ptoRequests).where(eq(ptoRequests.status, input.status as "pending" | "approved" | "rejected")).orderBy(ptoRequests.createdAt);
+      }
+      return db.select().from(ptoRequests).orderBy(ptoRequests.createdAt);
+    }),
+
+  reviewPto: protectedProcedure
+    .input(z.object({ id: z.number().int().positive(), status: z.enum(["approved", "rejected"]) }))
+    .mutation(async ({ ctx, input }) => {
+      const { ptoRequests } = await import("../drizzle/schema");
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new Error("DB unavailable");
+      await db.update(ptoRequests).set({
+        status: input.status,
+        reviewedBy: ctx.user?.name ?? ctx.user?.email ?? "unknown",
+        reviewedAt: Date.now(),
+      }).where(eq(ptoRequests.id, input.id));
+      return { ok: true };
+    }),
+
+  allExceptions: protectedProcedure
+    .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/).optional() }))
+    .query(async ({ input }) => {
+      const { attendanceExceptions } = await import("../drizzle/schema");
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const all = await db.select().from(attendanceExceptions).orderBy(attendanceExceptions.date);
+      if (input.month) return all.filter(e => e.date.startsWith(input.month + "-"));
+      return all;
+    }),
+
+  auxLogs: protectedProcedure
+    .input(z.object({ traineeCode: z.string().optional(), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }))
+    .query(async ({ input }) => {
+      const { agentAuxLogs } = await import("../drizzle/schema");
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+      if (input.traineeCode) {
+        const logs = await db.select().from(agentAuxLogs).where(eq(agentAuxLogs.traineeCode, input.traineeCode)).orderBy(agentAuxLogs.startTime);
+        if (input.date) return logs.filter(l => new Date(l.startTime).toISOString().slice(0, 10) === input.date);
+        return logs;
+      }
+      return db.select().from(agentAuxLogs).orderBy(agentAuxLogs.startTime);
     }),
 });
 
@@ -7941,5 +8236,6 @@ export const appRouter = router({
   contracts: contractsRouter,
   advances: advancesRouter,
   clients: clientsRouter,
+  timeTracking: timeTrackingRouter,
 });
 export type AppRouter = typeof appRouter;

@@ -1378,6 +1378,57 @@ export async function assignCampaignToClient(campaignId: number, clientId: numbe
   await db.update(campaigns).set({ clientId }).where(eq(campaigns.id, campaignId));
 }
 
+export async function listWorkforceAgentsByClient(clientId: number, includeFormer?: boolean) {
+  const db = await getDb();
+  if (!db) return [];
+  const { workforceAgents, campaigns } = await import("../drizzle/schema");
+  const rows = await db.select({
+    id: workforceAgents.id,
+    traineeCode: workforceAgents.traineeCode,
+    candidateId: workforceAgents.candidateId,
+    campaignId: workforceAgents.campaignId,
+    campaignName: campaigns.name,
+    fullName: workforceAgents.fullName,
+    alias: workforceAgents.alias,
+    email: workforceAgents.email,
+    phone: workforceAgents.phone,
+    shiftHours: workforceAgents.shiftHours,
+    teamLeader: workforceAgents.teamLeader,
+    offDay1: workforceAgents.offDay1,
+    offDay2: workforceAgents.offDay2,
+    joinDate: workforceAgents.joinDate,
+    isActive: workforceAgents.isActive,
+    createdAt: workforceAgents.createdAt,
+    dialerCredentials: workforceAgents.dialerCredentials,
+    crdts: workforceAgents.crdts,
+    agentStatus: workforceAgents.agentStatus,
+    salarySettled: workforceAgents.salarySettled,
+    address: workforceAgents.address,
+    emergencyContactName: workforceAgents.emergencyContactName,
+    emergencyContactPhone: workforceAgents.emergencyContactPhone,
+    emergencyContactRelation: workforceAgents.emergencyContactRelation,
+    nestingStatus: workforceAgents.nestingStatus,
+    workLocation: workforceAgents.workLocation,
+    avatarUrl: workforceAgents.avatarUrl,
+    nationalId: workforceAgents.nationalId,
+    nationalIdExpiry: workforceAgents.nationalIdExpiry,
+    dateOfBirth: workforceAgents.dateOfBirth,
+    gender: workforceAgents.gender,
+    nationality: workforceAgents.nationality,
+    maritalStatus: workforceAgents.maritalStatus,
+    militaryStatus: workforceAgents.militaryStatus,
+    jobTitle: workforceAgents.jobTitle,
+    city: workforceAgents.city,
+    profileLocked: workforceAgents.profileLocked,
+    promotedAt: workforceAgents.promotedAt,
+    employeeType: workforceAgents.employeeType,
+  }).from(workforceAgents)
+    .innerJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
+    .where(eq(campaigns.clientId, clientId))
+    .orderBy(workforceAgents.fullName);
+  return _wfFilterFormer(rows, includeFormer);
+}
+
 // ─── Workforce Agents ─────────────────────────────────────────────────────────
 
 export async function listWorkforceAgents(campaignId?: number, teamLeader?: string, includeFormer?: boolean) {
@@ -3363,6 +3414,21 @@ export async function getContractByCode(traineeCode: string) {
     .where(eq(agentContracts.traineeCode, traineeCode))
     .limit(1);
   return rows[0] ?? null;
+}
+
+export async function getAgentClientName(traineeCode: string): Promise<string | null> {
+  const db = await getDb();
+  if (!db) return null;
+  const { workforceAgents, campaigns, clients } = await import("../drizzle/schema");
+  const { eq } = await import("drizzle-orm");
+  const rows = await db
+    .select({ clientName: clients.name })
+    .from(workforceAgents)
+    .innerJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
+    .innerJoin(clients, eq(campaigns.clientId, clients.id))
+    .where(eq(workforceAgents.traineeCode, traineeCode))
+    .limit(1);
+  return rows[0]?.clientName ?? null;
 }
 
 export async function listAllContracts() {

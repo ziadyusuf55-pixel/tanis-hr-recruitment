@@ -17,17 +17,17 @@ const HR_TABS    = ["/candidates", "/performance-reports", "/payroll", "/commiss
 const FINANCE    = ["/payroll", "/commission", "/payment-preferences"];
 const EXTRAS     = ["/requests", "/training"];
 
-// A "manager" can reach everything except /settings.
+// A "manager" can reach everything except /settings and /time-tracking (Quantum-only feature, owner/admin only).
 const EVERYTHING_BUT_SETTINGS = [
   "/", ...OPERATIONS, ...HR_TABS, ...EXTRAS, "/business-development", "/clients", "/my-profile",
 ];
 
 const ROLE_PATHS: Record<string, string[]> = {
   manager: EVERYTHING_BUT_SETTINGS,
-  hr: ["/", ...HR_TABS, "/requests", "/training", "/my-profile"],
-  ops_manager: ["/", ...OPERATIONS, "/performance-reports", "/clients", "/training", "/requests", "/my-profile"],
-  // Near-admin: Operations + HR + Finance (no Settings, no BD)
-  team_lead: ["/", ...OPERATIONS, ...HR_TABS, ...FINANCE, ...EXTRAS, "/my-profile"],
+  hr: ["/", ...HR_TABS, "/requests", "/training", "/business-development", "/my-profile"],
+  ops_manager: ["/", ...OPERATIONS, "/performance-reports", "/clients", "/training", "/requests", "/business-development", "/my-profile"],
+  // Near-admin: Operations + HR + Finance + BD
+  team_lead: ["/", ...OPERATIONS, ...HR_TABS, ...FINANCE, ...EXTRAS, "/business-development", "/my-profile"],
   finance: ["/", ...FINANCE, "/my-profile"],
   bd: ["/business-development", ...OPERATIONS, "/my-profile"],
 };
@@ -80,9 +80,9 @@ export const ROLE_SUMMARY: Record<string, string> = {
   owner: "Everything, including Settings",
   admin: "Everything, including Settings",
   manager: "Everything except Settings",
-  hr: "Recruitment, Performance Reports, Salary, Commission, Payment Preferences, Documents, Employee Profiles, Leave, Requests, Training",
-  ops_manager: "Operations, Adherence, Quality, Coaching, Client Logouts, Cycle Tracker, Performance Reports, Requests, Training",
-  team_lead: "Operations + HR + Finance (no Settings, no BD)",
+  hr: "Recruitment, Performance Reports, Salary, Commission, Payment Preferences, Documents, Employee Profiles, Leave, Requests, Training, Business Development",
+  ops_manager: "Operations, Adherence, Quality, Coaching, Client Logouts, Cycle Tracker, Performance Reports, Requests, Training, Business Development",
+  team_lead: "Operations + HR + Finance + Business Development (no Settings)",
   finance: "Salary, Commission, Payment Preferences",
   bd: "Business Development + Operations",
   viewer: "Nothing — waiting for access",

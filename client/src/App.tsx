@@ -37,6 +37,9 @@ import OTLog from "./pages/OTLog";
 import MyProfile from "./pages/MyProfile";
 import Academy from "./pages/Academy";
 import Clients from "./pages/Clients";
+import ClientDashboardPage from "./pages/ClientDashboardPage";
+import TimeTrackingAdmin from "./pages/TimeTrackingAdmin";
+// TimeTrackerPage is now embedded as the AUX tab inside AgentPortal — no standalone route needed
 import { trpc as trpcClient } from "@/lib/trpc";
 import ClientLogoutsAdmin from "./pages/ClientLogoutsAdmin";
 import ChangePasswordPage from "./pages/ChangePasswordPage";
@@ -124,6 +127,9 @@ function Router() {
       <Route path="/coaching-admin" component={() => <ProtectedRoute component={CoachingAdmin} />} />
       <Route path="/client-logouts" component={() => <ProtectedRoute component={ClientLogoutsAdmin} />} />
       <Route path="/clients" component={() => <ProtectedRoute component={Clients} />} />
+      <Route path="/clients/:id" component={() => <ProtectedRoute component={ClientDashboardPage} />} />
+      <Route path="/time-tracking" component={() => <ProtectedRoute component={TimeTrackingAdmin} />} />
+      {/* /tracker removed — AUX tracking is now the "AUX" tab inside AgentPortal */}
       <Route path="/requests" component={() => <ProtectedRoute component={Requests} />} />
       <Route path="/settings" component={() => <ProtectedRoute component={Settings} />} />
       <Route path="/admin-invite" component={AdminInviteAccept} />

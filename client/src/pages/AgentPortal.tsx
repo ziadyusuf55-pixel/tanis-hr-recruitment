@@ -49,6 +49,8 @@ import {
   Trophy,
   DollarSign,
   ClipboardCheck,
+  Coffee,
+  AlertTriangle,
 } from "lucide-react";
 
 const TANIS_LOGO_WHITE =
@@ -168,7 +170,7 @@ function fmtHM(decimalHours: number | string | null | undefined): string {
   return `${sign}${h}:${m.toString().padStart(2, "0")}`;
 }
 
-type Tab = "profile" | "opplan" | "performance" | "academy" | "payroll" | "commission" | "requests" | "referrals" | "documents" | "payment" | "comments" | "notifications";
+type Tab = "profile" | "opplan" | "performance" | "academy" | "payroll" | "commission" | "requests" | "referrals" | "documents" | "payment" | "comments" | "notifications" | "aux";
 
 export default function AgentPortal() {
   const [, navigate] = useLocation();
@@ -195,6 +197,7 @@ export default function AgentPortal() {
   const logoutMutation = trpc.agent.logout.useMutation();
   // Shared data for banner — fetched once at top level
   const { data: _wfProfile } = trpc.workforce.getMyProfile.useQuery();
+  const { data: auxAccess } = trpc.timeTracking.checkAccess.useQuery();
   const { data: _payMethods = [] } = trpc.paymentMethods.listMine.useQuery();
   // Mandatory profile completion — check if agent has filled required fields
   const _profileComplete = !!(
@@ -285,6 +288,8 @@ export default function AgentPortal() {
     { id: "requests",    label: "Requests",     icon: <MessageSquare className="w-4 h-4" /> },
     { id: "notifications", label: "Alerts",      icon: <Bell className="w-4 h-4" /> },
     { id: "documents",   label: "Documents",    icon: <FileText className="w-4 h-4" /> },
+    // AUX tracker — only visible for Quantum agents
+    ...(auxAccess?.allowed ? [{ id: "aux" as Tab, label: "AUX", icon: <Coffee className="w-4 h-4" /> }] : []),
   ];
   // Secondary nav (in "More" section)
   const secondaryNavItems: { id: Tab; label: string; icon: React.ReactNode }[] = [
@@ -457,6 +462,7 @@ export default function AgentPortal() {
         {activeTab === "referrals" && <ReferralTab referrerCandidateId={agent.candidateId} theme={theme} />}
         {activeTab === "notifications" && <AgentNotificationsTab theme={theme} candidateId={agent.candidateId} />}
         {activeTab === "comments" && <AgentCommentsTab theme={theme} />}
+        {activeTab === "aux" && <AuxTrackerTab theme={theme} />}
       </main>
 
 
@@ -560,6 +566,8 @@ function ProfileCompletionBanner({ wfProfile, payMethods, theme, onGoToProfile, 
 }
 
 function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
+  const { data: myContract } = trpc.contracts.getMine.useQuery();
+  const { data: myAdvances = [] } = trpc.advances.listMine.useQuery();
   const { data: wfProfile } = trpc.workforce.getMyProfile.useQuery();
   const utils = trpc.useUtils();
   const setAvatar = trpc.workforce.setMyAvatar.useMutation({
@@ -883,6 +891,87 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
             })()}
           </div>
         </>
+      )}
+
+      {/* ── Contract Info ─────────────────────────────────────────────── */}
+      {myContract && (
+        <div className="mt-4 rounded-xl p-4 border" style={{ background: theme.cardBg, borderColor: theme.border }}>
+          <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: theme.textMuted }}>Contract</p>
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <p className="text-xs" style={{ color: theme.textFaint }}>Type</p>
+              <p className="font-medium capitalize" style={{ color: theme.text }}>
+                {myContract.contractType === "fixed_term" ? "Fixed-Term" : myContract.contractType.charAt(0).toUpperCase() + myContract.contractType.slice(1)}
+              </p>
+            </div>
+            {myContract.startDate && (
+              <div>
+                <p className="text-xs" style={{ color: theme.textFaint }}>Start Date</p>
+                <p className="font-medium" style={{ color: theme.text }}>{new Date(myContract.startDate).toLocaleDateString("en-GB")}</p>
+              </div>
+            )}
+            {myContract.endDate && (
+              <div>
+                <p className="text-xs" style={{ color: theme.textFaint }}>End Date</p>
+                <p className="font-medium" style={{ color: theme.text }}>{new Date(myContract.endDate).toLocaleDateString("en-GB")}</p>
+              </div>
+            )}
+            {myContract.probationEndDate && (
+              <div>
+                <p className="text-xs" style={{ color: theme.textFaint }}>Probation End</p>
+                <p className="font-medium" style={{ color: theme.text }}>{new Date(myContract.probationEndDate).toLocaleDateString("en-GB")}</p>
+              </div>
+            )}
+            <div>
+              <p className="text-xs" style={{ color: theme.textFaint }}>Medical Insurance</p>
+              <p className="font-medium" style={{ color: myContract.isMedicallyInsured ? "#16a34a" : theme.textMuted }}>
+                {myContract.isMedicallyInsured ? "✓ Insured" : "Not insured"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs" style={{ color: theme.textFaint }}>Social Insurance</p>
+              <p className="font-medium" style={{ color: myContract.isSociallyInsured ? "#16a34a" : theme.textMuted }}>
+                {myContract.isSociallyInsured ? "✓ Insured" : "Not insured"}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Salary Advances (سلفة) */}
+      {(myAdvances as any[]).length > 0 && (
+        <div className="mt-4 rounded-xl p-4 border" style={{ background: theme.cardBg, borderColor: theme.border }}>
+          <p className="text-xs font-semibold uppercase tracking-wide mb-3" style={{ color: theme.textMuted }}>
+            Salary Advances (سلفة)
+          </p>
+          <div className="space-y-2">
+            {(myAdvances as any[]).map((a: any) => (
+              <div key={a.id} className="flex items-center justify-between gap-3 text-sm">
+                <div>
+                  <span className="font-medium" style={{ color: theme.text }}>
+                    {parseFloat(a.amountEgp).toLocaleString()} EGP
+                  </span>
+                  <span className="text-xs ml-2" style={{ color: theme.textMuted }}>{a.issuedDate}</span>
+                  {a.reason && <span className="text-xs ml-2 italic" style={{ color: theme.textFaint }}>{a.reason}</span>}
+                </div>
+                <span
+                  className="text-xs font-medium px-2 py-0.5 rounded-full"
+                  style={{
+                    background: a.status === "pending"   ? "#fef3c7"
+                              : a.status === "deducted"  ? "#d1fae5"
+                              : "#f1f5f9",
+                    color:      a.status === "pending"   ? "#92400e"
+                              : a.status === "deducted"  ? "#065f46"
+                              : "#64748b",
+                  }}>
+                  {a.status === "pending"   ? "Pending"
+                 : a.status === "deducted"  ? `Deducted${a.deductCycle ? " · " + a.deductCycle : ""}`
+                 : "Cancelled"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   );
@@ -4825,6 +4914,200 @@ function ProfileCompletionWall({ agent, wfProfile }: { agent: { traineeCode: str
           Tanis Connect · This information is kept confidential and used for HR purposes only.
         </p>
       </div>
+    </div>
+  );
+}
+
+// ─── AUX Tracker Tab (Quantum agents only) ────────────────────────────────────
+const AUX_TYPES = [
+  { value: "break",    label: "Break" },
+  { value: "lunch",    label: "Lunch" },
+  { value: "training", label: "Training" },
+  { value: "meeting",  label: "Meeting" },
+  { value: "bathroom", label: "Bathroom" },
+  { value: "other",    label: "Other" },
+];
+
+function AuxTrackerTab({ theme }: { theme: Theme }) {
+  const utils = trpc.useUtils();
+  const today = new Date().toISOString().slice(0, 10);
+
+  const { data: auxLogs = [], refetch: refetchAux } = trpc.timeTracking.myAuxLogs.useQuery();
+  const [auxType, setAuxType] = useState("break");
+  const [showException, setShowException] = useState(false);
+  const [excForm, setExcForm] = useState({ date: today, exceptionType: "late", scheduledTime: "", actualTime: "", note: "" });
+
+  const startAux = trpc.timeTracking.startAux.useMutation({
+    onSuccess: () => { refetchAux(); toast.success("AUX started"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const endAux = trpc.timeTracking.endAux.useMutation({
+    onSuccess: (res) => {
+      refetchAux();
+      const mins = Math.floor(((res as { durationMs?: number }).durationMs ?? 0) / 60000);
+      toast.success(`AUX ended — ${mins}m logged`);
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const logException = trpc.timeTracking.logException.useMutation({
+    onSuccess: () => { setShowException(false); toast.success("Exception logged"); },
+    onError: (e) => toast.error(e.message),
+  });
+
+  type AuxLog = { id: number; auxType: string; startTime: number; endTime: number | null; durationMs: number | null };
+  const logs = auxLogs as AuxLog[];
+  const active = logs.find(l => !l.endTime);
+
+  function fmtDur(startMs: number, endMs?: number | null) {
+    const dur = (endMs ?? Date.now()) - startMs;
+    const mins = Math.floor(dur / 60000);
+    const hrs = Math.floor(mins / 60);
+    return hrs > 0 ? `${hrs}h ${mins % 60}m` : `${mins}m`;
+  }
+
+  const cardStyle: React.CSSProperties = { background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16 };
+  const labelStyle: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: theme.textMuted, display: "block", marginBottom: 4 };
+  const inputStyle: React.CSSProperties = { background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, borderRadius: 10, padding: "8px 12px", color: theme.text, fontSize: 13, width: "100%", outline: "none" };
+
+  return (
+    <div className="p-4 space-y-4 max-w-md mx-auto">
+
+      {/* AUX timer card */}
+      <div style={cardStyle}>
+        <p className="text-sm font-semibold mb-3 flex items-center gap-2">
+          <Coffee className="w-4 h-4" style={{ color: BRAND_LIGHT }} /> AUX Time
+        </p>
+
+        {active ? (
+          <div style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.25)", borderRadius: 12, padding: 12 }} className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-medium capitalize" style={{ color: theme.text }}>{active.auxType} in progress</span>
+              <span className="text-xs font-semibold px-2 py-1 rounded-full" style={{ background: "rgba(251,191,36,0.15)", color: "#d97706" }}>
+                {fmtDur(active.startTime)}
+              </span>
+            </div>
+            <button
+              onClick={() => endAux.mutate()}
+              disabled={endAux.isPending}
+              className="w-full h-9 rounded-xl text-sm font-semibold transition-opacity disabled:opacity-50"
+              style={{ background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, color: theme.text }}
+            >
+              End {active.auxType}
+            </button>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <select
+              value={auxType}
+              onChange={e => setAuxType(e.target.value)}
+              style={{ ...inputStyle, flex: 1 }}
+            >
+              {AUX_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+            </select>
+            <button
+              onClick={() => startAux.mutate({ auxType })}
+              disabled={startAux.isPending}
+              className="h-9 px-4 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-50"
+              style={{ background: BRAND }}
+            >
+              Start
+            </button>
+          </div>
+        )}
+
+        {/* Today's AUX history */}
+        {logs.filter(l => l.endTime).length > 0 && (
+          <div className="mt-3 space-y-1">
+            <p style={{ fontSize: 11, color: theme.textMuted, marginBottom: 6, fontWeight: 600 }}>Today's AUX</p>
+            {logs.filter(l => l.endTime).map(log => (
+              <div key={log.id} className="flex items-center justify-between py-1" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
+                <span className="text-sm capitalize" style={{ color: theme.text }}>{log.auxType}</span>
+                <span className="text-xs" style={{ color: theme.textMuted }}>{fmtDur(log.startTime, log.endTime)}</span>
+              </div>
+            ))}
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-xs font-semibold" style={{ color: theme.textMuted }}>Total AUX today</span>
+              <span className="text-xs font-semibold" style={{ color: theme.text }}>
+                {(() => {
+                  const totalMs = logs.filter(l => l.durationMs).reduce((acc, l) => acc + (l.durationMs ?? 0), 0);
+                  const mins = Math.floor(totalMs / 60000);
+                  const hrs = Math.floor(mins / 60);
+                  return hrs > 0 ? `${hrs}h ${mins % 60}m` : `${mins}m`;
+                })()}
+              </span>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Log Exception */}
+      <button
+        onClick={() => setShowException(true)}
+        className="w-full flex items-center justify-center gap-2 h-11 rounded-xl text-sm font-semibold transition-opacity"
+        style={{ background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, color: theme.text }}
+      >
+        <AlertTriangle className="w-4 h-4" /> Log Attendance Exception
+      </button>
+
+      {/* Exception dialog — simple inline panel when open */}
+      {showException && (
+        <div style={{ ...cardStyle, border: `1px solid ${BRAND}40` }}>
+          <p className="text-sm font-semibold mb-3" style={{ color: theme.text }}>Log Attendance Exception</p>
+          <div className="space-y-3">
+            <div>
+              <label style={labelStyle}>Date</label>
+              <input type="date" value={excForm.date} onChange={e => setExcForm(f => ({ ...f, date: e.target.value }))} style={inputStyle} />
+            </div>
+            <div>
+              <label style={labelStyle}>Type</label>
+              <select value={excForm.exceptionType} onChange={e => setExcForm(f => ({ ...f, exceptionType: e.target.value }))} style={inputStyle}>
+                <option value="late">Late Arrival</option>
+                <option value="early_departure">Early Departure</option>
+                <option value="absent">Absent</option>
+              </select>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label style={labelStyle}>Scheduled</label>
+                <input type="time" value={excForm.scheduledTime} onChange={e => setExcForm(f => ({ ...f, scheduledTime: e.target.value }))} style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>Actual</label>
+                <input type="time" value={excForm.actualTime} onChange={e => setExcForm(f => ({ ...f, actualTime: e.target.value }))} style={inputStyle} />
+              </div>
+            </div>
+            <div>
+              <label style={labelStyle}>Note</label>
+              <textarea
+                value={excForm.note}
+                onChange={e => setExcForm(f => ({ ...f, note: e.target.value }))}
+                rows={2}
+                placeholder="Brief note…"
+                style={{ ...inputStyle, resize: "none" }}
+              />
+            </div>
+          </div>
+          <div className="flex gap-2 mt-4">
+            <button onClick={() => setShowException(false)} className="flex-1 h-9 rounded-xl text-sm font-semibold transition-opacity" style={{ background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, color: theme.text }}>
+              Cancel
+            </button>
+            <button
+              disabled={logException.isPending}
+              onClick={() => logException.mutate({
+                date: excForm.date,
+                exceptionType: excForm.exceptionType as "late" | "early_departure" | "absent",
+                scheduledTime: excForm.scheduledTime || undefined,
+                actualTime: excForm.actualTime || undefined,
+                note: excForm.note || undefined,
+              })}
+              className="flex-1 h-9 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-50"
+              style={{ background: BRAND }}
+            >
+              {logException.isPending ? "Logging…" : "Submit"}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -29,7 +29,7 @@ import {
   LayoutDashboard, Users, LogOut, PanelLeft, GraduationCap, Inbox, Settings,
   Briefcase, Banknote, CreditCard, BarChart2, AlertCircle, Star, Wallet,
   FileText, Activity, ChevronDown, ChevronRight, TrendingUp, BookOpen, PhoneOff, DollarSign, UserCog, Building2, Zap, UserCircle, CalendarDays, Bell,
-  UserX, ShieldAlert, ClipboardList,
+  UserX, ShieldAlert, ClipboardList, Clock,
 } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState, useCallback } from "react";
 import React from "react";
@@ -74,6 +74,7 @@ const NAV: NavItem[] = [
     ],
   },
   { icon: Building2, label: "Clients",              path: "/clients" },
+  { icon: Clock,     label: "Time Tracking",        path: "/time-tracking" },
   { icon: Building2, label: "Business Development", path: "/business-development" },
   { icon: Activity, label: "Cycle Tracker", path: "/cycle-tracker" },
   { icon: TrendingUp, label: "Performance Reports", path: "/performance-reports" },
