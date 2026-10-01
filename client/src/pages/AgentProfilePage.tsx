@@ -94,7 +94,7 @@ export default function AgentProfilePage() {
   // Known Quantum positions — user can still type a custom one
   const QUANTUM_POSITIONS = ["Scheduler", "Servicing Account", "Call Center Agent", "Team Lead", "Quality Analyst"];
 
-  const transferCampaign = trpc.workforce.transferCampaign.useMutation({
+  const transferCampaign = trpc.exit.transferCampaign.useMutation({
     onSuccess: () => {
       toast.success("Agent transferred successfully");
       setTransferDialog(false);
@@ -104,7 +104,7 @@ export default function AgentProfilePage() {
       refetch();
       utils.workforce.list.invalidate();
     },
-    onError: (e) => toast.error(e.message),
+    onError: (e: { message: string }) => toast.error(e.message),
   });
 
   function openTransferDialog() {
@@ -286,7 +286,7 @@ export default function AgentProfilePage() {
     );
   }
 
-  const { agent, documents, paymentMethods, comments, candidate, payroll, adjustments = [] } = profile as typeof profile & { adjustments?: Array<{ id: number; crdts: string; month: string; type: string; amount: number; note: string | null; createdAt: number; createdBy: string | null }> };
+  const { agent, documents, paymentMethods, comments, candidate, payroll, adjustments = [] } = profile as typeof profile & { adjustments?: Array<{ id: number; crdts: string; month: string; type: string; amount: string; label: string | null; createdAt: number; createdBy: string | null }> };
   const campaign = (campaigns as Array<{id: number; name: string}>).find(c => c.id === agent.campaignId);
   const offDays = [agent.offDay1, agent.offDay2].filter(d => d !== null && d !== undefined) as number[];
   const isActive = agent.agentStatus === "active" || agent.isActive;
@@ -831,7 +831,7 @@ export default function AgentProfilePage() {
                           <td className={`py-2 pr-4 text-right font-semibold ${adj.type === "bonus" ? "text-green-700" : "text-red-600"}`}>
                             {adj.type === "bonus" ? "+" : "–"}{moneyEGP(adj.amount)}
                           </td>
-                          <td className="py-2 pr-4 text-muted-foreground">{adj.note ?? "—"}</td>
+                          <td className="py-2 pr-4 text-muted-foreground">{adj.label ?? "—"}</td>
                           <td className="py-2 text-right text-xs text-muted-foreground">{adj.createdBy ?? "—"}</td>
                         </tr>
                       ))}

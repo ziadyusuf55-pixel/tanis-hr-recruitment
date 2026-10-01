@@ -7650,9 +7650,10 @@ const exitRouter = router({
         throw new TRPCError({ code: "FORBIDDEN", message: "Only admins and HR can transfer agents between campaigns." });
       }
       const { updateWorkforceAgent } = await import("./db");
-      const update: Record<string, unknown> = { campaignId: input.campaignId };
-      if (input.jobTitle) update.jobTitle = input.jobTitle;
-      await updateWorkforceAgent(input.traineeCode, update as Parameters<typeof updateWorkforceAgent>[1]);
+      await updateWorkforceAgent(input.traineeCode, {
+        campaignId: input.campaignId,
+        ...(input.jobTitle ? { jobTitle: input.jobTitle } : {}),
+      });
       await auditEntry(ctx.user, "transfer_campaign", "agent", input.traineeCode, JSON.stringify({ campaignId: input.campaignId, jobTitle: input.jobTitle }));
       return { ok: true };
     }),
