@@ -1311,8 +1311,21 @@ export async function countUnreadNotifications(candidateId: number): Promise<num
 export async function listCampaigns() {
   const db = await getDb();
   if (!db) return [];
-  const { campaigns } = await import("../drizzle/schema");
-  return db.select().from(campaigns).orderBy(campaigns.name);
+  const { campaigns, clients } = await import("../drizzle/schema");
+  const rows = await db
+    .select({
+      id: campaigns.id,
+      name: campaigns.name,
+      clientId: campaigns.clientId,
+      clientName: clients.name,
+      minHeadcount: campaigns.minHeadcount,
+      workDays: campaigns.workDays,
+      notes: campaigns.notes,
+    })
+    .from(campaigns)
+    .leftJoin(clients, eq(campaigns.clientId, clients.id))
+    .orderBy(clients.name, campaigns.name);
+  return rows;
 }
 
 export async function getCampaignById(id: number) {

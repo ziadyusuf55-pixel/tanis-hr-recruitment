@@ -16,7 +16,7 @@ import {
   Plus, Trash2, ExternalLink, CheckCircle2, AlertTriangle, Info,
   Star, Building2, Phone, Mail, Calendar, Clock, Shield,
   LogOut, XCircle, KeyRound, MoreVertical, Pencil, GraduationCap, History,
-  Briefcase, Wallet, TrendingUp,
+  Briefcase, Wallet, TrendingUp, ArrowRightLeft,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem,
@@ -82,6 +82,21 @@ export default function AgentProfilePage() {
   const [deleteDialog, setDeleteDialog] = useState(false);
   const [resetPwDialog, setResetPwDialog] = useState(false);
   const [newPwResult, setNewPwResult] = useState<string | null>(null);
+
+  // ── Transfer Campaign ─────────────────────────────────────────────────────
+  const [transferDialog, setTransferDialog] = useState(false);
+  const [transferCampaignId, setTransferCampaignId] = useState<number | null>(null);
+
+  const transferCampaign = trpc.workforce.transferCampaign.useMutation({
+    onSuccess: () => {
+      toast.success("Agent transferred successfully");
+      setTransferDialog(false);
+      setTransferCampaignId(null);
+      refetch();
+      utils.workforce.list.invalidate();
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   // ── Promote to Hub ────────────────────────────────────────────────────────
   const [promoteDialog, setPromoteDialog] = useState(false);
@@ -250,7 +265,7 @@ export default function AgentProfilePage() {
     );
   }
 
-  const { agent, documents, paymentMethods, comments, candidate, payroll } = profile;
+  const { agent, documents, paymentMethods, comments, candidate, payroll, adjustments = [] } = profile as typeof profile & { adjustments?: Array<{ id: number; crdts: string; month: string; type: string; amount: number; note: string | null; createdAt: number; createdBy: string | null }> };
   const campaign = (campaigns as Array<{id: number; name: string}>).find(c => c.id === agent.campaignId);
   const offDays = [agent.offDay1, agent.offDay2].filter(d => d !== null && d !== undefined) as number[];
   const isActive = agent.agentStatus === "active" || agent.isActive;
@@ -362,6 +377,15 @@ export default function AgentProfilePage() {
                         }}
                       >
                         <TrendingUp className="h-4 w-4" /> Promote to Hub
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        className="gap-2 text-blue-700 focus:text-blue-700 focus:bg-blue-50"
+                        onClick={() => {
+                          setTransferCampaignId(agent.campaignId ?? null);
+                          setTransferDialog(true);
+                        }}
+                      >
+                        <ArrowRightLeft className="h-4 w-4" /> Transfer Campaign
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
@@ -762,6 +786,42 @@ export default function AgentProfilePage() {
             ) : (
               <p className="text-sm text-muted-foreground">No payroll records yet.</p>
             )}
+            {/* ── Manual Adjustments ── */}
+            {adjustments.length > 0 && (
+              <div className="mt-6">
+                <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-3">Manual Adjustments</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-xs uppercase tracking-wider text-muted-foreground border-b border-border">
+                        <th className="py-2 pr-4">Month</th>
+                        <th className="py-2 pr-4">Type</th>
+                        <th className="py-2 pr-4 text-right">Amount</th>
+                        <th className="py-2 pr-4">Note</th>
+                        <th className="py-2 text-right">Added By</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adjustments.sort((a, b) => b.month.localeCompare(a.month)).map(adj => (
+                        <tr key={adj.id} className="border-b border-border/50">
+                          <td className="py-2 pr-4 font-medium text-foreground">{adj.month}</td>
+                          <td className="py-2 pr-4">
+                            <span className={`text-xs rounded-full px-2 py-0.5 ${adj.type === "bonus" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>
+                              {adj.type === "bonus" ? "Bonus" : "Deduction"}
+                            </span>
+                          </td>
+                          <td className={`py-2 pr-4 text-right font-semibold ${adj.type === "bonus" ? "text-green-700" : "text-red-600"}`}>
+                            {adj.type === "bonus" ? "+" : "–"}{moneyEGP(adj.amount)}
+                          </td>
+                          <td className="py-2 pr-4 text-muted-foreground">{adj.note ?? "—"}</td>
+                          <td className="py-2 text-right text-xs text-muted-foreground">{adj.createdBy ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -1049,6 +1109,63 @@ export default function AgentProfilePage() {
           </div>
           <div className="flex justify-end pt-2">
             <Button onClick={() => { setResetPwDialog(false); setNewPwResult(null); }}>Done</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Transfer Campaign Dialog ───────────────────────────────────────── */}
+      <Dialog open={transferDialog} onOpenChange={(open) => { if (!open) { setTransferDialog(false); setTransferCampaignId(null); } }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-blue-700">
+              <ArrowRightLeft className="h-5 w-5" /> Transfer Campaign
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Move <strong>{agent.fullName}</strong> to a different campaign or client.
+              The agent will immediately appear under the selected campaign.
+            </p>
+            <div className="space-y-1.5">
+              <Label className="text-sm font-medium">Target Campaign</Label>
+              <Select
+                value={transferCampaignId?.toString() ?? ""}
+                onValueChange={(val) => setTransferCampaignId(Number(val))}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select a campaign…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(campaigns as Array<{ id: number; name: string; clientName?: string }>).map(c => (
+                    <SelectItem key={c.id} value={c.id.toString()}>
+                      {c.clientName ? `${c.clientName} — ${c.name}` : c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {transferCampaignId === (agent.campaignId ?? null) && (
+              <p className="text-xs text-amber-600">⚠ This is the agent's current campaign — select a different one.</p>
+            )}
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button variant="outline" onClick={() => { setTransferDialog(false); setTransferCampaignId(null); }}>
+              Cancel
+            </Button>
+            <Button
+              className="bg-blue-600 hover:bg-blue-700 text-white"
+              disabled={
+                !transferCampaignId ||
+                transferCampaignId === (agent.campaignId ?? null) ||
+                transferCampaign.isPending
+              }
+              onClick={() => {
+                if (!transferCampaignId) return;
+                transferCampaign.mutate({ traineeCode, campaignId: transferCampaignId });
+              }}
+            >
+              {transferCampaign.isPending ? "Transferring…" : "Transfer Agent"}
+            </Button>
           </div>
         </DialogContent>
       </Dialog>

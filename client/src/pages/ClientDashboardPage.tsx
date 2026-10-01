@@ -15,13 +15,13 @@ const SCORECARD_KPIS = [
   { category: "People & Attendance", key: "attendance_rate", label: "Attendance Rate", target: "≥98%", unit: "%" },
   { category: "People & Attendance", key: "schedule_adherence", label: "Schedule Adherence", target: "≥98%", unit: "%" },
   { category: "People & Attendance", key: "unplanned_absence_rate", label: "Unplanned Absence Rate", target: "≤2%", unit: "%" },
-  { category: "People & Attendance", key: "late_arrivals", label: "Late Arrivals / Early Departures", target: "0", unit: "#" },
+  { category: "People & Attendance", key: "late_arrivals", label: "Late Arrivals / Early Departures", target: "Trend / minimize", unit: "#" },
   { category: "People & Attendance", key: "pto_compliance", label: "PTO Compliance", target: "100%", unit: "%" },
-  { category: "People & Attendance", key: "monthly_attrition", label: "Monthly Attrition", target: "≤3%", unit: "%" },
+  { category: "People & Attendance", key: "monthly_attrition", label: "Monthly Attrition", target: "Track trend", unit: "%" },
   // Recruiting
-  { category: "Recruiting", key: "time_to_first_qualified", label: "Time to First Qualified", target: "≤5 days", unit: "days" },
+  { category: "Recruiting", key: "time_to_first_qualified", label: "Time to First Qualified Candidates", target: "≤5 business days", unit: "days" },
   { category: "Recruiting", key: "time_to_fill", label: "Time to Fill", target: "≤30 days", unit: "days" },
-  { category: "Recruiting", key: "replacement_speed", label: "Replacement Speed", target: "≤14 days", unit: "days" },
+  { category: "Recruiting", key: "replacement_speed", label: "Replacement Speed", target: "SLA-based", unit: "days" },
   { category: "Recruiting", key: "candidate_quality", label: "Candidate Quality Rate", target: "≥80%", unit: "%" },
   // Performance
   { category: "Performance", key: "employees_meeting_expectations", label: "Employees Meeting Expectations", target: "≥90%", unit: "%" },
@@ -44,6 +44,7 @@ type Agent = {
   traineeCode: string | null;
   fullName: string;
   campaignName: string | null;
+  jobTitle: string | null;
   teamLeader: string | null;
   agentStatus: string | null;
   joinDate: string | null;
@@ -107,7 +108,7 @@ export default function ClientDashboardPage() {
     );
   }
 
-  const { client, campaigns, activeAgents, allAgents, payroll, adherence, month } = data as unknown as {
+  const { client, campaigns, activeAgents: _rawActiveAgents, allAgents, payroll, adherence, month } = data as unknown as {
     client: { id: number; name: string; shortCode: string; colorHex: string; isActive: boolean };
     campaigns: { id: number; name: string }[];
     activeAgents: Agent[];
@@ -116,6 +117,10 @@ export default function ClientDashboardPage() {
     adherence: AdherenceEntry[];
     month: string;
   };
+
+  const isQuantum = client.name.toLowerCase().includes("quantum");
+  // Filter to only truly active-status agents (backend returns inactive/nesting too)
+  const activeAgents = _rawActiveAgents.filter(a => a.agentStatus === "active");
 
   // Computed metrics
   const totalActive = activeAgents.length;
@@ -151,7 +156,8 @@ export default function ClientDashboardPage() {
     let status: "green" | "red" | "gray" = "gray";
     if (computed !== null) {
       const num = parseFloat(computed);
-      if (!isNaN(num)) {
+      const isTrackOnly = kpi.target === "Track trend" || kpi.target === "Trend / minimize" || kpi.target === "SLA-based";
+      if (!isNaN(num) && !isTrackOnly) {
         if (kpi.target.startsWith("≥")) {
           const t = parseFloat(kpi.target.slice(1));
           status = num >= t ? "green" : "red";
@@ -216,7 +222,7 @@ export default function ClientDashboardPage() {
                 {!client.isActive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
               </div>
               <p className="text-sm text-muted-foreground">
-                {campaigns.length} campaign{campaigns.length !== 1 ? "s" : ""} · {totalActive} active agents
+                {campaigns.length} {isQuantum ? "position" : "campaign"}{campaigns.length !== 1 ? "s" : ""} · {totalActive} active agents
               </p>
             </div>
           </div>
@@ -265,7 +271,7 @@ export default function ClientDashboardPage() {
             </Card>
             <Card>
               <CardContent className="pt-5">
-                <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Campaigns</p>
+                <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">{isQuantum ? "Positions" : "Campaigns"}</p>
                 <p className="text-3xl font-bold mt-1">{campaigns.length}</p>
               </CardContent>
             </Card>
@@ -286,7 +292,7 @@ export default function ClientDashboardPage() {
           {/* Campaigns list */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-semibold">Campaigns</CardTitle>
+              <CardTitle className="text-sm font-semibold">{isQuantum ? "Positions" : "Campaigns"}</CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
               {campaigns.length === 0 ? (
@@ -336,7 +342,7 @@ export default function ClientDashboardPage() {
                   <TableRow>
                     <TableHead>Name</TableHead>
                     <TableHead>Code</TableHead>
-                    <TableHead>Campaign</TableHead>
+                    <TableHead>{isQuantum ? "Position" : "Campaign"}</TableHead>
                     <TableHead>Team Leader</TableHead>
                     <TableHead>Location</TableHead>
                     <TableHead>Status</TableHead>
@@ -354,15 +360,11 @@ export default function ClientDashboardPage() {
                       <TableRow key={a.id}>
                         <TableCell className="font-medium">{a.fullName}</TableCell>
                         <TableCell className="font-mono text-xs">{a.traineeCode}</TableCell>
-                        <TableCell>{a.campaignName ?? "—"}</TableCell>
+                        <TableCell>{isQuantum ? (a.jobTitle ?? a.campaignName ?? "—") : (a.campaignName ?? "—")}</TableCell>
                         <TableCell>{a.teamLeader ?? "—"}</TableCell>
                         <TableCell className="capitalize">{a.workLocation ?? "—"}</TableCell>
                         <TableCell>
-                          {a.nestingStatus === "nesting" ? (
-                            <Badge variant="secondary" className="text-xs">Nesting</Badge>
-                          ) : (
-                            <Badge className="text-xs bg-green-100 text-green-800 border-green-200 hover:bg-green-100">Active</Badge>
-                          )}
+                          <Badge className="text-xs bg-green-100 text-green-800 border-green-200 hover:bg-green-100">Active</Badge>
                         </TableCell>
                       </TableRow>
                     ))

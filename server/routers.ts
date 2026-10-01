@@ -7636,6 +7636,22 @@ const exitRouter = router({
       }
       return { ok: true };
     }),
+
+  /** Transfer an agent to a different campaign (and thus potentially a different client) */
+  transferCampaign: protectedProcedure
+    .input(z.object({
+      traineeCode: z.string().min(1),
+      campaignId: z.number().int().positive(),
+    }))
+    .mutation(async ({ ctx, input }) => {
+      if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner" && ctx.user?.role !== "hr") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Only admins and HR can transfer agents between campaigns." });
+      }
+      const { updateWorkforceAgent } = await import("./db");
+      await updateWorkforceAgent(input.traineeCode, { campaignId: input.campaignId });
+      await auditEntry(ctx.user, "transfer_campaign", "agent", input.traineeCode, JSON.stringify({ campaignId: input.campaignId }));
+      return { ok: true };
+    }),
 });
 
 const sessionRouter = router({
