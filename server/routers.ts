@@ -7642,14 +7642,18 @@ const exitRouter = router({
     .input(z.object({
       traineeCode: z.string().min(1),
       campaignId: z.number().int().positive(),
+      /** For position-based clients (e.g. Quantum) — also update the agent's jobTitle */
+      jobTitle: z.string().min(1).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
       if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner" && ctx.user?.role !== "hr") {
         throw new TRPCError({ code: "FORBIDDEN", message: "Only admins and HR can transfer agents between campaigns." });
       }
       const { updateWorkforceAgent } = await import("./db");
-      await updateWorkforceAgent(input.traineeCode, { campaignId: input.campaignId });
-      await auditEntry(ctx.user, "transfer_campaign", "agent", input.traineeCode, JSON.stringify({ campaignId: input.campaignId }));
+      const update: Record<string, unknown> = { campaignId: input.campaignId };
+      if (input.jobTitle) update.jobTitle = input.jobTitle;
+      await updateWorkforceAgent(input.traineeCode, update as Parameters<typeof updateWorkforceAgent>[1]);
+      await auditEntry(ctx.user, "transfer_campaign", "agent", input.traineeCode, JSON.stringify({ campaignId: input.campaignId, jobTitle: input.jobTitle }));
       return { ok: true };
     }),
 });

@@ -83,20 +83,41 @@ export default function AgentProfilePage() {
   const [resetPwDialog, setResetPwDialog] = useState(false);
   const [newPwResult, setNewPwResult] = useState<string | null>(null);
 
-  // ── Transfer Campaign ─────────────────────────────────────────────────────
+  // ── Transfer ──────────────────────────────────────────────────────────────
   const [transferDialog, setTransferDialog] = useState(false);
+  const [transferClientId, setTransferClientId] = useState<number | null>(null);
   const [transferCampaignId, setTransferCampaignId] = useState<number | null>(null);
+  const [transferJobTitle, setTransferJobTitle] = useState("");
+
+  const { data: allClients = [] } = trpc.clients.list.useQuery();
+
+  // Known Quantum positions — user can still type a custom one
+  const QUANTUM_POSITIONS = ["Scheduler", "Servicing Account", "Call Center Agent", "Team Lead", "Quality Analyst"];
 
   const transferCampaign = trpc.workforce.transferCampaign.useMutation({
     onSuccess: () => {
       toast.success("Agent transferred successfully");
       setTransferDialog(false);
+      setTransferClientId(null);
       setTransferCampaignId(null);
+      setTransferJobTitle("");
       refetch();
       utils.workforce.list.invalidate();
     },
     onError: (e) => toast.error(e.message),
   });
+
+  function openTransferDialog() {
+    setTransferClientId(null);
+    setTransferCampaignId(null);
+    setTransferJobTitle("");
+    setTransferDialog(true);
+  }
+
+  const transferTargetClient = (allClients as Array<{ id: number; name: string }>).find(c => c.id === transferClientId);
+  const isTransferTargetQuantum = transferTargetClient?.name.toLowerCase().includes("quantum") ?? false;
+  const campaignsForClient = (campaigns as Array<{ id: number; name: string; clientId: number | null; clientName: string | null }>)
+    .filter(c => c.clientId === transferClientId);
 
   // ── Promote to Hub ────────────────────────────────────────────────────────
   const [promoteDialog, setPromoteDialog] = useState(false);
@@ -380,12 +401,9 @@ export default function AgentProfilePage() {
                       </DropdownMenuItem>
                       <DropdownMenuItem
                         className="gap-2 text-blue-700 focus:text-blue-700 focus:bg-blue-50"
-                        onClick={() => {
-                          setTransferCampaignId(agent.campaignId ?? null);
-                          setTransferDialog(true);
-                        }}
+                        onClick={openTransferDialog}
                       >
-                        <ArrowRightLeft className="h-4 w-4" /> Transfer Campaign
+                        <ArrowRightLeft className="h-4 w-4" /> Transfer to Client / Position
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
@@ -1113,55 +1131,128 @@ export default function AgentProfilePage() {
         </DialogContent>
       </Dialog>
 
-      {/* ── Transfer Campaign Dialog ───────────────────────────────────────── */}
-      <Dialog open={transferDialog} onOpenChange={(open) => { if (!open) { setTransferDialog(false); setTransferCampaignId(null); } }}>
+      {/* ── Transfer Dialog ────────────────────────────────────────────────── */}
+      <Dialog open={transferDialog} onOpenChange={(open) => { if (!open) { setTransferDialog(false); setTransferClientId(null); setTransferCampaignId(null); setTransferJobTitle(""); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-blue-700">
-              <ArrowRightLeft className="h-5 w-5" /> Transfer Campaign
+              <ArrowRightLeft className="h-5 w-5" /> Transfer Agent
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              Move <strong>{agent.fullName}</strong> to a different campaign or client.
-              The agent will immediately appear under the selected campaign.
+              Move <strong>{agent.fullName}</strong> to a different client or position.
             </p>
+
+            {/* Step 1: Pick target client */}
             <div className="space-y-1.5">
-              <Label className="text-sm font-medium">Target Campaign</Label>
+              <Label className="text-sm font-medium">Target Client</Label>
               <Select
-                value={transferCampaignId?.toString() ?? ""}
-                onValueChange={(val) => setTransferCampaignId(Number(val))}
+                value={transferClientId?.toString() ?? ""}
+                onValueChange={(val) => {
+                  setTransferClientId(Number(val));
+                  setTransferCampaignId(null);
+                  setTransferJobTitle("");
+                }}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select a campaign…" />
+                  <SelectValue placeholder="Select a client…" />
                 </SelectTrigger>
                 <SelectContent>
-                  {(campaigns as Array<{ id: number; name: string; clientName?: string }>).map(c => (
-                    <SelectItem key={c.id} value={c.id.toString()}>
-                      {c.clientName ? `${c.clientName} — ${c.name}` : c.name}
-                    </SelectItem>
+                  {(allClients as Array<{ id: number; name: string }>).map(c => (
+                    <SelectItem key={c.id} value={c.id.toString()}>{c.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
-            {transferCampaignId === (agent.campaignId ?? null) && (
-              <p className="text-xs text-amber-600">⚠ This is the agent's current campaign — select a different one.</p>
+
+            {/* Step 2a: Quantum → pick Position (jobTitle) */}
+            {transferClientId && isTransferTargetQuantum && (
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">Position</Label>
+                <Select
+                  value={QUANTUM_POSITIONS.includes(transferJobTitle) ? transferJobTitle : (transferJobTitle ? "__custom__" : "")}
+                  onValueChange={(val) => {
+                    if (val !== "__custom__") setTransferJobTitle(val);
+                    else setTransferJobTitle("");
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select a position…" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {QUANTUM_POSITIONS.map(p => (
+                      <SelectItem key={p} value={p}>{p}</SelectItem>
+                    ))}
+                    <SelectItem value="__custom__">Other (type below)</SelectItem>
+                  </SelectContent>
+                </Select>
+                {(!QUANTUM_POSITIONS.includes(transferJobTitle) || transferJobTitle === "") && (
+                  <Input
+                    placeholder="e.g. Collections Specialist"
+                    value={transferJobTitle}
+                    onChange={e => setTransferJobTitle(e.target.value)}
+                    className="mt-1.5"
+                  />
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Agent will be assigned to Quantum's default campaign with this position.
+                </p>
+                {/* Auto-select the first Quantum campaign */}
+                {campaignsForClient.length > 0 && transferCampaignId === null && (() => {
+                  // Side-effect: auto-select first campaign for Quantum
+                  setTimeout(() => setTransferCampaignId(campaignsForClient[0].id), 0);
+                  return null;
+                })()}
+              </div>
+            )}
+
+            {/* Step 2b: Non-Quantum → pick Campaign */}
+            {transferClientId && !isTransferTargetQuantum && (
+              <div className="space-y-1.5">
+                <Label className="text-sm font-medium">Campaign</Label>
+                {campaignsForClient.length === 0 ? (
+                  <p className="text-xs text-amber-600 p-2 bg-amber-50 rounded-md border border-amber-200">
+                    No campaigns found for this client. Create a campaign first.
+                  </p>
+                ) : (
+                  <Select
+                    value={transferCampaignId?.toString() ?? ""}
+                    onValueChange={(val) => setTransferCampaignId(Number(val))}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select a campaign…" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {campaignsForClient.map(c => (
+                        <SelectItem key={c.id} value={c.id.toString()}>{c.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
             )}
           </div>
+
           <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => { setTransferDialog(false); setTransferCampaignId(null); }}>
+            <Button variant="outline" onClick={() => { setTransferDialog(false); setTransferClientId(null); setTransferCampaignId(null); setTransferJobTitle(""); }}>
               Cancel
             </Button>
             <Button
               className="bg-blue-600 hover:bg-blue-700 text-white"
               disabled={
+                !transferClientId ||
                 !transferCampaignId ||
-                transferCampaignId === (agent.campaignId ?? null) ||
+                (isTransferTargetQuantum && !transferJobTitle.trim()) ||
                 transferCampaign.isPending
               }
               onClick={() => {
                 if (!transferCampaignId) return;
-                transferCampaign.mutate({ traineeCode, campaignId: transferCampaignId });
+                transferCampaign.mutate({
+                  traineeCode,
+                  campaignId: transferCampaignId,
+                  jobTitle: isTransferTargetQuantum ? transferJobTitle.trim() : undefined,
+                });
               }}
             >
               {transferCampaign.isPending ? "Transferring…" : "Transfer Agent"}
