@@ -5109,7 +5109,7 @@ function AuxTrackerTab({ theme }: { theme: Theme }) {
   })();
 
   type AdminComment = { id: number; content: string; tag: string; adminName: string | null; createdAt: number };
-  const notes = (adminComments as AdminComment[]).filter(c => c.tag !== "resolved" || c.content.trim().length > 0);
+  const notes = (adminComments as unknown as AdminComment[]).filter(c => c.tag !== "resolved" || c.content.trim().length > 0);
 
   return (
     <div className="p-4 space-y-4 max-w-2xl mx-auto">
