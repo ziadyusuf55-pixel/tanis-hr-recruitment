@@ -51,6 +51,10 @@ import {
   ClipboardCheck,
   Coffee,
   AlertTriangle,
+  ChevronDown,
+  CalendarDays,
+  History,
+  StickyNote,
 } from "lucide-react";
 
 const TANIS_LOGO_WHITE =
@@ -208,6 +212,26 @@ export default function AgentPortal() {
   );
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const [showMoreNav, setShowMoreNav] = useState(false);
+  const [showAuxMenu, setShowAuxMenu] = useState(false);
+  const [headerAuxType, setHeaderAuxType] = useState("break");
+  const portalUtils = trpc.useUtils();
+  const { data: headerAuxLogs = [] } = trpc.timeTracking.myAuxLogs.useQuery(undefined, { enabled: !!auxAccess?.allowed });
+  const headerAuxLogsTyped = headerAuxLogs as { id: number; auxType: string; startTime: number; endTime: number | null; durationMs: number | null }[];
+  const headerActiveAux = headerAuxLogsTyped.find(l => !l.endTime);
+  const headerStartAux = trpc.timeTracking.startAux.useMutation({
+    onSuccess: () => { portalUtils.timeTracking.myAuxLogs.invalidate(); portalUtils.timeTracking.myAuxLogsAll.invalidate(); toast.success("AUX started"); setShowAuxMenu(false); },
+    onError: (e) => toast.error(e.message),
+  });
+  const headerEndAux = trpc.timeTracking.endAux.useMutation({
+    onSuccess: (res) => {
+      portalUtils.timeTracking.myAuxLogs.invalidate();
+      portalUtils.timeTracking.myAuxLogsAll.invalidate();
+      const mins = Math.floor(((res as { durationMs?: number }).durationMs ?? 0) / 60000);
+      toast.success(`AUX ended — ${mins}m logged`);
+      setShowAuxMenu(false);
+    },
+    onError: (e) => toast.error(e.message),
+  });
   // Auto-redirect to profile if profile is incomplete
   useEffect(() => {
     if (_wfProfile !== undefined && !_profileComplete && activeTab !== "profile") {
@@ -361,6 +385,75 @@ export default function AgentPortal() {
               {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
             </button>
             <NotificationBell candidateId={agent.candidateId} theme={theme} />
+
+            {/* AUX Quick-Start — Quantum agents only */}
+            {auxAccess?.allowed && (
+              <div className="relative">
+                <button
+                  onClick={() => setShowAuxMenu(!showAuxMenu)}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm font-semibold transition-all"
+                  style={headerActiveAux
+                    ? { background: "rgba(251,191,36,0.15)", color: "#d97706", border: "1px solid rgba(251,191,36,0.3)" }
+                    : { background: theme.toggleBg, color: theme.toggleText }
+                  }
+                  title={headerActiveAux ? `${headerActiveAux.auxType} in progress` : "Start AUX"}
+                >
+                  <Coffee className="w-4 h-4" />
+                  <span className="hidden sm:inline text-xs">{headerActiveAux ? "AUX ▪" : "AUX"}</span>
+                  <ChevronDown className="w-3 h-3" />
+                </button>
+                {showAuxMenu && (
+                  <div
+                    className="absolute right-0 top-full mt-1 z-50 rounded-xl shadow-lg p-3 min-w-[200px] space-y-2"
+                    style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}
+                  >
+                    {headerActiveAux ? (
+                      <>
+                        <p className="text-xs font-semibold capitalize" style={{ color: theme.text }}>
+                          {headerActiveAux.auxType} in progress…
+                        </p>
+                        <button
+                          onClick={() => headerEndAux.mutate()}
+                          disabled={headerEndAux.isPending}
+                          className="w-full h-8 rounded-lg text-sm font-semibold transition-opacity disabled:opacity-50"
+                          style={{ background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, color: theme.text }}
+                        >
+                          End AUX
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-xs font-semibold" style={{ color: theme.textMuted }}>Start AUX</p>
+                        <select
+                          value={headerAuxType}
+                          onChange={e => setHeaderAuxType(e.target.value)}
+                          className="w-full rounded-lg text-sm"
+                          style={{ background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, color: theme.text, padding: "6px 10px", outline: "none" }}
+                        >
+                          {AUX_TYPES_HEADER.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+                        </select>
+                        <button
+                          onClick={() => headerStartAux.mutate({ auxType: headerAuxType })}
+                          disabled={headerStartAux.isPending}
+                          className="w-full h-8 rounded-lg text-sm font-semibold text-white transition-opacity disabled:opacity-50"
+                          style={{ background: BRAND }}
+                        >
+                          Start
+                        </button>
+                      </>
+                    )}
+                    <button
+                      onClick={() => { setShowAuxMenu(false); setActiveTab("aux"); }}
+                      className="w-full text-xs py-1 rounded-lg text-center transition-all"
+                      style={{ color: theme.textFaint }}
+                    >
+                      Open AUX tab →
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
             <button
               onClick={handleLogout}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-all"
@@ -4919,6 +5012,14 @@ function ProfileCompletionWall({ agent, wfProfile }: { agent: { traineeCode: str
 }
 
 // ─── AUX Tracker Tab (Quantum agents only) ────────────────────────────────────
+const AUX_TYPES_HEADER = [
+  { value: "break",    label: "Break" },
+  { value: "lunch",    label: "Lunch" },
+  { value: "training", label: "Training" },
+  { value: "meeting",  label: "Meeting" },
+  { value: "bathroom", label: "Bathroom" },
+  { value: "other",    label: "Other" },
+];
 const AUX_TYPES = [
   { value: "break",    label: "Break" },
   { value: "lunch",    label: "Lunch" },
@@ -4932,18 +5033,31 @@ function AuxTrackerTab({ theme }: { theme: Theme }) {
   const utils = trpc.useUtils();
   const today = new Date().toISOString().slice(0, 10);
 
+  // Today's logs (for the live timer card)
   const { data: auxLogs = [], refetch: refetchAux } = trpc.timeTracking.myAuxLogs.useQuery();
+  // Full history
+  const { data: allAuxLogs = [] } = trpc.timeTracking.myAuxLogsAll.useQuery();
+  // Schedule
+  const weekSun = (() => { const d = new Date(); d.setDate(d.getDate() - d.getDay()); return d.toISOString().slice(0, 10); })();
+  const weekSat = (() => { const d = new Date(); d.setDate(d.getDate() + (6 - d.getDay())); return d.toISOString().slice(0, 10); })();
+  const { data: myBreaks = [] } = trpc.breakSchedule.getMyBreaks.useQuery({ startDate: weekSun, endDate: weekSat });
+  const { data: myOpPlan } = trpc.workforce.getMyOperationPlan.useQuery({ weekOffset: 0 });
+  // Admin notes
+  const { data: adminComments = [] } = trpc.agentComments.listMine.useQuery();
+
   const [auxType, setAuxType] = useState("break");
   const [showException, setShowException] = useState(false);
   const [excForm, setExcForm] = useState({ date: today, exceptionType: "late", scheduledTime: "", actualTime: "", note: "" });
+  const [showFullHistory, setShowFullHistory] = useState(false);
 
   const startAux = trpc.timeTracking.startAux.useMutation({
-    onSuccess: () => { refetchAux(); toast.success("AUX started"); },
+    onSuccess: () => { refetchAux(); utils.timeTracking.myAuxLogsAll.invalidate(); toast.success("AUX started"); },
     onError: (e) => toast.error(e.message),
   });
   const endAux = trpc.timeTracking.endAux.useMutation({
     onSuccess: (res) => {
       refetchAux();
+      utils.timeTracking.myAuxLogsAll.invalidate();
       const mins = Math.floor(((res as { durationMs?: number }).durationMs ?? 0) / 60000);
       toast.success(`AUX ended — ${mins}m logged`);
     },
@@ -4956,6 +5070,7 @@ function AuxTrackerTab({ theme }: { theme: Theme }) {
 
   type AuxLog = { id: number; auxType: string; startTime: number; endTime: number | null; durationMs: number | null };
   const logs = auxLogs as AuxLog[];
+  const allLogs = allAuxLogs as AuxLog[];
   const active = logs.find(l => !l.endTime);
 
   function fmtDur(startMs: number, endMs?: number | null) {
@@ -4964,19 +5079,44 @@ function AuxTrackerTab({ theme }: { theme: Theme }) {
     const hrs = Math.floor(mins / 60);
     return hrs > 0 ? `${hrs}h ${mins % 60}m` : `${mins}m`;
   }
+  function fmtTime(ms: number) {
+    return new Date(ms).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
+  }
+  function fmtDate(ms: number) {
+    return new Date(ms).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  }
+  function to12h(t: string) {
+    const [h, m] = t.split(":").map(Number);
+    const ampm = h >= 12 ? "PM" : "AM";
+    return `${h % 12 || 12}:${String(m).padStart(2, "0")} ${ampm}`;
+  }
 
   const cardStyle: React.CSSProperties = { background: theme.cardBg, border: `1px solid ${theme.cardBorder}`, borderRadius: 16, padding: 16 };
   const labelStyle: React.CSSProperties = { fontSize: 11, fontWeight: 600, color: theme.textMuted, display: "block", marginBottom: 4 };
   const inputStyle: React.CSSProperties = { background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, borderRadius: 10, padding: "8px 12px", color: theme.text, fontSize: 13, width: "100%", outline: "none" };
+  const sectionTitle = (icon: React.ReactNode, label: string) => (
+    <p className="text-sm font-semibold mb-3 flex items-center gap-2" style={{ color: theme.text }}>{icon} {label}</p>
+  );
+
+  // Group full history by date
+  const historyByDate = (() => {
+    const m: Record<string, AuxLog[]> = {};
+    for (const l of allLogs.filter(l => l.endTime)) {
+      const d = new Date(l.startTime).toISOString().slice(0, 10);
+      (m[d] ??= []).push(l);
+    }
+    return Object.entries(m).sort(([a], [b]) => b.localeCompare(a)); // newest first
+  })();
+
+  type AdminComment = { id: number; content: string; tag: string; adminName: string | null; createdAt: number };
+  const notes = (adminComments as AdminComment[]).filter(c => c.tag !== "resolved" || c.content.trim().length > 0);
 
   return (
-    <div className="p-4 space-y-4 max-w-md mx-auto">
+    <div className="p-4 space-y-4 max-w-2xl mx-auto">
 
-      {/* AUX timer card */}
+      {/* ── AUX timer card ── */}
       <div style={cardStyle}>
-        <p className="text-sm font-semibold mb-3 flex items-center gap-2">
-          <Coffee className="w-4 h-4" style={{ color: BRAND_LIGHT }} /> AUX Time
-        </p>
+        {sectionTitle(<Coffee className="w-4 h-4" style={{ color: BRAND_LIGHT }} />, "AUX Time")}
 
         {active ? (
           <div style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.25)", borderRadius: 12, padding: 12 }} className="space-y-2">
@@ -4997,11 +5137,7 @@ function AuxTrackerTab({ theme }: { theme: Theme }) {
           </div>
         ) : (
           <div className="flex gap-2">
-            <select
-              value={auxType}
-              onChange={e => setAuxType(e.target.value)}
-              style={{ ...inputStyle, flex: 1 }}
-            >
+            <select value={auxType} onChange={e => setAuxType(e.target.value)} style={{ ...inputStyle, flex: 1 }}>
               {AUX_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
             <button
@@ -5015,18 +5151,18 @@ function AuxTrackerTab({ theme }: { theme: Theme }) {
           </div>
         )}
 
-        {/* Today's AUX history */}
+        {/* Today's AUX summary */}
         {logs.filter(l => l.endTime).length > 0 && (
           <div className="mt-3 space-y-1">
             <p style={{ fontSize: 11, color: theme.textMuted, marginBottom: 6, fontWeight: 600 }}>Today's AUX</p>
             {logs.filter(l => l.endTime).map(log => (
               <div key={log.id} className="flex items-center justify-between py-1" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
                 <span className="text-sm capitalize" style={{ color: theme.text }}>{log.auxType}</span>
-                <span className="text-xs" style={{ color: theme.textMuted }}>{fmtDur(log.startTime, log.endTime)}</span>
+                <span className="text-xs" style={{ color: theme.textMuted }}>{fmtTime(log.startTime)} · {fmtDur(log.startTime, log.endTime)}</span>
               </div>
             ))}
             <div className="flex items-center justify-between pt-1">
-              <span className="text-xs font-semibold" style={{ color: theme.textMuted }}>Total AUX today</span>
+              <span className="text-xs font-semibold" style={{ color: theme.textMuted }}>Total today</span>
               <span className="text-xs font-semibold" style={{ color: theme.text }}>
                 {(() => {
                   const totalMs = logs.filter(l => l.durationMs).reduce((acc, l) => acc + (l.durationMs ?? 0), 0);
@@ -5040,7 +5176,132 @@ function AuxTrackerTab({ theme }: { theme: Theme }) {
         )}
       </div>
 
-      {/* Log Exception */}
+      {/* ── Weekly Schedule ── */}
+      <div style={cardStyle}>
+        {sectionTitle(<CalendarDays className="w-4 h-4" style={{ color: BRAND_LIGHT }} />, "This Week's Schedule")}
+        {myOpPlan && (() => {
+          const opDays = (myOpPlan as { days: { date: string; label: string; status: string }[] }).days ?? [];
+          return (
+            <div className="space-y-3">
+              <div className="grid grid-cols-7 gap-1 mb-2">
+                {opDays.map(day => {
+                  const isWork = day.status === "work";
+                  return (
+                    <div key={day.date} className="rounded-lg p-1.5 text-center" style={{ background: isWork ? "oklch(0.32 0.18 28 / 0.15)" : (theme.inputBg), border: `1px solid ${isWork ? "oklch(0.32 0.18 28 / 0.3)" : theme.cardBorder}` }}>
+                      <p className="text-[9px] font-medium mb-0.5" style={{ color: theme.textFaint }}>{day.label}</p>
+                      <p className="text-[10px] font-bold" style={{ color: isWork ? BRAND_LIGHT : theme.textMuted }}>{isWork ? "▪" : "○"}</p>
+                    </div>
+                  );
+                })}
+              </div>
+              {(myOpPlan as { shiftHours?: string }).shiftHours && (
+                <p className="text-xs" style={{ color: theme.textMuted }}>Shift: {(myOpPlan as { shiftHours: string }).shiftHours}</p>
+              )}
+            </div>
+          );
+        })()}
+        {!myOpPlan && <p className="text-sm" style={{ color: theme.textMuted }}>No operation plan for this week.</p>}
+
+        {/* Break schedule for the week */}
+        <div className="mt-3 pt-3" style={{ borderTop: `1px solid ${theme.cardBorder}` }}>
+          <p className="text-xs font-semibold mb-2 flex items-center gap-1.5" style={{ color: theme.textMuted }}>
+            <Clock className="w-3.5 h-3.5" /> Break Schedule
+          </p>
+          {(myBreaks as Array<{ date: string; breakStart: string; breakEnd: string }>).length === 0 ? (
+            <p className="text-xs" style={{ color: theme.textMuted }}>No break schedule set for this week.</p>
+          ) : (() => {
+            const grouped: Record<string, Array<{ breakStart: string; breakEnd: string }>> = {};
+            for (const b of myBreaks as Array<{ date: string; breakStart: string; breakEnd: string }>) {
+              (grouped[b.date] ??= []).push({ breakStart: b.breakStart, breakEnd: b.breakEnd });
+            }
+            return (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).map(([date, slots]) => {
+                  const d = new Date(date + "T00:00:00");
+                  const dayLabel = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+                  return (
+                    <div key={date} className="rounded-lg p-2.5" style={{ background: theme.inputBg, border: `1px solid ${theme.cardBorder}` }}>
+                      <p className="text-[10px] font-semibold mb-1.5" style={{ color: theme.textMuted }}>{dayLabel}</p>
+                      {slots.map((slot, i) => (
+                        <p key={i} className="text-xs" style={{ color: theme.text }}>{to12h(slot.breakStart)} – {to12h(slot.breakEnd)}</p>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </div>
+      </div>
+
+      {/* ── AUX History ── */}
+      <div style={cardStyle}>
+        {sectionTitle(<History className="w-4 h-4" style={{ color: BRAND_LIGHT }} />, "AUX History")}
+        {historyByDate.length === 0 ? (
+          <p className="text-sm" style={{ color: theme.textMuted }}>No completed AUX sessions yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {(showFullHistory ? historyByDate : historyByDate.slice(0, 7)).map(([date, dayLogs]) => {
+              const totalMs = dayLogs.reduce((acc, l) => acc + (l.durationMs ?? 0), 0);
+              const totalMins = Math.floor(totalMs / 60000);
+              const totalHrs = Math.floor(totalMins / 60);
+              const totalStr = totalHrs > 0 ? `${totalHrs}h ${totalMins % 60}m` : `${totalMins}m`;
+              const d = new Date(date + "T00:00:00");
+              const isToday = date === today;
+              return (
+                <div key={date}>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-xs font-semibold" style={{ color: theme.textMuted }}>
+                      {isToday ? "Today" : d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+                    </span>
+                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full" style={{ background: `${BRAND}20`, color: BRAND_LIGHT }}>{totalStr}</span>
+                  </div>
+                  <div className="space-y-1">
+                    {dayLogs.map(log => (
+                      <div key={log.id} className="flex items-center justify-between py-1 px-2 rounded-lg" style={{ background: theme.inputBg }}>
+                        <span className="text-xs capitalize" style={{ color: theme.text }}>{log.auxType}</span>
+                        <span className="text-xs" style={{ color: theme.textMuted }}>{fmtTime(log.startTime)} – {log.endTime ? fmtTime(log.endTime) : "…"} · {fmtDur(log.startTime, log.endTime)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+            {historyByDate.length > 7 && (
+              <button
+                onClick={() => setShowFullHistory(!showFullHistory)}
+                className="w-full text-xs py-1.5 rounded-lg text-center transition-all"
+                style={{ color: theme.textFaint, border: `1px solid ${theme.cardBorder}` }}
+              >
+                {showFullHistory ? "Show less" : `Show all ${historyByDate.length} days`}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Admin Notes ── */}
+      {notes.length > 0 && (
+        <div style={{ ...cardStyle, border: `1px solid ${BRAND}30` }}>
+          {sectionTitle(<StickyNote className="w-4 h-4" style={{ color: BRAND_LIGHT }} />, "Notes from HR / Management")}
+          <div className="space-y-3">
+            {notes.map(note => (
+              <div key={note.id} className="rounded-xl p-3" style={{ background: theme.inputBg, border: `1px solid ${note.tag === "warning" ? "rgba(239,68,68,0.3)" : theme.cardBorder}` }}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold" style={{ color: note.tag === "warning" ? "#ef4444" : theme.textMuted }}>
+                    {note.adminName ?? "HR"}{note.tag === "warning" && " · ⚠ Warning"}
+                    {note.tag === "resolved" && " · ✓ Resolved"}
+                  </span>
+                  <span className="text-[10px]" style={{ color: theme.textFaint }}>{fmtDate(note.createdAt)}</span>
+                </div>
+                <p className="text-sm" style={{ color: theme.text }}>{note.content}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Log Exception ── */}
       <button
         onClick={() => setShowException(true)}
         className="w-full flex items-center justify-center gap-2 h-11 rounded-xl text-sm font-semibold transition-opacity"
@@ -5049,7 +5310,6 @@ function AuxTrackerTab({ theme }: { theme: Theme }) {
         <AlertTriangle className="w-4 h-4" /> Log Attendance Exception
       </button>
 
-      {/* Exception dialog — simple inline panel when open */}
       {showException && (
         <div style={{ ...cardStyle, border: `1px solid ${BRAND}40` }}>
           <p className="text-sm font-semibold mb-3" style={{ color: theme.text }}>Log Attendance Exception</p>
@@ -5063,7 +5323,6 @@ function AuxTrackerTab({ theme }: { theme: Theme }) {
               <select value={excForm.exceptionType} onChange={e => setExcForm(f => ({ ...f, exceptionType: e.target.value }))} style={inputStyle}>
                 <option value="late">Late Arrival</option>
                 <option value="early_departure">Early Departure</option>
-                <option value="absent">Absent</option>
               </select>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -5095,7 +5354,7 @@ function AuxTrackerTab({ theme }: { theme: Theme }) {
               disabled={logException.isPending}
               onClick={() => logException.mutate({
                 date: excForm.date,
-                exceptionType: excForm.exceptionType as "late" | "early_departure" | "absent",
+                exceptionType: excForm.exceptionType as "late" | "early_departure",
                 scheduledTime: excForm.scheduledTime || undefined,
                 actualTime: excForm.actualTime || undefined,
                 note: excForm.note || undefined,
