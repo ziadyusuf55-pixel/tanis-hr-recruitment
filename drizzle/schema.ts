@@ -1,5 +1,6 @@
 import {
   int,
+  index,
   mysqlEnum,
   mysqlTable,
   text,
@@ -1506,3 +1507,28 @@ export const attendanceExceptions = mysqlTable("attendance_exceptions", {
 });
 export type AttendanceException = typeof attendanceExceptions.$inferSelect;
 export type InsertAttendanceException = typeof attendanceExceptions.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// agent_shifts — clock-in / clock-out per Quantum agent work session
+// ---------------------------------------------------------------------------
+export const agentShifts = mysqlTable(
+  "agent_shifts",
+  {
+    id: int("id").autoincrement().primaryKey(),
+    traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
+    /** UTC epoch ms when the agent clocked in */
+    clockIn: bigint("clockIn", { mode: "number" }).notNull(),
+    /** UTC epoch ms when the agent clocked out; NULL means still clocked in */
+    clockOut: bigint("clockOut", { mode: "number" }),
+    /** YYYY-MM-DD — used for day-based grouping */
+    date: varchar("date", { length: 10 }).notNull(),
+    /** Milliseconds of shift duration; populated on clockOut */
+    durationMs: int("durationMs"),
+    createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+  },
+  (t) => ({
+    traineeDate: index("idx_agent_shifts_trainee_date").on(t.traineeCode, t.date),
+  })
+);
+export type AgentShift = typeof agentShifts.$inferSelect;
+export type InsertAgentShift = typeof agentShifts.$inferInsert;

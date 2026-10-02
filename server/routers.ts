@@ -7970,6 +7970,26 @@ const timeTrackingRouter = router({
       .orderBy(agentAuxLogs.startTime);
   }),
 
+  // Returns all AUX logs for this agent (full history, not just today)
+  myAuxLogsAll: publicProcedure.query(async ({ ctx }) => {
+    const token = getAgentCookieFromReq(ctx.req);
+    if (!token) return [];
+    let traineeCode = "";
+    try {
+      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+      if (payload.type !== "agent") return [];
+      traineeCode = payload.traineeCode;
+    } catch { return []; }
+    const { agentAuxLogs } = await import("../drizzle/schema");
+    const { getDb } = await import("./db");
+    const { eq } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return [];
+    return db.select().from(agentAuxLogs)
+      .where(eq(agentAuxLogs.traineeCode, traineeCode))
+      .orderBy(agentAuxLogs.startTime);
+  }),
+
   submitPto: publicProcedure
     .input(z.object({
       requestType: z.enum(["annual", "sick", "emergency", "unpaid"]),
@@ -8005,7 +8025,7 @@ const timeTrackingRouter = router({
   logException: publicProcedure
     .input(z.object({
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      exceptionType: z.enum(["late", "early_departure", "absent"]),
+      exceptionType: z.enum(["late", "early_departure"]),
       scheduledTime: z.string().optional(),
       actualTime: z.string().optional(),
       minutesLate: z.number().int().optional(),
@@ -8111,6 +8131,216 @@ const timeTrackingRouter = router({
         return logs;
       }
       return db.select().from(agentAuxLogs).orderBy(agentAuxLogs.startTime);
+    }),
+
+  // ─── Clock In / Clock Out ────────────────────────────────────────────────────
+
+  /** Start a new work shift for the agent. Fails if already clocked in today. */
+  clockIn: publicProcedure.mutation(async ({ ctx }) => {
+    const token = getAgentCookieFromReq(ctx.req);
+    if (!token) throw new Error("Not authenticated");
+    let traineeCode = "";
+    try {
+      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+      if (payload.type !== "agent") throw new Error("Not agent");
+      traineeCode = payload.traineeCode;
+    } catch { throw new Error("Invalid session"); }
+    const { agentShifts } = await import("../drizzle/schema");
+    const { getDb } = await import("./db");
+    const { eq, and, isNull } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) throw new Error("DB unavailable");
+    // Check for an already-open shift (any day, not closed yet)
+    const [open] = await db.select().from(agentShifts)
+      .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut)))
+      .limit(1);
+    if (open) throw new Error("Already clocked in");
+    const now = Date.now();
+    const date = new Date(now).toISOString().slice(0, 10);
+    const [inserted] = await db.insert(agentShifts).values({ traineeCode, clockIn: now, date, createdAt: now }).$returningId();
+    return { ok: true, shiftId: inserted?.id ?? null };
+  }),
+
+  /** Close the current open shift for the agent. */
+  clockOut: publicProcedure.mutation(async ({ ctx }) => {
+    const token = getAgentCookieFromReq(ctx.req);
+    if (!token) throw new Error("Not authenticated");
+    let traineeCode = "";
+    try {
+      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+      if (payload.type !== "agent") throw new Error("Not agent");
+      traineeCode = payload.traineeCode;
+    } catch { throw new Error("Invalid session"); }
+    const { agentShifts } = await import("../drizzle/schema");
+    const { getDb } = await import("./db");
+    const { eq, and, isNull } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) throw new Error("DB unavailable");
+    const [active] = await db.select().from(agentShifts)
+      .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut)))
+      .orderBy(agentShifts.clockIn)
+      .limit(1);
+    if (!active) throw new Error("Not clocked in");
+    const clockOut = Date.now();
+    const durationMs = clockOut - active.clockIn;
+    await db.update(agentShifts).set({ clockOut, durationMs }).where(eq(agentShifts.id, active.id));
+    return { ok: true, durationMs };
+  }),
+
+  /** Return today's shift record (or null if not clocked in yet). */
+  myShiftToday: publicProcedure.query(async ({ ctx }) => {
+    const token = getAgentCookieFromReq(ctx.req);
+    if (!token) return null;
+    let traineeCode = "";
+    try {
+      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
+      if (payload.type !== "agent") return null;
+      traineeCode = payload.traineeCode;
+    } catch { return null; }
+    const { agentShifts } = await import("../drizzle/schema");
+    const { getDb } = await import("./db");
+    const { eq, and } = await import("drizzle-orm");
+    const db = await getDb();
+    if (!db) return null;
+    const today = new Date().toISOString().slice(0, 10);
+    const [shift] = await db.select().from(agentShifts)
+      .where(and(eq(agentShifts.traineeCode, traineeCode), eq(agentShifts.date, today)))
+      .orderBy(agentShifts.clockIn)
+      .limit(1);
+    return shift ?? null;
+  }),
+
+  /**
+   * Admin summary of productive (worked) hours per agent for a date range.
+   * Productive = shift time − all AUX time. Open records are capped at now.
+   * Returns per-agent: workedHrs, scheduledHrs, and minutes by each AUX type.
+   */
+  workedSummary: protectedProcedure
+    .input(z.object({
+      clientId: z.number().int().positive().optional(),
+      traineeCode: z.string().optional(),
+      from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    }))
+    .query(async ({ input }) => {
+      const { agentShifts, agentAuxLogs, workforceAgents } = await import("../drizzle/schema");
+      const { getDb, listWorkforceAgentsByClient } = await import("./db");
+      const { eq, and, gte, lt, inArray } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) return [];
+
+      const fromMs = new Date(input.from).getTime();
+      const toMs = new Date(input.to).getTime() + 86400000; // inclusive end-of-day
+
+      // Resolve the list of agents to include
+      type AgentRow = { traineeCode: string; fullName: string; shiftHours: string | null; offDay1: number | null; offDay2: number | null };
+      let agents: AgentRow[];
+      if (input.traineeCode) {
+        const [wa] = await db.select({
+          traineeCode: workforceAgents.traineeCode,
+          fullName: workforceAgents.fullName,
+          shiftHours: workforceAgents.shiftHours,
+          offDay1: workforceAgents.offDay1,
+          offDay2: workforceAgents.offDay2,
+        }).from(workforceAgents).where(eq(workforceAgents.traineeCode, input.traineeCode)).limit(1);
+        agents = wa ? [wa] : [];
+      } else if (input.clientId) {
+        const rows = await listWorkforceAgentsByClient(input.clientId);
+        agents = rows.map(r => ({ traineeCode: r.traineeCode, fullName: r.fullName, shiftHours: r.shiftHours ?? null, offDay1: r.offDay1 ?? null, offDay2: r.offDay2 ?? null }));
+      } else {
+        const rows = await db.select({
+          traineeCode: workforceAgents.traineeCode,
+          fullName: workforceAgents.fullName,
+          shiftHours: workforceAgents.shiftHours,
+          offDay1: workforceAgents.offDay1,
+          offDay2: workforceAgents.offDay2,
+        }).from(workforceAgents);
+        agents = rows;
+      }
+      if (agents.length === 0) return [];
+
+      const traineeCodes = agents.map(a => a.traineeCode);
+
+      // Fetch shifts and AUX logs in range for all agents at once
+      const shifts = traineeCodes.length === 1
+        ? await db.select().from(agentShifts).where(and(eq(agentShifts.traineeCode, traineeCodes[0]!), gte(agentShifts.clockIn, fromMs), lt(agentShifts.clockIn, toMs)))
+        : await db.select().from(agentShifts).where(and(inArray(agentShifts.traineeCode, traineeCodes), gte(agentShifts.clockIn, fromMs), lt(agentShifts.clockIn, toMs)));
+
+      const auxLogs = traineeCodes.length === 1
+        ? await db.select().from(agentAuxLogs).where(and(eq(agentAuxLogs.traineeCode, traineeCodes[0]!), gte(agentAuxLogs.startTime, fromMs), lt(agentAuxLogs.startTime, toMs)))
+        : await db.select().from(agentAuxLogs).where(and(inArray(agentAuxLogs.traineeCode, traineeCodes), gte(agentAuxLogs.startTime, fromMs), lt(agentAuxLogs.startTime, toMs)));
+
+      // Helper: parse "9:00 AM - 5:00 PM" → daily hours as a number
+      function parseDailyHours(shiftHours: string | null): number {
+        if (!shiftHours) return 0;
+        const m = shiftHours.match(/(\d{1,2}):(\d{2})\s*(AM|PM)\s*[-–]\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+        if (!m) return 0;
+        const toMins = (h: number, min: number, ampm: string) => {
+          let hour = h % 12;
+          if (ampm.toUpperCase() === "PM") hour += 12;
+          return hour * 60 + min;
+        };
+        const startMin = toMins(+m[1]!, +m[2]!, m[3]!);
+        const endMin = toMins(+m[4]!, +m[5]!, m[6]!);
+        const diff = endMin - startMin;
+        return diff > 0 ? diff / 60 : 0;
+      }
+
+      // Helper: count working days in [from, to] inclusive, excluding offDay1 and offDay2
+      function countWorkingDays(from: string, to: string, offDay1: number | null, offDay2: number | null): number {
+        let count = 0;
+        const cur = new Date(from + "T00:00:00Z");
+        const end = new Date(to + "T00:00:00Z");
+        while (cur <= end) {
+          const dow = cur.getUTCDay();
+          if (dow !== offDay1 && dow !== offDay2) count++;
+          cur.setUTCDate(cur.getUTCDate() + 1);
+        }
+        return count;
+      }
+
+      const now = Date.now();
+
+      return agents.map(agent => {
+        const myShifts = shifts.filter(s => s.traineeCode === agent.traineeCode);
+        const myAux = auxLogs.filter(l => l.traineeCode === agent.traineeCode);
+
+        // Shift time (cap open shifts at now)
+        const shiftMs = myShifts.reduce((acc, s) => {
+          const out = s.clockOut ?? now;
+          return acc + Math.max(0, out - s.clockIn);
+        }, 0);
+
+        // AUX breakdown (cap open AUX at now)
+        const auxByType: Record<string, number> = {};
+        for (const log of myAux) {
+          const end = log.endTime ?? now;
+          const durMs = log.durationMs ?? Math.max(0, end - log.startTime);
+          auxByType[log.auxType] = (auxByType[log.auxType] ?? 0) + durMs;
+        }
+
+        const totalAuxMs = Object.values(auxByType).reduce((a, b) => a + b, 0);
+        const productiveMs = Math.max(0, shiftMs - totalAuxMs);
+
+        const dailyHrs = parseDailyHours(agent.shiftHours);
+        const workingDays = countWorkingDays(input.from, input.to, agent.offDay1, agent.offDay2);
+        const scheduledHrs = Math.round(dailyHrs * workingDays * 100) / 100;
+
+        // Convert all AUX to minutes rounded to 2dp
+        const auxMinutes: Record<string, number> = {};
+        for (const [type, ms] of Object.entries(auxByType)) {
+          auxMinutes[type] = Math.round((ms / 60000) * 100) / 100;
+        }
+
+        return {
+          traineeCode: agent.traineeCode,
+          name: agent.fullName,
+          scheduledHrs,
+          workedHrs: Math.round((productiveMs / 3600000) * 100) / 100,
+          shiftHrs: Math.round((shiftMs / 3600000) * 100) / 100,
+          auxMinutes, // { break: N, lunch: N, system_down: N, … }
+        };
+      });
     }),
 });
 

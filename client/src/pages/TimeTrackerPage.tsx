@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Clock, Coffee, CalendarOff, AlertTriangle } from "lucide-react";
+import { Clock, Coffee, CalendarOff, AlertTriangle, LogIn, LogOut } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 
 const AUX_TYPES = [
@@ -17,6 +17,8 @@ const AUX_TYPES = [
   { value: "training", label: "Training" },
   { value: "meeting", label: "Meeting" },
   { value: "bathroom", label: "Bathroom" },
+  { value: "system_down", label: "System / IT Down" },
+  { value: "idle", label: "Idle / No Work" },
   { value: "other", label: "Other" },
 ];
 
@@ -49,7 +51,22 @@ export default function TimeTrackerPage() {
 
   const { data: access, isLoading: accessLoading } = trpc.timeTracking.checkAccess.useQuery();
   const { data: auxLogs = [], refetch: refetchAux } = trpc.timeTracking.myAuxLogs.useQuery();
+  const { data: todayShift, refetch: refetchShift } = trpc.timeTracking.myShiftToday.useQuery();
   const [auxType, setAuxType] = useState("break");
+
+  const clockIn = trpc.timeTracking.clockIn.useMutation({
+    onSuccess: () => { refetchShift(); toast.success("Clocked in — have a great shift!"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const clockOut = trpc.timeTracking.clockOut.useMutation({
+    onSuccess: (res) => {
+      refetchShift();
+      const hrs = Math.floor((res.durationMs ?? 0) / 3600000);
+      const mins = Math.floor(((res.durationMs ?? 0) % 3600000) / 60000);
+      toast.success(`Clocked out — ${hrs}h ${mins}m shift logged`);
+    },
+    onError: (e) => toast.error(e.message),
+  });
 
   const startAux = trpc.timeTracking.startAux.useMutation({
     onSuccess: () => { refetchAux(); toast.success("AUX started"); },
@@ -63,6 +80,9 @@ export default function TimeTrackerPage() {
     },
     onError: (e) => toast.error(e.message),
   });
+
+  // Clocked-in state: shift exists and has no clockOut yet
+  const isClockedIn = !!todayShift && !todayShift.clockOut;
 
   const [showPto, setShowPto] = useState(false);
   const [ptoForm, setPtoForm] = useState({ requestType: "annual", startDate: today, endDate: today, halfDay: false, reason: "" });
@@ -138,6 +158,60 @@ export default function TimeTrackerPage() {
         </p>
       </div>
 
+      {/* Clock In / Clock Out */}
+      <Card className="mb-4">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            {isClockedIn
+              ? <LogOut className="w-4 h-4 text-red-500" />
+              : <LogIn className="w-4 h-4 text-green-600" />}
+            Work Shift
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {isClockedIn ? (
+            <div className="rounded-lg bg-green-50 border border-green-200 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium text-green-800">Shift in progress</span>
+                <Badge variant="outline" className="text-green-700 border-green-300 bg-green-100 animate-pulse">
+                  {fmtDuration(todayShift!.clockIn)}
+                </Badge>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Clocked in at {new Date(todayShift!.clockIn).toLocaleTimeString("en-EG", { hour: "2-digit", minute: "2-digit" })}
+              </p>
+              <Button
+                className="w-full"
+                variant="destructive"
+                onClick={() => clockOut.mutate()}
+                disabled={clockOut.isPending}
+              >
+                <LogOut className="w-4 h-4 mr-2" /> Clock Out
+              </Button>
+            </div>
+          ) : todayShift?.clockOut ? (
+            <div className="rounded-lg bg-muted/50 border p-3 space-y-1">
+              <p className="text-sm font-medium">Shift complete</p>
+              <p className="text-xs text-muted-foreground">
+                {new Date(todayShift.clockIn).toLocaleTimeString("en-EG", { hour: "2-digit", minute: "2-digit" })}
+                {" → "}
+                {new Date(todayShift.clockOut).toLocaleTimeString("en-EG", { hour: "2-digit", minute: "2-digit" })}
+                {" · "}
+                {fmtDuration(todayShift.clockIn, todayShift.clockOut)}
+              </p>
+            </div>
+          ) : (
+            <Button
+              className="w-full"
+              onClick={() => clockIn.mutate()}
+              disabled={clockIn.isPending}
+            >
+              <LogIn className="w-4 h-4 mr-2" /> Clock In
+            </Button>
+          )}
+        </CardContent>
+      </Card>
+
       {/* AUX Tracker */}
       <Card className="mb-4">
         <CardHeader className="pb-3">
@@ -146,10 +220,15 @@ export default function TimeTrackerPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          {!isClockedIn && !todayShift?.clockOut && (
+            <p className="text-xs text-muted-foreground text-center py-1">
+              Clock in first to log AUX time.
+            </p>
+          )}
           {currentActive ? (
             <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-medium capitalize">{currentActive.auxType} in progress</span>
+                <span className="text-sm font-medium capitalize">{currentActive.auxType.replace(/_/g, " ")} in progress</span>
                 <Badge variant="outline" className="text-amber-700 border-amber-300 bg-amber-100 animate-pulse">
                   {fmtDuration(currentActive.startTime)}
                 </Badge>
@@ -160,7 +239,7 @@ export default function TimeTrackerPage() {
                 onClick={() => endAux.mutate()}
                 disabled={endAux.isPending}
               >
-                End {currentActive.auxType}
+                End {currentActive.auxType.replace(/_/g, " ")}
               </Button>
             </div>
           ) : (
@@ -173,7 +252,11 @@ export default function TimeTrackerPage() {
                   {AUX_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
                 </SelectContent>
               </Select>
-              <Button onClick={() => startAux.mutate({ auxType })} disabled={startAux.isPending}>
+              <Button
+                onClick={() => startAux.mutate({ auxType })}
+                disabled={startAux.isPending || !isClockedIn}
+                title={!isClockedIn ? "Clock in before starting AUX" : undefined}
+              >
                 Start
               </Button>
             </div>
@@ -185,7 +268,7 @@ export default function TimeTrackerPage() {
               <p className="text-xs text-muted-foreground font-medium mb-2">Today's AUX</p>
               {logs.filter(l => l.endTime).map(log => (
                 <div key={log.id} className="flex items-center justify-between text-sm py-1 border-b last:border-0">
-                  <span className="capitalize">{log.auxType}</span>
+                  <span className="capitalize">{log.auxType.replace(/_/g, " ")}</span>
                   <span className="text-muted-foreground text-xs">{fmtDuration(log.startTime, log.endTime)}</span>
                 </div>
               ))}
@@ -309,7 +392,6 @@ export default function TimeTrackerPage() {
                 <SelectContent>
                   <SelectItem value="late">Late Arrival</SelectItem>
                   <SelectItem value="early_departure">Early Departure</SelectItem>
-                  <SelectItem value="absent">Absent</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -339,7 +421,7 @@ export default function TimeTrackerPage() {
               disabled={logException.isPending}
               onClick={() => logException.mutate({
                 date: excForm.date,
-                exceptionType: excForm.exceptionType as "late" | "early_departure" | "absent",
+                exceptionType: excForm.exceptionType as "late" | "early_departure",
                 scheduledTime: excForm.scheduledTime || undefined,
                 actualTime: excForm.actualTime || undefined,
                 note: excForm.note || undefined,
