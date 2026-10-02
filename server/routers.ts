@@ -1,12 +1,14 @@
-import { COOKIE_NAME } from "@shared/const";
-import { and } from "drizzle-orm";
+import { COOKIE_NAME, AUX_TYPES } from "@shared/const";
+import { finalPay as calcFinalPay, remainingOwed, validatePayrollRow } from "@shared/pay";
+import { and, isNull } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { parse as parseCookieHeader } from "cookie";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
+import { staffProcedure, protectedProcedure, adminProcedure, roleProcedure, agentProcedure, agentOrStaffProcedure, publicProcedure, router } from "./_core/trpc";
+import { requireAgent, invalidateAgentSessionCache } from "./_core/agentAuth";
 import {
   addStageNote,
   assignCandidateToBatch,
@@ -221,7 +223,7 @@ const authRouter = router({
 
   // ── Central permissions (tab-level roles on the Google-login users) ──
   // List everyone who has signed in, with their current role — for the Settings role manager.
-  listAppUsers: protectedProcedure.query(async ({ ctx }) => {
+  listAppUsers: staffProcedure.query(async ({ ctx }) => {
     if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN" });
     const { getDb } = await import("./db");
     const { desc } = await import("drizzle-orm");
@@ -236,7 +238,7 @@ const authRouter = router({
   }),
 
   // Owner/admin sets another user's role. Can't demote yourself out of full access by accident.
-  setUserRole: protectedProcedure
+  setUserRole: staffProcedure
     .input(z.object({ openId: z.string(), role: z.enum(["owner", "admin", "manager", "hr", "ops_manager", "team_lead", "finance", "bd", "viewer", "user"]) }))
     .mutation(async ({ ctx, input }) => {
       if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN" });
@@ -252,7 +254,7 @@ const authRouter = router({
       return { ok: true } as const;
     }),
 
-  removeUser: protectedProcedure
+  removeUser: staffProcedure
     .input(z.object({ openId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       if (ctx.user?.role !== "owner" && ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
@@ -270,13 +272,13 @@ const authRouter = router({
 
 
 const batchesRouter = router({
-    list: protectedProcedure.query(() => listBatches()),
+    list: staffProcedure.query(() => listBatches()),
 
-    get: protectedProcedure
+    get: staffProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => getBatchById(input.id)),
 
-    create: protectedProcedure
+    create: staffProcedure
       .input(z.object({
         name: z.string().min(1),
         trainerName: z.string().optional(),
@@ -285,7 +287,7 @@ const batchesRouter = router({
       }))
       .mutation(({ input }) => createBatch(input)),
 
-    update: protectedProcedure
+    update: staffProcedure
       .input(z.object({
         id: z.number(),
         name: z.string().min(1).optional(),
@@ -295,23 +297,23 @@ const batchesRouter = router({
       }))
       .mutation(({ input: { id, ...data } }) => updateBatch(id, data)),
 
-    delete: protectedProcedure
+    delete: adminProcedure
       .input(z.object({ id: z.number() }))
       .mutation(({ input }) => deleteBatch(input.id)),
 
-    listCandidates: protectedProcedure
+    listCandidates: staffProcedure
       .input(z.object({ batchId: z.number() }))
       .query(({ input }) => listCandidatesInBatch(input.batchId)),
 
-    assignCandidate: protectedProcedure
+    assignCandidate: staffProcedure
       .input(z.object({ batchId: z.number(), candidateId: z.number() }))
       .mutation(({ input }) => assignCandidateToBatch(input.batchId, input.candidateId)),
 
-    removeCandidate: protectedProcedure
+    removeCandidate: staffProcedure
       .input(z.object({ batchId: z.number(), candidateId: z.number() }))
       .mutation(({ input }) => removeCandidateFromBatch(input.batchId, input.candidateId)),
 
-    setTraineeCode: protectedProcedure
+    setTraineeCode: staffProcedure
       .input(z.object({ batchId: z.number(), candidateId: z.number(), code: z.string().nullable() }))
       .mutation(async ({ input }) => {
         // Guard: reject if code is already in use by another active agent
@@ -338,7 +340,7 @@ const batchesRouter = router({
         return setTraineeCode(input.batchId, input.candidateId, input.code);
       }),
 
-    getUsedCodes: protectedProcedure.query(async () => {
+    getUsedCodes: staffProcedure.query(async () => {
       // Returns all T-codes currently in use (active agents + trainees)
       const { getDb } = await import("./db");
       const { workforceAgents, batchCandidates: bc } = await import("../drizzle/schema");
@@ -355,18 +357,18 @@ const batchesRouter = router({
       };
     }),
 
-    getCandidateBatch: protectedProcedure
+    getCandidateBatch: staffProcedure
       .input(z.object({ candidateId: z.number() }))
       .query(({ input }) => getCandidateBatch(input.candidateId)),
 
-    toggleSlackJoined: protectedProcedure
+    toggleSlackJoined: staffProcedure
       .input(z.object({ batchId: z.number(), candidateId: z.number(), value: z.boolean() }))
       .mutation(({ input }) => toggleSlackJoined(input.batchId, input.candidateId, input.value)),
 
-  allAssignments: protectedProcedure
+  allAssignments: staffProcedure
     .query(() => getAllBatchAssignments()),
   // Bulk generate credentials for all agents in a batch
-  bulkGenerateCredentials: protectedProcedure
+  bulkGenerateCredentials: staffProcedure
     .input(z.object({ batchId: z.number() }))
     .mutation(async ({ input }) => {
       const candidates = await listCandidatesInBatch(input.batchId);
@@ -383,13 +385,13 @@ const batchesRouter = router({
 });
 
 const candidatesRouter = router({
-  list: protectedProcedure.query(() => listCandidates()),
+  list: staffProcedure.query(() => listCandidates()),
 
-    get: protectedProcedure
+    get: staffProcedure
       .input(z.object({ id: z.number() }))
       .query(({ input }) => getCandidateById(input.id)),
 
-    create: protectedProcedure
+    create: staffProcedure
       .input(
         z.object({
           name: z.string().min(1),
@@ -419,7 +421,7 @@ const candidatesRouter = router({
         return result;
       }),
 
-    update: protectedProcedure
+    update: staffProcedure
       .input(
         z.object({
           id: z.number(),
@@ -444,7 +446,7 @@ const candidatesRouter = router({
         return updateCandidate(id, data);
       }),
 
-    updateStatus: protectedProcedure
+    updateStatus: staffProcedure
       .input(z.object({
         id: z.number(),
         status: PIPELINE_STAGES_ZOD,
@@ -475,7 +477,7 @@ const candidatesRouter = router({
       }),
 
     /** Mark/unmark a candidate as "No Answer" (phone call not answered) */
-    setSubStatus: protectedProcedure
+    setSubStatus: staffProcedure
       .input(z.object({
         id: z.number(),
         subStatus: z.enum(["no_answer"]).nullable(),
@@ -491,10 +493,10 @@ const candidatesRouter = router({
         return { success: true };
       }),
 
-    delete: protectedProcedure
+    delete: roleProcedure("hr", "manager", "team_lead")
       .input(z.object({ id: z.number() }))
       .mutation(({ input }) => deleteCandidate(input.id)),
-    blacklist: protectedProcedure
+    blacklist: staffProcedure
       .input(z.object({ id: z.number(), reason: z.string().min(1) }))
       .mutation(async ({ input, ctx }) => {
         await blacklistCandidate(input.id, input.reason);
@@ -508,7 +510,7 @@ const candidatesRouter = router({
         return { success: true };
       }),
 
-    bulkImport: protectedProcedure
+    bulkImport: staffProcedure
       .input(
         z.array(
           z.object({
@@ -528,16 +530,16 @@ const candidatesRouter = router({
       .mutation(({ input }) => bulkInsertCandidates(input)),
 
     /** Check if a phone number already exists — used for duplicate prevention */
-    checkDuplicate: protectedProcedure
+    checkDuplicate: staffProcedure
       .input(z.object({ phone: z.string() }))
       .query(({ input }) => checkDuplicateByPhone(input.phone)),
 
     /** Returns all candidates whose phone matches a previously rejected candidate */
-    reApplicants: protectedProcedure
+    reApplicants: staffProcedure
       .query(() => getReApplicants()),
 
     /** Upload a CV file and attach it to a candidate */
-    uploadCv: protectedProcedure
+    uploadCv: staffProcedure
       .input(
         z.object({
           id: z.number(),
@@ -557,27 +559,27 @@ const candidatesRouter = router({
       }),
 
     /** Remove CV attachment from a candidate */
-  removeCv: protectedProcedure
+  removeCv: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(({ input }) => updateCandidate(input.id, { cvUrl: null, cvFileName: null })),
 });
 
 const activityRouter = router({
-    list: protectedProcedure
+    list: staffProcedure
       .input(z.object({ candidateId: z.number() }))
       .query(({ input }) => listActivityByCandidateId(input.candidateId)),
 
-  listAll: protectedProcedure
+  listAll: staffProcedure
     .input(z.object({ limit: z.number().optional() }))
     .query(({ input }) => listAllActivity(input.limit ?? 200)),
 });
 
 const notesRouter = router({
-    list: protectedProcedure
+    list: staffProcedure
       .input(z.object({ candidateId: z.number() }))
       .query(({ input }) => listNotesByCandidateId(input.candidateId)),
 
-  add: protectedProcedure
+  add: staffProcedure
     .input(
       z.object({
         candidateId: z.number(),
@@ -595,11 +597,11 @@ const notesRouter = router({
 });
 
 const interviewsRouter = router({
-    listByCandidate: protectedProcedure
+    listByCandidate: staffProcedure
       .input(z.object({ candidateId: z.number() }))
       .query(({ input }) => listInterviewsByCandidateId(input.candidateId)),
 
-    schedule: protectedProcedure
+    schedule: staffProcedure
       .input(
         z.object({
           candidateId: z.number(),
@@ -641,11 +643,11 @@ const interviewsRouter = router({
 });
 
 const dashboardRouter = router({
-    pipelineCounts: protectedProcedure
+    pipelineCounts: staffProcedure
       .input(z.object({ period: z.enum(["week", "month", "all"]).default("month") }))
       .query(({ input }) => getPipelineCounts(input.period)),
 
-    kpis: protectedProcedure
+    kpis: staffProcedure
       .input(z.object({ period: z.enum(["week", "month", "all"]).default("month") }))
       .query(async ({ input }) => {
         const { period } = input;
@@ -734,7 +736,7 @@ const dashboardRouter = router({
   /** Operational snapshot for the dashboard: money this cycle vs last, quality/
    *  adherence flags, OT + coaching spend, and logout repeat-offenders.
    *  Cycle runs the 26th → 25th, matching payroll. */
-  opsSnapshot: protectedProcedure.query(async () => {
+  opsSnapshot: staffProcedure.query(async () => {
     const { getDb } = await import("./db");
     const { and, gte, lte, eq } = await import("drizzle-orm");
     const db = await getDb();
@@ -748,22 +750,20 @@ const dashboardRouter = router({
     if (!db) return empty;
     const { cycleStats, agentViolations, cycleOT, coachingSessions, clientLogouts, workforceAgents } = await import("../drizzle/schema");
 
-    // Cycle key = the month the cycle ENDS in (26 Jun–25 Jul → "2026-07").
-    const now = new Date();
-    const endMonth = new Date(now.getFullYear(), now.getMonth() + (now.getDate() >= 26 ? 1 : 0), 1);
-    const key = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-    const cycleKey = key(endMonth);
-    const prevCycleKey = key(new Date(endMonth.getFullYear(), endMonth.getMonth() - 1, 1));
-    const cycleStart = new Date(endMonth.getFullYear(), endMonth.getMonth() - 1, 26);
-    const iso = (d: Date) => d.toISOString().slice(0, 10);
-    const todayIso = iso(now);
+    // ONE cycle definition (server/_core/time.ts): 26th→25th, named after the END month, business-time "today".
+    const { businessDateKey, cycleKeyFor, cycleDateRangeFor } = await import("./_core/time");
+    const todayIso = businessDateKey();
+    const cycleKey = cycleKeyFor(todayIso);
+    const [cy, cm] = cycleKey.split("-").map(Number);
+    const prevCycleKey = `${cm === 1 ? cy - 1 : cy}-${String(cm === 1 ? 12 : cm - 1).padStart(2, "0")}`;
+    const cycleStartIso = cycleDateRangeFor(cycleKey).from;
 
     const [stats, prevStats, viol, ot, coaching, logouts, agents] = await Promise.all([
       db.select().from(cycleStats).where(eq(cycleStats.cycleKey, cycleKey)),
       db.select().from(cycleStats).where(eq(cycleStats.cycleKey, prevCycleKey)),
-      db.select().from(agentViolations).where(and(gte(agentViolations.date, iso(cycleStart)), lte(agentViolations.date, todayIso))),
-      db.select().from(cycleOT).where(eq(cycleOT.cycleKey, cycleKey)),
-      db.select().from(coachingSessions).where(eq(coachingSessions.cycleKey, cycleKey)),
+      db.select().from(agentViolations).where(and(gte(agentViolations.date, cycleStartIso), lte(agentViolations.date, todayIso))),
+      db.select().from(cycleOT).where(and(eq(cycleOT.cycleKey, cycleKey), eq(cycleOT.status, "approved"))),
+      db.select().from(coachingSessions).where(and(eq(coachingSessions.cycleKey, cycleKey), eq(coachingSessions.status, "approved"))),
       db.select().from(clientLogouts).where(eq(clientLogouts.cycleKey, cycleKey)),
       db.select().from(workforceAgents),
     ]);
@@ -802,7 +802,7 @@ const dashboardRouter = router({
   }),
 
   // Overview: pending deletion count + recent separations
-  overview: protectedProcedure
+  overview: staffProcedure
     .query(async () => {
       const pending = await getPendingDeletionAgents();
       return {
@@ -846,9 +846,13 @@ function getAgentCookieFromReq(req: { headers: { cookie?: string } }): string | 
   const parsed = parseCookieHeader(req.headers.cookie);
   return parsed[AGENT_COOKIE];
 }
+/** Cryptographically random one-time password: <code>-<6 chars, no ambiguous glyphs>. */
 function generatePassword(traineeCode: string): string {
-  const digits = Math.floor(1000 + Math.random() * 9000);
-  return `${traineeCode}-${digits}`;
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
+  const bytes = crypto.randomBytes(6);
+  let out = "";
+  for (let i = 0; i < 6; i++) out += alphabet[bytes[i] % alphabet.length];
+  return `${traineeCode}-${out}`;
 }
 
 /** Agent-facing: an agent's OWN adherence / quality / coaching / OT records.
@@ -893,7 +897,7 @@ const agentRouter = router({
   // The agent's own adherence / quality / coaching / OT (synced from the sheets)
   myRecords: agentMyRecordsProcedure,
   // Generate credentials for a candidate — called by admin from CandidateDetail
-  generateCredentials: protectedProcedure
+  generateCredentials: roleProcedure("manager", "hr")
     .input(z.object({ candidateId: z.number(), traineeCode: z.string().min(1) }))
     .mutation(async ({ input }) => {
       const plainPassword = generatePassword(input.traineeCode);
@@ -904,7 +908,7 @@ const agentRouter = router({
     }),
 
   // Check if credentials exist for a candidate
-  hasCredentials: protectedProcedure
+  hasCredentials: staffProcedure
     .input(z.object({ candidateId: z.number() }))
     .query(async ({ input }) => {
       const cred = await getAgentCredentialByCandidateId(input.candidateId);
@@ -1013,7 +1017,7 @@ const agentRouter = router({
     }),
 
   // Reset agent password — admin only, generates a new random password
-  resetPassword: protectedProcedure
+  resetPassword: roleProcedure("manager", "hr")
     .input(z.object({ candidateId: z.number().optional(), traineeCode: z.string().optional(), crdts: z.string().optional() }))
     .mutation(async ({ input }) => {
       // Look up credentials by traineeCode first (more reliable for Operations agents),
@@ -1122,12 +1126,12 @@ const agentRouter = router({
             const issuedAt = payload.iat * 1000; // JWT iat is in seconds
             if (_meAgent.sessionRevokedAt && issuedAt < _meAgent.sessionRevokedAt) {
               // Clear the stale cookie
-              ctx.res.clearCookie("agent_session");
+              ctx.res.clearCookie(AGENT_COOKIE, { path: "/" });
               return null;
             }
             // Also reject if agent is no longer active
             if (_meAgent.agentStatus && !["active"].includes(_meAgent.agentStatus)) {
-              ctx.res.clearCookie("agent_session");
+              ctx.res.clearCookie(AGENT_COOKIE, { path: "/" });
               return null;
             }
           }
@@ -1188,7 +1192,7 @@ const agentRouter = router({
       return getPayrollByCandidateId(input.candidateId);
     }),
 
-  upsertPayroll: protectedProcedure
+  upsertPayroll: staffProcedure
     .input(z.object({
       candidateId: z.number(),
       month: z.string().regex(/^\d{4}-\d{2}$/),
@@ -1204,7 +1208,7 @@ const agentRouter = router({
       return { success: true };
     }),
 
-  deletePayroll: protectedProcedure
+  deletePayroll: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
       if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN", message: "Only admins can delete payroll records." });
@@ -1214,7 +1218,7 @@ const agentRouter = router({
     }),
 
   // Payroll Excel Upload procedures
-  uploadPayroll: protectedProcedure
+  uploadPayroll: staffProcedure
     .input(z.object({
       month: z.string().regex(/^\d{4}-\d{2}$/),
       rows: z.array(z.object({
@@ -1246,17 +1250,17 @@ const agentRouter = router({
       );
       return { success: true, count: results.length };
     }),
-  getPayrollMonths: protectedProcedure
+  getPayrollMonths: staffProcedure
     .query(async () => {
       return getPayrollMonths();
     }),
-  getPayrollByMonth: protectedProcedure
+  getPayrollByMonth: staffProcedure
     .input(z.object({ month: z.string() }))
     .query(async ({ input }) => {
       return getPayrollByMonth(input.month);
     }),
   // Admin: delete all payroll rows for a specific month (undo a bad import)
-  deletePayrollForMonth: protectedProcedure
+  deletePayrollForMonth: staffProcedure
     .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
     .mutation(async ({ ctx, input }) => {
       if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN", message: "Only admins can delete payroll sheets." });
@@ -1311,7 +1315,7 @@ const agentRouter = router({
       return getPerformanceByCandidateId(input.candidateId);
     }),
 
-  upsertPerformance: protectedProcedure
+  upsertPerformance: staffProcedure
     .input(z.object({
       candidateId: z.number(),
       period: z.string().regex(/^\d{4}-\d{2}$/),
@@ -1328,7 +1332,7 @@ const agentRouter = router({
       return { success: true };
     }),
 
-  deletePerformance: protectedProcedure
+  deletePerformance: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       await deletePerformanceRecord(input.id);
@@ -1338,7 +1342,7 @@ const agentRouter = router({
 
 const requestsRouter = router({
   // Agent: submit a new request
-  submit: publicProcedure
+  submit: agentProcedure
     .input(z.object({
       type: z.enum(["leave", "paid_leave", "salary", "schedule", "complaint", "resignation", "day_off", "sick_note", "hr_letter", "other"]),
       subject: z.string().min(1).max(255),
@@ -1350,16 +1354,7 @@ const requestsRouter = router({
       hrLetterLanguage: z.enum(["arabic", "english"]).optional(), // language for hr_letter type
     }))
     .mutation(async ({ input, ctx }) => {
-      // Must be authenticated as agent
-      const agentToken = getAgentCookieFromReq(ctx.req);
-      if (!agentToken) throw new TRPCError({ code: "UNAUTHORIZED", message: "Not authenticated as agent" });
-      let payload: { candidateId: number; traineeCode: string; type: string };
-      try {
-        payload = jwt.verify(agentToken, ENV.cookieSecret) as typeof payload;
-      } catch {
-        throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid agent session" });
-      }
-      if (payload.type !== "agent") throw new TRPCError({ code: "UNAUTHORIZED", message: "Not an agent session" });
+      const payload = ctx.agent;
       // Enforce 2-week minimum for date-based requests (compare calendar dates, not ms)
       const dateRequiredTypes = ["leave", "day_off", "resignation"];
       if (dateRequiredTypes.includes(input.type)) {
@@ -1380,7 +1375,7 @@ const requestsRouter = router({
           }
         }
       }
-      await createAgentRequest({
+      const created = await createAgentRequest({
         candidateId: payload.candidateId,
         traineeCode: payload.traineeCode,
         type: input.type,
@@ -1392,7 +1387,25 @@ const requestsRouter = router({
         hrLetterPurpose: input.hrLetterPurpose ?? null,
         hrLetterLanguage: input.hrLetterLanguage ?? null,
       });
-      // Request goes to the request center — no email notification
+      // Leave requests ALSO land in leave_requests so Leave Management + balances see them
+      // (one leave system). The request-centre row stays for the agent's own view/replies.
+      if (input.type === "leave" || input.type === "paid_leave") {
+        const dates = (input.requestedDates ?? []).filter(Boolean).sort();
+        const single = input.requestedDate ? new Date(input.requestedDate).toISOString().slice(0, 10) : null;
+        const startDate = dates[0] ?? single;
+        const endDate = dates[dates.length - 1] ?? single;
+        if (startDate && endDate) {
+          const newId = (created as unknown as Array<{ insertId?: number }>)[0]?.insertId ?? null;
+          const { createLeaveRequestRow } = await import("./db");
+          await createLeaveRequestRow({
+            traineeCode: payload.traineeCode,
+            startDate, endDate,
+            days: dates.length || 1,
+            reason: `${input.subject}${input.message ? ` — ${input.message}` : ""}`.slice(0, 2000),
+            agentRequestId: newId,
+          });
+        }
+      }
       return { success: true };
     }),
 
@@ -1410,10 +1423,10 @@ const requestsRouter = router({
   }),
 
   // Admin: list all requests
-  listAll: protectedProcedure.query(() => listAllAgentRequests()),
+  listAll: staffProcedure.query(() => listAllAgentRequests()),
 
   // Admin: update status and/or reply
-  updateStatus: protectedProcedure
+  updateStatus: staffProcedure
     .input(z.object({
       id: z.number(),
       status: z.enum(["pending", "in_progress", "resolved", "rejected"]),
@@ -1425,7 +1438,7 @@ const requestsRouter = router({
   countUnread: protectedProcedure.query(({ ctx }) => countUnreadAgentRequests(ctx.user?.openId ?? undefined)),
 
   // Admin: mark all requests as read (called when admin opens the Requests page)
-  markAllRead: protectedProcedure.mutation(({ ctx }) => markAllAgentRequestsRead(ctx.user?.openId ?? undefined)),
+  markAllRead: staffProcedure.mutation(({ ctx }) => markAllAgentRequestsRead(ctx.user?.openId ?? undefined)),
 
   // Agent: upload an attachment file (returns S3 URL)
   uploadAttachment: publicProcedure
@@ -1456,7 +1469,7 @@ const requestsRouter = router({
 // ─── Admin Auth Router ────────────────────────────────────────────────────────
 const adminAuthRouter = router({
   // Invite a new admin (owner only)
-  invite: protectedProcedure
+  invite: adminProcedure
     .input(z.object({ email: z.string().email(), name: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
       const existing = await getAdminByEmail(input.email);
@@ -1473,10 +1486,9 @@ const adminAuthRouter = router({
     }),
 
   // Regenerate an existing invite — resets token + expiry + clears usedAt
-  regenerateInvite: protectedProcedure
+  regenerateInvite: adminProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
       const { regenerateAdminInviteById } = await import("./db");
       const result = await regenerateAdminInviteById(input.id);
       return { token: result.token, expiresAt: result.expiresAt };
@@ -1551,10 +1563,10 @@ const adminAuthRouter = router({
   }),
 
   // List all admins (owner only)
-  list: protectedProcedure.query(() => listAdminAccounts()),
+  list: adminProcedure.query(() => listAdminAccounts()),
 
   // Deactivate / reactivate admin (owner only)
-  setActive: protectedProcedure
+  setActive: adminProcedure
     .input(z.object({ id: z.number(), isActive: z.boolean() }))
     .mutation(({ input }) => setAdminActive(input.id, input.isActive)),
 });
@@ -1562,25 +1574,25 @@ const adminAuthRouter = router({
 // ─── Referrals Router ─────────────────────────────────────────────────────────
 const referralsRouter = router({
   // Agent submits a referral
-  submit: publicProcedure
+  submit: agentProcedure
     .input(z.object({
-      referrerCandidateId: z.number(),
-      refereeName: z.string().min(1),
-      refereePhone: z.string().min(5),
-      refereeNote: z.string().optional(),
+      referrerCandidateId: z.number().optional(),
+      refereeName: z.string().min(1).max(255),
+      refereePhone: z.string().min(5).max(40),
+      refereeNote: z.string().max(1000).optional(),
     }))
-    .mutation(async ({ input }) => {
-      // Auto-create candidate with source="referral"
+    .mutation(async ({ input, ctx }) => {
+      // The referrer is ALWAYS the logged-in agent — never whoever the body names.
+      const referrerCandidateId = ctx.agent.candidateId;
       const insertResult = await createCandidate({
         name: input.refereeName,
         phone: input.refereePhone,
         source: "referral",
-        notes: `Referred by agent (candidateId: ${input.referrerCandidateId}). Note: ${input.refereeNote ?? ""}`,
+        notes: `Referred by agent ${ctx.agent.traineeCode} (candidateId: ${referrerCandidateId}). Note: ${input.refereeNote ?? ""}`,
       });
-      // insertResult is MySqlRawQueryResult — extract insertId
       const createdCandidateId = (insertResult as { insertId?: number })?.insertId ?? null;
       await createReferral({
-        referrerCandidateId: input.referrerCandidateId,
+        referrerCandidateId,
         refereeName: input.refereeName,
         refereePhone: input.refereePhone,
         refereeNote: input.refereeNote ?? null,
@@ -1590,15 +1602,15 @@ const referralsRouter = router({
     }),
 
   // Agent views own referrals
-  listMine: publicProcedure
-    .input(z.object({ candidateId: z.number() }))
-    .query(({ input }) => getReferralsByReferrer(input.candidateId)),
+  listMine: agentProcedure
+    .input(z.object({ candidateId: z.number().optional() }).optional())
+    .query(({ ctx }) => getReferralsByReferrer(ctx.agent.candidateId)),
 
   // Admin views all referrals
-  listAll: protectedProcedure.query(() => listAllReferrals()),
+  listAll: staffProcedure.query(() => listAllReferrals()),
 
   // Admin updates referral status
-  updateStatus: protectedProcedure
+  updateStatus: staffProcedure
     .input(z.object({
       id: z.number(),
       status: z.enum(["pending", "contacted", "hired", "rejected"]),
@@ -1622,28 +1634,29 @@ const referralsRouter = router({
 
 // ─── Notifications Router ─────────────────────────────────────────────────────
 const notificationsRouter = router({
-  listMine: publicProcedure
-    .input(z.object({ candidateId: z.number() }))
-    .query(({ input }) => getNotificationsByCandidate(input.candidateId)),
+  // All three are scoped to the logged-in agent; the candidateId input is ignored (kept for client compat).
+  listMine: agentProcedure
+    .input(z.object({ candidateId: z.number().optional() }).optional())
+    .query(({ ctx }) => getNotificationsByCandidate(ctx.agent.candidateId)),
 
-  countUnread: publicProcedure
-    .input(z.object({ candidateId: z.number() }))
-    .query(({ input }) => countUnreadNotifications(input.candidateId)),
+  countUnread: agentProcedure
+    .input(z.object({ candidateId: z.number().optional() }).optional())
+    .query(({ ctx }) => countUnreadNotifications(ctx.agent.candidateId)),
 
-  markRead: publicProcedure
-    .input(z.object({ candidateId: z.number() }))
-    .mutation(({ input }) => markNotificationsRead(input.candidateId)),
+  markRead: agentProcedure
+    .input(z.object({ candidateId: z.number().optional() }).optional())
+    .mutation(({ ctx }) => markNotificationsRead(ctx.agent.candidateId)),
 });
 
 // ─── Campaigns Router ────────────────────────────────────────────────────────
 const campaignsRouter = router({
-  list: protectedProcedure.query(() => listCampaigns()),
+  list: staffProcedure.query(() => listCampaigns()),
 
-  getById: publicProcedure
+  getById: agentOrStaffProcedure
     .input(z.object({ id: z.number() }))
     .query(({ input }) => getCampaignById(input.id)),
 
-  create: protectedProcedure
+  create: staffProcedure
     .input(z.object({
       name: z.string().min(1),
       clientId: z.number().int().positive().nullable().optional(),
@@ -1653,7 +1666,7 @@ const campaignsRouter = router({
     }))
     .mutation(({ input }) => createCampaign(input)),
 
-  update: protectedProcedure
+  update: staffProcedure
     .input(z.object({
       id: z.number(),
       name: z.string().min(1).optional(),
@@ -1664,15 +1677,27 @@ const campaignsRouter = router({
     }))
     .mutation(({ input }) => { const { id, ...rest } = input; return updateCampaign(id, rest); }),
 
-  delete: protectedProcedure
+  delete: adminProcedure
     .input(z.object({ id: z.number() }))
-    .mutation(({ input }) => deleteCampaign(input.id)),
+    .mutation(async ({ input, ctx }) => {
+      // Refuse to orphan agents: a campaign with active agents must be emptied first.
+      const { getDb } = await import("./db");
+      const { eq, and, sql: rawSql } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { workforceAgents } = await import("../drizzle/schema");
+      const [{ n }] = await db.select({ n: rawSql<number>`count(*)` }).from(workforceAgents)
+        .where(and(eq(workforceAgents.campaignId, input.id), eq(workforceAgents.agentStatus, "active")));
+      if (Number(n) > 0) throw new TRPCError({ code: "PRECONDITION_FAILED", message: `This campaign still has ${n} active agent(s). Transfer them first.` });
+      await auditEntry(ctx.user, "delete_campaign", "campaign", String(input.id));
+      return deleteCampaign(input.id);
+    }),
 
-  headcountForecast: protectedProcedure
+  headcountForecast: staffProcedure
     .input(z.object({ campaignId: z.number(), days: z.number().int().min(1).max(90).optional() }))
     .query(({ input }) => getHeadcountForecast(input.campaignId, input.days ?? 30)),
 
-  sendOvertimeAlert: protectedProcedure
+  sendOvertimeAlert: staffProcedure
     .input(z.object({ campaignId: z.number(), date: z.string(), message: z.string().optional() }))
     .mutation(async ({ input }) => {
       // Get all active agents in this campaign
@@ -1696,7 +1721,7 @@ const campaignsRouter = router({
     }),
 
   // Dynamic operation plan: 7-day grid (Mon-Sun) showing each agent's work/off status
-  getOperationPlanMonth: publicProcedure
+  getOperationPlanMonth: agentOrStaffProcedure
     .input(z.object({ campaignId: z.number(), year: z.number().int(), month: z.number().int().min(1).max(12) }))
     .query(async ({ input }) => {
       const allAgentsMonth = await listWorkforceAgents(input.campaignId);
@@ -1726,7 +1751,7 @@ const campaignsRouter = router({
       }));
       return { campaign, year: input.year, month: input.month, days, grid };
     }),
-  getOperationPlan: publicProcedure
+  getOperationPlan: agentOrStaffProcedure
     .input(z.object({ campaignId: z.number(), weekOffset: z.number().int().optional() }))
     .query(async ({ input }) => {
       const allAgents = await listWorkforceAgents(input.campaignId);
@@ -1779,7 +1804,7 @@ const campaignsRouter = router({
 // ─── Workforce Router ─────────────────────────────────────────────────────────
 const workforceRouter = router({
   /** AUDIT: Payroll reconciliation — compare payroll_records vs what agents would see */
-  auditPayrollReconciliation: protectedProcedure
+  auditPayrollReconciliation: staffProcedure
     .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
     .query(async ({ ctx, input }) => {
       if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN" });
@@ -1826,7 +1851,7 @@ const workforceRouter = router({
     }),
 
   /** AUDIT: Check which agents can still log into portal despite being terminated */
-  auditPortalAccess: protectedProcedure.query(async ({ ctx }) => {
+  auditPortalAccess: staffProcedure.query(async ({ ctx }) => {
     if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN" });
     const { getDb } = await import("./db");
     const { agentCredentials, workforceAgents } = await import("../drizzle/schema");
@@ -1852,7 +1877,7 @@ const workforceRouter = router({
   }),
 
   /** All agents for display purposes — includes former agents, returns name/alias/status only */
-  listForDisplay: protectedProcedure.query(async () => {
+  listForDisplay: staffProcedure.query(async () => {
     const { getDb } = await import("./db");
     const { workforceAgents } = await import("../drizzle/schema");
     const { or, isNull, eq } = await import("drizzle-orm");
@@ -1870,7 +1895,7 @@ const workforceRouter = router({
   }),
 
   /** Global search — by name, alias, T-code, or CRDTS */
-  globalSearch: protectedProcedure
+  globalSearch: staffProcedure
     .input(z.object({ q: z.string().min(1).max(100) }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -1894,7 +1919,7 @@ const workforceRouter = router({
 
   // Manual "Mark as settled" — flips salarySettled; used when final pay is confirmed (exit checklist gates the full archive)
   // Unified HR profile: update address + emergency contact
-  updateHrInfo: protectedProcedure
+  updateHrInfo: staffProcedure
     .input(z.object({ traineeCode: z.string(), address: z.string().optional(), emergencyContactName: z.string().optional(), emergencyContactPhone: z.string().optional(), emergencyContactRelation: z.string().optional() }))
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
@@ -1907,7 +1932,7 @@ const workforceRouter = router({
       await auditEntry(ctx.user, "update_hr_info", "agent", traineeCode, JSON.stringify(rest));
       return { ok: true };
     }),
-  markSettled: protectedProcedure
+  markSettled: staffProcedure
     .input(z.object({ traineeCode: z.string(), settled: z.boolean() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -1918,11 +1943,11 @@ const workforceRouter = router({
       await db.update(workforceAgents).set({ salarySettled: input.settled, settledAt: input.settled ? Date.now() : null }).where(eq(workforceAgents.traineeCode, input.traineeCode));
       return { ok: true };
     }),
-  list: protectedProcedure
+  list: staffProcedure
     .input(z.object({ campaignId: z.number().optional(), teamLeader: z.string().optional(), includeFormer: z.boolean().optional() }))
     .query(({ input }) => listWorkforceAgents(input.campaignId, input.teamLeader, input.includeFormer)),
   /** Active agents missing required personal info — for Slack pings. */
-  incompleteProfiles: protectedProcedure
+  incompleteProfiles: staffProcedure
     .query(async () => {
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
@@ -1960,13 +1985,13 @@ const workforceRouter = router({
         .filter(a => a.missing.length > 0)
         .sort((a, b) => b.missing.length - a.missing.length);
     }),
-  allInTraining: protectedProcedure
+  allInTraining: staffProcedure
     .query(() => listAllAgentsInTraining()),
   // Returns the next available T-{N} code (lowest unused sequential number)
-  nextTraineeCode: protectedProcedure
+  nextTraineeCode: staffProcedure
     .query(() => getNextAvailableTraineeCode()),
 
-  create: protectedProcedure
+  create: staffProcedure
     .input(z.object({
       traineeCode: z.string().min(1),
       candidateId: z.number(),
@@ -2061,7 +2086,7 @@ const workforceRouter = router({
         }
       }
     }),
-  update: protectedProcedure
+  update: staffProcedure
     .input(z.object({
       traineeCode: z.string(),
       fullName: z.string().optional(),
@@ -2155,15 +2180,12 @@ const workforceRouter = router({
       return { url };
     }),
   // Agent: fill my personal profile ONCE. After submitting it locks; further edits go through HR.
-  updateMyProfile: publicProcedure
+  updateMyProfile: agentProcedure
     .input(z.object({
+      // HR-only fields (contractEndDate, probationEndDate, isOnProbation, rehireEligible, rehireNote)
+      // are deliberately NOT accepted here — they come from HR, never from the agent.
       nationalId: z.string().max(50).optional(),
       nationalIdExpiry: z.string().max(20).optional(),
-      contractEndDate: z.string().max(20).optional(),
-      probationEndDate: z.string().max(20).optional(),
-      isOnProbation: z.boolean().optional(),
-      rehireEligible: z.boolean().optional(),
-      rehireNote: z.string().max(500).optional(),
       dateOfBirth: z.string().max(20).optional(),
       gender: z.enum(["male", "female"]).optional(),
       nationality: z.string().max(100).optional(),
@@ -2172,11 +2194,7 @@ const workforceRouter = router({
       city: z.string().max(120).optional(),
     }))
     .mutation(async ({ input, ctx }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) throw new TRPCError({ code: "UNAUTHORIZED", message: "Not authenticated as agent" });
-      let traineeCode: string;
-      try { ({ traineeCode } = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string }); }
-      catch { throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid agent session" }); }
+      const traineeCode = ctx.agent.traineeCode;
       const me = await getWorkforceAgentByCode(traineeCode);
       if (!me) throw new TRPCError({ code: "NOT_FOUND", message: "Agent not found" });
       if (me.profileLocked) throw new TRPCError({ code: "FORBIDDEN", message: "Your profile is already submitted. Please request an update from HR." });
@@ -2184,7 +2202,7 @@ const workforceRouter = router({
       return { success: true };
     }),
 
-  getCampaignAgents: publicProcedure
+  getCampaignAgents: agentOrStaffProcedure
     .input(z.object({ campaignId: z.number() }))
     .query(async ({ input, ctx }) => {
       // Require either admin session or valid agent cookie
@@ -2208,8 +2226,8 @@ const workforceRouter = router({
         avatarUrl: a.avatarUrl,
       }));
     }),
-  getEligibleCandidates: protectedProcedure.query(() => getEligibleCandidatesForOps()),
-  getAgentFullProfile: protectedProcedure
+  getEligibleCandidates: staffProcedure.query(() => getEligibleCandidatesForOps()),
+  getAgentFullProfile: staffProcedure
     .input(z.object({ traineeCode: z.string() }))
     .query(async ({ input }) => {
       const lookup = decodeURIComponent(input.traineeCode).trim();
@@ -2346,24 +2364,27 @@ const workforceRouter = router({
         myCode: _code,
       };
     }),
-  bulkGenerateCredentials: protectedProcedure
+  bulkGenerateCredentials: roleProcedure("manager", "hr")
     .input(z.object({ campaignId: z.number().optional() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
       const agents = await listWorkforceAgents(input.campaignId);
-      const DEFAULT_PASSWORD = "Tanis2025";
-      const passwordHash = await bcrypt.hash(DEFAULT_PASSWORD, 10);
+      // One UNIQUE random password per agent (never a shared default), must be changed on first login.
       const results: Array<{ fullName: string; traineeCode: string; password: string }> = [];
       for (const agent of agents) {
         if (!agent.traineeCode || !agent.candidateId) continue;
+        const pw = generatePassword(agent.traineeCode);
+        const passwordHash = await bcrypt.hash(pw, 10);
         await upsertAgentCredential(agent.candidateId, agent.traineeCode, passwordHash, true);
-        results.push({ fullName: agent.fullName, traineeCode: agent.traineeCode, password: DEFAULT_PASSWORD });
+        results.push({ fullName: agent.fullName, traineeCode: agent.traineeCode, password: pw });
       }
+      await auditEntry(ctx.user, "bulk_generate_credentials", "campaign", String(input.campaignId ?? "all"), JSON.stringify({ count: results.length }));
       return { generated: results.length, credentials: results };
     }),
   // Admin: force-delete an agent and their candidate record (for test/cleanup)
-  forceDelete: protectedProcedure
+  forceDelete: adminProcedure
     .input(z.object({ traineeCode: z.string() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ input, ctx }) => {
+      await auditEntry(ctx.user, "force_delete_agent", "agent", input.traineeCode);
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
@@ -2377,7 +2398,7 @@ const workforceRouter = router({
     }),
 
   // Generate a unique 6-digit trainee code not already in use
-  generateUniqueId: protectedProcedure
+  generateUniqueId: staffProcedure
     .mutation(async () => {
       const { generateUniqueTraineeCode } = await import("./db");
       const code = await generateUniqueTraineeCode();
@@ -2391,7 +2412,7 @@ const workforceRouter = router({
    * - If the agent's email matches an existing Hub user, auto-assigns their Hub role
    * - Otherwise they should sign in to Hub and the role will be auto-assigned on first login
    */
-  promoteToHub: protectedProcedure
+  promoteToHub: staffProcedure
     .input(z.object({
       traineeCode: z.string(),
       hubRole: z.enum(["team_lead", "manager", "hr", "ops_manager", "finance", "admin"]),
@@ -2408,7 +2429,7 @@ const workforceRouter = router({
 });
 // ─── Agent Comments Router ────────────────────────────────────────────────────
 const agentCommentsRouter = router({
-  listByCode: protectedProcedure
+  listByCode: staffProcedure
     .input(z.object({ traineeCode: z.string() }))
     .query(({ input }) => getCommentsByCode(input.traineeCode)),
   listMine: publicProcedure.query(({ ctx }) => {
@@ -2419,7 +2440,7 @@ const agentCommentsRouter = router({
       return getCommentsByCode(_cmtCode);
     } catch { return []; }
   }),
-  add: protectedProcedure
+  add: staffProcedure
     .input(z.object({
       traineeCode: z.string(),
       content: z.string().min(1),
@@ -2431,7 +2452,7 @@ const agentCommentsRouter = router({
       content: input.content,
       tag: input.tag,
     })),
-  delete: protectedProcedure
+  delete: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(({ input }) => deleteAgentComment(input.id)),
 });
@@ -2447,8 +2468,8 @@ const paymentMethodsRouter = router({
     } catch { return []; }
   }),
 
-  listAll: protectedProcedure.query(() => listAllPaymentMethods()),
-  listGrouped: protectedProcedure.query(() => listPaymentMethodsGrouped()),
+  listAll: staffProcedure.query(() => listAllPaymentMethods()),
+  listGrouped: staffProcedure.query(() => listPaymentMethodsGrouped()),
 
   upsert: publicProcedure
     .input(z.object({
@@ -2500,10 +2521,10 @@ const paymentMethodsRouter = router({
       return deletePaymentMethod(input.id);
     }),
 
-  addComment: protectedProcedure
+  addComment: staffProcedure
     .input(z.object({ id: z.number(), comment: z.string() }))
     .mutation(({ input }) => addPaymentMethodComment(input.id, input.comment)),
-  adminUpsert: protectedProcedure
+  adminUpsert: staffProcedure
     .input(z.object({
       id: z.number().optional(),
       traineeCode: z.string(),
@@ -2517,7 +2538,7 @@ const paymentMethodsRouter = router({
       isPreferred: z.boolean().optional(),
     }))
     .mutation(({ input }) => upsertPaymentMethod(input)),
-  adminDelete: protectedProcedure
+  adminDelete: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       // Safety check: warn if this payment method is referenced in payroll records
@@ -2536,7 +2557,7 @@ const paymentMethodsRouter = router({
       }
       return deletePaymentMethod(input.id);
     }),
-  adminSetPreferred: protectedProcedure
+  adminSetPreferred: staffProcedure
     .input(z.object({ id: z.number(), traineeCode: z.string() }))
     .mutation(({ input }) => setPaymentMethodPreferred(input.id, input.traineeCode)),
 });
@@ -2552,10 +2573,10 @@ const documentsRouter = router({
     } catch { return []; }
   }),
 
-  listAll: protectedProcedure.query(() => listAllDocuments()),
+  listAll: staffProcedure.query(() => listAllDocuments()),
 
   /** Get/set agent portal lock state — admin/owner only */
-  getPortalLock: protectedProcedure.query(async () => {
+  getPortalLock: staffProcedure.query(async () => {
     const { getDb } = await import("./db");
     const { appSettings } = await import("../drizzle/schema");
     const { eq } = await import("drizzle-orm");
@@ -2566,7 +2587,7 @@ const documentsRouter = router({
     return { locked: row?.value === "true", message: msgRow?.value ?? "" };
   }),
 
-  setPortalLock: protectedProcedure
+  setPortalLock: staffProcedure
     .input(z.object({ locked: z.boolean(), message: z.string().max(200).optional() }))
     .mutation(async ({ ctx, input }) => {
       if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN", message: "Only admins can lock the portal." });
@@ -2585,7 +2606,7 @@ const documentsRouter = router({
       return { ok: true };
     }),
 
-  markContractSigned: protectedProcedure
+  markContractSigned: staffProcedure
     .input(z.object({
       traineeCodes: z.array(z.string().min(1)).min(1),
       contractStartDate: z.string().max(20).optional(),
@@ -2609,7 +2630,7 @@ const documentsRouter = router({
       return { updated: input.traineeCodes.length };
     }),
 
-  listByAgent: protectedProcedure
+  listByAgent: staffProcedure
     .input(z.object({ traineeCode: z.string() }))
     .query(({ input }) => getDocumentsByCode(input.traineeCode)),
 
@@ -2650,7 +2671,7 @@ const documentsRouter = router({
       return { url };
     }),
 
-  review: protectedProcedure
+  review: roleProcedure("hr", "manager", "team_lead")
     .input(z.object({
       id: z.number(),
       status: z.enum(["approved", "rejected"]),
@@ -2659,7 +2680,7 @@ const documentsRouter = router({
     .mutation(({ input }) => reviewAgentDocument(input.id, input.status, input.adminComment)),
 
   /** Admin uploads a document on behalf of an agent (no agent cookie required). */
-  uploadForAgent: protectedProcedure
+  uploadForAgent: staffProcedure
     .input(z.object({
       traineeCode: z.string().min(1),
       docType: z.string().min(1),
@@ -2738,7 +2759,7 @@ const scheduleChangeRouter = router({
       .sort((x, y) => x.name.localeCompare(y.name));
   }),
 
-  listAll: protectedProcedure.query(() => listAllScheduleChangeRequests()),
+  listAll: staffProcedure.query(() => listAllScheduleChangeRequests()),
 
   peerApprove: publicProcedure
     .input(z.object({ id: z.number(), approve: z.boolean() }))
@@ -2795,7 +2816,7 @@ const scheduleChangeRouter = router({
       return { success: true };
     }),
 
-  managerApprove: protectedProcedure
+  managerApprove: staffProcedure
     .input(z.object({
       id: z.number(),
       approve: z.boolean(),
@@ -2852,7 +2873,7 @@ const scheduleChangeRouter = router({
 // ─── Break Schedule Router ────────────────────────────────────────────────────
 const breakScheduleRouter = router({
   // Admin: replace all break slots for multiple agent+date combinations
-  upsert: protectedProcedure
+  upsert: staffProcedure
     .input(z.object({
       entries: z.array(z.object({
         agentCode: z.string(),
@@ -2865,7 +2886,7 @@ const breakScheduleRouter = router({
     }))
     .mutation(({ input }) => bulkReplaceBreaks(input.entries)),
   // Admin: get breaks for a specific agent in a date range
-  getByAgent: protectedProcedure
+  getByAgent: staffProcedure
     .input(z.object({
       agentCode: z.string(),
       startDate: z.string(),
@@ -2873,11 +2894,11 @@ const breakScheduleRouter = router({
     }))
     .query(({ input }) => getBreakSchedulesByAgent(input.agentCode, input.startDate, input.endDate)),
   // Admin: get all breaks in a date range (for overview)
-  getByDateRange: protectedProcedure
+  getByDateRange: staffProcedure
     .input(z.object({ startDate: z.string(), endDate: z.string() }))
     .query(({ input }) => getBreakSchedulesByDateRange(input.startDate, input.endDate)),
   // Admin: delete a specific break entry
-  delete: protectedProcedure
+  delete: staffProcedure
     .input(z.object({ agentCode: z.string(), date: z.string() }))
     .mutation(({ input }) => deleteBreakSchedule(input.agentCode, input.date)),
   // Agent: get own breaks for current week
@@ -2899,7 +2920,7 @@ const breakScheduleRouter = router({
 // ─── Separation Router ────────────────────────────────────────────
 const separationRouter = router({
   // Admin: mark agent as resigned on-spot (also blacklists candidate)
-  resignOnSpot: protectedProcedure
+  resignOnSpot: roleProcedure("hr", "manager")
     .input(z.object({ agentCode: z.string(), reason: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
@@ -2912,6 +2933,7 @@ const separationRouter = router({
         const { workforceAgents, exitProcess } = await import("../drizzle/schema");
         // Revoke portal session
         await db.update(workforceAgents).set({ sessionRevokedAt: Date.now() } as never).where(eq(workforceAgents.traineeCode, input.agentCode));
+        invalidateAgentSessionCache(input.agentCode);
         // Auto-create exit process record if not already exists
         const existing = await db.select({ id: exitProcess.id }).from(exitProcess).where(eq(exitProcess.traineeCode, input.agentCode)).limit(1);
         if (!existing[0]) {
@@ -2922,7 +2944,7 @@ const separationRouter = router({
     }),
 
   // Admin: terminate agent
-  terminate: protectedProcedure
+  terminate: roleProcedure("hr", "manager")
     .input(z.object({ agentCode: z.string(), reason: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED" });
@@ -2934,6 +2956,7 @@ const separationRouter = router({
       if (db) {
         const { workforceAgents, exitProcess } = await import("../drizzle/schema");
         await db.update(workforceAgents).set({ sessionRevokedAt: Date.now() } as never).where(eq(workforceAgents.traineeCode, input.agentCode));
+        invalidateAgentSessionCache(input.agentCode);
         // Auto-create exit process record
         const existing = await db.select({ id: exitProcess.id }).from(exitProcess).where(eq(exitProcess.traineeCode, input.agentCode)).limit(1);
         if (!existing[0]) {
@@ -2944,7 +2967,7 @@ const separationRouter = router({
     }),
 
   // Admin: approve a resignation request submitted by agent
-  approveResignation: protectedProcedure
+  approveResignation: staffProcedure
     .input(z.object({
       agentCode: z.string(),
       requestId: z.number(),
@@ -2961,6 +2984,7 @@ const separationRouter = router({
         if (_rDb) {
           const { workforceAgents: _rWa } = await import("../drizzle/schema");
           await _rDb.update(_rWa).set({ sessionRevokedAt: Date.now() } as never).where(_rEq(_rWa.traineeCode, input.agentCode));
+          invalidateAgentSessionCache(input.agentCode);
         }
       }
       // Look up the request to get the reason
@@ -2985,11 +3009,11 @@ const separationRouter = router({
     }),
 
   // Admin/Agent: get separation history for an agent
-  getByAgent: protectedProcedure
+  getByAgent: staffProcedure
     .input(z.object({ agentCode: z.string() }))
     .query(({ input }) => getSeparationsByAgent(input.agentCode)),
   /** Full list of resigned + terminated + archived agents with all their data. */
-  listFormerAgents: protectedProcedure
+  listFormerAgents: staffProcedure
     .query(async () => {
       const { getDb } = await import("./db");
       const { eq, or, inArray, desc } = await import("drizzle-orm");
@@ -3035,14 +3059,14 @@ const separationRouter = router({
       }));
     }),
   // Admin: get all terminated/resigned agents pending deletion
-  pendingDeletion: protectedProcedure
+  pendingDeletion: staffProcedure
     .query(() => getPendingDeletionAgents()),
   // Get pending (scheduled, not yet applied) separation for an agent
-  getPendingForAgent: protectedProcedure
+  getPendingForAgent: staffProcedure
     .input(z.object({ agentCode: z.string() }))
     .query(({ input }) => getPendingSeparationForAgent(input.agentCode)),
   // Schedule a future resignation (stays active until effectiveDate)
-  scheduleResignation: protectedProcedure
+  scheduleResignation: staffProcedure
     .input(z.object({
       agentCode: z.string(),
       effectiveDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -3054,7 +3078,7 @@ const separationRouter = router({
       return { success: true };
     }),
   // Cancel a pending scheduled separation
-  cancelScheduled: protectedProcedure
+  cancelScheduled: staffProcedure
     .input(z.object({ agentCode: z.string() }))
     .mutation(async ({ input }) => {
       await cancelScheduledSeparation(input.agentCode);
@@ -3063,7 +3087,7 @@ const separationRouter = router({
 });
 // ─── Payroll v2 Router ───────────────────────────────────────────────────────
 const payrollV2Router = router({
-  uploadPayrollV2: protectedProcedure
+  uploadPayrollV2: staffProcedure
     .input(z.object({
       month: z.string(), // YYYY-MM
       rows: z.array(z.object({
@@ -3091,6 +3115,7 @@ const payrollV2Router = router({
     .mutation(async ({ input, ctx }) => {
       const uploadedBy = ctx.user?.name ?? "admin";
       const uploadedAt = Date.now();
+      if (!/^\d{4}-\d{2}$/.test(input.month)) throw new TRPCError({ code: "BAD_REQUEST", message: "month must be YYYY-MM" });
 
       // Duplicate CRDTS guard — warn if same CRDTS appears more than once
       const crdtsCounts = input.rows.reduce((m, r) => { m[r.crdts] = (m[r.crdts] ?? 0) + 1; return m; }, {} as Record<string, number>);
@@ -3098,13 +3123,22 @@ const payrollV2Router = router({
         .filter(([, count]) => count > 1)
         .map(([crdts, count]) => ({ crdts, alias: null, type: "duplicate_crdts", message: `CRDTS ${crdts} appears ${count} times — only the last row will be saved.` }));
 
-      // Commission is NEVER auto-attached during payroll upload.
-      // Commission must be entered manually in the Salary tab by HR.
-      // This prevents commission data from being overwritten during payroll re-uploads.
-
+      // Validate EVERY row before writing ANY. A bad number must never be stored and paid silently.
+      const problems: Array<{ crdts: string; problems: string[] }> = [];
       for (const row of input.rows) {
-        await upsertPayrollRecordV2({ ...row, commissionEgp: row.commissionEgp, month: input.month, uploadedBy, uploadedAt });
+        const p = validatePayrollRow(row);
+        if (p.length) problems.push({ crdts: row.crdts, problems: p });
       }
+      if (problems.length) {
+        const preview = problems.slice(0, 5).map(p => `${p.crdts}: ${p.problems.join("; ")}`).join(" | ");
+        throw new TRPCError({ code: "BAD_REQUEST", message: `${problems.length} row(s) failed validation — nothing was saved. ${preview}${problems.length > 5 ? ` … +${problems.length - 5} more` : ""}` });
+      }
+
+      // Commission is NEVER auto-attached during payroll upload — HR enters it in the Salary tab.
+      // One transaction: either the whole month lands or none of it does.
+      const { upsertPayrollRecordsV2Batch } = await import("./db");
+      const batch = await upsertPayrollRecordsV2Batch(input.rows.map(row => ({ ...row, month: input.month, uploadedBy, uploadedAt })));
+      await auditEntry(ctx.user, "upload_payroll", "payroll_month", input.month, JSON.stringify({ rows: input.rows.length, ...batch }));
 
       // Anomaly detection
       const { getDb } = await import("./db");
@@ -3134,15 +3168,33 @@ const payrollV2Router = router({
       return { success: true, count: input.rows.length, commissionCycle: "", commissionAttached: 0, warnings: [...dupWarnings, ...warnings] };
     }),
 
-  getStatusPage: protectedProcedure
+  getStatusPage: staffProcedure
     .input(z.object({ month: z.string() }))
     .query(({ input }) => getPayrollStatusPage(input.month)),
 
-  setStatus: protectedProcedure
+  setStatus: roleProcedure("finance", "hr", "manager", "team_lead")
     .input(z.object({ id: z.number(), status: z.enum(["pending", "paid"]) }))
-    .mutation(({ input }) => setPayrollStatus(input.id, input.status)),
+    .mutation(async ({ input, ctx }) => {
+      const { getDb, getPayrollRecordWithAdjustments } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { payrollRecords } = await import("../drizzle/schema");
+      const { eq } = await import("drizzle-orm");
+      const rec = await getPayrollRecordWithAdjustments(input.id);
+      if (!rec) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
+      // "Paid" means the FULL amount owed (net + commission + adjustments) has been paid.
+      const total = calcFinalPay(rec.record, rec.adjustments);
+      await db.update(payrollRecords).set({
+        paymentStatus: input.status,
+        paidAt: input.status === "paid" ? Date.now() : null,
+        paidBy: input.status === "paid" ? (ctx.user.name ?? ctx.user.email ?? "admin") : null,
+        amountPaid: input.status === "paid" ? total.toFixed(2) : null,
+      }).where(eq(payrollRecords.id, input.id));
+      await auditEntry(ctx.user, input.status === "paid" ? "mark_paid" : "mark_unpaid", "payroll", String(input.id), JSON.stringify({ total }));
+      return { ok: true };
+    }),
 
-  updateRecord: protectedProcedure
+  updateRecord: staffProcedure
     .input(z.object({
       id: z.number(),
       lastKnownPaidAt: z.number().nullable().optional(),
@@ -3216,12 +3268,6 @@ const payrollV2Router = router({
       return { success: true };
     }),
 
-  getMyMonths: publicProcedure
-    .input(z.object({ crdts: z.string() }))
-    .query(({ input }) => getMyPayrollMonthsByCrdts(input.crdts)),
-  getMyRecord: publicProcedure
-    .input(z.object({ crdts: z.string(), month: z.string() }))
-    .query(({ input }) => getMyPayrollRecordByCrdts(input.crdts, input.month)),
   // Agent portal: derive CRDTS from cookie automatically
   getMyMonthsFromCookie: publicProcedure.query(async ({ ctx }) => {
     const _pr1Tok = getAgentCookieFromReq(ctx.req);
@@ -3246,7 +3292,7 @@ const payrollV2Router = router({
       } catch { return null; }
     }),
   // Admin: get all payroll records for a specific agent by CRDTS
-  getAgentPayrollHistory: protectedProcedure
+  getAgentPayrollHistory: staffProcedure
     .input(z.object({ crdts: z.string() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -3261,7 +3307,7 @@ const payrollV2Router = router({
     }),
 
   /** Bulk mark a selected list of payroll IDs as paid. Records who clicked it. */
-  bulkMarkPaid: protectedProcedure
+  bulkMarkPaid: staffProcedure
     .input(z.object({ ids: z.array(z.number()).min(1), month: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
@@ -3272,17 +3318,26 @@ const payrollV2Router = router({
       if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED", message: "No authenticated user found." });
       const paidBy = ctx.user.name ?? ctx.user.email ?? "Unknown Admin";
       const paidAt = Date.now();
+      const { getPayrollRecordWithAdjustments } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      void inArray;
       await db.transaction(async (tx) => {
-        await tx.update(payrollRecords)
-          .set({ paymentStatus: "paid", paidAt, paidBy } as never)
-          .where(inArray(payrollRecords.id, input.ids));
+        for (const id of input.ids) {
+          const rec = await getPayrollRecordWithAdjustments(id);
+          if (!rec) continue;
+          const total = calcFinalPay(rec.record, rec.adjustments);
+          // Marking paid records the full amount owed so "remaining" is 0 and reports reconcile.
+          await tx.update(payrollRecords)
+            .set({ paymentStatus: "paid", paidAt, paidBy, amountPaid: total.toFixed(2) } as never)
+            .where(eq(payrollRecords.id, id));
+        }
       });
       await auditEntry(ctx.user, "bulk_mark_paid", "payroll", input.month, JSON.stringify({ ids: input.ids, count: input.ids.length, paidBy }));
       return { ok: true, count: input.ids.length, paidBy };
     }),
 
   /** Bulk partial pay — pay a fixed amount to each selected agent. */
-  bulkPartialPay: protectedProcedure
+  bulkPartialPay: staffProcedure
     .input(z.object({ ids: z.array(z.number()).min(1), amountEach: z.number().positive(), month: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
@@ -3295,13 +3350,15 @@ const payrollV2Router = router({
       const paidAt = Date.now();
       let count = 0;
       await db.transaction(async (tx) => {
+        const { getPayrollRecordWithAdjustments } = await import("./db");
         for (const id of input.ids) {
-          const [rec] = await tx.select().from(payrollRecords).where(eq(payrollRecords.id, id)).limit(1);
+          const full = await getPayrollRecordWithAdjustments(id);
+          const rec = full?.record;
           if (!rec || rec.paymentStatus === "paid") continue;
-          const netPay = parseFloat(String(rec.netPay ?? 0));
+          const owed = calcFinalPay(rec, full!.adjustments); // net + commission + adjustments
           const prevPaid = parseFloat(String((rec as Record<string, unknown>).amountPaid ?? "0"));
-          const totalPaid = Math.min(prevPaid + input.amountEach, netPay);
-          const fullyPaid = totalPaid >= netPay;
+          const totalPaid = Math.min(prevPaid + input.amountEach, owed);
+          const fullyPaid = totalPaid >= owed - 0.005;
           await tx.update(payrollRecords).set({
             amountPaid: String(totalPaid.toFixed(2)), paidBy, paidAt,
             paymentStatus: fullyPaid ? "paid" : "pending",
@@ -3315,7 +3372,7 @@ const payrollV2Router = router({
 
   /** Partial pay: record a partial amount paid and who paid it.
    *  Status stays "pending" until pay reaches netPay (then auto-flips to paid). */
-  partialPay: protectedProcedure
+  partialPay: staffProcedure
     .input(z.object({ id: z.number(), amountPaid: z.number().positive() }))
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
@@ -3323,15 +3380,21 @@ const payrollV2Router = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { payrollRecords } = await import("../drizzle/schema");
-      const [rec] = await db.select().from(payrollRecords).where(eq(payrollRecords.id, input.id)).limit(1);
+      const { getPayrollRecordWithAdjustments } = await import("./db");
+      const full = await getPayrollRecordWithAdjustments(input.id);
+      const rec = full?.record;
       if (!rec) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
-      const netPay = parseFloat(String(rec.netPay ?? 0));
+      const owed = calcFinalPay(rec, full!.adjustments); // net + commission + adjustments
       const prevPaid = parseFloat(String((rec as Record<string, unknown>).amountPaid ?? "0"));
+      const stillOwed = remainingOwed(rec, full!.adjustments);
+      // Cap: never record more than what is owed.
+      if (input.amountPaid > stillOwed + 0.005) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `Amount exceeds the remaining balance (EGP ${stillOwed.toFixed(2)}).` });
+      }
       const totalPaid = prevPaid + input.amountPaid;
-      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED", message: "No authenticated user." });
       const paidBy = ctx.user.name ?? ctx.user.email ?? "Unknown Admin";
       const paidAt = Date.now();
-      const fullyPaid = totalPaid >= netPay;
+      const fullyPaid = totalPaid >= owed - 0.005;
       await db.update(payrollRecords)
         .set({
           amountPaid: String(totalPaid.toFixed(2)),
@@ -3340,13 +3403,13 @@ const payrollV2Router = router({
           paymentStatus: fullyPaid ? "paid" : "pending",
         } as never)
         .where(eq(payrollRecords.id, input.id));
-      const remaining = Math.max(0, netPay - totalPaid);
+      const remaining = Math.max(0, owed - totalPaid);
       await auditEntry(ctx.user, "partial_pay", "payroll", String(input.id), JSON.stringify({ amountPaid: input.amountPaid, totalPaid, remaining, fullyPaid, paidBy }));
       return { ok: true, totalPaid, remaining, fullyPaid, paidBy };
     }),
 
   /** Pay the remaining balance on a partially-paid record. */
-  payRemaining: protectedProcedure
+  payRemaining: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
@@ -3354,19 +3417,20 @@ const payrollV2Router = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { payrollRecords } = await import("../drizzle/schema");
-      const [rec] = await db.select().from(payrollRecords).where(eq(payrollRecords.id, input.id)).limit(1);
-      if (!rec) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
-      if (!ctx.user) throw new TRPCError({ code: "UNAUTHORIZED", message: "No authenticated user." });
+      const { getPayrollRecordWithAdjustments } = await import("./db");
+      const full = await getPayrollRecordWithAdjustments(input.id);
+      if (!full) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
       const paidBy = ctx.user.name ?? ctx.user.email ?? "Unknown Admin";
+      const total = calcFinalPay(full.record, full.adjustments);
       await db.update(payrollRecords)
-        .set({ amountPaid: rec.netPay, paidBy, paidAt: Date.now(), paymentStatus: "paid" } as never)
+        .set({ amountPaid: total.toFixed(2), paidBy, paidAt: Date.now(), paymentStatus: "paid" } as never)
         .where(eq(payrollRecords.id, input.id));
-      await auditEntry(ctx.user, "pay_remaining", "payroll", String(input.id), JSON.stringify({ paidBy }));
+      await auditEntry(ctx.user, "pay_remaining", "payroll", String(input.id), JSON.stringify({ paidBy, total }));
       return { ok: true, paidBy };
     }),
 
   /** Monthly payroll stats and insights. */
-  statsForMonth: protectedProcedure
+  statsForMonth: staffProcedure
     .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -3411,7 +3475,7 @@ const payrollV2Router = router({
     }),
 
   // Admin: delete all payroll V2 rows for a specific month (undo a bad import)
-  deleteForMonth: protectedProcedure
+  deleteForMonth: staffProcedure
     .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -3444,7 +3508,7 @@ const orientationRouter = router({
       await markOrientationShown(payload.traineeCode);
     } catch { return; }
   }),
-  reset: protectedProcedure
+  reset: staffProcedure
     .input(z.object({ traineeCode: z.string() }))
     .mutation(({ input }) => resetOrientation(input.traineeCode)),
 });
@@ -3456,7 +3520,7 @@ const orientationRouter = router({
 // writes any of this to a payslip.
 // ════════════════════════════════════════════════════════════════════════════
 const otRouter = router({
-  list: protectedProcedure
+  list: staffProcedure
     .input(z.object({ crdts: z.string().optional(), month: z.string().optional() }).optional())
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -3485,7 +3549,7 @@ const NON_AGENT_TYPES = ["team_lead", "manager", "hr", "ops_manager", "finance",
  * ══════════════════════════════════════════════════════════════════════════ */
 const academyRouter = router({
   // ---- Courses -----------------------------------------------------------
-  listCourses: protectedProcedure
+  listCourses: staffProcedure
     .input(z.object({ publishedOnly: z.boolean().optional() }).optional())
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -3498,7 +3562,7 @@ const academyRouter = router({
       return q.orderBy(desc(academyCourses.createdAt));
     }),
 
-  createCourse: protectedProcedure
+  createCourse: staffProcedure
     .input(z.object({
       title: z.string().min(1).max(255),
       description: z.string().optional(),
@@ -3526,7 +3590,7 @@ const academyRouter = router({
       return { ok: true } as const;
     }),
 
-  publishCourse: protectedProcedure
+  publishCourse: staffProcedure
     .input(z.object({ id: z.number(), isPublished: z.boolean() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -3540,7 +3604,7 @@ const academyRouter = router({
     }),
 
   // ---- Modules -----------------------------------------------------------
-  listModules: protectedProcedure
+  listModules: staffProcedure
     .input(z.object({ courseId: z.number() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -3553,7 +3617,7 @@ const academyRouter = router({
         .orderBy(asc(academyModules.sortOrder));
     }),
 
-  addModule: protectedProcedure
+  addModule: staffProcedure
     .input(z.object({
       courseId: z.number(),
       title: z.string().min(1).max(255),
@@ -3582,7 +3646,7 @@ const academyRouter = router({
     }),
 
   // ---- Assignments -------------------------------------------------------
-  listAssignments: protectedProcedure
+  listAssignments: staffProcedure
     .input(z.object({ courseId: z.number().optional(), traineeCode: z.string().optional() }).optional())
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -3598,7 +3662,7 @@ const academyRouter = router({
       return q.orderBy(desc(academyAssignments.assignedAt));
     }),
 
-  assign: protectedProcedure
+  assign: staffProcedure
     .input(z.object({
       courseId: z.number(),
       traineeCodes: z.array(z.string()).min(1),
@@ -3634,7 +3698,7 @@ const academyRouter = router({
   /** Suggestions — driven by the Hub's own data rather than guesswork:
    *  repeat violations, repeat client logouts, and repeat coaching sessions all
    *  point at agents who need training, matched to a course where possible. */
-  suggestions: protectedProcedure.query(async () => {
+  suggestions: staffProcedure.query(async () => {
     const { getDb } = await import("./db");
     const { gte } = await import("drizzle-orm");
     const db = await getDb();
@@ -3792,7 +3856,7 @@ const academyRouter = router({
     const [row] = await db.select().from(appSettings).where(eq(appSettings.key, "cefr_enabled")).limit(1);
     return row ? row.value !== "false" : true;
   }),
-  setCefrEnabled: protectedProcedure
+  setCefrEnabled: staffProcedure
     .input(z.object({ enabled: z.boolean() }))
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
@@ -3834,7 +3898,7 @@ const academyRouter = router({
       return { ok: true };
     }),
   /** Admin: all CEFR scores (latest per agent). */
-  listCefrScores: protectedProcedure.query(async () => {
+  listCefrScores: staffProcedure.query(async () => {
     const { getDb } = await import("./db");
     const { englishScores, workforceAgents } = await import("../drizzle/schema");
     const { desc } = await import("drizzle-orm");
@@ -3850,7 +3914,7 @@ const academyRouter = router({
   }),
   // ---- Quiz (assessment) -------------------------------------------------
   /** Admin: list a course's questions WITH correct answers (builder view). */
-  listQuizQuestions: protectedProcedure
+  listQuizQuestions: staffProcedure
     .input(z.object({ courseId: z.number() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -3864,7 +3928,7 @@ const academyRouter = router({
       return rows.map(r => ({ ...r, options: JSON.parse(r.options) as string[] }));
     }),
 
-  addQuizQuestion: protectedProcedure
+  addQuizQuestion: staffProcedure
     .input(z.object({
       courseId: z.number(),
       question: z.string().min(1).max(2000),
@@ -3892,7 +3956,7 @@ const academyRouter = router({
       return { ok: true } as const;
     }),
 
-  deleteQuizQuestion: protectedProcedure
+  deleteQuizQuestion: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -3905,7 +3969,7 @@ const academyRouter = router({
     }),
 
   /** Admin: set/change a course's pass mark (0 disables the quiz gate). */
-  setPassMark: protectedProcedure
+  setPassMark: staffProcedure
     .input(z.object({ courseId: z.number(), passMark: z.number().int().min(0).max(100) }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -4010,7 +4074,7 @@ const employeesRouter = router({
   /** Complete profile bundle for one agent — everything in one call:
    *  salary history, commission history, performance, joining/training dates.
    *  Money sections are visible to all roles EXCEPT bd (checked on the client too). */
-  profileFull: protectedProcedure
+  profileFull: staffProcedure
     .input(z.object({ crdts: z.string(), traineeCode: z.string().optional() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -4043,7 +4107,7 @@ const employeesRouter = router({
     }),
 
   /** Everyone — agents AND management. Used by the Employee Profiles tab. */
-  list: protectedProcedure
+  list: staffProcedure
     .input(z.object({ type: z.string().optional() }).optional())
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -4059,7 +4123,7 @@ const employeesRouter = router({
     }),
 
   /** Create a management employee record (Settings → Management). */
-  addManagement: protectedProcedure
+  addManagement: staffProcedure
     .input(z.object({
       fullName: z.string().min(1).max(255),
       alias: z.string().max(100).optional(),
@@ -4092,7 +4156,7 @@ const employeesRouter = router({
     }),
 
   /** Link a Hub login to an employee record, so they can edit their own profile. */
-  linkLogin: protectedProcedure
+  linkLogin: staffProcedure
     .input(z.object({ traineeCode: z.string(), openId: z.string() }))
     .mutation(async ({ ctx, input }) => {
       if (ctx.user?.role !== "owner" && ctx.user?.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
@@ -4107,7 +4171,7 @@ const employeesRouter = router({
     }),
 
   /** The logged-in person's OWN employee record (null if their login isn't linked). */
-  myProfile: protectedProcedure.query(async ({ ctx }) => {
+  myProfile: staffProcedure.query(async ({ ctx }) => {
     const openId = ctx.user?.openId;
     if (!openId) return null;
     const { getDb } = await import("./db");
@@ -4133,7 +4197,7 @@ const employeesRouter = router({
   }),
 
   /** Edit your OWN profile — personal details only. Can't touch salary/status/role. */
-  updateMyProfile: protectedProcedure
+  updateMyProfile: staffProcedure
     .input(z.object({
       phone: z.string().max(50).optional(),
       address: z.string().max(500).optional(),
@@ -4157,7 +4221,7 @@ const employeesRouter = router({
 });
 
 const violationsRouter = router({
-  bulkInsert: protectedProcedure
+  bulkInsert: staffProcedure
     .input(z.array(z.object({
       agentCode: z.string(),
       crdts: z.string().optional(),
@@ -4176,7 +4240,7 @@ const violationsRouter = router({
       return { success: true };
     }),
 
-  list: protectedProcedure
+  list: staffProcedure
     .input(z.object({
       agentCode: z.string().optional(),
       crdts: z.string().optional(),
@@ -4185,14 +4249,15 @@ const violationsRouter = router({
     }))
     .query(({ input }) => listViolations(input)),
 
-  myViolations: publicProcedure
-    .input(z.object({ agentCode: z.string(), month: z.string().optional() }))
-    .query(({ input }) => listViolations({ agentCode: input.agentCode, month: input.month })),
+  // Agent: own violations only — identity comes from the session, never from input.
+  myViolations: agentProcedure
+    .input(z.object({ month: z.string().optional() }).optional())
+    .query(({ input, ctx }) => listViolations({ agentCode: ctx.agent.traineeCode, month: input?.month })),
 });
 
 // ─── Performance v2 Router ────────────────────────────────────────────────────
 const performanceV2Router = router({
-  bulkUpsert: protectedProcedure
+  bulkUpsert: staffProcedure
     .input(z.object({
       month: z.string(),
       rows: z.array(z.object({
@@ -4213,11 +4278,11 @@ const performanceV2Router = router({
       return { success: true };
     }),
 
-  getByMonth: protectedProcedure
+  getByMonth: staffProcedure
     .input(z.object({ month: z.string() }))
     .query(({ input }) => getPerformanceByMonth(input.month)),
 
-  getMonths: protectedProcedure
+  getMonths: staffProcedure
     .query(() => getPerformanceMonths()),
 });
 
@@ -4226,7 +4291,7 @@ const performanceV2Router = router({
 // ─── Cycle Tracker Router ────────────────────────────────────────────────────
 const cycleTrackerRouter = router({
   // Admin: upload stats Excel rows
-  uploadStats: protectedProcedure
+  uploadStats: staffProcedure
     .input(z.object({
       rows: z.array(z.object({
         crdts: z.string(),
@@ -4296,7 +4361,7 @@ const cycleTrackerRouter = router({
     }),
 
   // Admin: upload deductions Excel rows
-  uploadDeductions: protectedProcedure
+  uploadDeductions: staffProcedure
     .input(z.object({
       rows: z.array(z.object({
         crdts: z.string(),
@@ -4317,7 +4382,7 @@ const cycleTrackerRouter = router({
     }),
 
   // Admin: upload OT Excel rows
-  uploadOT: protectedProcedure
+  uploadOT: staffProcedure
     .input(z.object({
       rows: z.array(z.object({
         crdts: z.string(),
@@ -4365,7 +4430,7 @@ const cycleTrackerRouter = router({
     }),
 
   // Admin: get current cycle key
-  getCurrentCycle: protectedProcedure
+  getCurrentCycle: staffProcedure
     .query(async () => {
       const cycleKey = getCurrentCycleKey();
       const dateRange = getCycleDateRange(cycleKey);
@@ -4373,7 +4438,7 @@ const cycleTrackerRouter = router({
     }),
 
   // Admin: get team performance summary for a cycle
-  getTeamStats: protectedProcedure
+  getTeamStats: staffProcedure
     .input(z.object({ cycleKey: z.union([z.string().regex(/^\d{4}-\d{2}$/), z.literal("")]).optional() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -4432,7 +4497,7 @@ const cycleTrackerRouter = router({
     }),
 
   /** Calendar-month view of team stats (26th→25th cycle vs Jan 1st→31st month). */
-  getMonthlyTeamStats: protectedProcedure
+  getMonthlyTeamStats: staffProcedure
     .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -4534,7 +4599,7 @@ const cycleTrackerRouter = router({
     }),
 
   // Admin: get all cycle history for a specific agent by CRDTS
-  getAgentHistory: protectedProcedure
+  getAgentHistory: staffProcedure
     .input(z.object({ crdts: z.string() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -4559,16 +4624,19 @@ const cycleTrackerRouter = router({
         const totalLoginHours = stats.reduce((s, r) => s + Number(r.loginHours ?? 0), 0);
         const totalProfit = stats.reduce((s, r) => s + Number(r.profit ?? 0), 0);
         const totalDeductions = deds.reduce((s, r) => s + Number(r.deductionAmount ?? 0), 0);
-        const totalOTHours = ots.reduce((s, r) => s + Number(r.hours ?? 0), 0);
-        const totalOTEgp = ots.reduce((s, r) => s + Number(r.egpAmount ?? 0), 0);
+        // Money/hours totals count APPROVED OT only; pending shows separately, rejected never counts.
+        const approvedOts = ots.filter(r => r.status === "approved");
+        const totalOTHours = approvedOts.reduce((s, r) => s + Number(r.hours ?? 0), 0);
+        const totalOTEgp = approvedOts.reduce((s, r) => s + Number(r.egpAmount ?? 0), 0);
+        const pendingOTHours = ots.filter(r => r.status === "pending").reduce((s, r) => s + Number(r.hours ?? 0), 0);
         const revPerHr = totalLoginHours > 0 ? totalRevenue / totalLoginHours : 0;
         const dateRange = getCycleDateRange(cycleKey);
-        return { cycleKey, dateRange, totalRevenue, totalCalls, totalLoginHours, totalProfit, totalDeductions, totalOTHours, totalOTEgp, revPerHr, days: stats.length };
+        return { cycleKey, dateRange, totalRevenue, totalCalls, totalLoginHours, totalProfit, totalDeductions, totalOTHours, totalOTEgp, pendingOTHours, revPerHr, days: stats.length };
       });
     }),
 
   // Admin: delete all stats rows for a specific date (undo a bad upload)
-  deleteStatsForDate: protectedProcedure
+  deleteStatsForDate: staffProcedure
     .input(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -4591,7 +4659,7 @@ const cycleTrackerRouter = router({
       return { deleted: total };
     }),
   // Admin: delete all stats for a specific cycle month (e.g. "2026-05")
-  deleteStatsForCycle: protectedProcedure
+  deleteStatsForCycle: staffProcedure
     .input(z.object({ cycleKey: z.string().regex(/^\d{4}-\d{2}$/) }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -4614,7 +4682,7 @@ const cycleTrackerRouter = router({
             return { deleted: total };
     }),
   // ─── Client Logouts ───────────────────────────────────────────────────────
-  uploadClientLogouts: protectedProcedure
+  uploadClientLogouts: staffProcedure
     .input(z.object({
       rows: z.array(z.object({
         crdts: z.string(),
@@ -4625,10 +4693,10 @@ const cycleTrackerRouter = router({
       }))
     }))
     .mutation(({ input }) => bulkUpsertClientLogouts(input.rows)),
-  getClientLogoutsByCycle: protectedProcedure
+  getClientLogoutsByCycle: staffProcedure
     .input(z.object({ cycleKey: z.string() }))
     .query(({ input }) => getClientLogoutsByCycle(input.cycleKey)),
-  getMyClientLogouts: protectedProcedure
+  getMyClientLogouts: staffProcedure
     .query(async ({ ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
       const { getDb } = await import('./db');
@@ -4644,13 +4712,13 @@ const cycleTrackerRouter = router({
       return getClientLogoutsByAgent(crdts);
     }),
   // ─── Commission Month ──────────────────────────────────────────────────────
-  getCommissionMonth: protectedProcedure
+  getCommissionMonth: staffProcedure
     .input(z.object({ crdts: z.string(), month: z.string() }))
     .query(({ input }) => getCommissionMonthData(input.crdts, input.month)),
-  getAvailableCommissionMonths: protectedProcedure
+  getAvailableCommissionMonths: staffProcedure
     .input(z.object({ crdts: z.string() }))
     .query(({ input }) => getAvailableCommissionMonths(input.crdts)),
-  getMyCommissionMonths: protectedProcedure
+  getMyCommissionMonths: staffProcedure
     .query(async ({ ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
       const { getDb } = await import('./db');
@@ -4664,7 +4732,7 @@ const cycleTrackerRouter = router({
       if (!crdts) return [];
       return getAvailableCommissionMonths(crdts);
     }),
-  getMyCommissionMonth: protectedProcedure
+  getMyCommissionMonth: staffProcedure
     .input(z.object({ month: z.string() }))
     .query(async ({ input, ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
@@ -4680,7 +4748,7 @@ const cycleTrackerRouter = router({
       return getCommissionMonthData(crdts, input.month);
     }),
   // ─── Performance History ──────────────────────────────────────────────────
-  getMyPerformanceHistory: protectedProcedure
+  getMyPerformanceHistory: staffProcedure
     .query(async ({ ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
       const { getDb } = await import('./db');
@@ -4694,11 +4762,11 @@ const cycleTrackerRouter = router({
       if (!crdts) return [];
       return getAgentPerformanceHistory(crdts);
     }),
-  getAgentPerformanceHistory: protectedProcedure
+  getAgentPerformanceHistory: staffProcedure
     .input(z.object({ crdts: z.string() }))
     .query(({ input }) => getAgentPerformanceHistory(input.crdts)),
   // ─── Campaign Ranking ─────────────────────────────────────────────────────
-  getMyCampaignRanking: protectedProcedure
+  getMyCampaignRanking: staffProcedure
     .input(z.object({ cycleKey: z.string() }))
     .query(async ({ input, ctx }) => {
       if (!ctx.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
@@ -4819,7 +4887,7 @@ const cycleTrackerRouter = router({
     }),
 
   // Admin: per-day stats for a specific agent + cycle (for line charts with logout markers)
-  getAgentDailyStats: protectedProcedure
+  getAgentDailyStats: staffProcedure
     .input(z.object({ crdts: z.string(), cycleKey: z.string().regex(/^\d{4}-\d{2}$/), viewMode: z.enum(["cycle", "month"]).default("cycle") }))
     .query(async ({ input }) => {
       const { getDb } = await import('./db');
@@ -4920,7 +4988,7 @@ const cycleTrackerRouter = router({
 // ─── Coaching Router ────────────────────────────────────────────────────────
 const coachingRouter = router({
   // Upload coaching sessions from sheet
-  upload: protectedProcedure
+  upload: staffProcedure
     .input(z.object({
       cycleKey: z.string().regex(/^\d{4}-\d{2}$/),
       sessions: z.array(z.object({
@@ -4958,7 +5026,7 @@ const coachingRouter = router({
     }),
 
   // List coaching sessions for a cycle
-  listByCycle: protectedProcedure
+  listByCycle: staffProcedure
     .input(z.object({ cycleKey: z.string().regex(/^\d{4}-\d{2}$/), viewMode: z.enum(["cycle","month"]).default("cycle") }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -4973,7 +5041,7 @@ const coachingRouter = router({
     }),
 
   // List coaching sessions for a specific agent (by CRDTS)
-  listByCrdts: protectedProcedure
+  listByCrdts: staffProcedure
     .input(z.object({ crdts: z.string(), agentCode: z.string().optional() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -4991,7 +5059,7 @@ const coachingRouter = router({
     }),
 
   // Approve / reject a session
-  updateStatus: protectedProcedure
+  updateStatus: staffProcedure
     .input(z.object({ id: z.number(), status: z.enum(["pending", "approved", "rejected"]) }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -5004,7 +5072,7 @@ const coachingRouter = router({
     }),
 
   // Delete all sessions for a cycle (undo upload)
-  deleteForCycle: protectedProcedure
+  deleteForCycle: staffProcedure
     .input(z.object({ cycleKey: z.string().regex(/^\d{4}-\d{2}$/) }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -5017,7 +5085,7 @@ const coachingRouter = router({
     }),
 
   // Get coaching bonus total for an agent in a cycle (for payslip)
-  getBonusForAgent: protectedProcedure
+  getBonusForAgent: staffProcedure
     .input(z.object({ crdts: z.string(), cycleKey: z.string() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -5065,14 +5133,14 @@ const coachingRouter = router({
 // ─── Settings Router ────────────────────────────────────────────────────────
 const settingsRouter = router({
   // Team Leaders
-  listTeamLeaders: protectedProcedure.query(async () => {
+  listTeamLeaders: staffProcedure.query(async () => {
     const { getDb } = await import("./db");
     const { teamLeaders } = await import("../drizzle/schema");
     const db = await getDb();
     if (!db) return [];
     return db.select().from(teamLeaders).orderBy(teamLeaders.name);
   }),
-  addTeamLeader: protectedProcedure
+  addTeamLeader: staffProcedure
     .input(z.object({ name: z.string().min(1), email: z.string().email().optional(), phone: z.string().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -5082,7 +5150,7 @@ const settingsRouter = router({
       await db.insert(teamLeaders).values({ name: input.name, email: input.email, phone: input.phone });
       return { success: true };
     }),
-  updateTeamLeader: protectedProcedure
+  updateTeamLeader: staffProcedure
     .input(z.object({ id: z.number(), name: z.string().min(1).optional(), email: z.string().email().optional(), phone: z.string().optional(), isActive: z.boolean().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -5094,7 +5162,7 @@ const settingsRouter = router({
       await db.update(teamLeaders).set(rest).where(eq(teamLeaders.id, id));
       return { success: true };
     }),
-  deleteTeamLeader: protectedProcedure
+  deleteTeamLeader: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -5113,7 +5181,7 @@ type CoachingStatus = typeof COACHING_STATUSES[number];
 
 const coachingCasesRouter = router({
   // Create a new coaching case
-  create: protectedProcedure
+  create: staffProcedure
     .input(z.object({
       agentId: z.number(),
       agentCrdts: z.string(),
@@ -5157,7 +5225,7 @@ const coachingCasesRouter = router({
       return { id: caseId };
     }),
 
-  list: protectedProcedure
+  list: staffProcedure
     .input(z.object({
       cycleKey: z.string().optional(),
       status: z.string().optional(),
@@ -5180,7 +5248,7 @@ const coachingCasesRouter = router({
         .orderBy(desc(coachingCases.createdAt));
     }),
 
-  getById: protectedProcedure
+  getById: staffProcedure
     .input(z.object({ id: z.number() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -5210,7 +5278,7 @@ const coachingCasesRouter = router({
       return { ...caseRow, statusLog, performanceSnapshot: { totalRevenue, totalCalls, totalLoginHours, avgRevPerHr, days: stats.length }, qualityScore };
     }),
 
-  update: protectedProcedure
+  update: staffProcedure
     .input(z.object({
       id: z.number(),
       followUpDate: z.string().optional(),
@@ -5231,7 +5299,7 @@ const coachingCasesRouter = router({
       return { ok: true };
     }),
 
-  updateStatus: protectedProcedure
+  updateStatus: staffProcedure
     .input(z.object({
       id: z.number(),
       status: z.enum(COACHING_STATUSES),
@@ -5250,7 +5318,7 @@ const coachingCasesRouter = router({
       return { ok: true };
     }),
 
-  delete: protectedProcedure
+  delete: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -5267,7 +5335,7 @@ const coachingCasesRouter = router({
 // ─── HubSpot Router ──────────────────────────────────────────────────────────
 const hubspotRouter = router({
   // Preview contacts from HubSpot — returns new/duplicate/conflict lists
-  previewContacts: protectedProcedure
+  previewContacts: staffProcedure
     .input(z.object({
       limit: z.number().min(1).max(200).default(100),
       after: z.string().optional(), // pagination cursor
@@ -5354,7 +5422,7 @@ const hubspotRouter = router({
     }),
 
   // Import selected HubSpot contacts as candidates
-  importContacts: protectedProcedure
+  importContacts: staffProcedure
     .input(z.object({
       contacts: z.array(z.object({
         hubspotId: z.string(),
@@ -5415,7 +5483,7 @@ const hubspotRouter = router({
 // ─── Integrations Router ──────────────────────────────────────────────────────
 const integrationsRouter = router({
   // Get connection status for all integrations
-  getStatus: protectedProcedure.query(async () => {
+  getStatus: staffProcedure.query(async () => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) return { google: false, hubspot: false };
@@ -5429,7 +5497,7 @@ const integrationsRouter = router({
   }),
 
   // Disconnect Google Calendar
-  disconnectGoogle: protectedProcedure.mutation(async () => {
+  disconnectGoogle: staffProcedure.mutation(async () => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) return { ok: false };
@@ -5441,7 +5509,7 @@ const integrationsRouter = router({
 
   // Debug: inspect raw Google Calendar data
   /** Import candidates from Microsoft/Outlook calendar events */
-  importMicrosoftCalendarEvents: protectedProcedure
+  importMicrosoftCalendarEvents: staffProcedure
     .input(z.object({
       startDate: z.string(),
       endDate: z.string(),
@@ -5531,7 +5599,7 @@ const integrationsRouter = router({
       return { imported, total: events.length };
     }),
 
-  debugCalendar: protectedProcedure.mutation(async () => {
+  debugCalendar: staffProcedure.mutation(async () => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
@@ -5576,7 +5644,7 @@ const integrationsRouter = router({
   }),
 
   // Preview Google Calendar events as candidate imports
-  previewCalendarEvents: protectedProcedure
+  previewCalendarEvents: staffProcedure
     .input(z.object({
       dateFrom: z.string().optional(), // ISO date string, e.g. "2026-05-19"
       dateTo: z.string().optional(),   // ISO date string, e.g. "2026-05-21"
@@ -5739,7 +5807,7 @@ const integrationsRouter = router({
   }),
 
   // Import selected calendar events as candidates
-  importCalendarEvents: protectedProcedure
+  importCalendarEvents: staffProcedure
     .input(z.object({
       events: z.array(z.object({
         eventId: z.string(),
@@ -5801,20 +5869,22 @@ const integrationsRouter = router({
 // ─── Trainer Salaries Router ─────────────────────────────────────────────────
 const trainerSalariesRouter = router({
   // Agent: get own trainer salary
-  getForAgent: publicProcedure
-    .input(z.object({ crdts: z.string(), month: z.string() }))
-    .query(async ({ input }) => {
+  getForAgent: agentProcedure
+    .input(z.object({ month: z.string() }))
+    .query(async ({ input, ctx }) => {
       const { getDb } = await import("./db");
       const { trainerSalaries } = await import("../drizzle/schema");
       const { eq, and } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) return null;
+      const agent = await getWorkforceAgentByCode(ctx.agent.traineeCode);
+      const crdts = agent?.crdts || ctx.agent.traineeCode;
       const rows = await db.select().from(trainerSalaries)
-        .where(and(eq(trainerSalaries.crdts, input.crdts), eq(trainerSalaries.month, input.month)))
+        .where(and(eq(trainerSalaries.crdts, crdts), eq(trainerSalaries.month, input.month)))
         .limit(1);
       return rows[0] ?? null;
     }),
-  getForMonth: protectedProcedure
+  getForMonth: staffProcedure
     .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -5827,7 +5897,7 @@ const trainerSalariesRouter = router({
         .orderBy(asc(trainerSalaries.trainerName));
     }),
 
-  upsert: protectedProcedure
+  upsert: staffProcedure
     .input(z.object({
       id: z.number().optional(),
       crdts: z.string().optional(),
@@ -5843,28 +5913,42 @@ const trainerSalariesRouter = router({
       const { trainerSalaries } = await import("../drizzle/schema");
       const { eq } = await import("drizzle-orm");
       const now = Date.now();
+      const crdts = input.crdts?.trim() || null;
       if (input.id) {
         await db.update(trainerSalaries).set({
+          crdts,
           trainerName: input.trainerName,
           salaryEgp: String(input.salaryEgp),
           notes: input.notes ?? null,
           updatedAt: now,
         }).where(eq(trainerSalaries.id, input.id));
         return { id: input.id };
-      } else {
-        const [result] = await db.insert(trainerSalaries).values({
-          trainerName: input.trainerName,
-          month: input.month,
-          salaryEgp: String(input.salaryEgp),
-          notes: input.notes ?? null,
-          createdAt: now,
-          updatedAt: now,
-        });
-        return { id: (result as { insertId: number }).insertId };
       }
+      // One row per (crdts, month) when a CRDTS is given; per (name, month) otherwise. Never a silent duplicate.
+      const { and: andOp } = await import("drizzle-orm");
+      const [dup] = await db.select({ id: trainerSalaries.id }).from(trainerSalaries)
+        .where(crdts
+          ? andOp(eq(trainerSalaries.crdts, crdts), eq(trainerSalaries.month, input.month))
+          : andOp(eq(trainerSalaries.trainerName, input.trainerName), eq(trainerSalaries.month, input.month)))
+        .limit(1);
+      if (dup) {
+        await db.update(trainerSalaries).set({ crdts, trainerName: input.trainerName, salaryEgp: String(input.salaryEgp), notes: input.notes ?? null, updatedAt: now })
+          .where(eq(trainerSalaries.id, dup.id));
+        return { id: dup.id };
+      }
+      const [result] = await db.insert(trainerSalaries).values({
+        crdts,
+        trainerName: input.trainerName,
+        month: input.month,
+        salaryEgp: String(input.salaryEgp),
+        notes: input.notes ?? null,
+        createdAt: now,
+        updatedAt: now,
+      });
+      return { id: (result as { insertId: number }).insertId };
     }),
 
-  delete: protectedProcedure
+  delete: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -5881,18 +5965,20 @@ const trainerSalariesRouter = router({
 // ─── Payroll Adjustments Router ──────────────────────────────────────────────
 const adjustmentsRouter = router({
   // Agent: get own adjustments for a pay cycle
-  getForAgent: publicProcedure
-    .input(z.object({ crdts: z.string(), month: z.string() }))
-    .query(async ({ input }) => {
+  getForAgent: agentProcedure
+    .input(z.object({ month: z.string() }))
+    .query(async ({ input, ctx }) => {
       const { getDb } = await import("./db");
       const { payrollAdjustments } = await import("../drizzle/schema");
       const { eq, and } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) return [];
+      const agent = await getWorkforceAgentByCode(ctx.agent.traineeCode);
+      const crdts = agent?.crdts || ctx.agent.traineeCode;
       return db.select().from(payrollAdjustments)
-        .where(and(eq(payrollAdjustments.crdts, input.crdts), eq(payrollAdjustments.month, input.month)));
+        .where(and(eq(payrollAdjustments.crdts, crdts), eq(payrollAdjustments.month, input.month)));
     }),
-  getForMonth: protectedProcedure
+  getForMonth: staffProcedure
     .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -5905,7 +5991,7 @@ const adjustmentsRouter = router({
         .orderBy(asc(payrollAdjustments.createdAt));
     }),
 
-  add: protectedProcedure
+  add: staffProcedure
     .input(z.object({
       crdts: z.string().min(1),
       month: z.string().regex(/^\d{4}-\d{2}$/),
@@ -5930,7 +6016,7 @@ const adjustmentsRouter = router({
       return { id: (result as { insertId?: number }).insertId ?? 0 };
     }),
 
-  update: protectedProcedure
+  update: staffProcedure
     .input(z.object({
       id: z.number(),
       type: z.enum(["bonus", "deduction"]).optional(),
@@ -5951,7 +6037,7 @@ const adjustmentsRouter = router({
       return { success: true };
     }),
 
-  delete: protectedProcedure
+  delete: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -5966,7 +6052,7 @@ const adjustmentsRouter = router({
 
 const commissionRouter = router({
   // Get all commission records for a given payment cycle (YYYY-MM)
-  getForMonth: protectedProcedure
+  getForMonth: staffProcedure
     .input(z.object({ month: z.string() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -5978,7 +6064,7 @@ const commissionRouter = router({
     }),
 
   // Upload commission records from parsed Excel rows
-  upload: protectedProcedure
+  upload: staffProcedure
     .input(z.object({
       paymentCycle: z.string().regex(/^\d{4}-\d{2}$/, "Payment cycle must be YYYY-MM"),
       rows: z.array(z.object({
@@ -6043,7 +6129,7 @@ const commissionRouter = router({
     }),
 
   // Update a single commission record amount (manual adjustment)
-  updateCommission: protectedProcedure
+  updateCommission: staffProcedure
     .input(z.object({
       id: z.number(),
       commissionEgp: z.number().min(0),
@@ -6071,7 +6157,7 @@ const commissionRouter = router({
     }),
 
   // Change the payment cycle (and performance month) on an existing commission record
-  changeCycle: protectedProcedure
+  changeCycle: staffProcedure
     .input(z.object({
       id: z.number(),
       newPaymentCycle: z.string().regex(/^\d{4}-\d{2}$/),
@@ -6112,7 +6198,7 @@ const commissionRouter = router({
   // #8 — BULK move an ENTIRE commission cycle (all records + leaderboard rows) to a
   // different pay cycle in one action. Also re-syncs payroll: clears commissionEgp on
   // the old cycle's payroll records and applies it to the new cycle's records.
-  reassignCycle: protectedProcedure
+  reassignCycle: staffProcedure
     .input(z.object({
       fromCycle: z.string().regex(/^\d{4}-\d{2}$/),
       toCycle: z.string().regex(/^\d{4}-\d{2}$/),
@@ -6152,7 +6238,7 @@ const commissionRouter = router({
     }),
 
   // Get full leaderboard for a cycle (all campaigns)
-  getFullLeaderboard: protectedProcedure
+  getFullLeaderboard: staffProcedure
     .input(z.object({ cycleKey: z.string() }))
     .query(async ({ input }) => {
       const { getFullLeaderboard } = await import("./db");
@@ -6168,7 +6254,7 @@ const commissionRouter = router({
     }),
 
   // Upload leaderboard rows from Campaign tabs of the commission file
-  uploadLeaderboard: protectedProcedure
+  uploadLeaderboard: staffProcedure
     .input(z.object({
       cycleKey: z.string(),
       rows: z.array(z.object({
@@ -6190,16 +6276,17 @@ const commissionRouter = router({
     }),
 
   // Agent-facing: get upcoming commission for the logged-in agent (by traineeCode)
-  getMyUpcomingCommission: publicProcedure
-    .input(z.object({ traineeCode: z.string() }))
-    .query(async ({ input }) => {
+  getMyUpcomingCommission: agentProcedure
+    .query(async ({ ctx }) => {
       const { getDb } = await import("./db");
       const db = await getDb();
       if (!db) return [];
       const { commissions } = await import("../drizzle/schema");
-      const { eq } = await import("drizzle-orm");
+      const { eq, or } = await import("drizzle-orm");
+      const agent = await getWorkforceAgentByCode(ctx.agent.traineeCode);
+      const crdts = agent?.crdts || ctx.agent.traineeCode;
       return db.select().from(commissions)
-        .where(eq(commissions.crdts, input.traineeCode))
+        .where(or(eq(commissions.crdts, crdts), eq(commissions.crdts, ctx.agent.traineeCode)))
         .orderBy(commissions.paymentCycle);
     }),
 
@@ -6218,11 +6305,22 @@ const commissionRouter = router({
         .from(commissionLeaderboard)
         .groupBy(commissionLeaderboard.cycleKey)
         .orderBy(sql`${commissionLeaderboard.cycleKey} DESC`);
-      return rows.map(r => ({ cycleKey: r.cycleKey, performanceMonth: (r.performanceMonth ?? null) as string | null }));
+      // The dropdown shows the performance-month LABEL. When the same month was uploaded under two cycle
+      // keys (e.g. "2026-09" then re-uploaded as "2026-10"), keep only the newest key per label so the
+      // agent never sees "SEPTEMBER 2026" twice.
+      const seen = new Set<string>();
+      const out: { cycleKey: string; performanceMonth: string | null }[] = [];
+      for (const r of rows) {
+        const label = (r.performanceMonth ?? r.cycleKey).trim().toLowerCase().replace(/\s+/g, " ");
+        if (seen.has(label)) continue;
+        seen.add(label);
+        out.push({ cycleKey: r.cycleKey, performanceMonth: (r.performanceMonth ?? null) as string | null });
+      }
+      return out;
     }),
 
   // Delete a single commission record by id (also clears commissionEgp from matching payroll record)
-  deleteCommissionRecord: protectedProcedure
+  deleteCommissionRecord: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6246,35 +6344,35 @@ const commissionRouter = router({
     }),
 
   // Clear all commission records AND leaderboard rows for a given pay cycle
-  clearCommissionCycle: protectedProcedure
-    .input(z.object({ cycleKey: z.string() }))
-    .mutation(async ({ input }) => {
+  clearCommissionCycle: roleProcedure("finance", "hr", "manager", "team_lead")
+    .input(z.object({ cycleKey: z.string().regex(/^\d{4}-\d{2}$/) }))
+    .mutation(async ({ input, ctx }) => {
       const { getDb } = await import("./db");
       const db = await getDb();
       if (!db) throw new Error("DB unavailable");
       const { commissions, commissionLeaderboard, payrollRecords } = await import("../drizzle/schema");
-      const { eq } = await import("drizzle-orm");
-      // Get all commission records for this cycle to clear payroll commission fields
+      const { eq, and } = await import("drizzle-orm");
       const recs = await db.select().from(commissions).where(eq(commissions.paymentCycle, input.cycleKey));
-      for (const rec of recs) {
-        await db.update(payrollRecords)
-          .set({ commissionEgp: "0" })
-          .where(eq(payrollRecords.crdts, rec.crdts));
-      }
-      // Delete all commission records for this cycle
-      await db.delete(commissions).where(eq(commissions.paymentCycle, input.cycleKey));
-      // Delete all leaderboard rows for this cycle
-      await db.delete(commissionLeaderboard).where(eq(commissionLeaderboard.cycleKey, input.cycleKey));
-      return { success: true };
+      await db.transaction(async (tx) => {
+        // Clear commission ONLY on this cycle's payroll month — never across every month the agent has.
+        for (const rec of recs) {
+          await tx.update(payrollRecords)
+            .set({ commissionEgp: "0" })
+            .where(and(eq(payrollRecords.crdts, rec.crdts), eq(payrollRecords.month, input.cycleKey)));
+        }
+        await tx.delete(commissions).where(eq(commissions.paymentCycle, input.cycleKey));
+        await tx.delete(commissionLeaderboard).where(eq(commissionLeaderboard.cycleKey, input.cycleKey));
+      });
+      await auditEntry(ctx.user, "clear_commission_cycle", "commission_cycle", input.cycleKey, JSON.stringify({ records: recs.length }));
+      return { ok: true, cleared: recs.length };
     }),
 });
 
 // ─── Admin Invites Router ───────────────────────────────────────────────────
 const invitesRouter = router({
-  generate: protectedProcedure
+  generate: adminProcedure
     .input(z.object({ origin: z.string().url() }))
     .mutation(async ({ ctx, input }) => {
-      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
       const { getDb } = await import("./db");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
@@ -6294,9 +6392,8 @@ const invitesRouter = router({
       return { token, inviteUrl, expiresAt };
     }),
 
-  list: protectedProcedure
+  list: adminProcedure
     .query(async ({ ctx }) => {
-      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
       const { getDb } = await import("./db");
       const db = await getDb();
       if (!db) return [];
@@ -6305,10 +6402,9 @@ const invitesRouter = router({
       return db.select().from(adminInvites).orderBy(desc(adminInvites.createdAt));
     }),
 
-  revoke: protectedProcedure
+  revoke: adminProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
       const { getDb } = await import("./db");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
@@ -6318,9 +6414,9 @@ const invitesRouter = router({
       return { ok: true };
     }),
 
-  use: publicProcedure
-    .input(z.object({ token: z.string(), openId: z.string() }))
-    .mutation(async ({ input }) => {
+  use: protectedProcedure
+    .input(z.object({ token: z.string() }))
+    .mutation(async ({ input, ctx }) => {
       const { getDb } = await import("./db");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
@@ -6330,10 +6426,19 @@ const invitesRouter = router({
       if (!invite) throw new TRPCError({ code: "NOT_FOUND", message: "Invite not found or already used" });
       if (invite.usedAt) throw new TRPCError({ code: "BAD_REQUEST", message: "This invite link has already been used" });
       if (Date.now() > invite.expiresAt) throw new TRPCError({ code: "BAD_REQUEST", message: "This invite link has expired" });
-      // Promote user to admin
-      await db.update(users).set({ role: "admin" }).where(eq(users.openId, input.openId));
-      // Mark invite as used
-      await db.update(adminInvites).set({ usedAt: Date.now() }).where(eq(adminInvites.id, invite.id));
+      // The invite is bound to an email — only that login may redeem it, and only for itself.
+      const myEmail = (ctx.user.email ?? "").trim().toLowerCase();
+      if (!invite.email || invite.email.trim().toLowerCase() !== myEmail) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "This invite was issued to a different email address" });
+      }
+      // Atomically consume the invite first so a token can never be redeemed twice.
+      const consumed = await db.update(adminInvites).set({ usedAt: Date.now() })
+        .where(and(eq(adminInvites.id, invite.id), isNull(adminInvites.usedAt)));
+      if (((consumed as unknown as [{ affectedRows?: number }])[0]?.affectedRows ?? 1) === 0) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "This invite link has already been used" });
+      }
+      await db.update(users).set({ role: "admin" }).where(eq(users.openId, ctx.user.openId));
+      await auditEntry(ctx.user, "invite_redeemed", "user", ctx.user.openId, JSON.stringify({ inviteId: invite.id }));
       return { ok: true };
     }),
 });
@@ -6341,10 +6446,9 @@ const invitesRouter = router({
 // ─── API Keys Router ─────────────────────────────────────────────────────────
 const apiKeysRouter = router({
   // Generate a new API key (admin only)
-  generate: protectedProcedure
+  generate: adminProcedure
     .input(z.object({ name: z.string().min(1).max(100) }))
     .mutation(async ({ ctx, input }) => {
-      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
       const { getDb } = await import("./db");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
@@ -6365,9 +6469,8 @@ const apiKeysRouter = router({
     }),
 
   // List all API keys (admin only) — never returns raw key, only prefix
-  list: protectedProcedure
+  list: adminProcedure
     .query(async ({ ctx }) => {
-      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
       const { getDb } = await import("./db");
       const db = await getDb();
       if (!db) return [];
@@ -6386,10 +6489,9 @@ const apiKeysRouter = router({
     }),
 
   // Revoke an API key (admin only)
-  revoke: protectedProcedure
+  revoke: adminProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
       const { getDb } = await import("./db");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
@@ -6400,10 +6502,9 @@ const apiKeysRouter = router({
     }),
 
   // Delete an API key permanently (admin only)
-  delete: protectedProcedure
+  delete: adminProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      if (ctx.user.role !== "admin") throw new TRPCError({ code: "FORBIDDEN" });
       const { getDb } = await import("./db");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
@@ -6418,7 +6519,7 @@ const apiKeysRouter = router({
 // ─── HR Router: lifecycle (settle/archive) + exit process + leave management ──
 const hrRouter = router({
   // Mark a former agent's salary as fully paid → they drop out of Operations.
-  markSettled: protectedProcedure
+  markSettled: staffProcedure
     .input(z.object({ traineeCode: z.string(), settled: z.boolean() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6430,7 +6531,7 @@ const hrRouter = router({
       return { ok: true };
     }),
   // Exit checklist — read (auto-creates a blank one)
-  getExit: protectedProcedure
+  getExit: staffProcedure
     .input(z.object({ traineeCode: z.string() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6441,7 +6542,7 @@ const hrRouter = router({
       const rows = await db.select().from(exitProcess).where(eq(exitProcess.traineeCode, input.traineeCode)).limit(1);
       return rows[0] ?? null;
     }),
-  updateExit: protectedProcedure
+  updateExit: staffProcedure
     .input(z.object({
       traineeCode: z.string(),
       exitType: z.enum(["resignation", "termination", "contract_end"]).optional(),
@@ -6473,7 +6574,7 @@ const hrRouter = router({
       return { ok: true };
     }),
   // Archive: exit checklist must be complete → labels the linked candidate + closes out the agent.
-  archiveAgent: protectedProcedure
+  archiveAgent: staffProcedure
     .input(z.object({ traineeCode: z.string(), status: z.enum(["resigned", "terminated", "blacklisted"]) }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6494,7 +6595,7 @@ const hrRouter = router({
       return { ok: true };
     }),
   // ── Leave ──
-  listBalances: protectedProcedure.query(async () => {
+  listBalances: staffProcedure.query(async () => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) return [];
@@ -6502,7 +6603,7 @@ const hrRouter = router({
     return db.select().from(leaveBalances);
   }),
   // Mass-add: set/increment balances for ALL active agents for a year.
-  massSetBalances: protectedProcedure
+  massSetBalances: adminProcedure
     .input(z.object({ year: z.number(), casualTotal: z.number(), annualTotal: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6521,7 +6622,7 @@ const hrRouter = router({
       }
       return { ok: true, agents: updated };
     }),
-  setBalance: protectedProcedure
+  setBalance: staffProcedure
     .input(z.object({ traineeCode: z.string(), year: z.number(), casualTotal: z.number().optional(), annualTotal: z.number().optional(), casualUsed: z.number().optional(), annualUsed: z.number().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6536,7 +6637,7 @@ const hrRouter = router({
       else await db.insert(leaveBalances).values({ traineeCode, year, casualTotal: rest.casualTotal ?? 0, annualTotal: rest.annualTotal ?? 0, casualUsed: rest.casualUsed ?? 0, annualUsed: rest.annualUsed ?? 0, updatedAt: now });
       return { ok: true };
     }),
-  listLeaveRequests: protectedProcedure
+  listLeaveRequests: staffProcedure
     .input(z.object({ status: z.enum(["pending", "approved", "rejected"]).optional() }).optional())
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6547,20 +6648,17 @@ const hrRouter = router({
       if (input?.status) return db.select().from(leaveRequests).where(eq(leaveRequests.status, input.status)).orderBy(desc(leaveRequests.createdAt));
       return db.select().from(leaveRequests).orderBy(desc(leaveRequests.createdAt));
     }),
-  // Agent submits a request (no type — HR classifies)
-  requestLeave: publicProcedure
-    .input(z.object({ traineeCode: z.string(), startDate: z.string(), endDate: z.string(), days: z.number().min(1), reason: z.string().optional() }))
-    .mutation(async ({ input }) => {
-      const { getDb } = await import("./db");
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { leaveRequests } = await import("../drizzle/schema");
-      await db.insert(leaveRequests).values({ ...input, createdAt: Date.now() });
+  // Agent submits a request (no type — HR classifies). Identity from session.
+  requestLeave: agentProcedure
+    .input(z.object({ traineeCode: z.string().optional(), startDate: z.string(), endDate: z.string(), days: z.number().min(1), reason: z.string().optional() }))
+    .mutation(async ({ input, ctx }) => {
+      const { createLeaveRequestRow } = await import("./db");
+      await createLeaveRequestRow({ traineeCode: ctx.agent.traineeCode, startDate: input.startDate, endDate: input.endDate, days: input.days, reason: input.reason ?? null });
       return { ok: true };
     }),
 
   /** Staff/admin submits their OWN leave request */
-  requestMyLeave: protectedProcedure
+  requestMyLeave: staffProcedure
     .input(z.object({ startDate: z.string(), endDate: z.string(), days: z.number().int().min(1), reason: z.string().optional() }))
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
@@ -6573,7 +6671,7 @@ const hrRouter = router({
     }),
 
   /** Get own leave requests + balance (staff/admin) */
-  getMyLeaves: protectedProcedure.query(async ({ ctx }) => {
+  getMyLeaves: staffProcedure.query(async ({ ctx }) => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) return { requests: [], balance: null };
@@ -6588,20 +6686,19 @@ const hrRouter = router({
   }),
 
   /** Decide on staff leave — only admin/owner can approve */
-  decideMyLeave: protectedProcedure
-    .input(z.object({ id: z.number(), decision: z.enum(["approved", "rejected"]), leaveType: z.enum(["casual", "annual"]).optional() }))
+  decideMyLeave: adminProcedure
+    .input(z.object({ id: z.number(), decision: z.enum(["approved", "rejected"]), leaveType: z.enum(["casual", "annual", "unpaid"]).optional() }))
     .mutation(async ({ ctx, input }) => {
-      if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN", message: "Only admins and owners can approve staff leave requests." });
-      const { getDb } = await import("./db");
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { leaveRequests } = await import("../drizzle/schema");
-      const { eq } = await import("drizzle-orm");
-      await db.update(leaveRequests).set({ status: input.decision, leaveType: input.leaveType ?? null, decidedBy: ctx.user?.name ?? null, decidedAt: Date.now() }).where(eq(leaveRequests.id, input.id));
+      const { decideLeaveRequest } = await import("./db");
+      try {
+        await decideLeaveRequest({ id: input.id, decision: input.decision, leaveType: input.leaveType, decidedBy: ctx.user.name ?? ctx.user.email ?? "admin" });
+      } catch (e) {
+        throw toTrpcError(e, "Failed to decide leave");
+      }
       await auditEntry(ctx.user, `staff_leave_${input.decision}`, "leave_request", String(input.id), JSON.stringify({ role: ctx.user?.role }));
       return { ok: true };
     }),
-  myLeaveRequests: publicProcedure
+  myLeaveRequests: staffProcedure
     .input(z.object({ traineeCode: z.string() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6611,35 +6708,18 @@ const hrRouter = router({
       const { eq, desc } = await import("drizzle-orm");
       return db.select().from(leaveRequests).where(eq(leaveRequests.traineeCode, input.traineeCode)).orderBy(desc(leaveRequests.createdAt));
     }),
-  // HR decides: classify type + approve (deducts balance) or reject.
-  decideLeave: protectedProcedure
-    .input(z.object({ id: z.number(), decision: z.enum(["approved", "rejected"]), leaveType: z.enum(["casual", "annual"]).optional(), decidedBy: z.string().optional() }))
+  // HR decides: classify type + approve (deducts balance) or reject. Same transactional path as leave.decide.
+  decideLeave: roleProcedure("hr", "manager", "ops_manager", "team_lead")
+    .input(z.object({ id: z.number(), decision: z.enum(["approved", "rejected"]), leaveType: z.enum(["casual", "annual", "unpaid"]).optional(), decidedBy: z.string().optional() }))
     .mutation(async ({ input, ctx }) => {
-      const allowedRolesL = ["hr", "admin", "owner", "ops_manager", "manager"];
-      if (!allowedRolesL.includes(ctx.user?.role ?? "")) throw new TRPCError({ code: "FORBIDDEN", message: "Only HR and managers can approve leave requests." });
-      const { getDb } = await import("./db");
-      const { eq, and } = await import("drizzle-orm");
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { leaveRequests, leaveBalances } = await import("../drizzle/schema");
-      const req = (await db.select().from(leaveRequests).where(eq(leaveRequests.id, input.id)).limit(1))[0];
-      if (!req) throw new TRPCError({ code: "NOT_FOUND", message: "Request not found" });
-      if (input.decision === "approved" && !input.leaveType) throw new TRPCError({ code: "BAD_REQUEST", message: "Pick the leave type (عارضة / اعتيادية) before approving." });
-      await db.update(leaveRequests).set({ status: input.decision, leaveType: input.leaveType ?? null, decidedBy: input.decidedBy ?? ctx.user?.name ?? null, decidedAt: Date.now() }).where(eq(leaveRequests.id, input.id));
-      await auditEntry(ctx.user, input.decision === "approved" ? "leave_approved" : "leave_rejected", "leave_request", String(input.id), JSON.stringify({ decidedBy: ctx.user?.name, leaveType: input.leaveType }));
-      if (input.decision === "approved" && input.leaveType) {
-        const year = parseInt(String(req.startDate).slice(0, 4)) || new Date().getFullYear();
-        const bal = (await db.select().from(leaveBalances).where(and(eq(leaveBalances.traineeCode, req.traineeCode), eq(leaveBalances.year, year))).limit(1))[0];
-        if (bal) {
-          const available = input.leaveType === "casual" ? bal.casualTotal - bal.casualUsed : bal.annualTotal - bal.annualUsed;
-          if (available < req.days) throw new TRPCError({ code: "BAD_REQUEST", message: `Insufficient ${input.leaveType === "casual" ? "casual" : "annual"} leave balance. Available: ${available} day(s), requested: ${req.days} day(s).` });
-          const upd = input.leaveType === "casual" ? { casualUsed: bal.casualUsed + req.days } : { annualUsed: bal.annualUsed + req.days };
-          await db.update(leaveBalances).set({ ...upd, updatedAt: Date.now() }).where(eq(leaveBalances.id, bal.id));
-        } else {
-          await db.insert(leaveBalances).values({ traineeCode: req.traineeCode, year, casualTotal: 6, annualTotal: 21, casualUsed: input.leaveType === "casual" ? req.days : 0, annualUsed: input.leaveType === "annual" ? req.days : 0, updatedAt: Date.now() });
-        }
+      const { decideLeaveRequest } = await import("./db");
+      try {
+        const r = await decideLeaveRequest({ id: input.id, decision: input.decision, leaveType: input.leaveType, decidedBy: ctx.user.name ?? input.decidedBy ?? ctx.user.email ?? "admin", defaults: { casualTotal: 6, annualTotal: 21 } });
+        await auditEntry(ctx.user, input.decision === "approved" ? "leave_approved" : "leave_rejected", "leave_request", String(input.id), JSON.stringify({ decidedBy: ctx.user?.name, leaveType: input.leaveType, traineeCode: r.traineeCode }));
+        return { ok: true };
+      } catch (e) {
+        throw toTrpcError(e, "Failed to decide leave");
       }
-      return { ok: true };
     }),
 });
 
@@ -6671,6 +6751,15 @@ async function assertBdDealOwnership(ctx: { user?: { role?: string; openId?: str
   if (result.dealOwnerId !== result.requesterId) {
     throw new TRPCError({ code: "FORBIDDEN", message: `View-only: this deal belongs to ${result.ownerName ?? "another BD user"}` });
   }
+}
+
+/** Map a thrown db-layer error ({code, message}) onto a VALID TRPC code; anything unknown becomes 500. */
+function toTrpcError(e: unknown, fallback = "Request failed"): TRPCError {
+  const err = e as { code?: string; message?: string };
+  const ok = new Set(["BAD_REQUEST", "NOT_FOUND", "FORBIDDEN", "UNAUTHORIZED", "CONFLICT", "PRECONDITION_FAILED"]);
+  const isKnown = !!err.code && ok.has(err.code);
+  const code = (isKnown ? err.code : "INTERNAL_SERVER_ERROR") as "BAD_REQUEST";
+  return new TRPCError({ code, message: isKnown ? (err.message ?? fallback) : fallback });
 }
 
 // ─── Audit log helper ─────────────────────────────────────────────────────────
@@ -6707,10 +6796,19 @@ const bdRouter = router({
     const unlinked = await db.select().from(bdUsers);
     return { kind: "unlinked" as const, candidates: unlinked.filter(u => !u.openId) };
   }),
-  linkLogin: protectedProcedure
+  linkLogin: staffProcedure
     .input(z.object({ bdUserId: z.number() }))
     .mutation(async ({ input, ctx }) => {
       const openId = (ctx.user as { openId?: string })?.openId;
+      {
+        // Same rule as linkMyLogin: self-link needs a matching email unless you are a Hub admin.
+        const { getDb: _g } = await import("./db"); const { eq: _e } = await import("drizzle-orm");
+        const _db = await _g(); const { bdUsers: _bu } = await import("../drizzle/schema");
+        const _t = _db ? (await _db.select().from(_bu).where(_e(_bu.id, input.bdUserId)).limit(1))[0] : null;
+        const _isAdmin = ctx.user.role === "admin" || ctx.user.role === "owner";
+        const _match = !!_t?.email && !!ctx.user.email && _t.email.trim().toLowerCase() === ctx.user.email.trim().toLowerCase();
+        if (_t && !_isAdmin && (!_match || _t.role === "admin")) throw new TRPCError({ code: "FORBIDDEN", message: "This BD profile can only be linked to your login by an admin." });
+      }
       if (!openId) throw new TRPCError({ code: "BAD_REQUEST", message: "No login id on session" });
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
@@ -6721,9 +6819,13 @@ const bdRouter = router({
       if (!target[0]) throw new TRPCError({ code: "NOT_FOUND", message: "BD user not found" });
       if (target[0].openId && target[0].openId !== openId) throw new TRPCError({ code: "BAD_REQUEST", message: "That BD user is already linked to another login" });
       await db.update(bdUsers).set({ openId }).where(eq(bdUsers.id, input.bdUserId));
+      if (ctx.user.role === "user" || ctx.user.role === "viewer") {
+        const { users } = await import("../drizzle/schema");
+        await db.update(users).set({ role: "bd" }).where(eq(users.openId, openId));
+      }
       return { ok: true };
     }),
-  unlinkLogin: protectedProcedure
+  unlinkLogin: adminProcedure
     .input(z.object({ bdUserId: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6735,7 +6837,7 @@ const bdRouter = router({
       return { ok: true };
     }),
   // ── In-Hub bell: reminders due today/overdue (bd users see their own; admin sees all) ──
-  dueReminders: protectedProcedure.query(async ({ ctx }) => {
+  dueReminders: staffProcedure.query(async ({ ctx }) => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) return [];
@@ -6755,7 +6857,7 @@ const bdRouter = router({
     return rows.map(d => ({ id: d.id, title: d.title, reminderDate: d.reminderDate, reminderNote: d.reminderNote, ownerId: d.ownerId }));
   }),
   // ── Tasks per deal ──
-  listTasks: publicProcedure
+  listTasks: staffProcedure
     .input(z.object({ dealId: z.number() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6765,7 +6867,7 @@ const bdRouter = router({
       const { eq, asc } = await import("drizzle-orm");
       return db.select().from(bdDealTasks).where(eq(bdDealTasks.dealId, input.dealId)).orderBy(asc(bdDealTasks.done), asc(bdDealTasks.dueDate));
     }),
-  addTask: protectedProcedure
+  addTask: staffProcedure
     .input(z.object({ dealId: z.number(), title: z.string().min(1), dueDate: z.string().optional() }))
     .mutation(async ({ ctx, input }) => {
       await assertBdDealOwnership(ctx, input.dealId);
@@ -6776,7 +6878,7 @@ const bdRouter = router({
       await db.insert(bdDealTasks).values({ ...input, done: false, createdAt: Date.now() });
       return { ok: true };
     }),
-  toggleTask: protectedProcedure
+  toggleTask: staffProcedure
     .input(z.object({ id: z.number(), done: z.boolean() }))
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
@@ -6790,7 +6892,7 @@ const bdRouter = router({
       await db.update(bdDealTasks).set({ done: input.done, doneAt: input.done ? Date.now() : null }).where(eq(bdDealTasks.id, input.id));
       return { ok: true };
     }),
-  deleteTask: protectedProcedure
+  deleteTask: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
@@ -6805,7 +6907,7 @@ const bdRouter = router({
       return { ok: true };
     }),
   // Seed the BD team (Ziad / Malak / Ali). Safe to run repeatedly.
-  seedUsers: protectedProcedure.mutation(async () => {
+  seedUsers: staffProcedure.mutation(async () => {
     const { getDb } = await import("./db");
     const { eq } = await import("drizzle-orm");
     const db = await getDb();
@@ -6821,7 +6923,7 @@ const bdRouter = router({
     }
     return { ok: true };
   }),
-  listUsers: publicProcedure.query(async () => {
+  listUsers: staffProcedure.query(async () => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) return [];
@@ -6831,7 +6933,7 @@ const bdRouter = router({
   // ── Companies (top of the BD tree: company → contacts → deals) ──
   /** Lists companies. First call auto-backfills from legacy free-text company
    *  names on contacts, then links contacts + deals to their new companyId. */
-  listCompanies: publicProcedure.query(async () => {
+  listCompanies: staffProcedure.query(async () => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) return [];
@@ -6870,7 +6972,7 @@ const bdRouter = router({
     }
     return companies.sort((a, b) => b.updatedAt - a.updatedAt);
   }),
-  addCompany: protectedProcedure
+  addCompany: staffProcedure
     .input(z.object({ name: z.string().min(1).max(255), website: z.string().optional(), industry: z.string().optional(), country: z.string().optional(), source: z.string().optional(), notes: z.string().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6881,7 +6983,7 @@ const bdRouter = router({
       const res = await db.insert(bdCompanies).values({ ...input, createdAt: now, updatedAt: now });
       return { ok: true, id: (res as unknown as { insertId: number }).insertId ?? 0 };
     }),
-  updateCompany: protectedProcedure
+  updateCompany: staffProcedure
     .input(z.object({ id: z.number(), name: z.string().min(1).max(255).optional(), website: z.string().optional(), industry: z.string().optional(), country: z.string().optional(), source: z.string().optional(), notes: z.string().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6896,7 +6998,7 @@ const bdRouter = router({
       return { ok: true };
     }),
   /** Deleting a company is blocked while it still has contacts or open deals. */
-  deleteCompany: protectedProcedure
+  deleteCompany: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6915,7 +7017,7 @@ const bdRouter = router({
       return { ok: true };
     }),
   /** Open deals with no logged activity for 14+ days — the "going cold" list. */
-  staleDeals: publicProcedure.query(async () => {
+  staleDeals: staffProcedure.query(async () => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) return [];
@@ -6944,7 +7046,7 @@ const bdRouter = router({
   }),
 
   /** Permanently ignore a deal's "going cold" alert. Resets automatically if new activity is logged. */
-  ignoreStale: protectedProcedure
+  ignoreStale: staffProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6958,7 +7060,7 @@ const bdRouter = router({
       return { ok: true } as const;
     }),
   /** Full company timeline: its own notes + every activity on its deals. */
-  listCompanyActivity: publicProcedure
+  listCompanyActivity: staffProcedure
     .input(z.object({ companyId: z.number() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6977,7 +7079,7 @@ const bdRouter = router({
         .map(a => ({ ...a, dealTitle: a.dealId ? (dealTitle.get(a.dealId) ?? null) : null }))
         .sort((a, b) => b.createdAt - a.createdAt);
     }),
-  addCompanyActivity: protectedProcedure
+  addCompanyActivity: staffProcedure
     .input(z.object({ companyId: z.number(), note: z.string().min(1), createdBy: z.number().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6988,7 +7090,7 @@ const bdRouter = router({
       return { ok: true };
     }),
   // ── Contacts (shared across the team) ──
-  listContacts: publicProcedure.query(async () => {
+  listContacts: staffProcedure.query(async () => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) return [];
@@ -6996,7 +7098,7 @@ const bdRouter = router({
     const { desc } = await import("drizzle-orm");
     return db.select().from(bdContacts).orderBy(desc(bdContacts.updatedAt));
   }),
-  addContact: protectedProcedure
+  addContact: staffProcedure
     .input(z.object({ companyId: z.number().optional(), company: z.string().optional(), contactName: z.string().optional(), jobTitle: z.string().optional(), email: z.string().optional(), phone: z.string().optional(), website: z.string().optional(), source: z.string().optional(), notes: z.string().optional(), createdBy: z.number().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7017,7 +7119,7 @@ const bdRouter = router({
       const insertId = (result as unknown as { insertId: number }).insertId;
       return { ok: true, id: insertId ?? 0 };
     }),
-  updateContact: protectedProcedure
+  updateContact: staffProcedure
     .input(z.object({ id: z.number(), companyId: z.number().optional(), company: z.string().optional(), contactName: z.string().optional(), jobTitle: z.string().optional(), email: z.string().optional(), phone: z.string().optional(), website: z.string().optional(), source: z.string().optional(), notes: z.string().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7029,7 +7131,7 @@ const bdRouter = router({
       await db.update(bdContacts).set({ ...rest, updatedAt: Date.now() }).where(eq(bdContacts.id, id));
       return { ok: true };
     }),
-  deleteContact: protectedProcedure
+  deleteContact: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7041,7 +7143,7 @@ const bdRouter = router({
       return { ok: true };
     }),
   // ── Deals (per-owner pipeline) ──
-  listDeals: publicProcedure
+  listDeals: staffProcedure
     .input(z.object({ ownerId: z.number().optional() }).optional())
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7052,7 +7154,7 @@ const bdRouter = router({
       if (input?.ownerId) return db.select().from(bdDeals).where(eq(bdDeals.ownerId, input.ownerId)).orderBy(desc(bdDeals.updatedAt));
       return db.select().from(bdDeals).orderBy(desc(bdDeals.updatedAt));
     }),
-  addDeal: protectedProcedure
+  addDeal: staffProcedure
     .input(z.object({ title: z.string().min(1), ownerId: z.number(), companyId: z.number().optional(), contactId: z.number().optional(), stage: z.enum(["follow_up", "negotiations", "review", "partners_consultants", "closed_won", "closed_lost"]).optional(), serviceType: z.string().optional(), seats: z.number().optional(), value: z.string().optional(), notes: z.string().optional(), expectedCloseDate: z.string().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7063,7 +7165,7 @@ const bdRouter = router({
       await db.insert(bdDeals).values({ ...input, stage: input.stage ?? "follow_up", createdAt: now, updatedAt: now });
       return { ok: true };
     }),
-  updateDeal: protectedProcedure
+  updateDeal: staffProcedure
     .input(z.object({ id: z.number(), title: z.string().optional(), ownerId: z.number().optional(), companyId: z.number().optional(), contactId: z.number().optional(), serviceType: z.string().optional(), seats: z.number().optional(), value: z.string().optional(), notes: z.string().optional(), expectedCloseDate: z.string().optional() }))
     .mutation(async ({ ctx, input }) => {
       await assertBdDealOwnership(ctx, input.id);
@@ -7076,7 +7178,7 @@ const bdRouter = router({
       await db.update(bdDeals).set({ ...rest, updatedAt: Date.now() }).where(eq(bdDeals.id, id));
       return { ok: true };
     }),
-  moveStage: protectedProcedure
+  moveStage: staffProcedure
     .input(z.object({ id: z.number(), stage: z.enum(["follow_up", "negotiations", "review", "partners_consultants", "closed_won", "closed_lost"]), reason: z.string().optional() }))
     .mutation(async ({ ctx, input }) => {
       await assertBdDealOwnership(ctx, input.id);
@@ -7093,7 +7195,7 @@ const bdRouter = router({
       return { ok: true };
     }),
   // Activity log — a timestamped note; also refreshes the deal's last-contacted date
-  addActivity: protectedProcedure
+  addActivity: staffProcedure
     .input(z.object({ dealId: z.number(), note: z.string().min(1), createdBy: z.number().optional() }))
     .mutation(async ({ ctx, input }) => {
       await assertBdDealOwnership(ctx, input.dealId);
@@ -7107,7 +7209,7 @@ const bdRouter = router({
       await db.update(bdDeals).set({ lastContactedAt: now, updatedAt: now }).where(eq(bdDeals.id, input.dealId));
       return { ok: true };
     }),
-  listActivity: publicProcedure
+  listActivity: staffProcedure
     .input(z.object({ dealId: z.number() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7117,7 +7219,7 @@ const bdRouter = router({
       const { eq, desc } = await import("drizzle-orm");
       return db.select().from(bdDealActivity).where(eq(bdDealActivity.dealId, input.dealId)).orderBy(desc(bdDealActivity.createdAt));
     }),
-  setReminder: protectedProcedure
+  setReminder: staffProcedure
     .input(z.object({ id: z.number(), reminderDate: z.string().optional(), reminderNote: z.string().optional() }))
     .mutation(async ({ ctx, input }) => {
       await assertBdDealOwnership(ctx, input.id);
@@ -7129,7 +7231,7 @@ const bdRouter = router({
       await db.update(bdDeals).set({ reminderDate: input.reminderDate ?? null, reminderNote: input.reminderNote ?? null, updatedAt: Date.now() }).where(eq(bdDeals.id, input.id));
       return { ok: true };
     }),
-  deleteDeal: protectedProcedure
+  deleteDeal: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
       await assertBdDealOwnership(ctx, input.id);
@@ -7154,11 +7256,10 @@ const bdRouter = router({
     if (!rows[0]) return { linked: false as const, role: null, bdUserId: null, name: null };
     return { linked: true as const, role: rows[0].role, bdUserId: rows[0].id, name: rows[0].name };
   }),
-  linkMyLogin: publicProcedure
+  linkMyLogin: staffProcedure
     .input(z.object({ bdUserId: z.number() }))
     .mutation(async ({ input, ctx }) => {
-      const openId = ctx.user?.openId;
-      if (!openId) throw new TRPCError({ code: "UNAUTHORIZED", message: "Log in first" });
+      const openId = ctx.user.openId;
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
@@ -7167,11 +7268,24 @@ const bdRouter = router({
       const target = (await db.select().from(bdUsers).where(eq(bdUsers.id, input.bdUserId)).limit(1))[0];
       if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "BD user not found" });
       if (target.openId && target.openId !== openId) throw new TRPCError({ code: "BAD_REQUEST", message: target.name + " is already linked to another login." });
+      // Self-service linking is only allowed when the BD profile's email matches the login's email.
+      // Anything else (no email on file, mismatch, or claiming a BD admin) must be done by a Hub admin via bd.linkLogin.
+      const isHubAdmin = ctx.user.role === "admin" || ctx.user.role === "owner";
+      const emailsMatch = !!target.email && !!ctx.user.email && target.email.trim().toLowerCase() === ctx.user.email.trim().toLowerCase();
+      if (!isHubAdmin && (!emailsMatch || target.role === "admin")) {
+        throw new TRPCError({ code: "FORBIDDEN", message: "This BD profile can only be linked to your login by an admin." });
+      }
       await db.update(bdUsers).set({ openId }).where(eq(bdUsers.id, input.bdUserId));
+      // Give the Hub login the matching role so the server-side staff gate admits them.
+      if (ctx.user.role === "user" || ctx.user.role === "viewer") {
+        const { users } = await import("../drizzle/schema");
+        await db.update(users).set({ role: "bd" }).where(eq(users.openId, openId));
+      }
+      await auditEntry(ctx.user, "bd_link_login", "bd_user", String(input.bdUserId), JSON.stringify({ self: !isHubAdmin }));
       return { ok: true, name: target.name };
     }),
   // Bell: count + list of due/overdue reminders and tasks for an owner (or all)
-  dueItems: publicProcedure
+  dueItems: staffProcedure
     .input(z.object({ ownerId: z.number().optional() }).optional())
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7195,42 +7309,48 @@ const bdRouter = router({
 // ─── #5 CRDTS reuse check + archive Router ───────────────────────────────────
 // ─── Presence Router ─────────────────────────────────────────────────────────
 const presenceRouter = router({
-  /** Agent calls this every 60s to mark themselves online */
-  heartbeat: publicProcedure
-    .input(z.object({ traineeCode: z.string(), status: z.enum(["available","on_break","on_call","away"]).optional(), customNote: z.string().max(30).optional() }))
-    .mutation(async ({ input }) => {
+  /** Agent calls this every 60s to mark themselves online. Identity comes from the session cookie. */
+  heartbeat: agentProcedure
+    .input(z.object({ traineeCode: z.string().optional(), status: z.enum(["available","on_break","on_call","away"]).optional(), customNote: z.string().max(30).optional() }))
+    .mutation(async ({ input, ctx }) => {
+      const traineeCode = ctx.agent.traineeCode;
       const { getDb } = await import("./db");
-      const { agentPresence, workforceAgents } = await import("../drizzle/schema");
-      const { eq } = await import("drizzle-orm");
+      const { agentPresence, workforceAgents, agentAuxLogs } = await import("../drizzle/schema");
+      const { eq, and, isNull: isNullOp, desc } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) return { ok: false };
-      // Get agent info
       const [agent] = await db.select({ alias: workforceAgents.alias, fullName: workforceAgents.fullName, campaignId: workforceAgents.campaignId, avatarUrl: workforceAgents.avatarUrl })
-        .from(workforceAgents).where(eq(workforceAgents.traineeCode, input.traineeCode)).limit(1);
+        .from(workforceAgents).where(eq(workforceAgents.traineeCode, traineeCode)).limit(1);
+      // Presence mirrors AUX: an open AUX row always wins over the self-reported status.
+      const [openAux] = await db.select({ auxType: agentAuxLogs.auxType }).from(agentAuxLogs)
+        .where(and(eq(agentAuxLogs.traineeCode, traineeCode), isNullOp(agentAuxLogs.endTime)))
+        .orderBy(desc(agentAuxLogs.startTime)).limit(1);
+      const status = openAux ? (openAux.auxType === "break" || openAux.auxType === "lunch" ? "on_break" : "away") : (input.status ?? "available");
       await db.insert(agentPresence).values({
-        traineeCode: input.traineeCode,
+        traineeCode,
         alias: agent?.alias ?? null,
         fullName: agent?.fullName ?? null,
         avatarUrl: agent?.avatarUrl ?? null,
-        status: input.status ?? "available",
+        status,
         customNote: input.customNote ?? null,
         lastSeen: Date.now(),
         campaignId: agent?.campaignId ?? null,
       }).onDuplicateKeyUpdate({
         set: {
-          status: input.status ?? "available",
+          status,
           customNote: input.customNote ?? null,
           lastSeen: Date.now(),
           alias: agent?.alias ?? null,
           fullName: agent?.fullName ?? null,
           avatarUrl: agent?.avatarUrl ?? null,
+          campaignId: agent?.campaignId ?? null, // follows transferCampaign
         }
       });
       return { ok: true };
     }),
 
-  /** Get all currently online agents (seen within last 5 minutes) */
-  list: publicProcedure.query(async () => {
+  /** Currently online agents (seen within last 5 minutes). Agents and staff only. */
+  list: agentOrStaffProcedure.query(async () => {
     const { getDb } = await import("./db");
     const { agentPresence } = await import("../drizzle/schema");
     const { gte } = await import("drizzle-orm");
@@ -7240,8 +7360,8 @@ const presenceRouter = router({
     return db.select().from(agentPresence).where(gte(agentPresence.lastSeen, fiveMinAgo));
   }),
 
-  /** Get ALL agents presence (online + recent offline) for the directory */
-  listAll: publicProcedure.query(async () => {
+  /** All agents presence (online + recent offline) for the directory. Agents and staff only. */
+  listAll: agentOrStaffProcedure.query(async () => {
     const { getDb } = await import("./db");
     const { agentPresence } = await import("../drizzle/schema");
     const db = await getDb();
@@ -7252,29 +7372,28 @@ const presenceRouter = router({
   }),
 
   /** Agent sets their own status */
-  setStatus: publicProcedure
-    .input(z.object({ traineeCode: z.string(), status: z.enum(["available","on_break","on_call","away"]), customNote: z.string().max(30).optional() }))
-    .mutation(async ({ input }) => {
+  setStatus: agentProcedure
+    .input(z.object({ traineeCode: z.string().optional(), status: z.enum(["available","on_break","on_call","away"]), customNote: z.string().max(30).optional() }))
+    .mutation(async ({ input, ctx }) => {
       const { getDb } = await import("./db");
       const { agentPresence } = await import("../drizzle/schema");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) return { ok: false };
-      await db.update(agentPresence).set({ status: input.status, customNote: input.customNote ?? null, lastSeen: Date.now() }).where(eq(agentPresence.traineeCode, input.traineeCode));
+      await db.update(agentPresence).set({ status: input.status, customNote: input.customNote ?? null, lastSeen: Date.now() }).where(eq(agentPresence.traineeCode, ctx.agent.traineeCode));
       return { ok: true };
     }),
 
   /** Agent goes offline */
-  offline: publicProcedure
-    .input(z.object({ traineeCode: z.string() }))
-    .mutation(async ({ input }) => {
+  offline: agentProcedure
+    .input(z.object({ traineeCode: z.string().optional() }).optional())
+    .mutation(async ({ ctx }) => {
       const { getDb } = await import("./db");
       const { agentPresence } = await import("../drizzle/schema");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) return { ok: false };
-      // Set lastSeen to 0 so they appear offline immediately
-      await db.update(agentPresence).set({ lastSeen: 0 }).where(eq(agentPresence.traineeCode, input.traineeCode));
+      await db.update(agentPresence).set({ lastSeen: 0 }).where(eq(agentPresence.traineeCode, ctx.agent.traineeCode));
       return { ok: true };
     }),
 });
@@ -7282,7 +7401,7 @@ const presenceRouter = router({
 // ─── Warnings Router ─────────────────────────────────────────────────────────
 const warningsRouter = router({
   /** List all warnings for an agent */
-  list: protectedProcedure
+  list: staffProcedure
     .input(z.object({ traineeCode: z.string() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7294,7 +7413,7 @@ const warningsRouter = router({
     }),
 
   /** Issue a warning — HR/manager only */
-  issue: protectedProcedure
+  issue: staffProcedure
     .input(z.object({
       traineeCode: z.string(),
       warningType: z.enum(["verbal", "written", "final"]),
@@ -7321,7 +7440,7 @@ const warningsRouter = router({
     }),
 
   /** Delete a warning — admin/owner only */
-  delete: protectedProcedure
+  delete: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
       if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN" });
@@ -7337,7 +7456,7 @@ const warningsRouter = router({
 
 const crdtsArchiveRouter = router({
   // Is this CRDTS already held by another agent? Flags if that agent is resigned/terminated.
-  checkReuse: protectedProcedure
+  checkReuse: staffProcedure
     .input(z.object({ crdts: z.string(), excludeCode: z.string().optional() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7351,7 +7470,7 @@ const crdtsArchiveRouter = router({
       const inactive = holder.agentStatus === "resigned" || holder.agentStatus === "terminated";
       return { conflict: true as const, inactive, holder };
     }),
-  listArchive: protectedProcedure.query(async () => {
+  listArchive: staffProcedure.query(async () => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) return [];
@@ -7361,7 +7480,7 @@ const crdtsArchiveRouter = router({
   }),
   // Record a handover on override, then clear CRDTS off the previous holder so it
   // points to the new agent going forward. Previous agent's records are untouched.
-  archiveHandover: protectedProcedure
+  archiveHandover: staffProcedure
     .input(z.object({ crdts: z.string(), previousCode: z.string().optional(), newCode: z.string().optional(), archivedBy: z.string().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7398,23 +7517,25 @@ const crdtsArchiveRouter = router({
 
 // ═══ LEAVE MANAGEMENT — casual (عارضة) / annual (اعتيادية) ═══
 const leaveRouter = router({
-  // Agent: submit a request (no type — HR classifies on decision). Balances are hidden from agents.
-  request: publicProcedure
-    .input(z.object({ traineeCode: z.string(), startDate: z.string(), endDate: z.string(), days: z.number().min(1), reason: z.string().optional() }))
-    .mutation(async ({ input }) => {
-      // Leave requests open on December 1st each year
-      const now = new Date();
-      if (now.getMonth() < 11) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Leave requests open on December 1st. You can see your balance but submissions aren't accepted yet." });
-      }
-      const { getDb } = await import("./db");
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { leaveRequests } = await import("../drizzle/schema");
-      await db.insert(leaveRequests).values({ ...input, status: "pending", createdAt: Date.now() });
+  // Agent: submit a request (no type — HR classifies on decision). Identity from session.
+  request: agentProcedure
+    .input(z.object({ traineeCode: z.string().optional(), startDate: z.string(), endDate: z.string(), days: z.number().min(1), reason: z.string().optional() }))
+    .mutation(async ({ input, ctx }) => {
+      const { createLeaveRequestRow } = await import("./db");
+      await createLeaveRequestRow({ traineeCode: ctx.agent.traineeCode, startDate: input.startDate, endDate: input.endDate, days: input.days, reason: input.reason ?? null });
       return { ok: true };
     }),
-  myRequests: publicProcedure
+  // Agent: own requests. (Staff use listRequests / hr.myLeaveRequests for a given agent.)
+  mine: agentProcedure.query(async ({ ctx }) => {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return [];
+    const { leaveRequests } = await import("../drizzle/schema");
+    const { eq, desc } = await import("drizzle-orm");
+    return db.select().from(leaveRequests).where(eq(leaveRequests.traineeCode, ctx.agent.traineeCode)).orderBy(desc(leaveRequests.createdAt));
+  }),
+  // Staff: one agent's requests (used by the HR profile page).
+  myRequests: staffProcedure
     .input(z.object({ traineeCode: z.string() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7424,7 +7545,7 @@ const leaveRouter = router({
       const { eq, desc } = await import("drizzle-orm");
       return db.select().from(leaveRequests).where(eq(leaveRequests.traineeCode, input.traineeCode)).orderBy(desc(leaveRequests.createdAt));
     }),
-  listRequests: protectedProcedure
+  listRequests: staffProcedure
     .input(z.object({ status: z.enum(["pending", "approved", "rejected"]).optional() }).optional())
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7435,33 +7556,20 @@ const leaveRouter = router({
       if (input?.status) return db.select().from(leaveRequests).where(eq(leaveRequests.status, input.status)).orderBy(desc(leaveRequests.createdAt));
       return db.select().from(leaveRequests).orderBy(desc(leaveRequests.createdAt));
     }),
-  // HR decides: classify the type + approve/reject. Approval increments the used counter.
-  decide: protectedProcedure
-    .input(z.object({ id: z.number(), status: z.enum(["approved", "rejected"]), leaveType: z.enum(["casual", "annual"]).optional() }))
+  // HR decides: classify the type + approve/reject. ONE transactional path (see db.decideLeaveRequest).
+  decide: roleProcedure("hr", "manager", "ops_manager", "team_lead")
+    .input(z.object({ id: z.number(), status: z.enum(["approved", "rejected"]), leaveType: z.enum(["casual", "annual", "unpaid"]).optional() }))
     .mutation(async ({ input, ctx }) => {
-      const { getDb } = await import("./db");
-      const { eq, and, sql } = await import("drizzle-orm");
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { leaveRequests, leaveBalances } = await import("../drizzle/schema");
-      if (input.status === "approved" && !input.leaveType) throw new TRPCError({ code: "BAD_REQUEST", message: "Pick the leave type (casual/annual) before approving" });
-      const rows = await db.select().from(leaveRequests).where(eq(leaveRequests.id, input.id)).limit(1);
-      const req = rows[0];
-      if (!req) throw new TRPCError({ code: "NOT_FOUND", message: "Request not found" });
-      await db.update(leaveRequests).set({ status: input.status, leaveType: input.leaveType ?? null, decidedBy: ctx.user?.name ?? "admin", decidedAt: Date.now() }).where(eq(leaveRequests.id, input.id));
-      if (input.status === "approved" && input.leaveType) {
-        const year = String(new Date().getFullYear());
-        const bal = await db.select().from(leaveBalances).where(and(eq(leaveBalances.traineeCode, req.traineeCode), eq(leaveBalances.year, Number(year)))).limit(1);
-        if (bal[0]) {
-          const field = input.leaveType === "casual" ? { casualUsed: sql`${leaveBalances.casualUsed} + ${req.days}` } : { annualUsed: sql`${leaveBalances.annualUsed} + ${req.days}` };
-          await db.update(leaveBalances).set({ ...field, updatedAt: Date.now() }).where(eq(leaveBalances.id, bal[0].id));
-        } else {
-          await db.insert(leaveBalances).values({ traineeCode: req.traineeCode, year: Number(year), casualTotal: 0, annualTotal: 0, casualUsed: input.leaveType === "casual" ? req.days : 0, annualUsed: input.leaveType === "annual" ? req.days : 0, updatedAt: Date.now() });
-        }
+      const { decideLeaveRequest } = await import("./db");
+      try {
+        const r = await decideLeaveRequest({ id: input.id, decision: input.status, leaveType: input.leaveType, decidedBy: ctx.user.name ?? ctx.user.email ?? "admin" });
+        await auditEntry(ctx.user, input.status === "approved" ? "leave_approved" : "leave_rejected", "leave_request", String(input.id), JSON.stringify({ leaveType: input.leaveType, traineeCode: r.traineeCode, days: r.days }));
+        return { ok: true };
+      } catch (e) {
+        throw toTrpcError(e, "Failed to decide leave");
       }
-      return { ok: true };
     }),
-  listBalances: protectedProcedure
+  listBalances: staffProcedure
     .input(z.object({ year: z.number().optional() }).optional())
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7473,7 +7581,7 @@ const leaveRouter = router({
       return db.select().from(leaveBalances).where(eq(leaveBalances.year, y));
     }),
   // Admin: mass-add balances to ALL active agents (adds on top of existing totals)
-  massAdd: protectedProcedure
+  massAdd: roleProcedure("manager", "hr")
     .input(z.object({ casual: z.number().min(0), annual: z.number().min(0) }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7497,7 +7605,7 @@ const leaveRouter = router({
 
 // ═══ EXIT PROCESS — required checklist before an agent is archived ═══
 const exitRouter = router({
-  get: protectedProcedure
+  get: staffProcedure
     .input(z.object({ traineeCode: z.string() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7509,7 +7617,7 @@ const exitRouter = router({
       return rows[0] ?? null;
     }),
   // List all agents settled but not yet archived (exit checklist pending)
-  pendingChecklist: protectedProcedure.query(async () => {
+  pendingChecklist: staffProcedure.query(async () => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) return [];
@@ -7537,7 +7645,7 @@ const exitRouter = router({
       .map(a => ({ ...a, exitProcess: epMap.get(a.traineeCode) ?? null }));
   }),
   // List all agents pending settlement (separated but not yet salary-settled)
-  pendingSettlement: protectedProcedure.query(async () => {
+  pendingSettlement: staffProcedure.query(async () => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) return [];
@@ -7559,7 +7667,7 @@ const exitRouter = router({
       .map(a => ({ ...a, exitProcess: epMap.get(a.traineeCode) ?? null }));
   }),
   // Mark salary settled (BEFORE checklist — step 2 in lifecycle)
-  markSettled: protectedProcedure
+  markSettled: staffProcedure
     .input(z.object({ traineeCode: z.string(), settled: z.boolean() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7572,7 +7680,7 @@ const exitRouter = router({
       await db.update(exitProcess).set({ settlementDone: input.settled, updatedAt: Date.now() }).where(eq(exitProcess.traineeCode, input.traineeCode));
       return { ok: true };
     }),
-  upsert: protectedProcedure
+  upsert: staffProcedure
     .input(z.object({
       traineeCode: z.string(),
       exitType: z.enum(["resignation", "termination", "contract_end"]).optional(),
@@ -7594,7 +7702,7 @@ const exitRouter = router({
       return { ok: true };
     }),
   // Archive: requires salary settled AND checklist complete (interview, clearance, assets, last day)
-  archive: protectedProcedure
+  archive: staffProcedure
     .input(z.object({ traineeCode: z.string() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7616,7 +7724,7 @@ const exitRouter = router({
       return { ok: true };
     }),
   // Legacy alias kept for backward compat with any existing UI calls
-  settleAndArchive: protectedProcedure
+  settleAndArchive: staffProcedure
     .input(z.object({ traineeCode: z.string() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7638,7 +7746,7 @@ const exitRouter = router({
     }),
 
   /** Transfer an agent to a different campaign (and thus potentially a different client) */
-  transferCampaign: protectedProcedure
+  transferCampaign: staffProcedure
     .input(z.object({
       traineeCode: z.string().min(1),
       campaignId: z.number().int().positive(),
@@ -7649,25 +7757,36 @@ const exitRouter = router({
       if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner" && ctx.user?.role !== "hr") {
         throw new TRPCError({ code: "FORBIDDEN", message: "Only admins and HR can transfer agents between campaigns." });
       }
-      const { updateWorkforceAgent } = await import("./db");
+      const { updateWorkforceAgent, getDb } = await import("./db");
+      // The target campaign must exist — otherwise the agent is orphaned and loses AUX/time-tracking access.
+      const target = await getCampaignById(input.campaignId);
+      if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "Target campaign not found" });
       await updateWorkforceAgent(input.traineeCode, {
         campaignId: input.campaignId,
         ...(input.jobTitle ? { jobTitle: input.jobTitle } : {}),
       });
+      // Keep presence in step so the directory shows the new campaign immediately.
+      const db = await getDb();
+      if (db) {
+        const { agentPresence } = await import("../drizzle/schema");
+        const { eq } = await import("drizzle-orm");
+        await db.update(agentPresence).set({ campaignId: input.campaignId }).where(eq(agentPresence.traineeCode, input.traineeCode));
+      }
+      invalidateAgentSessionCache(input.traineeCode);
       await auditEntry(ctx.user, "transfer_campaign", "agent", input.traineeCode, JSON.stringify({ campaignId: input.campaignId, jobTitle: input.jobTitle }));
       return { ok: true };
     }),
 });
 
 const sessionRouter = router({
-  list: protectedProcedure.query(async ({ ctx }) => {
+  list: staffProcedure.query(async ({ ctx }) => {
     if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") {
       throw new TRPCError({ code: "FORBIDDEN" });
     }
     const { listSessionLogs } = await import("./sessionLog");
     return listSessionLogs();
   }),
-  revoke: protectedProcedure
+  revoke: staffProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
       if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") {
@@ -7681,9 +7800,9 @@ const sessionRouter = router({
 
 // ─── Clients Router ───────────────────────────────────────────────────────────
 const clientsRouter = router({
-  list: protectedProcedure.query(() => listClients()),
+  list: staffProcedure.query(() => listClients()),
 
-  create: protectedProcedure
+  create: roleProcedure("manager")
     .input(z.object({
       name: z.string().min(1),
       shortCode: z.string().min(1).max(20),
@@ -7691,24 +7810,25 @@ const clientsRouter = router({
     }))
     .mutation(({ input }) => createClient(input)),
 
-  update: protectedProcedure
+  update: roleProcedure("manager")
     .input(z.object({
       id: z.number().int().positive(),
       name: z.string().min(1).optional(),
       shortCode: z.string().min(1).max(20).optional(),
       colorHex: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
       isActive: z.boolean().optional(),
+      timeTrackingEnabled: z.boolean().optional(),
     }))
     .mutation(({ input }) => { const { id, ...rest } = input; return updateClient(id, rest); }),
 
-  assignCampaign: protectedProcedure
+  assignCampaign: staffProcedure
     .input(z.object({
       campaignId: z.number().int().positive(),
       clientId: z.number().int().positive().nullable(),
     }))
     .mutation(({ input }) => assignCampaignToClient(input.campaignId, input.clientId)),
 
-  getDashboard: protectedProcedure
+  getDashboard: staffProcedure
     .input(z.object({
       clientId: z.number().int().positive(),
       month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
@@ -7742,15 +7862,30 @@ const clientsRouter = router({
           .where(and(eq(payrollRecords.month, month), inArray(payrollRecords.agentCode, agentCodes)));
       }
 
-      // Adherence violations for this month
+      // Adherence for this month. adherence_log has no live writer any more, so the dashboard reads the
+      // two tables that ARE written: self-logged attendance exceptions (late / early_departure) and the
+      // nightly attendance violations from the sheets. Shape is normalised to { agentCode, date, type }.
       const agentCodesList = allAgents.map(a => a.traineeCode).filter((c): c is string => Boolean(c));
-      let adherence: typeof adherenceLog.$inferSelect[] = [];
+      const crdtsList = allAgents.map(a => (a as { crdts?: string | null }).crdts).filter((c): c is string => Boolean(c));
+      let adherence: Array<{ id: number; agentCode: string; date: string; type: string; source: "exception" | "violation" }> = [];
       if (agentCodesList.length > 0) {
-        adherence = await db.select().from(adherenceLog)
-          .where(inArray(adherenceLog.agentCode, agentCodesList));
-        const prefix = month + "-";
-        adherence = adherence.filter(a => a.date?.startsWith(prefix));
+        const { attendanceExceptions, agentViolations } = await import("../drizzle/schema");
+        const { like, or } = await import("drizzle-orm");
+        const [exc, viol] = await Promise.all([
+          db.select().from(attendanceExceptions).where(and(inArray(attendanceExceptions.traineeCode, agentCodesList), like(attendanceExceptions.date, `${month}-%`))),
+          db.select().from(agentViolations).where(and(
+            eq(agentViolations.category, "attendance"),
+            like(agentViolations.date, `${month}-%`),
+            crdtsList.length ? or(inArray(agentViolations.agentCode, agentCodesList), inArray(agentViolations.crdts, crdtsList)) : inArray(agentViolations.agentCode, agentCodesList),
+          )),
+        ]);
+        const crdtsToCode = new Map(allAgents.map(a => [(a as { crdts?: string | null }).crdts ?? "", a.traineeCode]));
+        adherence = [
+          ...exc.map(e => ({ id: e.id, agentCode: e.traineeCode, date: e.date, type: e.exceptionType, source: "exception" as const })),
+          ...viol.map(v => ({ id: v.id, agentCode: crdtsToCode.get(v.crdts ?? "") ?? v.agentCode, date: v.date, type: /late|tardi/i.test(v.type) ? "late" : /early/i.test(v.type) ? "early_departure" : v.type, source: "violation" as const })),
+        ];
       }
+      void adherenceLog;
 
       return {
         client,
@@ -7767,7 +7902,7 @@ const clientsRouter = router({
 // ─── Salary Advances (سلفة) ───────────────────────────────────────────────────
 const advancesRouter = router({
   /** HR: list all advances (optional filter by traineeCode). */
-  list: protectedProcedure
+  list: staffProcedure
     .input(z.object({ traineeCode: z.string().optional() }))
     .query(async ({ input }) => {
       const { listAdvances } = await import("./db");
@@ -7790,7 +7925,7 @@ const advancesRouter = router({
     }),
 
   /** HR: create a new salary advance. */
-  create: protectedProcedure
+  create: staffProcedure
     .input(z.object({
       traineeCode: z.string().min(1),
       amountEgp:   z.string().regex(/^\d+(\.\d{1,2})?$/, "Must be a valid amount"),
@@ -7806,7 +7941,7 @@ const advancesRouter = router({
     }),
 
   /** HR: mark an advance as deducted (links to pay cycle). */
-  deduct: protectedProcedure
+  deduct: staffProcedure
     .input(z.object({
       id:          z.number().int().positive(),
       deductCycle: z.string().regex(/^\d{4}-\d{2}$/),
@@ -7818,7 +7953,7 @@ const advancesRouter = router({
     }),
 
   /** HR: cancel / write off an advance. */
-  cancel: protectedProcedure
+  cancel: staffProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ input }) => {
       const { cancelAdvance } = await import("./db");
@@ -7830,7 +7965,7 @@ const advancesRouter = router({
 // ─── Contracts ────────────────────────────────────────────────────────────────
 const contractsRouter = router({
   /** Create or update a contract for an agent. Any authenticated user. */
-  upsert: protectedProcedure
+  upsert: staffProcedure
     .input(z.object({
       traineeCode:        z.string().min(1),
       contractType:       z.enum(["permanent", "fixed_term", "freelance"]),
@@ -7850,7 +7985,7 @@ const contractsRouter = router({
     }),
 
   /** Get contract for a specific agent (by traineeCode). */
-  getByCode: protectedProcedure
+  getByCode: staffProcedure
     .input(z.object({ traineeCode: z.string() }))
     .query(async ({ input }) => {
       const { getContractByCode } = await import("./db");
@@ -7858,14 +7993,14 @@ const contractsRouter = router({
     }),
 
   /** List all contracts with agent info joined. */
-  listAll: protectedProcedure
+  listAll: staffProcedure
     .query(async () => {
       const { listAllContracts } = await import("./db");
       return listAllContracts();
     }),
 
   /** List active agents who have no contract yet. */
-  listMissing: protectedProcedure
+  listMissing: staffProcedure
     .query(async () => {
       const { listAgentsWithoutContracts } = await import("./db");
       return listAgentsWithoutContracts();
@@ -7888,141 +8023,194 @@ const contractsRouter = router({
 });
 
 // ─── Time Tracking Router ──────────────────────────────────────────────────────
+// Clock-in/out, AUX, PTO and attendance exceptions for clients with the
+// `timeTrackingEnabled` flag. Identity ALWAYS comes from ctx.agent (session), the
+// feature gate is enforced on every agent write, and "today" is the business
+// (Cairo) calendar day — see server/_core/time.ts.
+
+/** Longest an AUX or shift may stay open before it is auto-closed (ms). */
+const AUX_MAX_OPEN_MS = 12 * 60 * 60 * 1000;
+const SHIFT_MAX_OPEN_MS = 16 * 60 * 60 * 1000;
+
+async function assertTimeTrackingAccess(traineeCode: string) {
+  const { getAgentTimeTrackingAccess } = await import("./db");
+  const access = await getAgentTimeTrackingAccess(traineeCode);
+  if (!access.allowed) throw new TRPCError({ code: "FORBIDDEN", message: "Time tracking is not enabled for your client." });
+  return access;
+}
+
+/** Auto-close AUX rows / shifts left open longer than the cap so the agent is never stuck. */
+async function closeStaleOpenRows(traineeCode: string) {
+  const { getDb } = await import("./db");
+  const db = await getDb();
+  if (!db) return;
+  const { agentAuxLogs, agentShifts } = await import("../drizzle/schema");
+  const { eq, and, isNull, lt, sql } = await import("drizzle-orm");
+  const now = Date.now();
+  await db.update(agentAuxLogs)
+    .set({ endTime: sql`${agentAuxLogs.startTime} + ${AUX_MAX_OPEN_MS}`, durationMs: AUX_MAX_OPEN_MS, note: sql`CONCAT(COALESCE(${agentAuxLogs.note}, ''), ' [auto-closed]')` })
+    .where(and(eq(agentAuxLogs.traineeCode, traineeCode), isNull(agentAuxLogs.endTime), lt(agentAuxLogs.startTime, now - AUX_MAX_OPEN_MS)));
+  await db.update(agentShifts)
+    .set({ clockOut: sql`${agentShifts.clockIn} + ${SHIFT_MAX_OPEN_MS}`, durationMs: SHIFT_MAX_OPEN_MS })
+    .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut), lt(agentShifts.clockIn, now - SHIFT_MAX_OPEN_MS)));
+}
+
 const timeTrackingRouter = router({
-  /** Returns whether the current agent belongs to a Quantum campaign. */
+  /** Whether the current agent's client has time tracking enabled. */
   checkAccess: publicProcedure.query(async ({ ctx }) => {
-    const token = getAgentCookieFromReq(ctx.req);
-    if (!token) return { allowed: false, clientName: null as string | null };
-    try {
-      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-      if (payload.type !== "agent") return { allowed: false, clientName: null as string | null };
-      const { getAgentClientName } = await import("./db");
-      const clientName = await getAgentClientName(payload.traineeCode);
-      const allowed = !!clientName && clientName.toLowerCase().includes("quantum");
-      return { allowed, clientName };
-    } catch { return { allowed: false, clientName: null as string | null }; }
+    if (!ctx.agent) return { allowed: false, clientName: null as string | null, clientId: null as number | null };
+    const { getAgentTimeTrackingAccess } = await import("./db");
+    return getAgentTimeTrackingAccess(ctx.agent.traineeCode);
   }),
 
-  startAux: publicProcedure
-    .input(z.object({ auxType: z.string().min(1) }))
+  startAux: agentProcedure
+    .input(z.object({ auxType: z.enum(AUX_TYPES), note: z.string().max(500).optional() }))
     .mutation(async ({ ctx, input }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) throw new Error("Not authenticated");
-      let traineeCode = "";
-      try {
-        const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-        if (payload.type !== "agent") throw new Error("Not agent");
-        traineeCode = payload.traineeCode;
-      } catch { throw new Error("Invalid session"); }
-      const { agentAuxLogs } = await import("../drizzle/schema");
-      const { getDb } = await import("./db");
-      const db = await getDb();
-      if (!db) throw new Error("DB unavailable");
-      await db.insert(agentAuxLogs).values({ traineeCode, auxType: input.auxType, startTime: Date.now(), createdAt: Date.now() });
-      return { ok: true };
-    }),
-
-  endAux: publicProcedure
-    .mutation(async ({ ctx }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) throw new Error("Not authenticated");
-      let traineeCode = "";
-      try {
-        const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-        if (payload.type !== "agent") throw new Error("Not agent");
-        traineeCode = payload.traineeCode;
-      } catch { throw new Error("Invalid session"); }
-      const { agentAuxLogs } = await import("../drizzle/schema");
+      const traineeCode = ctx.agent.traineeCode;
+      await assertTimeTrackingAccess(traineeCode);
+      await closeStaleOpenRows(traineeCode);
+      const { agentAuxLogs, agentShifts } = await import("../drizzle/schema");
       const { getDb } = await import("./db");
       const { eq, and, isNull } = await import("drizzle-orm");
       const db = await getDb();
-      if (!db) throw new Error("DB unavailable");
-      const [active] = await db.select().from(agentAuxLogs)
-        .where(and(eq(agentAuxLogs.traineeCode, traineeCode), isNull(agentAuxLogs.endTime)))
-        .orderBy(agentAuxLogs.startTime)
-        .limit(1);
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      // Must be clocked in.
+      const [shift] = await db.select({ id: agentShifts.id }).from(agentShifts)
+        .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut))).limit(1);
+      if (!shift) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Clock in before starting AUX." });
+      // Exactly one open AUX at a time — a double-click or second tab must not create a second row.
+      const [open] = await db.select({ id: agentAuxLogs.id, auxType: agentAuxLogs.auxType }).from(agentAuxLogs)
+        .where(and(eq(agentAuxLogs.traineeCode, traineeCode), isNull(agentAuxLogs.endTime))).limit(1);
+      if (open) throw new TRPCError({ code: "CONFLICT", message: `You are already in ${open.auxType}. End it first.` });
+      const now = Date.now();
+      const [row] = await db.insert(agentAuxLogs).values({ traineeCode, auxType: input.auxType, startTime: now, note: input.note ?? null, createdAt: now }).$returningId();
+      return { ok: true, id: row?.id ?? null };
+    }),
+
+  endAux: agentProcedure
+    .input(z.object({ id: z.number().int().positive().optional() }).optional())
+    .mutation(async ({ ctx, input }) => {
+      const traineeCode = ctx.agent.traineeCode;
+      const { agentAuxLogs } = await import("../drizzle/schema");
+      const { getDb } = await import("./db");
+      const { eq, and, isNull, desc } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      // Close the row the client named, else the NEWEST open row (never the oldest).
+      const where = input?.id
+        ? and(eq(agentAuxLogs.id, input.id), eq(agentAuxLogs.traineeCode, traineeCode), isNull(agentAuxLogs.endTime))
+        : and(eq(agentAuxLogs.traineeCode, traineeCode), isNull(agentAuxLogs.endTime));
+      const [active] = await db.select().from(agentAuxLogs).where(where).orderBy(desc(agentAuxLogs.startTime)).limit(1);
       if (!active) return { ok: true, durationMs: 0 };
       const endTime = Date.now();
-      const durationMs = endTime - active.startTime;
-      await db.update(agentAuxLogs).set({ endTime, durationMs }).where(eq(agentAuxLogs.id, active.id));
+      const durationMs = Math.max(0, Math.min(endTime - active.startTime, AUX_MAX_OPEN_MS));
+      await db.update(agentAuxLogs).set({ endTime, durationMs }).where(and(eq(agentAuxLogs.id, active.id), isNull(agentAuxLogs.endTime)));
       return { ok: true, durationMs };
     }),
 
-  myAuxLogs: publicProcedure.query(async ({ ctx }) => {
-    const token = getAgentCookieFromReq(ctx.req);
-    if (!token) return [];
-    let traineeCode = "";
-    try {
-      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-      if (payload.type !== "agent") return [];
-      traineeCode = payload.traineeCode;
-    } catch { return []; }
-    const { agentAuxLogs } = await import("../drizzle/schema");
-    const { getDb } = await import("./db");
-    const { eq, and, gte, lt } = await import("drizzle-orm");
-    const db = await getDb();
-    if (!db) return [];
-    const today = new Date().toISOString().slice(0, 10);
-    const todayStart = new Date(today).getTime();
-    const todayEnd = todayStart + 86400000;
-    return db.select().from(agentAuxLogs)
-      .where(and(eq(agentAuxLogs.traineeCode, traineeCode), gte(agentAuxLogs.startTime, todayStart), lt(agentAuxLogs.startTime, todayEnd)))
-      .orderBy(agentAuxLogs.startTime);
-  }),
+  /** Today's AUX rows (business-day window). `date` lets the client pass its own local day. */
+  myAuxLogs: agentProcedure
+    .input(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      const { agentAuxLogs } = await import("../drizzle/schema");
+      const { getDb } = await import("./db");
+      const { eq, and, gte, lt, or, isNull } = await import("drizzle-orm");
+      const { businessDateKey, businessDayBounds } = await import("./_core/time");
+      const db = await getDb();
+      if (!db) return [];
+      const { start, end } = businessDayBounds(input?.date ?? businessDateKey());
+      // Include any still-open row even if it started yesterday (overnight shifts).
+      return db.select().from(agentAuxLogs)
+        .where(and(eq(agentAuxLogs.traineeCode, ctx.agent.traineeCode),
+          or(and(gte(agentAuxLogs.startTime, start), lt(agentAuxLogs.startTime, end)), isNull(agentAuxLogs.endTime))))
+        .orderBy(agentAuxLogs.startTime);
+    }),
 
-  // Returns all AUX logs for this agent (full history, not just today)
-  myAuxLogsAll: publicProcedure.query(async ({ ctx }) => {
-    const token = getAgentCookieFromReq(ctx.req);
-    if (!token) return [];
-    let traineeCode = "";
-    try {
-      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-      if (payload.type !== "agent") return [];
-      traineeCode = payload.traineeCode;
-    } catch { return []; }
+  /** Full AUX history for this agent. */
+  myAuxLogsAll: agentProcedure.query(async ({ ctx }) => {
     const { agentAuxLogs } = await import("../drizzle/schema");
     const { getDb } = await import("./db");
     const { eq } = await import("drizzle-orm");
     const db = await getDb();
     if (!db) return [];
-    return db.select().from(agentAuxLogs)
-      .where(eq(agentAuxLogs.traineeCode, traineeCode))
-      .orderBy(agentAuxLogs.startTime);
+    return db.select().from(agentAuxLogs).where(eq(agentAuxLogs.traineeCode, ctx.agent.traineeCode)).orderBy(agentAuxLogs.startTime);
   }),
 
-  submitPto: publicProcedure
+  // ─── PTO — thin wrapper over the ONE leave system (leave_requests) ────────────
+  submitPto: agentProcedure
     .input(z.object({
-      requestType: z.enum(["annual", "sick", "emergency", "unpaid"]),
+      requestType: z.enum(["annual", "sick", "emergency", "unpaid", "casual"]),
       startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       halfDay: z.boolean().optional(),
       reason: z.string().max(1000).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) throw new Error("Not authenticated");
-      let traineeCode = "";
-      let agentName = "";
-      try {
-        const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string; name?: string };
-        if (payload.type !== "agent") throw new Error("Not agent");
-        traineeCode = payload.traineeCode;
-        agentName = payload.name ?? "";
-      } catch { throw new Error("Invalid session"); }
-      const { ptoRequests } = await import("../drizzle/schema");
+      await assertTimeTrackingAccess(ctx.agent.traineeCode);
+      if (input.endDate < input.startDate) throw new TRPCError({ code: "BAD_REQUEST", message: "End date is before start date." });
+      const { createLeaveRequestRow } = await import("./db");
+      const agent = await getWorkforceAgentByCode(ctx.agent.traineeCode);
+      const id = await createLeaveRequestRow({
+        traineeCode: ctx.agent.traineeCode,
+        requesterName: agent?.fullName ?? null,
+        startDate: input.startDate, endDate: input.endDate,
+        reason: `[${input.requestType}${input.halfDay ? ", half day" : ""}] ${input.reason ?? ""}`.trim(),
+      });
+      return { ok: true, id };
+    }),
+
+  myPtoRequests: agentProcedure.query(async ({ ctx }) => {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) return [];
+    const { leaveRequests } = await import("../drizzle/schema");
+    const { eq, desc } = await import("drizzle-orm");
+    const rows = await db.select().from(leaveRequests).where(eq(leaveRequests.traineeCode, ctx.agent.traineeCode)).orderBy(desc(leaveRequests.createdAt));
+    // Shape compatible with the old pto_requests rows the page renders.
+    return rows.map(r => ({
+      id: r.id, traineeCode: r.traineeCode, agentName: r.requesterName,
+      requestType: r.leaveType ?? (r.reason?.match(/^\[(\w+)/)?.[1] ?? "leave"),
+      startDate: r.startDate, endDate: r.endDate, halfDay: /half day/.test(r.reason ?? ""),
+      status: r.status, reason: r.reason, reviewedBy: r.decidedBy, reviewedAt: r.decidedAt, createdAt: r.createdAt,
+    }));
+  }),
+
+  allPtoRequests: staffProcedure
+    .input(z.object({ status: z.enum(["pending", "approved", "rejected", "all"]).optional() }))
+    .query(async ({ input }) => {
       const { getDb } = await import("./db");
       const db = await getDb();
-      if (!db) throw new Error("DB unavailable");
-      await db.insert(ptoRequests).values({
-        traineeCode, agentName, requestType: input.requestType,
-        startDate: input.startDate, endDate: input.endDate,
-        halfDay: input.halfDay ?? false, reason: input.reason ?? null,
-        status: "pending", createdAt: Date.now(),
-      });
+      if (!db) return [];
+      const { leaveRequests } = await import("../drizzle/schema");
+      const { eq, desc } = await import("drizzle-orm");
+      const q = db.select().from(leaveRequests);
+      const rows = input.status && input.status !== "all"
+        ? await q.where(eq(leaveRequests.status, input.status)).orderBy(desc(leaveRequests.createdAt))
+        : await q.orderBy(desc(leaveRequests.createdAt));
+      return rows.map(r => ({
+        id: r.id, traineeCode: r.traineeCode, agentName: r.requesterName,
+        requestType: r.leaveType ?? (r.reason?.match(/^\[(\w+)/)?.[1] ?? "leave"),
+        startDate: r.startDate, endDate: r.endDate, halfDay: /half day/.test(r.reason ?? ""),
+        status: r.status, reason: r.reason, reviewedBy: r.decidedBy, reviewedAt: r.decidedAt, createdAt: r.createdAt,
+        days: r.days, leaveType: r.leaveType,
+      }));
+    }),
+
+  reviewPto: roleProcedure("hr", "manager", "ops_manager", "team_lead")
+    .input(z.object({ id: z.number().int().positive(), status: z.enum(["approved", "rejected"]), leaveType: z.enum(["casual", "annual", "unpaid"]).optional() }))
+    .mutation(async ({ ctx, input }) => {
+      const { decideLeaveRequest } = await import("./db");
+      try {
+        await decideLeaveRequest({ id: input.id, decision: input.status, leaveType: input.leaveType, decidedBy: ctx.user.name ?? ctx.user.email ?? "unknown", defaults: { casualTotal: 6, annualTotal: 21 } });
+      } catch (e) {
+        throw toTrpcError(e, "Failed");
+      }
+      await auditEntry(ctx.user, `pto_${input.status}`, "leave_request", String(input.id));
       return { ok: true };
     }),
 
-  logException: publicProcedure
+  // ─── Attendance exceptions ────────────────────────────────────────────────────
+  logException: agentProcedure
     .input(z.object({
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       exceptionType: z.enum(["late", "early_departure"]),
@@ -8032,22 +8220,14 @@ const timeTrackingRouter = router({
       note: z.string().max(500).optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) throw new Error("Not authenticated");
-      let traineeCode = "";
-      let agentName = "";
-      try {
-        const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string; name?: string };
-        if (payload.type !== "agent") throw new Error("Not agent");
-        traineeCode = payload.traineeCode;
-        agentName = payload.name ?? "";
-      } catch { throw new Error("Invalid session"); }
+      await assertTimeTrackingAccess(ctx.agent.traineeCode);
       const { attendanceExceptions } = await import("../drizzle/schema");
       const { getDb } = await import("./db");
       const db = await getDb();
-      if (!db) throw new Error("DB unavailable");
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const agent = await getWorkforceAgentByCode(ctx.agent.traineeCode);
       await db.insert(attendanceExceptions).values({
-        traineeCode, agentName, date: input.date,
+        traineeCode: ctx.agent.traineeCode, agentName: agent?.fullName ?? null, date: input.date,
         exceptionType: input.exceptionType,
         scheduledTime: input.scheduledTime ?? null,
         actualTime: input.actualTime ?? null,
@@ -8058,164 +8238,117 @@ const timeTrackingRouter = router({
       return { ok: true };
     }),
 
-  myPtoRequests: publicProcedure.query(async ({ ctx }) => {
-    const token = getAgentCookieFromReq(ctx.req);
-    if (!token) return [];
-    let traineeCode = "";
-    try {
-      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-      if (payload.type !== "agent") return [];
-      traineeCode = payload.traineeCode;
-    } catch { return []; }
-    const { ptoRequests } = await import("../drizzle/schema");
-    const { getDb } = await import("./db");
-    const { eq } = await import("drizzle-orm");
-    const db = await getDb();
-    if (!db) return [];
-    return db.select().from(ptoRequests).where(eq(ptoRequests.traineeCode, traineeCode)).orderBy(ptoRequests.createdAt);
-  }),
-
-  allPtoRequests: protectedProcedure
-    .input(z.object({ status: z.enum(["pending", "approved", "rejected", "all"]).optional() }))
-    .query(async ({ input }) => {
-      const { ptoRequests } = await import("../drizzle/schema");
-      const { getDb } = await import("./db");
-      const { eq } = await import("drizzle-orm");
-      const db = await getDb();
-      if (!db) return [];
-      if (input.status && input.status !== "all") {
-        return db.select().from(ptoRequests).where(eq(ptoRequests.status, input.status as "pending" | "approved" | "rejected")).orderBy(ptoRequests.createdAt);
-      }
-      return db.select().from(ptoRequests).orderBy(ptoRequests.createdAt);
-    }),
-
-  reviewPto: protectedProcedure
-    .input(z.object({ id: z.number().int().positive(), status: z.enum(["approved", "rejected"]) }))
-    .mutation(async ({ ctx, input }) => {
-      const { ptoRequests } = await import("../drizzle/schema");
-      const { getDb } = await import("./db");
-      const { eq } = await import("drizzle-orm");
-      const db = await getDb();
-      if (!db) throw new Error("DB unavailable");
-      await db.update(ptoRequests).set({
-        status: input.status,
-        reviewedBy: ctx.user?.name ?? ctx.user?.email ?? "unknown",
-        reviewedAt: Date.now(),
-      }).where(eq(ptoRequests.id, input.id));
-      return { ok: true };
-    }),
-
-  allExceptions: protectedProcedure
-    .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/).optional() }))
+  allExceptions: staffProcedure
+    .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/).optional(), status: z.enum(["pending", "reviewed"]).optional() }))
     .query(async ({ input }) => {
       const { attendanceExceptions } = await import("../drizzle/schema");
       const { getDb } = await import("./db");
+      const { and, like, eq } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) return [];
-      const all = await db.select().from(attendanceExceptions).orderBy(attendanceExceptions.date);
-      if (input.month) return all.filter(e => e.date.startsWith(input.month + "-"));
-      return all;
+      const conds = [];
+      if (input.month) conds.push(like(attendanceExceptions.date, `${input.month}-%`));
+      if (input.status) conds.push(eq(attendanceExceptions.status, input.status));
+      const q = db.select().from(attendanceExceptions);
+      return conds.length ? q.where(and(...conds)).orderBy(attendanceExceptions.date) : q.orderBy(attendanceExceptions.date);
     }),
 
-  auxLogs: protectedProcedure
+  /** Staff marks an exception as reviewed (closes the loop that was never closed). */
+  reviewException: roleProcedure("hr", "manager", "ops_manager", "team_lead")
+    .input(z.object({ id: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      const { attendanceExceptions } = await import("../drizzle/schema");
+      const { getDb } = await import("./db");
+      const { eq } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      await db.update(attendanceExceptions).set({ status: "reviewed", reviewedBy: ctx.user.name ?? ctx.user.email ?? "staff" }).where(eq(attendanceExceptions.id, input.id));
+      return { ok: true };
+    }),
+
+  /** Admin AUX log. The date filter applies with OR without a traineeCode; a date is required when no agent is named. */
+  auxLogs: staffProcedure
     .input(z.object({ traineeCode: z.string().optional(), date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }))
     .query(async ({ input }) => {
       const { agentAuxLogs } = await import("../drizzle/schema");
       const { getDb } = await import("./db");
-      const { eq } = await import("drizzle-orm");
+      const { eq, and, gte, lt } = await import("drizzle-orm");
+      const { businessDateKey, businessDayBounds } = await import("./_core/time");
       const db = await getDb();
       if (!db) return [];
-      if (input.traineeCode) {
-        const logs = await db.select().from(agentAuxLogs).where(eq(agentAuxLogs.traineeCode, input.traineeCode)).orderBy(agentAuxLogs.startTime);
-        if (input.date) return logs.filter(l => new Date(l.startTime).toISOString().slice(0, 10) === input.date);
-        return logs;
-      }
-      return db.select().from(agentAuxLogs).orderBy(agentAuxLogs.startTime);
+      const conds = [];
+      if (input.traineeCode) conds.push(eq(agentAuxLogs.traineeCode, input.traineeCode));
+      const date = input.date ?? (input.traineeCode ? null : businessDateKey());
+      if (date) { const { start, end } = businessDayBounds(date); conds.push(gte(agentAuxLogs.startTime, start), lt(agentAuxLogs.startTime, end)); }
+      return db.select().from(agentAuxLogs).where(and(...conds)).orderBy(agentAuxLogs.startTime);
     }),
 
   // ─── Clock In / Clock Out ────────────────────────────────────────────────────
-
-  /** Start a new work shift for the agent. Fails if already clocked in today. */
-  clockIn: publicProcedure.mutation(async ({ ctx }) => {
-    const token = getAgentCookieFromReq(ctx.req);
-    if (!token) throw new Error("Not authenticated");
-    let traineeCode = "";
-    try {
-      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-      if (payload.type !== "agent") throw new Error("Not agent");
-      traineeCode = payload.traineeCode;
-    } catch { throw new Error("Invalid session"); }
+  clockIn: agentProcedure.mutation(async ({ ctx }) => {
+    const traineeCode = ctx.agent.traineeCode;
+    await assertTimeTrackingAccess(traineeCode);
+    await closeStaleOpenRows(traineeCode);
     const { agentShifts } = await import("../drizzle/schema");
     const { getDb } = await import("./db");
     const { eq, and, isNull } = await import("drizzle-orm");
+    const { businessDateKey } = await import("./_core/time");
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
-    // Check for an already-open shift (any day, not closed yet)
-    const [open] = await db.select().from(agentShifts)
-      .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut)))
-      .limit(1);
-    if (open) throw new Error("Already clocked in");
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+    const [open] = await db.select({ id: agentShifts.id }).from(agentShifts)
+      .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut))).limit(1);
+    if (open) throw new TRPCError({ code: "CONFLICT", message: "Already clocked in" });
     const now = Date.now();
-    const date = new Date(now).toISOString().slice(0, 10);
-    const [inserted] = await db.insert(agentShifts).values({ traineeCode, clockIn: now, date, createdAt: now }).$returningId();
+    const [inserted] = await db.insert(agentShifts).values({ traineeCode, clockIn: now, date: businessDateKey(now), createdAt: now }).$returningId();
     return { ok: true, shiftId: inserted?.id ?? null };
   }),
 
-  /** Close the current open shift for the agent. */
-  clockOut: publicProcedure.mutation(async ({ ctx }) => {
-    const token = getAgentCookieFromReq(ctx.req);
-    if (!token) throw new Error("Not authenticated");
-    let traineeCode = "";
-    try {
-      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-      if (payload.type !== "agent") throw new Error("Not agent");
-      traineeCode = payload.traineeCode;
-    } catch { throw new Error("Invalid session"); }
-    const { agentShifts } = await import("../drizzle/schema");
+  clockOut: agentProcedure.mutation(async ({ ctx }) => {
+    const traineeCode = ctx.agent.traineeCode;
+    const { agentShifts, agentAuxLogs } = await import("../drizzle/schema");
     const { getDb } = await import("./db");
-    const { eq, and, isNull } = await import("drizzle-orm");
+    const { eq, and, isNull, desc } = await import("drizzle-orm");
     const db = await getDb();
-    if (!db) throw new Error("DB unavailable");
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
     const [active] = await db.select().from(agentShifts)
       .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut)))
-      .orderBy(agentShifts.clockIn)
-      .limit(1);
-    if (!active) throw new Error("Not clocked in");
+      .orderBy(desc(agentShifts.clockIn)).limit(1);
+    if (!active) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Not clocked in" });
     const clockOut = Date.now();
-    const durationMs = clockOut - active.clockIn;
+    // Clocking out also ends any open AUX so nothing dangles overnight.
+    const [openAux] = await db.select().from(agentAuxLogs)
+      .where(and(eq(agentAuxLogs.traineeCode, traineeCode), isNull(agentAuxLogs.endTime))).orderBy(desc(agentAuxLogs.startTime)).limit(1);
+    if (openAux) await db.update(agentAuxLogs).set({ endTime: clockOut, durationMs: Math.max(0, clockOut - openAux.startTime) }).where(eq(agentAuxLogs.id, openAux.id));
+    const durationMs = Math.max(0, clockOut - active.clockIn);
     await db.update(agentShifts).set({ clockOut, durationMs }).where(eq(agentShifts.id, active.id));
     return { ok: true, durationMs };
   }),
 
-  /** Return today's shift record (or null if not clocked in yet). */
-  myShiftToday: publicProcedure.query(async ({ ctx }) => {
-    const token = getAgentCookieFromReq(ctx.req);
-    if (!token) return null;
-    let traineeCode = "";
-    try {
-      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-      if (payload.type !== "agent") return null;
-      traineeCode = payload.traineeCode;
-    } catch { return null; }
-    const { agentShifts } = await import("../drizzle/schema");
-    const { getDb } = await import("./db");
-    const { eq, and } = await import("drizzle-orm");
-    const db = await getDb();
-    if (!db) return null;
-    const today = new Date().toISOString().slice(0, 10);
-    const [shift] = await db.select().from(agentShifts)
-      .where(and(eq(agentShifts.traineeCode, traineeCode), eq(agentShifts.date, today)))
-      .orderBy(agentShifts.clockIn)
-      .limit(1);
-    return shift ?? null;
-  }),
+  /** The agent's open shift, else today's most recent shift, else null. */
+  myShiftToday: agentProcedure
+    .input(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }).optional())
+    .query(async ({ ctx, input }) => {
+      const traineeCode = ctx.agent.traineeCode;
+      await closeStaleOpenRows(traineeCode);
+      const { agentShifts } = await import("../drizzle/schema");
+      const { getDb } = await import("./db");
+      const { eq, and, isNull, desc } = await import("drizzle-orm");
+      const { businessDateKey } = await import("./_core/time");
+      const db = await getDb();
+      if (!db) return null;
+      const [open] = await db.select().from(agentShifts)
+        .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut))).orderBy(desc(agentShifts.clockIn)).limit(1);
+      if (open) return open;
+      const [shift] = await db.select().from(agentShifts)
+        .where(and(eq(agentShifts.traineeCode, traineeCode), eq(agentShifts.date, input?.date ?? businessDateKey())))
+        .orderBy(desc(agentShifts.clockIn)).limit(1);
+      return shift ?? null;
+    }),
 
   /**
    * Admin summary of productive (worked) hours per agent for a date range.
    * Productive = shift time − all AUX time. Open records are capped at now.
-   * Returns per-agent: workedHrs, scheduledHrs, and minutes by each AUX type.
    */
-  workedSummary: protectedProcedure
+  workedSummary: staffProcedure
     .input(z.object({
       clientId: z.number().int().positive().optional(),
       traineeCode: z.string().optional(),
@@ -8225,120 +8358,70 @@ const timeTrackingRouter = router({
     .query(async ({ input }) => {
       const { agentShifts, agentAuxLogs, workforceAgents } = await import("../drizzle/schema");
       const { getDb, listWorkforceAgentsByClient } = await import("./db");
-      const { eq, and, gte, lt, inArray } = await import("drizzle-orm");
+      const { eq, and, gte, lt, inArray, or, isNull } = await import("drizzle-orm");
+      const { businessDayBounds } = await import("./_core/time");
       const db = await getDb();
       if (!db) return [];
 
-      const fromMs = new Date(input.from).getTime();
-      const toMs = new Date(input.to).getTime() + 86400000; // inclusive end-of-day
+      const fromMs = businessDayBounds(input.from).start;
+      const toMs = businessDayBounds(input.to).end;
 
-      // Resolve the list of agents to include
       type AgentRow = { traineeCode: string; fullName: string; shiftHours: string | null; offDay1: number | null; offDay2: number | null };
+      const cols = { traineeCode: workforceAgents.traineeCode, fullName: workforceAgents.fullName, shiftHours: workforceAgents.shiftHours, offDay1: workforceAgents.offDay1, offDay2: workforceAgents.offDay2 };
+      const notDemo = or(isNull(workforceAgents.isDemo), eq(workforceAgents.isDemo, false));
       let agents: AgentRow[];
       if (input.traineeCode) {
-        const [wa] = await db.select({
-          traineeCode: workforceAgents.traineeCode,
-          fullName: workforceAgents.fullName,
-          shiftHours: workforceAgents.shiftHours,
-          offDay1: workforceAgents.offDay1,
-          offDay2: workforceAgents.offDay2,
-        }).from(workforceAgents).where(eq(workforceAgents.traineeCode, input.traineeCode)).limit(1);
+        const [wa] = await db.select(cols).from(workforceAgents).where(eq(workforceAgents.traineeCode, input.traineeCode)).limit(1);
         agents = wa ? [wa] : [];
       } else if (input.clientId) {
         const rows = await listWorkforceAgentsByClient(input.clientId);
         agents = rows.map(r => ({ traineeCode: r.traineeCode, fullName: r.fullName, shiftHours: r.shiftHours ?? null, offDay1: r.offDay1 ?? null, offDay2: r.offDay2 ?? null }));
       } else {
-        const rows = await db.select({
-          traineeCode: workforceAgents.traineeCode,
-          fullName: workforceAgents.fullName,
-          shiftHours: workforceAgents.shiftHours,
-          offDay1: workforceAgents.offDay1,
-          offDay2: workforceAgents.offDay2,
-        }).from(workforceAgents);
-        agents = rows;
+        agents = await db.select(cols).from(workforceAgents).where(notDemo);
       }
       if (agents.length === 0) return [];
-
       const traineeCodes = agents.map(a => a.traineeCode);
 
-      // Fetch shifts and AUX logs in range for all agents at once
-      const shifts = traineeCodes.length === 1
-        ? await db.select().from(agentShifts).where(and(eq(agentShifts.traineeCode, traineeCodes[0]!), gte(agentShifts.clockIn, fromMs), lt(agentShifts.clockIn, toMs)))
-        : await db.select().from(agentShifts).where(and(inArray(agentShifts.traineeCode, traineeCodes), gte(agentShifts.clockIn, fromMs), lt(agentShifts.clockIn, toMs)));
+      const shifts = await db.select().from(agentShifts).where(and(inArray(agentShifts.traineeCode, traineeCodes), gte(agentShifts.clockIn, fromMs), lt(agentShifts.clockIn, toMs)));
+      const auxLogs = await db.select().from(agentAuxLogs).where(and(inArray(agentAuxLogs.traineeCode, traineeCodes), gte(agentAuxLogs.startTime, fromMs), lt(agentAuxLogs.startTime, toMs)));
 
-      const auxLogs = traineeCodes.length === 1
-        ? await db.select().from(agentAuxLogs).where(and(eq(agentAuxLogs.traineeCode, traineeCodes[0]!), gte(agentAuxLogs.startTime, fromMs), lt(agentAuxLogs.startTime, toMs)))
-        : await db.select().from(agentAuxLogs).where(and(inArray(agentAuxLogs.traineeCode, traineeCodes), gte(agentAuxLogs.startTime, fromMs), lt(agentAuxLogs.startTime, toMs)));
-
-      // Helper: parse "9:00 AM - 5:00 PM" → daily hours as a number
       function parseDailyHours(shiftHours: string | null): number {
         if (!shiftHours) return 0;
         const m = shiftHours.match(/(\d{1,2}):(\d{2})\s*(AM|PM)\s*[-–]\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i);
         if (!m) return 0;
-        const toMins = (h: number, min: number, ampm: string) => {
-          let hour = h % 12;
-          if (ampm.toUpperCase() === "PM") hour += 12;
-          return hour * 60 + min;
-        };
-        const startMin = toMins(+m[1]!, +m[2]!, m[3]!);
-        const endMin = toMins(+m[4]!, +m[5]!, m[6]!);
-        const diff = endMin - startMin;
-        return diff > 0 ? diff / 60 : 0;
+        const toMins = (h: number, min: number, ampm: string) => ((h % 12) + (ampm.toUpperCase() === "PM" ? 12 : 0)) * 60 + min;
+        let diff = toMins(+m[1]!, +m[2]!, m[3]!) - toMins(+m[4]!, +m[5]!, m[6]!);
+        diff = -diff;
+        if (diff <= 0) diff += 24 * 60; // overnight shift
+        return diff / 60;
       }
-
-      // Helper: count working days in [from, to] inclusive, excluding offDay1 and offDay2
       function countWorkingDays(from: string, to: string, offDay1: number | null, offDay2: number | null): number {
         let count = 0;
-        const cur = new Date(from + "T00:00:00Z");
-        const end = new Date(to + "T00:00:00Z");
-        while (cur <= end) {
-          const dow = cur.getUTCDay();
-          if (dow !== offDay1 && dow !== offDay2) count++;
-          cur.setUTCDate(cur.getUTCDate() + 1);
-        }
+        const cur = new Date(from + "T00:00:00Z"); const end = new Date(to + "T00:00:00Z");
+        while (cur <= end) { const dow = cur.getUTCDay(); if (dow !== offDay1 && dow !== offDay2) count++; cur.setUTCDate(cur.getUTCDate() + 1); }
         return count;
       }
 
       const now = Date.now();
-
       return agents.map(agent => {
         const myShifts = shifts.filter(s => s.traineeCode === agent.traineeCode);
         const myAux = auxLogs.filter(l => l.traineeCode === agent.traineeCode);
-
-        // Shift time (cap open shifts at now)
-        const shiftMs = myShifts.reduce((acc, s) => {
-          const out = s.clockOut ?? now;
-          return acc + Math.max(0, out - s.clockIn);
-        }, 0);
-
-        // AUX breakdown (cap open AUX at now)
+        const shiftMs = myShifts.reduce((acc, s) => acc + Math.max(0, (s.clockOut ?? now) - s.clockIn), 0);
         const auxByType: Record<string, number> = {};
         for (const log of myAux) {
-          const end = log.endTime ?? now;
-          const durMs = log.durationMs ?? Math.max(0, end - log.startTime);
+          const durMs = log.durationMs ?? Math.max(0, (log.endTime ?? now) - log.startTime);
           auxByType[log.auxType] = (auxByType[log.auxType] ?? 0) + durMs;
         }
-
         const totalAuxMs = Object.values(auxByType).reduce((a, b) => a + b, 0);
         const productiveMs = Math.max(0, shiftMs - totalAuxMs);
-
-        const dailyHrs = parseDailyHours(agent.shiftHours);
-        const workingDays = countWorkingDays(input.from, input.to, agent.offDay1, agent.offDay2);
-        const scheduledHrs = Math.round(dailyHrs * workingDays * 100) / 100;
-
-        // Convert all AUX to minutes rounded to 2dp
+        const scheduledHrs = Math.round(parseDailyHours(agent.shiftHours) * countWorkingDays(input.from, input.to, agent.offDay1, agent.offDay2) * 100) / 100;
         const auxMinutes: Record<string, number> = {};
-        for (const [type, ms] of Object.entries(auxByType)) {
-          auxMinutes[type] = Math.round((ms / 60000) * 100) / 100;
-        }
-
+        for (const [type, ms] of Object.entries(auxByType)) auxMinutes[type] = Math.round((ms / 60000) * 100) / 100;
         return {
-          traineeCode: agent.traineeCode,
-          name: agent.fullName,
-          scheduledHrs,
+          traineeCode: agent.traineeCode, name: agent.fullName, scheduledHrs,
           workedHrs: Math.round((productiveMs / 3600000) * 100) / 100,
           shiftHrs: Math.round((shiftMs / 3600000) * 100) / 100,
-          auxMinutes, // { break: N, lunch: N, system_down: N, … }
+          auxMinutes,
         };
       });
     }),
@@ -8368,7 +8451,7 @@ export const appRouter = router({
   breakSchedule: breakScheduleRouter,
   separation: separationRouter,
   auditLog: router({
-    list: protectedProcedure
+    list: adminProcedure
       .input(z.object({ limit: z.number().int().min(1).max(200).default(100), action: z.string().optional() }))
       .query(async ({ input }) => {
         const { getDb } = await import("./db");
@@ -8381,7 +8464,7 @@ export const appRouter = router({
       }),
   }),
   slack: router({
-    sendReminders: protectedProcedure
+    sendReminders: staffProcedure
       .input(z.object({ type: z.enum(["incomplete_profile", "missing_payment_prefs"]) }))
       .mutation(async ({ ctx, input }) => {
         const { ENV } = await import("./_core/env");
