@@ -19,16 +19,18 @@ interface InterviewNotificationParams {
  * Sends an interview scheduling notification email to the recruiter.
  * Uses the built-in Forge notification API.
  */
+/** Escape user-controlled text before it is interpolated into HTML email. */
+function esc(v: unknown): string {
+  return String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+}
+
 export async function sendInterviewNotification(params: InterviewNotificationParams): Promise<void> {
-  const {
-    recruiterEmail,
-    recruiterName = "Recruiter",
-    candidateName,
-    scheduledAt,
-    location,
-    interviewerName,
-    notes,
-  } = params;
+  const { recruiterEmail, scheduledAt } = params;
+  const recruiterName = esc(params.recruiterName || "Recruiter");
+  const candidateName = esc(params.candidateName);
+  const location = params.location ? esc(params.location) : params.location;
+  const interviewerName = params.interviewerName ? esc(params.interviewerName) : params.interviewerName;
+  const notes = params.notes ? esc(params.notes) : params.notes;
 
   const scheduledDate = new Date(scheduledAt);
   const formattedDate = scheduledDate.toLocaleDateString("en-US", {

@@ -7,6 +7,12 @@ import { registerOAuthRoutes } from "./oauth";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
+import { resolveAgentSession } from "./agentAuth";
+import { sdk } from "./sdk";
+import { ENV } from "./env";
+import { createHmac, timingSafeEqual, randomBytes } from "crypto";
+import { cycleKeyFor } from "./time";
+import { toDecimalHours, normalizeOtType, round2 } from "../../shared/hours";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -200,9 +206,45 @@ const checkLeaveEligibility = async () => {
 checkLeaveEligibility();
 setInterval(checkLeaveEligibility, 24 * 60 * 60 * 1000).unref(); // daily
 
+/**
+ * Are we behind a reverse proxy we trust to set X-Forwarded-*?
+ * Production always runs behind the host's proxy, so default ON there (every request would
+ * otherwise share the proxy's IP and the 300 req/min limit would throttle the whole company).
+ * Set TRUST_PROXY=false to disable, or TRUST_PROXY=true to force it on in dev.
+ */
+const TRUST_PROXY = process.env.TRUST_PROXY
+  ? ["true", "1", "yes"].includes(process.env.TRUST_PROXY.toLowerCase())
+  : process.env.NODE_ENV === "production";
+
+/** Client IP for rate limiting — Express's req.ip honours `trust proxy` (first hop only, not any spoofed header). */
+function clientIp(req: express.Request): string {
+  if (TRUST_PROXY) return req.ip ?? req.socket.remoteAddress ?? "unknown";
+  return req.socket.remoteAddress ?? "unknown";
+}
+
+/** Sign/verify OAuth `state` so the callback can't be driven by a forged state. */
+function signState(obj: Record<string, string>): string {
+  const payload = Buffer.from(JSON.stringify(obj)).toString("base64url");
+  const sig = createHmac("sha256", ENV.cookieSecret).update(payload).digest("base64url");
+  return `${payload}.${sig}`;
+}
+function verifyState(raw: string | undefined): Record<string, string> | null {
+  if (!raw || !raw.includes(".")) return null;
+  const [payload, sig] = raw.split(".", 2);
+  const mine = createHmac("sha256", ENV.cookieSecret).update(payload!).digest("base64url");
+  try { if (!timingSafeEqual(Buffer.from(mine), Buffer.from(sig!))) return null; } catch { return null; }
+  try { return JSON.parse(Buffer.from(payload!, "base64url").toString()) as Record<string, string>; } catch { return null; }
+}
+function isAllowedOrigin(origin: string): boolean {
+  const allowed = (process.env.ALLOWED_ORIGIN ?? "https://hub.tanis-eg.com").split(",").map(o => o.trim()).filter(Boolean);
+  if (process.env.NODE_ENV !== "production") return true;
+  return allowed.includes(origin);
+}
+
 async function startServer() {
   const app = express();
   const server = createServer(app);
+  if (TRUST_PROXY) app.set("trust proxy", 1);
 
   // ── CORS — restrict to hub domain in production ──
   app.use((req, res, next) => {
@@ -233,7 +275,7 @@ async function startServer() {
 
   // ── Global rate limit: 300 req/min per IP (stops scrapers & brute-force) ──
   app.use((req, res, next) => {
-    const ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ?? req.socket.remoteAddress ?? "unknown";
+    const ip = clientIp(req);
     if (rateLimit(`global:${ip}`, 300)) {
       res.status(429).json({ error: "Too many requests — please slow down." });
       return;
@@ -242,10 +284,13 @@ async function startServer() {
   });
 
   // ── Strict rate limit on auth endpoints (10 attempts/min per IP) ──
-  const AUTH_PATHS = ["/api/oauth", "/api/trpc/agent.login", "/api/trpc/adminAuth"];
+  // Matched against the full path INCLUDING batched procedure lists ("/api/trpc/a.b,agent.login").
+  const AUTH_PROCS = ["agent.login", "adminAuth.login", "adminAuth.acceptInvite", "invites.use", "agent.resetPassword"];
   app.use((req, res, next) => {
-    const ip = (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ?? req.socket.remoteAddress ?? "unknown";
-    if (AUTH_PATHS.some(p => req.path.startsWith(p)) && rateLimit(`auth:${ip}`, 10)) {
+    const ip = clientIp(req);
+    const isAuth = req.path.startsWith("/api/oauth") || req.path === "/api/check-agent-creds" ||
+      (req.path.startsWith("/api/trpc/") && req.path.slice("/api/trpc/".length).split(",").some(p => AUTH_PROCS.includes(p)));
+    if (isAuth && rateLimit(`auth:${ip}`, 10)) {
       res.status(429).json({ error: "Too many login attempts — try again in a minute." });
       return;
     }
@@ -276,6 +321,12 @@ async function startServer() {
     // File upload endpoint for agent documents
   app.post("/api/upload-doc", async (req, res) => {
     try {
+      // Auth: a live agent session OR a staff login. Anonymous uploads are refused.
+      const agent = await resolveAgentSession(req);
+      let staff = null;
+      if (!agent) { try { staff = await sdk.authenticateRequest(req); } catch { staff = null; } }
+      if (!agent && !staff) { res.status(401).json({ error: "Login required" }); return; }
+      const ownerKey = agent ? agent.traineeCode : `staff-${staff?.openId ?? "unknown"}`;
       const busboy = (await import("busboy")).default;
       const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
       const ALLOWED_TYPES = new Set(["image/jpeg", "image/jpg", "image/png", "image/webp", "application/pdf", "image/gif"]);
@@ -298,8 +349,19 @@ async function startServer() {
           if (fileTooLarge) { res.status(413).json({ error: "File too large. Maximum size is 5MB." }); return; }
           const { storagePut } = await import("../storage");
           const buf = Buffer.concat(chunks);
-          const ext = fileName.split(".").pop() ?? "bin";
-          const key = `agent-docs/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+          // Never trust the client's MIME: sniff the magic bytes.
+          const sniffed = buf.subarray(0, 4).toString("hex");
+          const magicOk =
+            (mimeType.startsWith("image/jpeg") || mimeType === "image/jpg") ? sniffed.startsWith("ffd8ff") :
+            mimeType === "image/png"  ? sniffed === "89504e47" :
+            mimeType === "image/gif"  ? sniffed.startsWith("474946") :
+            mimeType === "image/webp" ? buf.subarray(0, 4).toString("ascii") === "RIFF" && buf.subarray(8, 12).toString("ascii") === "WEBP" :
+            mimeType === "application/pdf" ? buf.subarray(0, 5).toString("ascii") === "%PDF-" : false;
+          if (!magicOk) { res.status(415).json({ error: "File content does not match its type." }); return; }
+          const EXT: Record<string, string> = { "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif", "application/pdf": "pdf" };
+          const ext = EXT[mimeType.toLowerCase()] ?? "bin";
+          const safeOwner = ownerKey.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 64);
+          const key = `agent-docs/${safeOwner}/${Date.now()}-${randomBytes(6).toString("hex")}.${ext}`;
           const { url } = await storagePut(key, buf, mimeType);
           res.json({ url, key });
         } catch (err) {
@@ -314,7 +376,7 @@ async function startServer() {
   });
 
   // Google OAuth initiate route
-  app.get("/api/oauth/google", (req, res) => {
+  app.get("/api/oauth/google", async (req, res) => {
     // Get frontend origin from query param (passed by frontend)
     const origin = (req.query.origin as string) || "";
     const incomingState = req.query.state as string | undefined;
@@ -324,11 +386,16 @@ async function startServer() {
       "https://www.googleapis.com/auth/userinfo.email",
     ].join(" ");
     // Preserve userId from frontend state if provided, otherwise build fresh state
-    let stateObj: Record<string, string> = { origin };
+    if (!origin || !isAllowedOrigin(origin)) { res.status(400).send("Origin not allowed"); return; }
+    // The connecting user must be logged in; the token is bound to THEIR id, never one from the URL.
+    let me: { openId?: string } | null = null;
+    try { me = await sdk.authenticateRequest(req); } catch { me = null; }
+    if (!me?.openId) { res.status(401).send("Login required"); return; }
+    let stateObj: Record<string, string> = { origin, userId: me.openId, nonce: randomBytes(8).toString("hex") };
     if (incomingState) {
-      try { stateObj = { ...JSON.parse(Buffer.from(incomingState, "base64").toString()), origin }; } catch (e) { console.warn("[OAuth] Invalid state param:", e instanceof Error ? e.message : e); }
+      try { const extra = JSON.parse(Buffer.from(incomingState, "base64").toString()) as Record<string, string>; delete extra.userId; stateObj = { ...extra, ...stateObj }; } catch { /* ignore client extras */ }
     }
-    const state = Buffer.from(JSON.stringify(stateObj)).toString("base64");
+    const state = signState(stateObj);
     const authUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
     authUrl.searchParams.set("client_id", process.env.GOOGLE_CLIENT_ID ?? "");
     authUrl.searchParams.set("redirect_uri", redirectUri);
@@ -346,12 +413,9 @@ async function startServer() {
       const code = req.query.code as string;
       const stateRaw = req.query.state as string;
       if (!code) { res.status(400).send("Missing code"); return; }
-      let origin = "";
-      let stateParam: Record<string, string> = {};
-      try {
-        stateParam = JSON.parse(Buffer.from(stateRaw, "base64").toString());
-        origin = stateParam.origin ?? "";
-      } catch (e) { console.warn("[OAuth callback] Token verification failed:", e instanceof Error ? e.message : e); }
+      const stateParam = verifyState(stateRaw);
+      if (!stateParam || !stateParam.origin || !isAllowedOrigin(stateParam.origin) || !stateParam.userId) { res.status(400).send("Invalid or expired OAuth state"); return; }
+      const origin = stateParam.origin;
       const redirectUri = `${origin}/api/oauth/google/callback`;
 
       // Exchange code for tokens
@@ -380,7 +444,7 @@ async function startServer() {
         const { sql } = await import("drizzle-orm");
         const now = Date.now();
         // Extract userId from state param (passed in OAuth initiation URL)
-        const userId = stateParam?.userId ?? null;
+        const userId = stateParam.userId;
         await db.execute(sql`
           INSERT INTO integrations_tokens (provider, userId, access_token, refresh_token, expires_at, scope, created_at, updated_at)
           VALUES ('google', ${userId}, ${tokenData.access_token}, ${tokenData.refresh_token ?? null}, ${now + (tokenData.expires_in ?? 3600) * 1000}, ${tokenData.scope ?? null}, ${now}, ${now})
@@ -402,16 +466,21 @@ async function startServer() {
   });
 
   // ─── Microsoft OAuth ──────────────────────────────────────────────────────
-  app.get("/api/oauth/microsoft", (req, res) => {
+  app.get("/api/oauth/microsoft", async (req, res) => {
     const origin = (req.query.origin as string) || "";
     const incomingState = req.query.state as string | undefined;
     const tenantId = process.env.MICROSOFT_TENANT_ID ?? "common";
     const redirectUri = `${origin}/api/oauth/microsoft/callback`;
-    let stateObj: Record<string, string> = { origin };
+    if (!origin || !isAllowedOrigin(origin)) { res.status(400).send("Origin not allowed"); return; }
+    // The connecting user must be logged in; the token is bound to THEIR id, never one from the URL.
+    let me: { openId?: string } | null = null;
+    try { me = await sdk.authenticateRequest(req); } catch { me = null; }
+    if (!me?.openId) { res.status(401).send("Login required"); return; }
+    let stateObj: Record<string, string> = { origin, userId: me.openId, nonce: randomBytes(8).toString("hex") };
     if (incomingState) {
-      try { stateObj = { ...JSON.parse(Buffer.from(incomingState, "base64").toString()), origin }; } catch (e) { console.warn("[OAuth] Invalid state param:", e instanceof Error ? e.message : e); }
+      try { const extra = JSON.parse(Buffer.from(incomingState, "base64").toString()) as Record<string, string>; delete extra.userId; stateObj = { ...extra, ...stateObj }; } catch { /* ignore client extras */ }
     }
-    const state = Buffer.from(JSON.stringify(stateObj)).toString("base64");
+    const state = signState(stateObj);
     const authUrl = new URL(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize`);
     authUrl.searchParams.set("client_id", process.env.MICROSOFT_CLIENT_ID ?? "");
     authUrl.searchParams.set("redirect_uri", redirectUri);
@@ -427,12 +496,9 @@ async function startServer() {
       const code = req.query.code as string;
       const stateRaw = req.query.state as string;
       if (!code) { res.status(400).send("Missing code"); return; }
-      let origin = "";
-      let stateParam: Record<string, string> = {};
-      try {
-        stateParam = JSON.parse(Buffer.from(stateRaw, "base64").toString());
-        origin = stateParam.origin ?? "";
-      } catch (e) { console.warn("[OAuth callback] Token verification failed:", e instanceof Error ? e.message : e); }
+      const stateParam = verifyState(stateRaw);
+      if (!stateParam || !stateParam.origin || !isAllowedOrigin(stateParam.origin) || !stateParam.userId) { res.status(400).send("Invalid or expired OAuth state"); return; }
+      const origin = stateParam.origin;
       const tenantId = process.env.MICROSOFT_TENANT_ID ?? "common";
       const redirectUri = `${origin}/api/oauth/microsoft/callback`;
 
@@ -462,7 +528,7 @@ async function startServer() {
         const { integrationsTokens } = await import("../../drizzle/schema");
         const { sql } = await import("drizzle-orm");
         const now = Date.now();
-        const userId = stateParam?.userId ?? null;
+        const userId = stateParam.userId;
         await db.execute(sql`
           INSERT INTO integrations_tokens (provider, userId, access_token, refresh_token, expires_at, scope, created_at, updated_at)
           VALUES ('microsoft', ${userId}, ${tokenData.access_token}, ${tokenData.refresh_token ?? null}, ${now + (tokenData.expires_in ?? 3600) * 1000}, ${tokenData.scope ?? null}, ${now}, ${now})
@@ -503,6 +569,10 @@ async function startServer() {
 
   // ─── Agent credential check (FormerAgents restore flow) ─────────────────
   app.get("/api/check-agent-creds", async (req, res) => {
+    // Staff only — otherwise this enumerates valid trainee codes.
+    let me: { role?: string } | null = null;
+    try { me = await sdk.authenticateRequest(req); } catch { me = null; }
+    if (!me || me.role === "user" || me.role === "viewer") { res.status(401).json({ hasCredentials: false, error: "Login required" }); return; }
     const code = req.query.code as string;
     if (!code) { res.json({ hasCredentials: false }); return; }
     try {
@@ -543,12 +613,17 @@ async function startServer() {
       const now = Date.now();
       const s = (v: unknown) => (v === undefined || v === null ? "" : String(v).trim());
       const n = (v: unknown) => { const x = Number(String(v ?? "").replace(/,/g, "")); return isNaN(x) ? 0 : x; };
-      const mon = (d: string) => d.slice(0, 7);
+      // Hours: "8:48" / 8.8 / "8h 48m" all accepted; anything else REJECTS the row (never 0).
+      const hrs = (v: unknown): number | null => { const h = toDecimalHours(v); return h == null ? null : round2(h); };
+      // Pay cycle = 26th→25th (same rule as the UI). OT on the 26th–31st lands in the NEXT cycle, not the calendar month.
+      const mon = (d: string) => cycleKeyFor(d);
       let inserted = 0, skipped = 0, invalid = 0;
-      for (const r of rows) {
+      const rejected: Array<{ row: number; reason: string }> = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
         const crdts = s(r.crdts).replace(/\.0+$/, "");
         const date = s(r.date);
-        if (!crdts || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { invalid++; continue; }
+        if (!crdts || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { invalid++; rejected.push({ row: i + 1, reason: "missing CRDTS or bad date" }); continue; }
         if (kind === "adherence" || kind === "quality") {
           const category = kind === "quality" ? "quality" : "attendance";
           const type = s(r.type) || "Other";
@@ -568,11 +643,13 @@ async function startServer() {
           if (s(r.loggedBy)) bits.push(`logged by ${s(r.loggedBy)}`);
           if (s(r.recording)) bits.push(`recording: ${s(r.recording)}`);
           const st = s(r.status).toLowerCase();
+          const vHours = hrs(r.hours);
+          if (vHours == null) { invalid++; rejected.push({ row: i + 1, reason: `unreadable hours "${s(r.hours)}"` }); continue; }
           try {
             await db.insert(agentViolations).values({
               crdts, agentCode: crdts,
               date, month: mon(date), type, category,
-              hours: String(n(r.hours)), deduction: String(n(r.deduction)),
+              hours: String(vHours), deduction: String(n(r.deduction)),
               description: bits.filter(Boolean).join(" · ") || null,
               status: st === "approved" ? "approved" : st === "rejected" ? "rejected" : "pending",
               approvedBy: s(r.approvedBy) || null,
@@ -587,7 +664,10 @@ async function startServer() {
             else throw insertErr;
           }
         } else if (kind === "ot") {
-          const otType = s(r.otType) || "1.5x";
+          const otType = normalizeOtType(r.otType);
+          if (!otType) { invalid++; rejected.push({ row: i + 1, reason: `OT type "${s(r.otType)}" must be 1.5x, 2x or 3x` }); continue; }
+          const otHours = hrs(r.hours);
+          if (otHours == null || otHours <= 0 || otHours > 16) { invalid++; rejected.push({ row: i + 1, reason: `unreadable or out-of-range OT hours "${s(r.hours)}"` }); continue; }
           const existing = await db.select().from(cycleOT).where(and(
             eq(cycleOT.crdts, crdts),
             eq(cycleOT.date, date),
@@ -597,7 +677,7 @@ async function startServer() {
           await db.insert(cycleOT).values({
             crdts, agentCode: crdts, alias: s(r.alias) || null,
             date, cycleKey: mon(date), otType,
-            hours: String(n(r.hours)), egpAmount: String(n(r.egp)),
+            hours: String(otHours), egpAmount: String(n(r.egp)),
             uploadedAt: now,
           });
           inserted++;
@@ -609,11 +689,13 @@ async function startServer() {
           )).limit(1);
           if (existing.length) { skipped++; continue; }
           const st = s(r.status).toLowerCase();
+          const cHours = hrs(r.hours);
+          if (cHours == null) { invalid++; rejected.push({ row: i + 1, reason: `unreadable coaching hours "${s(r.hours)}"` }); continue; }
           await db.insert(coachingSessions).values({
             crdts, agentCode: crdts, alias: s(r.alias) || null,
             sessionDate: date, cycleKey: mon(date),
             sessionType: topic,
-            coachingHours: String(n(r.hours)), bonusAmount: String(n(r.egp)),
+            coachingHours: String(cHours), bonusAmount: String(n(r.egp)),
             notes: s(r.notes) || null,
             status: st === "approved" ? "approved" : st === "rejected" ? "rejected" : "pending",
             uploadedAt: now,
@@ -621,7 +703,7 @@ async function startServer() {
           inserted++;
         }
       }
-      res.json({ ok: true, kind, received: rows.length, inserted, skipped, invalid });
+      res.json({ ok: true, kind, received: rows.length, inserted, skipped, invalid, rejected: rejected.slice(0, 50) });
     } catch (err) {
       console.error("[/api/upload/logs] error:", err);
       res.status(500).json({ error: err instanceof Error ? err.message : "Upload failed" });
@@ -677,16 +759,7 @@ async function startServer() {
         if (m) return `${m[3]}-${String(+m[2]).padStart(2, "0")}-${String(+m[1]).padStart(2, "0")}`;
         throw new Error(`Invalid date: ${raw}`);
       };
-      // Cycle runs 26th→25th, named after the END month. Pure string math on ISO.
-      const getCycleKey = (iso: string): string => {
-        const [y, mo, da] = iso.split("-").map(Number);
-        if (da >= 26) {
-          const ny = mo === 12 ? y + 1 : y;
-          const nm = mo === 12 ? 1 : mo + 1;
-          return `${ny}-${String(nm).padStart(2, "0")}`;
-        }
-        return `${y}-${String(mo).padStart(2, "0")}`;
-      };
+      const getCycleKey = (iso: string): string => cycleKeyFor(iso);
       const rows = body.map((r: Record<string, unknown>, i: number) => {
         const crdts = String(r["CRDTS"] ?? r["crdts"] ?? "").trim();
         const dateRaw = String(r["Date"] ?? r["date"] ?? "").trim();
@@ -698,7 +771,11 @@ async function startServer() {
           alias: String(r["Alias"] ?? r["alias"] ?? "").trim() || undefined,
           date,
           cycleKey: getCycleKey(date),
-          loginHours: parseFloat(String(r["Login Hours"] ?? r["loginHours"] ?? 0)) || 0,
+          loginHours: (() => {
+            const h = toDecimalHours(r["Login Hours"] ?? r["loginHours"] ?? 0);
+            if (h == null || h > 24) throw new Error(`Row ${i + 1}: unreadable Login Hours "${String(r["Login Hours"] ?? r["loginHours"])}"`);
+            return round2(h);
+          })(),
           totalCalls: parseInt(String(r["Total Calls"] ?? r["totalCalls"] ?? 0), 10) || 0,
           revenue: parseFloat(String(r["Revenue"] ?? r["revenue"] ?? 0)) || 0,
           cost: parseFloat(String(r["Cost"] ?? r["cost"] ?? 0)) || 0,
@@ -763,7 +840,7 @@ async function startServer() {
           crdts,
           alias: String(r["Alias"] ?? r["alias"] ?? "").trim() || undefined,
           date,
-          cycleKey: date.slice(0, 7),         // YYYY-MM (calendar month)
+          cycleKey: cycleKeyFor(date),        // 26th→25th pay cycle (same rule everywhere)
         });
       }
       if (rows.length === 0) { res.status(400).json({ error: "No valid logout rows" }); return; }
@@ -832,7 +909,7 @@ async function startServer() {
           score: numStr(r["Score"] ?? r["score"] ?? r["TOTAL"]),
           deductionEgp: numStr(r["EGP"] ?? r["egp"] ?? r["deductionEgp"]),
           hours: numStr(r["Hours"] ?? r["hours"]),
-          cycleKey: date.slice(0, 7),
+          cycleKey: cycleKeyFor(date),
         });
       }
       if (rows.length === 0) { res.status(400).json({ error: "No valid quality rows" }); return; }
@@ -974,7 +1051,13 @@ async function startServer() {
 
       // 2) Verify the request genuinely came from Slack (only if a signing secret is set)
       const signingSecret = process.env.SLACK_SIGNING_SECRET;
-      if (signingSecret) {
+      if (!signingSecret) {
+        // Fail closed: without a signing secret anyone could POST fake reaction events and flip request statuses.
+        console.warn("[slack] SLACK_SIGNING_SECRET is not set — rejecting event");
+        res.status(503).send("slack signing secret not configured");
+        return;
+      }
+      {
         const ts = req.headers["x-slack-request-timestamp"] as string | undefined;
         const sig = req.headers["x-slack-signature"] as string | undefined;
         const raw = (req as unknown as { rawBody?: Buffer }).rawBody;
@@ -1037,6 +1120,26 @@ async function startServer() {
     }
   });
 
+  // ── CSRF: reject cross-origin state-changing requests ──────────────────────
+  // Mounted BEFORE the tRPC handler so it actually runs. GET (queries) pass;
+  // POST (mutations) must come from our own origin.
+  app.use("/api/trpc", (req, res, next) => {
+    if (req.method === "GET") return next(); // queries are safe
+    const origin = req.headers["origin"] as string | undefined;
+    if (!origin) return next(); // same-origin fetches may omit Origin; cookies are SameSite anyway
+    // Behind the proxy the Host header is the upstream (e.g. localhost:3000) — compare against the
+    // host the browser actually used, and always accept the configured public origin(s).
+    const fwdHost = TRUST_PROXY ? (req.headers["x-forwarded-host"] as string | undefined)?.split(",")[0]?.trim() : undefined;
+    const host = fwdHost || (req.headers["host"] as string | undefined);
+    try {
+      const originHost = new URL(origin).host;
+      if (originHost === host || isAllowedOrigin(origin)) return next();
+    } catch {
+      res.status(403).json({ error: "Invalid origin." });
+      return;
+    }
+    res.status(403).json({ error: "Cross-origin request rejected." });
+  });
   // tRPC API
   app.use(
     "/api/trpc",
@@ -1056,27 +1159,6 @@ async function startServer() {
     })
   );
 
-  // ── CSRF: reject cross-origin state-changing requests ──────────────────────
-  // Runs after tRPC so reads/queries still work from anywhere, but mutations
-  // from foreign origins are blocked.
-  app.use("/api/trpc", (req, res, next) => {
-    if (req.method === "GET") return next(); // queries are safe
-    const origin = req.headers["origin"] as string | undefined;
-    const host = req.headers["host"] as string | undefined;
-    if (origin && host) {
-      try {
-        const originHost = new URL(origin).host;
-        if (originHost !== host) {
-          res.status(403).json({ error: "Cross-origin request rejected." });
-          return;
-        }
-      } catch {
-        res.status(403).json({ error: "Invalid origin." });
-        return;
-      }
-    }
-    next();
-  });
   // development mode uses Vite, production mode uses static files
   if (process.env.NODE_ENV === "development") {
     await setupVite(app, server);

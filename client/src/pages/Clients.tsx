@@ -16,6 +16,7 @@ type Client = {
   shortCode: string;
   colorHex: string;
   isActive: boolean;
+  timeTrackingEnabled?: boolean;
 };
 
 type Campaign = {
@@ -242,12 +243,17 @@ export default function Clients() {
                   onChange={e => setEditing(prev => prev ? { ...prev, isActive: e.target.checked } : prev)} />
                 <label htmlFor="isActive" className="text-sm">Active</label>
               </div>
+              <div className="flex items-center gap-2 pt-1">
+                <input type="checkbox" id="timeTrackingEnabled" checked={!!editing.timeTrackingEnabled}
+                  onChange={e => setEditing(prev => prev ? { ...prev, timeTrackingEnabled: e.target.checked } : prev)} />
+                <label htmlFor="timeTrackingEnabled" className="text-sm">Time tracking (clock-in, AUX, PTO) for this client's agents</label>
+              </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
               <Button
                 disabled={!form.name || !form.shortCode || updateMut.isPending}
-                onClick={() => updateMut.mutate({ id: editing.id, ...form, isActive: editing.isActive })}>
+                onClick={() => updateMut.mutate({ id: editing.id, ...form, isActive: editing.isActive, timeTrackingEnabled: !!editing.timeTrackingEnabled })}>
                 {updateMut.isPending ? "Saving…" : "Save Changes"}
               </Button>
             </DialogFooter>

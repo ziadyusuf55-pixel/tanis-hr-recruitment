@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { AuxType } from "@shared/const";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,11 +48,13 @@ type PtoReq = {
 
 export default function TimeTrackerPage() {
   const utils = trpc.useUtils();
-  const today = new Date().toISOString().slice(0, 10);
+  // The agent's LOCAL day — never the UTC day (which rolls at 02:00/03:00 Cairo).
+  const d0 = new Date();
+  const today = `${d0.getFullYear()}-${String(d0.getMonth() + 1).padStart(2, "0")}-${String(d0.getDate()).padStart(2, "0")}`;
 
   const { data: access, isLoading: accessLoading } = trpc.timeTracking.checkAccess.useQuery();
-  const { data: auxLogs = [], refetch: refetchAux } = trpc.timeTracking.myAuxLogs.useQuery();
-  const { data: todayShift, refetch: refetchShift } = trpc.timeTracking.myShiftToday.useQuery();
+  const { data: auxLogs = [], refetch: refetchAux } = trpc.timeTracking.myAuxLogs.useQuery({ date: today }, { refetchInterval: 30000 });
+  const { data: todayShift, refetch: refetchShift } = trpc.timeTracking.myShiftToday.useQuery({ date: today }, { refetchInterval: 30000 });
   const [auxType, setAuxType] = useState("break");
 
   const clockIn = trpc.timeTracking.clockIn.useMutation({
@@ -107,7 +110,7 @@ export default function TimeTrackerPage() {
   });
 
   const logs = auxLogs as AuxLog[];
-  const currentActive = logs.find(l => !l.endTime);
+  const currentActive = [...logs].filter(l => !l.endTime).sort((a, b) => b.startTime - a.startTime)[0];
 
   function fmtDuration(startMs: number, endMs?: number | null) {
     const dur = (endMs ?? Date.now()) - startMs;
@@ -236,7 +239,7 @@ export default function TimeTrackerPage() {
               <Button
                 className="w-full"
                 variant="outline"
-                onClick={() => endAux.mutate()}
+                onClick={() => endAux.mutate({ id: currentActive?.id })}
                 disabled={endAux.isPending}
               >
                 End {currentActive.auxType.replace(/_/g, " ")}
@@ -253,7 +256,7 @@ export default function TimeTrackerPage() {
                 </SelectContent>
               </Select>
               <Button
-                onClick={() => startAux.mutate({ auxType })}
+                onClick={() => startAux.mutate({ auxType: auxType as AuxType })}
                 disabled={startAux.isPending || !isClockedIn}
                 title={!isClockedIn ? "Clock in before starting AUX" : undefined}
               >

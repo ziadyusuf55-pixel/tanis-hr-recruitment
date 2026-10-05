@@ -114,8 +114,9 @@ export default function AgentProfilePage() {
     setTransferDialog(true);
   }
 
-  const transferTargetClient = (allClients as Array<{ id: number; name: string }>).find(c => c.id === transferClientId);
-  const isTransferTargetQuantum = transferTargetClient?.name.toLowerCase().includes("quantum") ?? false;
+  const transferTargetClient = (allClients as Array<{ id: number; name: string; timeTrackingEnabled?: boolean }>).find(c => c.id === transferClientId);
+  // Feature-flag driven (clients.timeTrackingEnabled); name match kept only as a fallback for stale caches.
+  const isTransferTargetQuantum = transferTargetClient?.timeTrackingEnabled ?? transferTargetClient?.name.toLowerCase().includes("quantum") ?? false;
   const campaignsForClient = (campaigns as Array<{ id: number; name: string; clientId: number | null; clientName: string | null }>)
     .filter(c => c.clientId === transferClientId);
 

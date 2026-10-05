@@ -118,7 +118,7 @@ export default function ClientDashboardPage() {
     month: string;
   };
 
-  const isQuantum = client.name.toLowerCase().includes("quantum");
+  const isQuantum = (client as { timeTrackingEnabled?: boolean }).timeTrackingEnabled ?? client.name.toLowerCase().includes("quantum");
   // Filter to only truly active-status agents (backend returns inactive/nesting too)
   const activeAgents = _rawActiveAgents.filter(a => a.agentStatus === "active");
 

@@ -8,6 +8,8 @@ import { Upload, Download, ChevronDown, ChevronUp, FileSpreadsheet, CheckCircle2
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
+import { toDecimalHours, round2 } from "@shared/hours";
+import { finalPay, sumAdjustments } from "@shared/pay";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -314,19 +316,34 @@ export default function PayrollPage() {
         const sheetName = wb.SheetNames.find(n => n.toLowerCase() === "payroll") ?? wb.SheetNames[0];
         const ws = wb.Sheets[sheetName];
         const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null });
+        const fmtRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: null, raw: false });
 
         if (raw.length === 0) { setParseError("The file appears to be empty."); return; }
 
         const norm = (k: string) => k.toLowerCase().replace(/[\s()%_-]/g, "");
-        const rows: ParsedRow[] = raw.map((r) => {
+        const rejects: string[] = [];
+        const rows: ParsedRow[] = raw.map((r, i) => {
+          const fr = fmtRows[i] ?? {};
           const get = (key: string) => {
             const found = Object.keys(r).find(k => norm(k) === norm(key));
             return found ? r[found] : null;
           };
+          const getFmt = (key: string) => {
+            const found = Object.keys(fr).find(k => norm(k) === norm(key));
+            return found ? fr[found] : null;
+          };
           const num = (v: unknown): number | undefined => {
             if (v == null || v === "") return undefined;
-            const n = Number(v);
+            const n = Number(String(v).replace(/,/g, ""));
             return isNaN(n) ? undefined : n;
+          };
+          // Hours: "166:48", 166.8, time-cells — all handled. Unreadable → row rejected (never silently dropped).
+          const hrs = (key: string): number | undefined => {
+            const v = get(key);
+            if (v == null || v === "") return undefined;
+            const h = toDecimalHours(v, getFmt(key));
+            if (h == null) { rejects.push(`row ${i + 2} (${String(get("CRDTS") ?? "")}): unreadable ${key} "${v}"`); return undefined; }
+            return round2(h);
           };
           return {
             crdts: String(get("CRDTS") ?? "").trim(),
@@ -334,13 +351,13 @@ export default function PayrollPage() {
             agentCode: (String(get("Agent Code") ?? "").trim() || String(get("CRDTS") ?? "").trim()),
             // If alias is missing, look it up from workforce list by CRDTS
             agentName: String(get("Alias") ?? get("alias") ?? get("Agent Name") ?? get("agent name") ?? "").trim() || undefined,
-            workingHours: num(get("Working Hours")),
+            workingHours: hrs("Working Hours"),
             baseSalary: num(get("Base Salary (EGP)")),
-            ot1x5Hours: num(get("OT 1.5x Hours")),
+            ot1x5Hours: hrs("OT 1.5x Hours"),
             ot1x5Pay: num(get("OT 1.5x Pay (EGP)")),
-            ot2xHours: num(get("OT 2x Hours")),
+            ot2xHours: hrs("OT 2x Hours"),
             ot2xPay: num(get("OT 2x Pay (EGP)")),
-            ot3xHours: num(get("OT 3x Hours")),
+            ot3xHours: hrs("OT 3x Hours"),
             ot3xPay: num(get("OT 3x Pay (EGP)")),
             coachingBonus: num(get("Coaching Bonus (EGP)")),
             qualityDeductions: num(get("Quality/Attendance Deductions (EGP)")) ?? num(get("Quality Deductions (EGP)")),
@@ -352,6 +369,10 @@ export default function PayrollPage() {
           };
         }).filter(r => r.crdts !== "");
 
+        if (rejects.length > 0) {
+          setParseError(`${rejects.length} row(s) have unreadable hours — nothing was loaded. Fix the sheet and re-upload. ${rejects.slice(0, 6).join("; ")}${rejects.length > 6 ? ` … +${rejects.length - 6} more` : ""}`);
+          return;
+        }
         if (rows.length === 0) {
           setParseError("No valid rows found. Make sure the 'CRDTS' column is present.");
           return;
@@ -405,7 +426,7 @@ export default function PayrollPage() {
       "Commission (EGP)": r.commissionEgp ?? "",
       "Total Deductions (EGP)": r.totalDeductions ?? "",
       "Net Pay (EGP)": r.netPay ?? "",
-      "Total (Net + Commission) (EGP)": ((n(r.netPay) + n(r.commissionEgp)) || "").toString() || "",
+      "Final Total (Net + Commission + Adjustments) (EGP)": (finalPay(r, (r as StatusRecord).adjustments ?? []) || "").toString() || "",
       Status: r.paymentStatus ?? "pending",
       "Paid By": (r as Record<string,unknown>).paidBy as string ?? "",
       "Paid At": r.paidAt ? new Date(r.paidAt).toLocaleDateString("en-EG") : "",
@@ -439,10 +460,9 @@ export default function PayrollPage() {
       });
 
   // Net manual adjustment for a record: + bonuses − deductions.
-  const adjNet = (r: StatusRecord) => (r.adjustments ?? []).reduce(
-    (s, a) => s + (a.type === "deduction" ? -1 : 1) * (n(a.amount) || 0), 0);
-  // Final pay an agent actually receives = net pay + commission + adjustments.
-  const rowTotal = (r: StatusRecord) => n(r.netPay) + n(r.commissionEgp) + adjNet(r);
+  const adjNet = (r: StatusRecord) => sumAdjustments(r.adjustments ?? []);
+  // Final pay an agent actually receives = net pay + commission + adjustments — from the SHARED formula.
+  const rowTotal = (r: StatusRecord) => finalPay(r, r.adjustments ?? []);
   const paidCount = records.filter(r => r.paymentStatus === "paid").length;
   const pendingCount = records.length - paidCount;
   const totalNetPay = records.reduce((sum, r) => sum + rowTotal(r), 0);

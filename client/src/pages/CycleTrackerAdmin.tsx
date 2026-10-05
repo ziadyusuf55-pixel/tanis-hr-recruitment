@@ -9,12 +9,37 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Upload, BarChart2, XCircle, Zap, CheckCircle, AlertCircle, RefreshCw, Trash2, FileSpreadsheet } from "lucide-react";
 import DashboardLayout from "@/components/DashboardLayout";
 import * as XLSX from "xlsx";
+import { toDecimalHours, normalizeOtType, round2 } from "@shared/hours";
 
 // ─── Excel parser helpers ──────────────────────────────────────────────────────
 function parseNumber(v: unknown): number {
   if (v == null || v === "") return 0;
   const n = parseFloat(String(v).replace(/,/g, ""));
   return isNaN(n) ? 0 : n;
+}
+/**
+ * Read a sheet twice: raw values (numbers/dates intact) + formatted text (so a
+ * time-formatted cell shows up as "8:48" instead of 0.3667). Hours columns use
+ * the formatted text to decide whether the cell was a duration.
+ */
+function readRows(ws: XLSX.WorkSheet): { raw: Record<string, unknown>[]; fmt: Record<string, unknown>[] } {
+  return {
+    raw: XLSX.utils.sheet_to_json(ws, { defval: "" }),
+    fmt: XLSX.utils.sheet_to_json(ws, { defval: "", raw: false }),
+  };
+}
+/** Hours from a row: null means "unreadable — reject this row". */
+function hoursOf(raw: Record<string, unknown>, fmt: Record<string, unknown> | undefined, keys: string[]): number | null {
+  const k = keys.find(k => raw[k] !== undefined && raw[k] !== "");
+  if (!k) return 0;
+  const h = toDecimalHours(raw[k], fmt?.[k]);
+  return h == null ? null : round2(h);
+}
+class RowRejects {
+  list: string[] = [];
+  add(rowNo: number, who: string, why: string) { this.list.push(`row ${rowNo}${who ? ` (${who})` : ""}: ${why}`); }
+  get count() { return this.list.length; }
+  summary(max = 8) { return this.list.slice(0, max).join("; ") + (this.list.length > max ? ` … +${this.list.length - max} more` : ""); }
 }
 function parseString(v: unknown): string {
   return v == null ? "" : String(v).trim();
@@ -30,9 +55,15 @@ function parseDate(v: unknown): string {
     }
   }
   const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${String(+m[2]).padStart(2, "0")}-${String(+m[3]).padStart(2, "0")}`;
+  // Sheets here are DD/MM/YYYY (Egypt). Never let new Date() read 09/06 as September 6.
+  m = s.match(/^(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{4})/);
+  if (m) return `${m[3]}-${String(+m[2]).padStart(2, "0")}-${String(+m[1]).padStart(2, "0")}`;
   const d = new Date(s);
   if (!isNaN(d.getTime())) {
-    return d.toISOString().slice(0, 10);
+    // Build from LOCAL parts — toISOString() would shift a midnight date to the previous day.
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   }
   return s;
 }
@@ -166,19 +197,21 @@ export default function CycleTrackerAdmin() {
   // ── Per-tab parsers ──────────────────────────────────────────────────────────
 
   async function processStatsSheet(ws: XLSX.WorkSheet): Promise<TabResult> {
-    const raw: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
-    const rows = raw.map(r => ({
+    const { raw, fmt } = readRows(ws);
+    const rej = new RowRejects();
+    const rows = raw.map((r, i) => ({
       crdts: parseString(r["CRDTS"] ?? r["crdts"] ?? r["Agent Code"] ?? r["agent_code"] ?? ""),
       agentCode: parseString(r["Agent Code"] ?? r["agent_code"] ?? r["Code"] ?? ""),
       alias: parseString(r["Alias"] ?? r["alias"] ?? ""),
       date: parseDate(r["Date"] ?? r["date"] ?? ""),
-      loginHours: parseNumber(r["Login Hours"] ?? r["login_hours"] ?? r["LoginHours"] ?? 0),
+      loginHours: (() => { const h = hoursOf(r, fmt[i], ["Login Hours", "login_hours", "LoginHours"]); if (h == null || h > 24) { rej.add(i + 2, parseString(r["CRDTS"] ?? r["crdts"]), `unreadable Login Hours "${r["Login Hours"] ?? r["login_hours"] ?? r["LoginHours"]}"`); return NaN; } return h; })(),
       totalCalls: parseNumber(r["Total Calls"] ?? r["total_calls"] ?? r["TotalCalls"] ?? 0),
       revenue: parseNumber(r["Revenue"] ?? r["revenue"] ?? 0),
       cost: parseNumber(r["Cost"] ?? r["cost"] ?? 0),
       profit: parseNumber(r["Profit"] ?? r["profit"] ?? 0),
       revPerHr: parseNumber(r["Rev/Hr"] ?? r["rev_per_hr"] ?? r["RevPerHr"] ?? r["Rev Per Hr"] ?? 0),
-    })).filter(r => r.crdts && r.date);
+    })).filter(r => r.crdts && r.date && !Number.isNaN(r.loginHours));
+    if (rej.count) return { tab: TAB_NAMES.stats, status: "error", error: `${rej.count} row(s) rejected — nothing uploaded. Fix the sheet: ${rej.summary()}` };
     if (rows.length === 0) return { tab: TAB_NAMES.stats, status: "error", error: "No valid rows. Check CRDTS and Date columns." };
     const res = await uploadStatsMutation.mutateAsync({ rows });
     return { tab: TAB_NAMES.stats, status: "done", count: res.count, cycleKey: res.cycleKey };
@@ -186,6 +219,7 @@ export default function CycleTrackerAdmin() {
 
   async function processDeductionsSheet(ws: XLSX.WorkSheet): Promise<TabResult> {
     const rawRows: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" }) as unknown[][];
+    const fmtRows: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", raw: false }) as unknown[][];
     if (rawRows.length < 2) return { tab: TAB_NAMES.deductions, status: "error", error: "Sheet appears empty." };
     let headerRowIdx = 0;
     for (let i = 0; i < Math.min(rawRows.length, 10); i++) {
@@ -208,50 +242,76 @@ export default function CycleTrackerAdmin() {
       const idx = colIdx(keys);
       return idx >= 0 ? (row as unknown[])[idx] : "";
     };
-    const rows = (rawRows.slice(headerRowIdx + 1) as unknown[][]).map(row => ({
-      crdts: parseString(getVal(row, ["crdts", "agent code"])),
-      agentCode: parseString(getVal(row, ["agent code", "agent_code"])),
-      alias: parseString(getVal(row, ["alias"])),
-      date: parseDate(getVal(row, ["date"])),
-      violationType: parseString(getVal(row, ["violation type", "violationtype", "violation", "type"])),
-      hours: parseNumber(getVal(row, ["override hours", "escalation hours", "hours"])),
-      deductionAmount: parseNumber(getVal(row, ["deduction", "amount"])),
-      status: (parseString(getVal(row, ["status"]) || "approved").toLowerCase() === "rejected" ? "rejected" : "approved") as "approved" | "rejected",
-    })).filter(r => r.crdts && r.date && r.deductionAmount > 0);
+    const rej = new RowRejects();
+    const rows = (rawRows.slice(headerRowIdx + 1) as unknown[][]).map((row, i) => {
+      const fmtRow = fmtRows[headerRowIdx + 1 + i] ?? [];
+      const hRaw = getVal(row, ["override hours", "escalation hours", "hours"]);
+      const hFmt = getVal(fmtRow, ["override hours", "escalation hours", "hours"]);
+      const h = toDecimalHours(hRaw, hFmt);
+      const crdts = parseString(getVal(row, ["crdts", "agent code"]));
+      const deductionAmount = parseNumber(getVal(row, ["deduction", "amount"]));
+      if (h == null && crdts && deductionAmount > 0) rej.add(headerRowIdx + 2 + i, crdts, `unreadable hours "${hRaw}"`);
+      return {
+        crdts,
+        agentCode: parseString(getVal(row, ["agent code", "agent_code"])),
+        alias: parseString(getVal(row, ["alias"])),
+        date: parseDate(getVal(row, ["date"])),
+        violationType: parseString(getVal(row, ["violation type", "violationtype", "violation", "type"])),
+        hours: h == null ? NaN : round2(h),
+        deductionAmount,
+        status: (parseString(getVal(row, ["status"]) || "approved").toLowerCase() === "rejected" ? "rejected" : "approved") as "approved" | "rejected",
+      };
+    }).filter(r => r.crdts && r.date && r.deductionAmount > 0 && !Number.isNaN(r.hours));
+    if (rej.count) return { tab: TAB_NAMES.deductions, status: "error", error: `${rej.count} row(s) rejected — nothing uploaded. ${rej.summary()}` };
     if (rows.length === 0) return { tab: TAB_NAMES.deductions, status: "error", error: "No valid rows. Ensure CRDTS, Date, and Deduction columns are present." };
     const res = await uploadDeductionsMutation.mutateAsync({ rows });
     return { tab: TAB_NAMES.deductions, status: "done", count: res.count, cycleKey: res.cycleKey };
   }
 
   async function processOTSheet(ws: XLSX.WorkSheet): Promise<TabResult> {
-    const raw: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
-    const rows = raw.map(r => ({
-      crdts: parseString(r["CRDTS"] ?? r["crdts"] ?? r["Agent Code"] ?? ""),
-      agentCode: parseString(r["Agent Code"] ?? r["agent_code"] ?? ""),
-      alias: parseString(r["Alias"] ?? r["alias"] ?? ""),
-      date: parseDate(r["Date"] ?? r["date"] ?? ""),
-      otType: parseString(r["OT Type"] ?? r["ot_type"] ?? r["Type"] ?? r["OTType"] ?? "1.5x"),
-      hours: parseNumber(r["Hours"] ?? r["hours"] ?? 0),
-      egpAmount: parseNumber(r["EGP Amount"] ?? r["egp_amount"] ?? r["Amount"] ?? r["EGP"] ?? 0),
-    })).filter(r => r.crdts && r.date);
+    const { raw, fmt } = readRows(ws);
+    const rej = new RowRejects();
+    const rows = raw.map((r, i) => {
+      const crdts = parseString(r["CRDTS"] ?? r["crdts"] ?? r["Agent Code"] ?? "");
+      const date = parseDate(r["Date"] ?? r["date"] ?? "");
+      const otRaw = r["OT Type"] ?? r["ot_type"] ?? r["Type"] ?? r["OTType"] ?? "";
+      const otType = normalizeOtType(otRaw);
+      const h = hoursOf(r, fmt[i], ["Hours", "hours"]);
+      if (crdts && date) {
+        if (!otType) rej.add(i + 2, crdts, `OT type "${otRaw}" must be 1.5x, 2x or 3x`);
+        if (h == null || h <= 0 || h > 16) rej.add(i + 2, crdts, `unreadable or out-of-range OT hours "${r["Hours"] ?? r["hours"]}"`);
+      }
+      return {
+        crdts,
+        agentCode: parseString(r["Agent Code"] ?? r["agent_code"] ?? ""),
+        alias: parseString(r["Alias"] ?? r["alias"] ?? ""),
+        date,
+        otType: otType ?? "",
+        hours: h ?? NaN,
+        egpAmount: parseNumber(r["EGP Amount"] ?? r["egp_amount"] ?? r["Amount"] ?? r["EGP"] ?? 0),
+      };
+    }).filter(r => r.crdts && r.date && r.otType && !Number.isNaN(r.hours));
+    if (rej.count) return { tab: TAB_NAMES.ot, status: "error", error: `${rej.count} row(s) rejected — nothing uploaded. ${rej.summary()}` };
     if (rows.length === 0) return { tab: TAB_NAMES.ot, status: "error", error: "No valid rows. Check CRDTS and Date columns." };
     const res = await uploadOTMutation.mutateAsync({ rows });
     return { tab: TAB_NAMES.ot, status: "done", count: res.count, cycleKey: res.cycleKey };
   }
 
   async function processCoachingSheet(ws: XLSX.WorkSheet): Promise<TabResult> {
-    const raw: Record<string, unknown>[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
+    const { raw, fmt } = readRows(ws);
+    const rej = new RowRejects();
     const cycleKey = cycleInfo?.cycleKey ?? new Date().toISOString().slice(0, 7);
-    const sessions = raw.map(r => ({
+    const sessions = raw.map((r, i) => ({
       crdts: parseString(r["CRDTS"] ?? r["crdts"] ?? r["Agent Code"] ?? r["agent_code"] ?? ""),
       agentCode: parseString(r["Agent Code"] ?? r["agent_code"] ?? ""),
       alias: parseString(r["Alias"] ?? r["alias"] ?? ""),
       sessionDate: parseDate(r["Date"] ?? r["date"] ?? r["Session Date"] ?? ""),
-      coachingHours: parseNumber(r["Coaching Hours"] ?? r["coaching_hours"] ?? r["Hours"] ?? 0),
+      coachingHours: (() => { const h = hoursOf(r, fmt[i], ["Coaching Hours", "coaching_hours", "Hours"]); if (h == null) { rej.add(i + 2, parseString(r["CRDTS"] ?? r["crdts"]), `unreadable coaching hours`); return NaN; } return h; })(),
       bonusAmount: parseNumber(r["Bonus Amount"] ?? r["bonus_amount"] ?? r["Bonus"] ?? r["Bonus (EGP)"] ?? 0),
       sessionType: parseString(r["Session Type"] ?? r["session_type"] ?? r["Type"] ?? ""),
       notes: parseString(r["Notes"] ?? r["notes"] ?? ""),
-    })).filter(s => s.crdts && s.sessionDate);
+    })).filter(s => s.crdts && s.sessionDate && !Number.isNaN(s.coachingHours));
+    if (rej.count) return { tab: TAB_NAMES.coaching, status: "error", error: `${rej.count} row(s) rejected — nothing uploaded. ${rej.summary()}` };
     if (sessions.length === 0) return { tab: TAB_NAMES.coaching, status: "error", error: "No valid rows. Ensure CRDTS and Date columns are present." };
     const result = await uploadCoachingMutation.mutateAsync({ cycleKey, sessions });
     return { tab: TAB_NAMES.coaching, status: "done", count: result.inserted, cycleKey };

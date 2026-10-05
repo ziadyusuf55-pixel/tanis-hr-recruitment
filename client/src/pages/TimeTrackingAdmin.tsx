@@ -30,6 +30,8 @@ type ExceptionRow = {
   actualTime: string | null;
   minutesLate: number | null;
   note: string | null;
+  status?: "pending" | "reviewed";
+  reviewedBy?: string | null;
 };
 
 type AuxLogRow = {
@@ -79,6 +81,11 @@ export default function TimeTrackingAdmin() {
     { enabled: tab === "hours" }
   );
 
+  const [leaveTypeById, setLeaveTypeById] = useState<Record<number, "casual" | "annual" | "unpaid">>({});
+  const reviewException = trpc.timeTracking.reviewException.useMutation({
+    onSuccess: () => { utils.timeTracking.allExceptions.invalidate(); toast.success("Marked as reviewed"); },
+    onError: (e) => toast.error(e.message),
+  });
   const reviewPto = trpc.timeTracking.reviewPto.useMutation({
     onSuccess: () => {
       utils.timeTracking.allPtoRequests.invalidate();
@@ -162,13 +169,25 @@ export default function TimeTrackingAdmin() {
                         </TableCell>
                         <TableCell>
                           {req.status === "pending" && (
-                            <div className="flex gap-1.5">
+                            <div className="flex gap-1.5 items-center">
+                              {/* Approving deducts a balance, so HR must classify the leave first. */}
+                              <select
+                                className="h-8 rounded-md border bg-background px-2 text-xs"
+                                value={leaveTypeById[req.id] ?? ""}
+                                onChange={e => setLeaveTypeById(m => ({ ...m, [req.id]: e.target.value as "casual" | "annual" | "unpaid" }))}
+                              >
+                                <option value="">Type…</option>
+                                <option value="casual">Casual (عارضة) — deducts</option>
+                                <option value="annual">Annual (اعتيادية) — deducts</option>
+                                <option value="unpaid">Unpaid / sick — no deduction</option>
+                              </select>
                               <Button
                                 size="sm"
                                 variant="outline"
                                 className="gap-1 text-green-700 border-green-200 hover:bg-green-50"
-                                disabled={reviewPto.isPending}
-                                onClick={() => reviewPto.mutate({ id: req.id, status: "approved" })}
+                                disabled={reviewPto.isPending || !leaveTypeById[req.id]}
+                                title={!leaveTypeById[req.id] ? "Pick casual or annual first" : undefined}
+                                onClick={() => reviewPto.mutate({ id: req.id, status: "approved", leaveType: leaveTypeById[req.id] })}
                               >
                                 <CheckCircle2 className="w-3.5 h-3.5" /> Approve
                               </Button>
@@ -215,12 +234,13 @@ export default function TimeTrackingAdmin() {
                     <TableHead>Actual</TableHead>
                     <TableHead>Minutes Late</TableHead>
                     <TableHead>Note</TableHead>
+                    <TableHead>Review</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {(exceptions as ExceptionRow[]).length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={8} className="text-center text-muted-foreground py-8">
                         No exceptions for {excMonth}.
                       </TableCell>
                     </TableRow>
@@ -242,6 +262,15 @@ export default function TimeTrackingAdmin() {
                         <TableCell>{exc.minutesLate != null ? `${exc.minutesLate}m` : "—"}</TableCell>
                         <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
                           {exc.note ?? "—"}
+                        </TableCell>
+                        <TableCell>
+                          {exc.status === "reviewed" ? (
+                            <Badge variant="secondary" className="text-xs">Reviewed{exc.reviewedBy ? ` · ${exc.reviewedBy}` : ""}</Badge>
+                          ) : (
+                            <Button size="sm" variant="outline" disabled={reviewException.isPending} onClick={() => reviewException.mutate({ id: exc.id })}>
+                              <CheckCircle2 className="w-3.5 h-3.5 mr-1" /> Mark reviewed
+                            </Button>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))

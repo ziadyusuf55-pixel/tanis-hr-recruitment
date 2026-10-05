@@ -115,6 +115,8 @@ export async function promoteAgentToHub(
 
   // 5: Delete portal credentials (fully cuts portal access)
   await db.delete(agentCredentials).where(eq(agentCredentials.traineeCode, traineeCode));
+  const { invalidateAgentSessionCache } = await import("./_core/agentAuth");
+  invalidateAgentSessionCache(traineeCode);
 
   // 6: Optionally link to Hub user by email
   let hubUserFound = false;
@@ -1377,7 +1379,7 @@ export async function createClient(data: { name: string; shortCode: string; colo
   });
 }
 
-export async function updateClient(id: number, data: Partial<{ name: string; shortCode: string; colorHex: string; isActive: boolean }>) {
+export async function updateClient(id: number, data: Partial<{ name: string; shortCode: string; colorHex: string; isActive: boolean; timeTrackingEnabled: boolean }>) {
   const db = await getDb();
   if (!db) return;
   const { clients } = await import("../drizzle/schema");
@@ -1437,9 +1439,30 @@ export async function listWorkforceAgentsByClient(clientId: number, includeForme
     employeeType: workforceAgents.employeeType,
   }).from(workforceAgents)
     .innerJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
-    .where(eq(campaigns.clientId, clientId))
+    .where(and(eq(campaigns.clientId, clientId), or(isNull(workforceAgents.isDemo), eq(workforceAgents.isDemo, false))))
     .orderBy(workforceAgents.fullName);
   return _wfFilterFormer(rows, includeFormer);
+}
+
+/**
+ * Time-tracking (clock-in / AUX / PTO) is a per-CLIENT feature flag — never a
+ * substring match on the client name. Returns the agent's client and whether
+ * the feature is enabled for it.
+ */
+export async function getAgentTimeTrackingAccess(traineeCode: string): Promise<{ allowed: boolean; clientId: number | null; clientName: string | null }> {
+  const db = await getDb();
+  if (!db) return { allowed: false, clientId: null, clientName: null };
+  const { workforceAgents, campaigns, clients } = await import("../drizzle/schema");
+  const rows = await db
+    .select({ clientId: clients.id, clientName: clients.name, enabled: clients.timeTrackingEnabled, isActive: clients.isActive })
+    .from(workforceAgents)
+    .innerJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
+    .innerJoin(clients, eq(campaigns.clientId, clients.id))
+    .where(eq(workforceAgents.traineeCode, traineeCode))
+    .limit(1);
+  const r = rows[0];
+  if (!r) return { allowed: false, clientId: null, clientName: null };
+  return { allowed: !!r.enabled && !!r.isActive, clientId: r.clientId, clientName: r.clientName };
 }
 
 // ─── Workforce Agents ─────────────────────────────────────────────────────────
@@ -1885,7 +1908,11 @@ export async function upsertPaymentMethod(data: {
   const { agentPaymentMethods } = await import("../drizzle/schema");
   if (data.id) {
     const { id, ...rest } = data;
-    await db.update(agentPaymentMethods).set(rest).where(eq(agentPaymentMethods.id, id));
+    // Owner check: the row must already belong to this traineeCode (prevents overwriting another agent's bank details).
+    const r = await db.update(agentPaymentMethods).set(rest)
+      .where(and(eq(agentPaymentMethods.id, id), eq(agentPaymentMethods.traineeCode, data.traineeCode)));
+    const affected = (r as unknown as [{ affectedRows?: number }])[0]?.affectedRows;
+    if (affected === 0) throw Object.assign(new Error("Payment method not found for this agent"), { code: "FORBIDDEN" });
   } else {
     await db.insert(agentPaymentMethods).values(data);
   }
@@ -1895,11 +1922,11 @@ export async function setPaymentMethodPreferred(id: number, traineeCode: string)
   const db = await getDb();
   if (!db) return;
   const { agentPaymentMethods } = await import("../drizzle/schema");
-  // Unset all preferred for this agent, then set the chosen one
+  // Unset all preferred for this agent, then set the chosen one — only if it is theirs.
   await db.update(agentPaymentMethods).set({ isPreferred: false })
     .where(eq(agentPaymentMethods.traineeCode, traineeCode));
   await db.update(agentPaymentMethods).set({ isPreferred: true })
-    .where(eq(agentPaymentMethods.id, id));
+    .where(and(eq(agentPaymentMethods.id, id), eq(agentPaymentMethods.traineeCode, traineeCode)));
 }
 
 export async function addPaymentMethodComment(id: number, comment: string) {
@@ -1941,8 +1968,11 @@ export async function upsertAgentDocument(data: {
   if (!db) return;
   const { agentDocuments } = await import("../drizzle/schema");
   if (data.id) {
-    await db.update(agentDocuments).set({ fileUrl: data.fileUrl, fileName: data.fileName ?? null, status: "pending", adminComment: null })
-      .where(eq(agentDocuments.id, data.id));
+    // Owner check: an agent may only replace their OWN document.
+    const r = await db.update(agentDocuments).set({ fileUrl: data.fileUrl, fileName: data.fileName ?? null, status: "pending", adminComment: null })
+      .where(and(eq(agentDocuments.id, data.id), eq(agentDocuments.traineeCode, data.traineeCode)));
+    const affected = (r as unknown as [{ affectedRows?: number }])[0]?.affectedRows;
+    if (affected === 0) throw Object.assign(new Error("Document not found for this agent"), { code: "FORBIDDEN" });
   } else {
     await db.insert(agentDocuments).values({ ...data, status: "pending" });
   }
@@ -2288,7 +2318,7 @@ export async function getAgentRequestById(id: number) {
 }
 
 // ─── Payroll v2 Helpers (Python-output, CRDTS-matched) ────────────────────────
-export async function upsertPayrollRecordV2(data: {
+type PayrollV2Input = {
   crdts: string; alias?: string; agentCode?: string; month: string;
   baseSalary?: number; workingHours?: number;
   ot1x5Hours?: number; ot1x5Pay?: number;
@@ -2299,15 +2329,25 @@ export async function upsertPayrollRecordV2(data: {
   totalDeductions?: number; netPay?: number;
   qualityDetail?: string; attendanceDetail?: string;
   uploadedBy?: string; uploadedAt?: number;
-}) {
-  const db = await getDb();
-  if (!db) return;
+};
+
+type DbExec = Awaited<ReturnType<typeof getDb>> extends infer D ? NonNullable<D> : never;
+
+/**
+ * Upsert ONE payroll row. Matches an existing row by (crdts, month) OR by
+ * (agentCode, month) — the unique index is on agentCode+month, so a CRDTS
+ * change mid-month must update the same row instead of colliding on insert.
+ * Pass `exec` to run inside a transaction.
+ */
+async function upsertPayrollRecordV2With(exec: DbExec, data: PayrollV2Input) {
   const { payrollRecords } = await import("../drizzle/schema");
-  // Try to find existing record by crdts + month
-  const existing = await db.select({ id: payrollRecords.id })
-    .from(payrollRecords)
-    .where(and(eq(payrollRecords.crdts, data.crdts), eq(payrollRecords.month, data.month)))
-    .limit(1);
+  const byCrdts = await exec.select({ id: payrollRecords.id }).from(payrollRecords)
+    .where(and(eq(payrollRecords.crdts, data.crdts), eq(payrollRecords.month, data.month))).limit(1);
+  const byCode = !byCrdts.length && data.agentCode
+    ? await exec.select({ id: payrollRecords.id }).from(payrollRecords)
+        .where(and(eq(payrollRecords.agentCode, data.agentCode), eq(payrollRecords.month, data.month))).limit(1)
+    : [];
+  const existingId = byCrdts[0]?.id ?? byCode[0]?.id ?? null;
   const toStr = (v?: number) => v != null ? String(v) : null;
   const vals = {
     crdts: data.crdts,
@@ -2333,24 +2373,53 @@ export async function upsertPayrollRecordV2(data: {
     uploadedBy: data.uploadedBy,
     uploadedAt: data.uploadedAt,
   };
-  if (existing.length > 0) {
-    // IMPORTANT: Never overwrite commissionEgp if the incoming value is null/0 and an existing value is set.
-    // Commission is entered manually — payroll re-uploads must never wipe it.
-    const existingFull = await db.select({ commissionEgp: payrollRecords.commissionEgp, coachingBonus: payrollRecords.coachingBonus })
-      .from(payrollRecords)
-      .where(and(eq(payrollRecords.crdts, data.crdts), eq(payrollRecords.month, data.month)))
-      .limit(1);
-    const preservedCommission = (data.commissionEgp == null || data.commissionEgp === 0)
-      ? (existingFull[0]?.commissionEgp ?? null)
-      : toStr(data.commissionEgp);
-    const preservedCoaching = (data.coachingBonus == null || data.coachingBonus === 0)
-      ? (existingFull[0]?.coachingBonus ?? null)
-      : toStr(data.coachingBonus);
-    await db.update(payrollRecords).set({ ...vals, commissionEgp: preservedCommission, coachingBonus: preservedCoaching })
-      .where(and(eq(payrollRecords.crdts, data.crdts), eq(payrollRecords.month, data.month)));
-  } else {
-    await db.insert(payrollRecords).values({ ...vals, candidateId: null });
+  if (existingId != null) {
+    // Commission is entered manually in the Salary tab — a payroll re-upload must never wipe it.
+    // An ABSENT commission column keeps the stored value; an explicit number (including 0) is a correction and wins.
+    const [existingFull] = await exec.select({ commissionEgp: payrollRecords.commissionEgp, coachingBonus: payrollRecords.coachingBonus })
+      .from(payrollRecords).where(eq(payrollRecords.id, existingId)).limit(1);
+    const commissionEgp = data.commissionEgp == null ? (existingFull?.commissionEgp ?? null) : toStr(data.commissionEgp);
+    const coachingBonus = data.coachingBonus == null ? (existingFull?.coachingBonus ?? null) : toStr(data.coachingBonus);
+    await exec.update(payrollRecords).set({ ...vals, commissionEgp, coachingBonus }).where(eq(payrollRecords.id, existingId));
+    return { id: existingId, created: false };
   }
+  const [ins] = await exec.insert(payrollRecords).values({ ...vals, candidateId: null }).$returningId();
+  return { id: ins?.id ?? null, created: true };
+}
+
+export async function upsertPayrollRecordV2(data: PayrollV2Input) {
+  const db = await getDb();
+  if (!db) return;
+  return upsertPayrollRecordV2With(db, data);
+}
+
+/** All-or-nothing upload of a month's rows in ONE transaction. */
+export async function upsertPayrollRecordsV2Batch(rows: PayrollV2Input[]) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  let created = 0, updated = 0;
+  await db.transaction(async (tx) => {
+    for (const row of rows) {
+      const r = await upsertPayrollRecordV2With(tx as unknown as DbExec, row);
+      if (r.created) created++; else updated++;
+    }
+  });
+  return { created, updated };
+}
+
+/** Record + its manual adjustments, for final-pay math. */
+export async function getPayrollRecordWithAdjustments(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const { payrollRecords, payrollAdjustments } = await import("../drizzle/schema");
+  const [rec] = await db.select().from(payrollRecords).where(eq(payrollRecords.id, id)).limit(1);
+  if (!rec) return null;
+  const crdts = rec.crdts ?? "";
+  const cands = Array.from(new Set([crdts, crdts.split(",")[0]?.trim() ?? ""].filter(Boolean)));
+  const adjustments = cands.length
+    ? await db.select().from(payrollAdjustments).where(and(inArray(payrollAdjustments.crdts, cands), eq(payrollAdjustments.month, rec.month)))
+    : [];
+  return { record: rec, adjustments };
 }
 
 export async function getPayrollStatusPage(month: string) {
@@ -2432,28 +2501,37 @@ export async function getMyPayrollRecordByCrdts(crdts: string, month: string) {
   const db = await getDb();
   if (!db) return null;
   const { payrollRecords, payrollAdjustments } = await import("../drizzle/schema");
-  const rows = await db.select().from(payrollRecords)
-    .where(and(eq(payrollRecords.crdts, crdts), eq(payrollRecords.month, month)))
-    .limit(1);
+  // An agent with several dialer ids ("114071,114032") may have the payroll row stored under
+  // any one of them — try the full string and each id.
+  const cands = crdtsCandidates(crdts);
+  const rows = cands.length
+    ? await db.select().from(payrollRecords)
+        .where(and(inArray(payrollRecords.crdts, cands), eq(payrollRecords.month, month)))
+        .limit(1)
+    : [];
   const record = rows[0] ?? null;
   if (!record) return null;
-  // Attach this agent's manual adjustments (bonuses / deductions) for the pay cycle.
-  // Match on the full CRDTS string OR its primary part, so a record stored as
-  // "114071,114032" still picks up an adjustment saved under "114071".
-  const crdtsCandidates = Array.from(new Set([crdts, String(crdts).split(",")[0].trim()].filter(Boolean)));
-  const { inArray: inArrayOp } = await import("drizzle-orm");
+  // Attach this agent's manual adjustments (bonuses / deductions) for the pay cycle, under any of the ids.
   const adjustments = await db.select().from(payrollAdjustments)
-    .where(and(inArrayOp(payrollAdjustments.crdts, crdtsCandidates), eq(payrollAdjustments.month, month)));
+    .where(and(inArray(payrollAdjustments.crdts, cands), eq(payrollAdjustments.month, month)));
   return { ...record, adjustments };
+}
+
+/** All CRDTS forms an agent may be stored under: the full string, each comma-separated id, and the first id. */
+export function crdtsCandidates(crdts: string): string[] {
+  const parts = String(crdts).split(",").map(x => x.trim()).filter(Boolean);
+  return Array.from(new Set([String(crdts).trim(), ...parts].filter(Boolean)));
 }
 
 export async function getMyPayrollMonthsByCrdts(crdts: string) {
   const db = await getDb();
   if (!db) return [];
   const { payrollRecords } = await import("../drizzle/schema");
+  const cands = crdtsCandidates(crdts);
+  if (!cands.length) return [];
   const rows = await db.selectDistinct({ month: payrollRecords.month })
     .from(payrollRecords)
-    .where(eq(payrollRecords.crdts, crdts))
+    .where(inArray(payrollRecords.crdts, cands))
     .orderBy(desc(payrollRecords.month));
   return rows.map(r => r.month);
 }
@@ -2727,48 +2805,29 @@ export async function getOrientationStatus(traineeCode: string): Promise<boolean
 }
 
 // ─── Cycle Tracker Helpers ────────────────────────────────────────────────────
-/** Returns the current cycle key (YYYY-MM) based on today's date.
- *  Cycle runs from 26th of previous month to 25th of current month.
- *  If today >= 26, cycle key = current month. If today <= 25, cycle key = current month.
- *  e.g. May 13 → cycle key "2026-05" (26 Apr – 25 May)
- *       May 26 → cycle key "2026-06" (26 May – 25 Jun)
- */
+// ONE definition of the 26th→25th pay cycle lives in server/_core/time.ts.
+// These wrappers keep the old names for existing callers.
+import { cycleKeyFor as _cycleKeyFor, cycleDateRangeFor as _cycleDateRangeFor, businessDateKey as _businessDateKey } from "./_core/time";
+
+/** Cycle key (YYYY-MM) that TODAY (business time) falls in. */
 export function getCurrentCycleKey(): string {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1; // 1-12
-  const day = now.getDate();
-  // If today is 26th or later, the cycle belongs to next month
-  if (day >= 26) {
-    const nextMonth = month === 12 ? 1 : month + 1;
-    const nextYear = month === 12 ? year + 1 : year;
-    return `${nextYear}-${String(nextMonth).padStart(2, "0")}`;
-  }
-  return `${year}-${String(month).padStart(2, "0")}`;
+  return _cycleKeyFor(_businessDateKey());
 }
 
-// Compute the cycle key (YYYY-MM) a given DATE belongs to, using the 26th→25th
-// rule. A date on the 26th or later belongs to the NEXT month's cycle.
-// This files each record into the cycle its own date falls in — unlike
-// getCurrentCycleKey(), which is based on "now" and is only correct for
-// same-day uploads.
+/** Cycle key (YYYY-MM) a given YYYY-MM-DD date belongs to. */
 export function getCycleKeyForDate(dateStr: string): string {
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) throw new Error(`Invalid date: ${dateStr}`);
-  const base = d.getDate() >= 26 ? new Date(d.getFullYear(), d.getMonth() + 1, 1) : d;
-  return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}`;
+  const iso = /^\d{4}-\d{2}-\d{2}/.test(dateStr) ? dateStr.slice(0, 10) : null;
+  if (!iso) {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) throw new Error(`Invalid date: ${dateStr}`);
+    return _cycleKeyFor(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+  }
+  return _cycleKeyFor(iso);
 }
 
 export function getCycleDateRange(cycleKey: string): { start: string; end: string } {
-  const [yearStr, monthStr] = cycleKey.split("-");
-  const year = parseInt(yearStr);
-  const month = parseInt(monthStr); // 1-12
-  // Cycle starts on 26th of previous month
-  const prevMonth = month === 1 ? 12 : month - 1;
-  const prevYear = month === 1 ? year - 1 : year;
-  const start = `${prevYear}-${String(prevMonth).padStart(2, "0")}-26`;
-  const end = `${year}-${String(month).padStart(2, "0")}-25`;
-  return { start, end };
+  const { from, to } = _cycleDateRangeFor(cycleKey);
+  return { start: from, end: to };
 }
 
 export async function upsertCycleStats(rows: Array<{
@@ -2891,8 +2950,9 @@ export async function getCycleTrackerForAgent(crdts: string, cycleKey: string) {
         eq(cycleDeductions.status, "approved")
       ))
       .orderBy(cycleDeductions.date),
+    // Agents see only OT that will actually be paid (rejected OT is hidden).
     db.select().from(cycleOT)
-      .where(and(inArray(cycleOT.crdts, crdtsList), eq(cycleOT.cycleKey, cycleKey)))
+      .where(and(inArray(cycleOT.crdts, crdtsList), eq(cycleOT.cycleKey, cycleKey), sql`${cycleOT.status} <> 'rejected'`))
       .orderBy(cycleOT.date),
   ]);
   // Today's stats (latest row for today)
@@ -3570,4 +3630,108 @@ export async function listAgentsWithoutContracts() {
   return db.select(cols).from(workforceAgents).where(
     and(eq(workforceAgents.agentStatus, "active"), notInArray(workforceAgents.traineeCode, contractedCodes))
   );
+}
+
+// ─── Leave: the ONE decision path ─────────────────────────────────────────────
+
+export type LeaveDecisionInput = {
+  id: number;
+  decision: "approved" | "rejected";
+  /** casual/annual deduct the matching balance; unpaid (sick, emergency, unpaid PTO) deducts nothing. */
+  leaveType?: "casual" | "annual" | "unpaid";
+  decidedBy: string;
+  /** Default yearly allowance used when an agent has no balance row yet. */
+  defaults?: { casualTotal: number; annualTotal: number };
+};
+
+/**
+ * Approve or reject a leave request atomically:
+ *   pending-check → (approve) balance-check → update request + balance in ONE transaction.
+ * Also mirrors the decision back to the agent_requests row it came from, if any.
+ * Throws TRPC-style errors ({ code, message }) that callers re-wrap.
+ */
+export async function decideLeaveRequest(input: LeaveDecisionInput) {
+  const db = await getDb();
+  if (!db) throw Object.assign(new Error("DB unavailable"), { code: "INTERNAL_SERVER_ERROR" });
+  const { leaveRequests, leaveBalances, agentRequests } = await import("../drizzle/schema");
+  const fail = (code: string, message: string) => Object.assign(new Error(message), { code });
+
+  if (input.decision === "approved" && !input.leaveType) {
+    throw fail("BAD_REQUEST", "Pick the leave type (casual/annual) before approving");
+  }
+
+  return db.transaction(async (tx) => {
+    const [req] = await tx.select().from(leaveRequests).where(eq(leaveRequests.id, input.id)).for("update");
+    if (!req) throw fail("NOT_FOUND", "Request not found");
+    if (req.status !== "pending") throw fail("BAD_REQUEST", `This request was already ${req.status}.`);
+
+    const now = Date.now();
+    if (input.decision === "approved" && input.leaveType && input.leaveType !== "unpaid") {
+      // Balance year = the year the leave is TAKEN, not the year HR clicks approve.
+      const year = parseInt(String(req.startDate).slice(0, 4)) || new Date().getFullYear();
+      const [bal] = await tx.select().from(leaveBalances)
+        .where(and(eq(leaveBalances.traineeCode, req.traineeCode), eq(leaveBalances.year, year))).for("update");
+      const isCasual = input.leaveType === "casual";
+      if (bal) {
+        const available = isCasual ? bal.casualTotal - bal.casualUsed : bal.annualTotal - bal.annualUsed;
+        if (available < req.days) {
+          throw fail("BAD_REQUEST", `Insufficient ${isCasual ? "casual" : "annual"} leave balance. Available: ${available} day(s), requested: ${req.days} day(s).`);
+        }
+        await tx.update(leaveBalances)
+          .set(isCasual ? { casualUsed: bal.casualUsed + req.days, updatedAt: now } : { annualUsed: bal.annualUsed + req.days, updatedAt: now })
+          .where(eq(leaveBalances.id, bal.id));
+      } else {
+        const d = input.defaults ?? { casualTotal: 0, annualTotal: 0 };
+        const available = isCasual ? d.casualTotal : d.annualTotal;
+        if (available < req.days) {
+          throw fail("BAD_REQUEST", `No ${isCasual ? "casual" : "annual"} leave balance on file for ${year}. Set the agent's balance first.`);
+        }
+        await tx.insert(leaveBalances).values({
+          traineeCode: req.traineeCode, year,
+          casualTotal: d.casualTotal, annualTotal: d.annualTotal,
+          casualUsed: isCasual ? req.days : 0, annualUsed: isCasual ? 0 : req.days,
+          updatedAt: now,
+        });
+      }
+    }
+
+    await tx.update(leaveRequests)
+      .set({ status: input.decision, leaveType: input.leaveType ?? null, decidedBy: input.decidedBy, decidedAt: now })
+      .where(eq(leaveRequests.id, input.id));
+
+    // Mirror back to the request centre so the agent sees the outcome where they asked.
+    if (req.agentRequestId) {
+      await tx.update(agentRequests)
+        .set({
+          status: input.decision === "approved" ? "resolved" : "rejected",
+          adminReply: `Leave ${input.decision}${input.leaveType ? ` (${input.leaveType})` : ""} by ${input.decidedBy}`,
+        })
+        .where(eq(agentRequests.id, req.agentRequestId));
+    }
+    return { ok: true as const, traineeCode: req.traineeCode, days: req.days, agentRequestId: req.agentRequestId ?? null };
+  });
+}
+
+/**
+ * Create a leave_requests row for an agent (optionally mirroring an agent_requests row).
+ * Dates are YYYY-MM-DD; `days` defaults to the inclusive calendar span.
+ */
+export async function createLeaveRequestRow(input: {
+  traineeCode: string; requesterName?: string | null; startDate: string; endDate: string;
+  days?: number; reason?: string | null; agentRequestId?: number | null;
+}) {
+  const db = await getDb();
+  if (!db) throw new Error("DB unavailable");
+  const { leaveRequests } = await import("../drizzle/schema");
+  const span = Math.round((Date.parse(input.endDate) - Date.parse(input.startDate)) / 86_400_000) + 1;
+  const days = input.days && input.days > 0 ? input.days : Math.max(1, span || 1);
+  const [r] = await db.insert(leaveRequests).values({
+    traineeCode: input.traineeCode,
+    requesterName: input.requesterName ?? null,
+    startDate: input.startDate, endDate: input.endDate, days,
+    reason: input.reason ?? null,
+    status: "pending", createdAt: Date.now(),
+    agentRequestId: input.agentRequestId ?? null,
+  }).$returningId();
+  return r?.id ?? null;
 }

@@ -2,12 +2,18 @@ export const ENV = {
   appId: process.env.VITE_APP_ID ?? "",
   cookieSecret: (() => {
     const s = process.env.JWT_SECRET ?? "";
-    if (!s) {
-      // In production crash if JWT_SECRET is completely missing
-      if (process.env.NODE_ENV === "production") throw new Error("FATAL: JWT_SECRET must be set.");
-      console.warn("⚠️  JWT_SECRET is missing — using insecure fallback. Set it in production.");
+    if (s) {
+      if (s.length < 32) console.warn("⚠️  JWT_SECRET is shorter than 32 characters — rotate to a longer random value.");
+      return s;
     }
-    return s || "dev-insecure-fallback-do-not-use-in-production";
+    // Fail closed everywhere except an explicit local dev/test opt-in: a guessable secret
+    // would let anyone mint Hub sessions, agent JWTs and admin JWTs (they share this key).
+    const devOptIn = process.env.ALLOW_INSECURE_DEV_SECRET === "true" || process.env.NODE_ENV === "test" || process.env.VITEST === "true";
+    if (process.env.NODE_ENV === "production" || !devOptIn) {
+      throw new Error("FATAL: JWT_SECRET must be set (random, 32+ characters). For local dev set ALLOW_INSECURE_DEV_SECRET=true.");
+    }
+    console.warn("⚠️  JWT_SECRET is missing — using insecure dev fallback.");
+    return "dev-insecure-fallback-do-not-use-in-production";
   })(),
   databaseUrl: process.env.DATABASE_URL ?? "",
   oAuthServerUrl: process.env.OAUTH_SERVER_URL ?? "",

@@ -1,15 +1,17 @@
-CREATE TABLE agent_aux_logs (
+CREATE TABLE IF NOT EXISTS agent_aux_logs (
   id INT AUTO_INCREMENT PRIMARY KEY,
   traineeCode VARCHAR(100) NOT NULL,
   auxType VARCHAR(50) NOT NULL,
   startTime BIGINT NOT NULL,
   endTime BIGINT,
-  durationMs INT,
+  durationMs BIGINT,
   note TEXT,
-  createdAt BIGINT NOT NULL
+  createdAt BIGINT NOT NULL,
+  INDEX idx_aux_trainee_start (traineeCode, startTime),
+  INDEX idx_aux_trainee_end (traineeCode, endTime)
 );
 
-CREATE TABLE pto_requests (
+CREATE TABLE IF NOT EXISTS pto_requests (
   id INT AUTO_INCREMENT PRIMARY KEY,
   traineeCode VARCHAR(100) NOT NULL,
   agentName VARCHAR(255),
@@ -24,7 +26,7 @@ CREATE TABLE pto_requests (
   createdAt BIGINT NOT NULL
 );
 
-CREATE TABLE attendance_exceptions (
+CREATE TABLE IF NOT EXISTS attendance_exceptions (
   id INT AUTO_INCREMENT PRIMARY KEY,
   traineeCode VARCHAR(100) NOT NULL,
   agentName VARCHAR(255),

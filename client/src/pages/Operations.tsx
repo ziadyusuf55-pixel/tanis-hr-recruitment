@@ -2095,7 +2095,7 @@ export default function Operations() {
             <DialogTitle className="flex items-center gap-2"><RefreshCw className="h-5 w-5 text-blue-600" /> Generate Agent Credentials</DialogTitle>
           </DialogHeader>
           <div className="space-y-4 py-2">
-            <p className="text-sm text-muted-foreground">This will generate portal login credentials for all Operations agents. Default password: <span className="font-mono font-semibold">Tanis2025</span>. Agents will be required to change their password on first login.</p>
+            <p className="text-sm text-muted-foreground">This will generate a unique one-time portal password for every Operations agent and export them as CSV. Agents must change their password on first login.</p>
             <div className="flex items-center gap-3">
               <select
                 className="flex-1 h-9 rounded-md border border-input bg-background px-3 py-1 text-sm"

@@ -430,6 +430,8 @@ export const clients = mysqlTable("clients", {
   shortCode: varchar("shortCode", { length: 20 }).notNull(),
   colorHex: varchar("colorHex", { length: 7 }).notNull().default("#6366f1"),
   isActive: boolean("isActive").notNull().default(true),
+  /** Feature flag: clock-in/out, AUX timer and PTO for this client's agents. */
+  timeTrackingEnabled: boolean("timeTrackingEnabled").notNull().default(false),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -777,7 +779,11 @@ export const cycleStats = mysqlTable("cycle_stats", {
   revPerHr: decimal("revPerHr", { precision: 10, scale: 2 }).default("0"),
   uploadedAt: bigint("uploadedAt", { mode: "number" }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  // onDuplicateKeyUpdate in db.upsertCycleStats relies on THIS key — without it every re-upload duplicates rows.
+  uqCrdtsDate: uniqueIndex("uq_cycle_stats_crdts_date").on(t.crdts, t.date),
+  cycle: index("idx_cycle_stats_cycle").on(t.cycleKey),
+}));
 export type CycleStats = typeof cycleStats.$inferSelect;
 export type InsertCycleStats = typeof cycleStats.$inferInsert;
 
@@ -799,7 +805,10 @@ export const cycleDeductions = mysqlTable("cycle_deductions", {
   status: mysqlEnum("status", ["approved", "rejected"]).default("approved").notNull(),
   uploadedAt: bigint("uploadedAt", { mode: "number" }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  uqCrdtsDateType: uniqueIndex("uq_cycle_deductions_crdts_date_type").on(t.crdts, t.date, t.violationType),
+  cycle: index("idx_cycle_deductions_cycle").on(t.cycleKey),
+}));
 export type CycleDeductions = typeof cycleDeductions.$inferSelect;
 export type InsertCycleDeductions = typeof cycleDeductions.$inferInsert;
 
@@ -826,7 +835,10 @@ export const cycleOT = mysqlTable("cycle_ot", {
   loggedAt: bigint("loggedAt", { mode: "number" }),
   approvedBy: varchar("approvedBy", { length: 255 }),
   approvedAt: bigint("approvedAt", { mode: "number" }),
-});
+}, (t) => ({
+  uqCrdtsDateType: uniqueIndex("uq_cycle_ot_crdts_date_type").on(t.crdts, t.date, t.otType),
+  cycle: index("idx_cycle_ot_cycle").on(t.cycleKey),
+}));
 export type CycleOT = typeof cycleOT.$inferSelect;
 export type InsertCycleOT = typeof cycleOT.$inferInsert;
 
@@ -1187,11 +1199,13 @@ export const leaveRequests = mysqlTable("leave_requests", {
   endDate: varchar("endDate", { length: 20 }).notNull(),
   days: int("days").default(1).notNull(),
   reason: text("reason"),
-  leaveType: mysqlEnum("leaveType", ["casual", "annual"]),    // NULL until HR classifies
+  leaveType: mysqlEnum("leaveType", ["casual", "annual", "unpaid"]),    // NULL until HR classifies; "unpaid" = no balance deduction
   status: mysqlEnum("status", ["pending", "approved", "rejected"]).default("pending").notNull(),
   decidedBy: varchar("decidedBy", { length: 255 }),
   createdAt: bigint("createdAt", { mode: "number" }).notNull(),
   decidedAt: bigint("decidedAt", { mode: "number" }),
+  /** When the request originated in the agent portal's request centre, the agent_requests.id it mirrors. */
+  agentRequestId: int("agentRequestId"),
 });
 export type LeaveRequest = typeof leaveRequests.$inferSelect;
 
@@ -1461,10 +1475,13 @@ export const agentAuxLogs = mysqlTable("agent_aux_logs", {
   auxType: varchar("auxType", { length: 50 }).notNull(),
   startTime: bigint("startTime", { mode: "number" }).notNull(),
   endTime: bigint("endTime", { mode: "number" }),
-  durationMs: int("durationMs"),
+  durationMs: bigint("durationMs", { mode: "number" }),
   note: text("note"),
   createdAt: bigint("createdAt", { mode: "number" }).notNull(),
-});
+}, (t) => ({
+  traineeStart: index("idx_aux_trainee_start").on(t.traineeCode, t.startTime),
+  openRows: index("idx_aux_trainee_end").on(t.traineeCode, t.endTime),
+}));
 export type AgentAuxLog = typeof agentAuxLogs.$inferSelect;
 export type InsertAgentAuxLog = typeof agentAuxLogs.$inferInsert;
 

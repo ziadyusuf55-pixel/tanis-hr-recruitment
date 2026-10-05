@@ -58,6 +58,9 @@ vi.mock("./db", () => ({
   checkDuplicateByPhone: vi.fn().mockResolvedValue(null),
   getReApplicants: vi.fn().mockResolvedValue([]),
   getTurnoverRate: vi.fn().mockResolvedValue({ rate: 5.0, separationsThisMonth: 1, currentHeadcount: 20 }),
+  getCandidateBatch: vi.fn().mockResolvedValue(null),
+  deleteBatch: vi.fn().mockResolvedValue(undefined),
+  getDb: vi.fn().mockResolvedValue(null),
 }));
 
 vi.mock("./email", () => ({
@@ -73,16 +76,44 @@ function makeCtx(overrides: Partial<TrpcContext> = {}): TrpcContext {
       email: "recruiter@tanis.com",
       name: "Test Recruiter",
       loginMethod: "manus",
-      role: "user",
+      role: "hr", // an ASSIGNED role — "user"/"viewer" are now rejected server-side (see test below)
       createdAt: new Date(),
       updatedAt: new Date(),
       lastSignedIn: new Date(),
     },
+    agent: null,
     req: { protocol: "https", headers: {} } as TrpcContext["req"],
     res: { clearCookie: vi.fn() } as unknown as TrpcContext["res"],
     ...overrides,
   };
 }
+
+// ─── Role enforcement ─────────────────────────────────────────────────────────
+describe("role enforcement", () => {
+  it("blocks an unassigned ('user') login from staff endpoints", async () => {
+    const ctx = makeCtx();
+    ctx.user!.role = "user";
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.candidates.list({})).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+  it("blocks a removed ('viewer') login from staff endpoints", async () => {
+    const ctx = makeCtx();
+    ctx.user!.role = "viewer";
+    const caller = appRouter.createCaller(ctx);
+    await expect(caller.candidates.list({})).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+  it("still lets an unassigned login read its own session (auth.me)", async () => {
+    const ctx = makeCtx();
+    ctx.user!.role = "user";
+    const caller = appRouter.createCaller(ctx);
+    const me = await caller.auth.me();
+    expect(me?.role).toBe("user");
+  });
+  it("requires owner/admin for destructive admin actions", async () => {
+    const caller = appRouter.createCaller(makeCtx()); // hr
+    await expect(caller.batches.delete({ id: 1 })).rejects.toMatchObject({ code: "FORBIDDEN" });
+  });
+});
 
 // ─── Auth router ──────────────────────────────────────────────────────────────
 describe("auth router", () => {

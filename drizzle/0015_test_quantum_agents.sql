@@ -1,6 +1,6 @@
 -- 0015: Test / demo agent accounts for Quantum client
 -- These agents are marked isDemo=TRUE so they are excluded from all real reports and headcount.
--- Login password for all three: Tanis2025
+-- (No login credentials are seeded — see Step 3 note below.)
 -- Trainee codes: QNT-TEST1, QNT-TEST2, QNT-TEST3
 --
 -- Prerequisites: a client named "Quantum" with at least one campaign must already exist.
@@ -58,27 +58,9 @@ VALUES
     'Call Center Agent'
   );
 
--- ─── Step 3: Insert agent credentials ────────────────────────────────────────
--- Password hash = bcrypt("Tanis2025", cost=10)
--- Generated: $2b$10$It43TOK69j3zHUl4zqoZ/ughO.nh3WKFzZ06ngKUC4aIWxiK3E2eK
-INSERT IGNORE INTO agent_credentials
-  (candidateId, traineeCode, passwordHash, mustChangePassword)
-VALUES
-  (
-    (SELECT id FROM candidates WHERE email = 'qnt.test1@tanis-demo.internal' LIMIT 1),
-    'QNT-TEST1',
-    '$2b$10$It43TOK69j3zHUl4zqoZ/ughO.nh3WKFzZ06ngKUC4aIWxiK3E2eK',
-    FALSE
-  ),
-  (
-    (SELECT id FROM candidates WHERE email = 'qnt.test2@tanis-demo.internal' LIMIT 1),
-    'QNT-TEST2',
-    '$2b$10$It43TOK69j3zHUl4zqoZ/ughO.nh3WKFzZ06ngKUC4aIWxiK3E2eK',
-    FALSE
-  ),
-  (
-    (SELECT id FROM candidates WHERE email = 'qnt.test3@tanis-demo.internal' LIMIT 1),
-    'QNT-TEST3',
-    '$2b$10$It43TOK69j3zHUl4zqoZ/ughO.nh3WKFzZ06ngKUC4aIWxiK3E2eK',
-    FALSE
-  );
+-- ─── Step 3 (REMOVED in audit, Oct 2026) ─────────────────────────────────────
+-- This file used to seed agent_credentials for the three demo agents with a shared,
+-- documented password. Shared credentials on production are a takeover risk, and
+-- isDemo accounts are now blocked from the live portal by server/_core/agentAuth.ts.
+-- 0017 deletes any such rows that were already inserted. To test the portal, generate
+-- a one-time password from Operations → agent → Generate Credentials.

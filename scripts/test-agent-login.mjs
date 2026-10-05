@@ -1,11 +1,16 @@
-// Test the full agent login flow
-const BASE = "http://localhost:3000";
+// Test the full agent login flow against a LOCAL dev server.
+// Credentials come from env — never commit real ones:
+//   TEST_AGENT_CODE=T-xxxx TEST_AGENT_PASSWORD=... node scripts/test-agent-login.mjs
+const BASE = process.env.BASE_URL ?? "http://localhost:3000";
+const CODE = process.env.TEST_AGENT_CODE;
+const PASSWORD = process.env.TEST_AGENT_PASSWORD;
+if (!CODE || !PASSWORD) { console.error("Set TEST_AGENT_CODE and TEST_AGENT_PASSWORD"); process.exit(1); }
 
 console.log("=== Step 1: Login ===");
 const loginRes = await fetch(`${BASE}/api/trpc/agent.login`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ json: { traineeCode: "T-5555", password: "T-5555-9999" } }),
+  body: JSON.stringify({ json: { traineeCode: CODE, password: PASSWORD } }),
 });
 
 console.log("Login status:", loginRes.status);

@@ -27,6 +27,7 @@ function createAuthContext(): { ctx: TrpcContext; clearedCookies: CookieCall[] }
 
   const ctx: TrpcContext = {
     user,
+    agent: null,
     req: {
       protocol: "https",
       headers: {},
@@ -51,10 +52,12 @@ describe("auth.logout", () => {
     expect(result).toEqual({ success: true });
     expect(clearedCookies).toHaveLength(1);
     expect(clearedCookies[0]?.name).toBe(COOKIE_NAME);
+    // Over HTTPS the session cookie is Secure + SameSite=Strict (see _core/cookies.ts); the clear must
+    // use the SAME attributes or the browser keeps the old cookie.
     expect(clearedCookies[0]?.options).toMatchObject({
       maxAge: -1,
       secure: true,
-      sameSite: "none",
+      sameSite: "strict",
       httpOnly: true,
       path: "/",
     });

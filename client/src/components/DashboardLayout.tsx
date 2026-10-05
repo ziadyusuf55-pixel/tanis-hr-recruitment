@@ -152,7 +152,9 @@ function useBdRole() {
   return { isBd: me?.kind === "bd" || me?.kind === "unlinked", loaded: !!me };
 }
 function BellBadge() {
-  const { data: due = [] } = trpc.bd.dueReminders.useQuery(undefined, { refetchInterval: 120000 });
+  const { user } = useAuth();
+  const role = (user as { role?: string } | null)?.role;
+  const { data: due = [] } = trpc.bd.dueReminders.useQuery(undefined, { refetchInterval: 120000, enabled: hasAnyAccess(role) });
   const list = due as { id: number; title: string; reminderDate: string | null; reminderNote: string | null }[];
   const [open, setOpen] = useState(false);
   const count = list.length;
@@ -517,7 +519,8 @@ function GlobalSearch() {
 function PortalLockToggle() {
   const [showForm, setShowForm] = useState(false);
   const [message, setMessage] = useState("");
-  const { data: lockState } = trpc.documents.getPortalLock.useQuery(undefined, { refetchInterval: 30000 });
+  const { user } = useAuth();
+  const { data: lockState } = trpc.documents.getPortalLock.useQuery(undefined, { refetchInterval: 30000, enabled: isFullAccess((user as { role?: string } | null)?.role) });
   const setLock = trpc.documents.setPortalLock.useMutation({ onSuccess: () => setShowForm(false) });
   const isLocked = lockState?.locked ?? false;
   return (

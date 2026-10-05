@@ -18,9 +18,12 @@ VALUES
   (2, 'Quantum', 'QNT', '#6366f1', 1)
 ON DUPLICATE KEY UPDATE `name` = VALUES(`name`);
 
--- Add clientId FK to campaigns
-ALTER TABLE `campaigns`
-  ADD COLUMN IF NOT EXISTS `clientId` INT NULL DEFAULT NULL;
+-- Add clientId FK to campaigns (guarded — stock MySQL 8 rejects ADD COLUMN IF NOT EXISTS)
+SET @q = IF((SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'campaigns' AND COLUMN_NAME = 'clientId') = 0,
+  'ALTER TABLE `campaigns` ADD COLUMN `clientId` INT NULL DEFAULT NULL', 'SELECT 1');
+PREPARE s FROM @q;
+EXECUTE s;
+DEALLOCATE PREPARE s;
 
 -- All existing campaigns belong to Apello
 UPDATE `campaigns` SET `clientId` = 1 WHERE `clientId` IS NULL;
