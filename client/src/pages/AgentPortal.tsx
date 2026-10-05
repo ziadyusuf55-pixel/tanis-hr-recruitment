@@ -3285,9 +3285,17 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
             style={{ background: theme.surface, borderColor: theme.surfaceBorder, color: theme.text }}
           >
             {(leaderboardCycles as { cycleKey: string; performanceMonth: string | null }[]).length > 0
-              ? (leaderboardCycles as { cycleKey: string; performanceMonth: string | null }[]).map(c => (
-                  <option key={c.cycleKey} value={c.cycleKey}>{c.performanceMonth || formatMonthLabel(c.cycleKey)}</option>
-                ))
+              ? (() => {
+                  const seen = new Set<string>();
+                  return (leaderboardCycles as { cycleKey: string; performanceMonth: string | null }[]).filter(c => {
+                    const label = (c.performanceMonth || formatMonthLabel(c.cycleKey)).trim().toLowerCase();
+                    if (seen.has(label)) return false;
+                    seen.add(label);
+                    return true;
+                  }).map(c => (
+                    <option key={c.cycleKey} value={c.cycleKey}>{c.performanceMonth || formatMonthLabel(c.cycleKey)}</option>
+                  ));
+                })()
               : Array.from({ length: 6 }, (_, i) => {
                   const d = new Date(); d.setMonth(d.getMonth() - i);
                   const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;

@@ -6305,7 +6305,18 @@ const commissionRouter = router({
         .from(commissionLeaderboard)
         .groupBy(commissionLeaderboard.cycleKey)
         .orderBy(sql`${commissionLeaderboard.cycleKey} DESC`);
-      return rows.map(r => ({ cycleKey: r.cycleKey, performanceMonth: (r.performanceMonth ?? null) as string | null }));
+      // The dropdown shows the performance-month LABEL. When the same month was uploaded under two cycle
+      // keys (e.g. "2026-09" then re-uploaded as "2026-10"), keep only the newest key per label so the
+      // agent never sees "SEPTEMBER 2026" twice.
+      const seen = new Set<string>();
+      const out: { cycleKey: string; performanceMonth: string | null }[] = [];
+      for (const r of rows) {
+        const label = (r.performanceMonth ?? r.cycleKey).trim().toLowerCase().replace(/\s+/g, " ");
+        if (seen.has(label)) continue;
+        seen.add(label);
+        out.push({ cycleKey: r.cycleKey, performanceMonth: (r.performanceMonth ?? null) as string | null });
+      }
+      return out;
     }),
 
   // Delete a single commission record by id (also clears commissionEgp from matching payroll record)
