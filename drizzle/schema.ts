@@ -320,7 +320,7 @@ export const agentRequests = mysqlTable("agent_requests", {
   id: int("id").autoincrement().primaryKey(),
   candidateId: int("candidateId").notNull(), // FK to candidates.id
   traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
-  type: mysqlEnum("type", ["leave", "salary", "schedule", "complaint", "resignation", "day_off", "paid_leave", "sick_note", "hr_letter", "other"]).notNull(),
+  type: mysqlEnum("type", ["leave", "salary", "schedule", "complaint", "resignation", "day_off", "paid_leave", "sick_note", "hr_letter", "late_arrival", "early_departure", "other"]).notNull(),
   subject: varchar("subject", { length: 255 }).notNull(),
   message: text("message").notNull(),
   requestedDate: bigint("requestedDate", { mode: "number" }), // UTC ms timestamp for date-based requests (leave, day_off, resignation last day)
@@ -432,6 +432,8 @@ export const clients = mysqlTable("clients", {
   isActive: boolean("isActive").notNull().default(true),
   /** Feature flag: clock-in/out, AUX timer and PTO for this client's agents. */
   timeTrackingEnabled: boolean("timeTrackingEnabled").notNull().default(false),
+  /** Position-based client (e.g. Quantum): agents are grouped by jobTitle, not by campaign. */
+  positionBased: boolean("positionBased").notNull().default(false),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -1230,16 +1232,7 @@ export type ExitProcess = typeof exitProcess.$inferSelect;
 // ═══════════════════════════════════════════════════════════════════════════
 // BD TASKS — per-deal to-dos with due dates (HubSpot-style).
 // ═══════════════════════════════════════════════════════════════════════════
-export const bdTasks = mysqlTable("bd_tasks", {
-  id: int("id").autoincrement().primaryKey(),
-  dealId: int("dealId").notNull(),
-  title: varchar("title", { length: 255 }).notNull(),
-  dueDate: varchar("dueDate", { length: 20 }),               // YYYY-MM-DD
-  done: boolean("done").default(false).notNull(),
-  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
-  doneAt: bigint("doneAt", { mode: "number" }),
-});
-export type BdTask = typeof bdTasks.$inferSelect;
+// (bd_tasks removed — it never existed in the database; bd_deal_tasks below is the real table.)
 
 
 // ═══ BD deal tasks ("send proposal by Thu") ═══

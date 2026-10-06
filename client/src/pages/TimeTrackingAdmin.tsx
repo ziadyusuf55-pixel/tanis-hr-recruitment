@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Clock, CalendarOff, AlertTriangle, CheckCircle2, XCircle, Activity, BarChart2, Download } from "lucide-react";
+import { Clock, CalendarOff, AlertTriangle, CheckCircle2, XCircle, Activity, BarChart2, Download, Trash2, LogOut, Users } from "lucide-react";
 
 type PtoReq = {
   id: number;
@@ -52,7 +52,16 @@ type HoursSummaryRow = {
   workedHrs: number;
   shiftHrs: number;
   auxMinutes: Record<string, number>;
+  clientName: string | null;
+  role: string | null;
+  startDate: string | null;
+  ptoHrs: number;
+  unplannedHrs: number;
+  lateEarly: number;
+  status: string;
+  agentStatus: string | null;
 };
+const fmtUS = (iso: string | null) => { if (!iso) return "—"; const [y, m, d] = iso.split("-"); return `${Number(m)}/${Number(d)}/${y}`; };
 
 export default function TimeTrackingAdmin() {
   const utils = trpc.useUtils();
@@ -64,6 +73,7 @@ export default function TimeTrackingAdmin() {
 
   const currentMonth = new Date().toISOString().slice(0, 7);
   const [hoursMonth, setHoursMonth] = useState(currentMonth);
+  const [hoursGroupByRole, setHoursGroupByRole] = useState(true);
 
   // Compute from/to for the selected month
   const hoursFrom = hoursMonth + "-01";
@@ -82,6 +92,15 @@ export default function TimeTrackingAdmin() {
   );
 
   const [leaveTypeById, setLeaveTypeById] = useState<Record<number, "casual" | "annual" | "unpaid">>({});
+  const { data: openShifts = [] } = trpc.timeTracking.openShifts.useQuery(undefined, { refetchInterval: 60000, enabled: tab === "open" });
+  const deleteAux = trpc.timeTracking.deleteAux.useMutation({
+    onSuccess: () => { utils.timeTracking.auxLogs.invalidate(); utils.timeTracking.workedSummary.invalidate(); toast.success("AUX entry deleted"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const adminClockOut = trpc.timeTracking.adminClockOut.useMutation({
+    onSuccess: () => { utils.timeTracking.openShifts.invalidate(); utils.timeTracking.workedSummary.invalidate(); toast.success("Agent clocked out"); },
+    onError: (e) => toast.error(e.message),
+  });
   const reviewException = trpc.timeTracking.reviewException.useMutation({
     onSuccess: () => { utils.timeTracking.allExceptions.invalidate(); toast.success("Marked as reviewed"); },
     onError: (e) => toast.error(e.message),
@@ -122,7 +141,59 @@ export default function TimeTrackingAdmin() {
           <TabsTrigger value="hours" className="gap-1.5">
             <BarChart2 className="w-3.5 h-3.5" /> Monthly Hours
           </TabsTrigger>
+          <TabsTrigger value="open" className="gap-1.5">
+            <Users className="w-3.5 h-3.5" /> On Shift Now
+          </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="open" className="mt-4">
+          <Card>
+            <CardContent className="pt-4">
+              <p className="text-xs text-muted-foreground mb-3">Everyone currently clocked in. Shifts never end on their own — if someone forgot to clock out, end it here (any open AUX is ended too).</p>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Agent</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Clocked in</TableHead>
+                    <TableHead>On shift</TableHead>
+                    <TableHead>State</TableHead>
+                    <TableHead></TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {(openShifts as Array<{ id: number; traineeCode: string; fullName: string | null; jobTitle: string | null; clockIn: number; state: string; auxSince: number | null }>).length === 0 ? (
+                    <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground py-8">Nobody is clocked in.</TableCell></TableRow>
+                  ) : (openShifts as Array<{ id: number; traineeCode: string; fullName: string | null; jobTitle: string | null; clockIn: number; state: string; auxSince: number | null }>).map(sft => {
+                    const hrs = (Date.now() - sft.clockIn) / 3600000;
+                    return (
+                      <TableRow key={sft.id} className={hrs > 14 ? "bg-amber-50/50" : undefined}>
+                        <TableCell>
+                          <div className="font-medium">{sft.fullName || sft.traineeCode}</div>
+                          <div className="text-xs font-mono text-muted-foreground">{sft.traineeCode}</div>
+                        </TableCell>
+                        <TableCell className="text-sm">{sft.jobTitle ?? "—"}</TableCell>
+                        <TableCell className="text-sm font-mono">{new Date(sft.clockIn).toLocaleString("en-EG", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</TableCell>
+                        <TableCell className="text-sm">{hrs.toFixed(1)}h{hrs > 14 && <span className="ml-1 text-xs text-amber-600">· likely forgot</span>}</TableCell>
+                        <TableCell>
+                          <Badge variant={sft.state === "available" ? "default" : "secondary"} className="capitalize text-xs">
+                            {sft.state.replace(/_/g, " ")}{sft.auxSince ? ` · ${Math.floor((Date.now() - sft.auxSince) / 60000)}m` : ""}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Button size="sm" variant="outline" className="gap-1" disabled={adminClockOut.isPending}
+                            onClick={() => { if (confirm(`Clock out ${sft.fullName || sft.traineeCode} now?`)) adminClockOut.mutate({ shiftId: sft.id }); }}>
+                            <LogOut className="w-3.5 h-3.5" /> Clock out
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="pto" className="mt-4">
           <Card>
@@ -318,6 +389,7 @@ export default function TimeTrackingAdmin() {
                     <TableHead>End Time</TableHead>
                     <TableHead>Duration</TableHead>
                     <TableHead>Note</TableHead>
+                    <TableHead></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -328,7 +400,7 @@ export default function TimeTrackingAdmin() {
                     if (filtered.length === 0) {
                       return (
                         <TableRow>
-                          <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                          <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                             No AUX logs{auxDate ? ` for ${auxDate}` : ""}{auxAgentFilter ? ` matching "${auxAgentFilter}"` : ""}.
                           </TableCell>
                         </TableRow>
@@ -361,6 +433,13 @@ export default function TimeTrackingAdmin() {
                           <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
                             {log.note ?? "—"}
                           </TableCell>
+                          <TableCell>
+                            <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-600" title="Delete this AUX entry"
+                              disabled={deleteAux.isPending}
+                              onClick={() => { if (confirm(`Delete this ${log.auxType.replace(/_/g, " ")} entry for ${log.traineeCode}?`)) deleteAux.mutate({ id: log.id }); }}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          </TableCell>
                         </TableRow>
                       );
                     });
@@ -381,103 +460,102 @@ export default function TimeTrackingAdmin() {
                 className="rounded-md border px-2.5 py-1.5 text-sm bg-background"
               />
             </div>
+            <label className="flex items-center gap-1.5 text-sm">
+              <input type="checkbox" checked={hoursGroupByRole} onChange={e => setHoursGroupByRole(e.target.checked)} />
+              Group by position
+            </label>
             <Button
               size="sm"
               variant="outline"
               className="gap-1.5 ml-auto"
               disabled={(hoursSummary as HoursSummaryRow[]).length === 0}
               onClick={() => {
+                // Employee-Level Roster & Attendance Detail — the client report layout.
                 const rows = hoursSummary as HoursSummaryRow[];
-                const auxTypes = Array.from(new Set(rows.flatMap(r => Object.keys(r.auxMinutes)))).sort();
-                const headers = ["Agent Code", "Name", "Scheduled Hrs", "Shift Hrs", "Worked Hrs", ...auxTypes.map(t => t.replace(/_/g, " ") + " (min)")];
-                const csvRows = [
-                  headers.join(","),
-                  ...rows.map(r => [
-                    r.traineeCode,
-                    `"${r.name}"`,
-                    r.scheduledHrs,
-                    r.shiftHrs,
-                    r.workedHrs,
-                    ...auxTypes.map(t => r.auxMinutes[t] ?? 0),
-                  ].join(","))
-                ];
-                const blob = new Blob([csvRows.join("\n")], { type: "text/csv" });
+                const esc = (v: unknown) => { const t = String(v ?? ""); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+                const header = ["Employee", "Quantum Client", "Role", "Start Date", "Sched. Hrs", "Worked Hrs", "PTO Hrs", "Unplanned Hrs", "Late / Early", "Status"];
+                const sorted = [...rows].sort((a, b) => (a.role ?? "zzz").localeCompare(b.role ?? "zzz") || a.name.localeCompare(b.name));
+                const csvRows = [header.join(","), ...sorted.map(r => [
+                  esc(r.name), esc(r.clientName ?? ""), esc(r.role ?? ""), esc(fmtUS(r.startDate)),
+                  r.scheduledHrs, r.workedHrs, r.ptoHrs, r.unplannedHrs, r.lateEarly, esc(r.status),
+                ].join(","))];
+                const blob = new Blob(["\ufeff" + csvRows.join("\n")], { type: "text/csv;charset=utf-8" });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = url;
-                a.download = `hours_${hoursMonth}.csv`;
+                a.download = `roster_attendance_${hoursMonth}.csv`;
                 a.click();
                 URL.revokeObjectURL(url);
               }}
             >
-              <Download className="w-3.5 h-3.5" /> Export CSV
+              <Download className="w-3.5 h-3.5" /> Export roster CSV
             </Button>
           </div>
           <Card>
             <CardContent className="pt-4 overflow-x-auto">
+              <p className="text-sm font-semibold mb-2">Employee-Level Roster &amp; Attendance Detail</p>
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Agent</TableHead>
-                    <TableHead className="text-right">Scheduled</TableHead>
-                    <TableHead className="text-right">Shift Hrs</TableHead>
+                    <TableHead>Employee</TableHead>
+                    <TableHead>Quantum Client</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Start Date</TableHead>
+                    <TableHead className="text-right">Sched. Hrs</TableHead>
                     <TableHead className="text-right">Worked Hrs</TableHead>
-                    <TableHead className="text-right">Break (min)</TableHead>
-                    <TableHead className="text-right">Lunch (min)</TableHead>
-                    <TableHead className="text-right">Training (min)</TableHead>
-                    <TableHead className="text-right">System Down (min)</TableHead>
-                    <TableHead className="text-right">Idle (min)</TableHead>
+                    <TableHead className="text-right">PTO Hrs</TableHead>
+                    <TableHead className="text-right">Unplanned Hrs</TableHead>
+                    <TableHead className="text-right">Late / Early</TableHead>
+                    <TableHead>Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {hoursLoading ? (
-                    <TableRow>
-                      <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
-                        Loading…
-                      </TableCell>
-                    </TableRow>
+                    <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
                   ) : (hoursSummary as HoursSummaryRow[]).length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={9} className="text-center text-muted-foreground py-8">
-                        No data for {hoursMonth}.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    (hoursSummary as HoursSummaryRow[]).map(row => {
-                      const utilPct = row.scheduledHrs > 0
-                        ? Math.round((row.workedHrs / row.scheduledHrs) * 100)
-                        : null;
+                    <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">No data for {hoursMonth}.</TableCell></TableRow>
+                  ) : (() => {
+                    const rows = [...(hoursSummary as HoursSummaryRow[])].sort((a, b) => (a.role ?? "zzz").localeCompare(b.role ?? "zzz") || a.name.localeCompare(b.name));
+                    const groups: Array<[string, HoursSummaryRow[]]> = hoursGroupByRole
+                      ? Array.from(rows.reduce((m, r) => { const k = r.role ?? "No position set"; (m.get(k) ?? m.set(k, []).get(k)!).push(r); return m; }, new Map<string, HoursSummaryRow[]>()).entries())
+                      : [["", rows]];
+                    const renderRow = (row: HoursSummaryRow) => {
+                      const utilPct = row.scheduledHrs > 0 ? Math.round((row.workedHrs / row.scheduledHrs) * 100) : null;
                       return (
                         <TableRow key={row.traineeCode}>
                           <TableCell>
                             <div className="font-medium">{row.name}</div>
                             <div className="text-xs text-muted-foreground font-mono">{row.traineeCode}</div>
                           </TableCell>
-                          <TableCell className="text-right font-mono text-sm">{row.scheduledHrs}h</TableCell>
-                          <TableCell className="text-right font-mono text-sm">{row.shiftHrs}h</TableCell>
+                          <TableCell className="text-sm">{row.clientName ?? "—"}</TableCell>
+                          <TableCell className="text-sm">{row.role ?? <span className="text-amber-600">not set</span>}</TableCell>
+                          <TableCell className="text-sm font-mono">{fmtUS(row.startDate)}</TableCell>
+                          <TableCell className="text-right font-mono text-sm">{row.scheduledHrs}</TableCell>
                           <TableCell className="text-right">
-                            <span className="font-mono text-sm">{row.workedHrs}h</span>
-                            {utilPct !== null && (
-                              <span className={`ml-1 text-xs ${utilPct >= 90 ? "text-green-600" : utilPct >= 75 ? "text-amber-500" : "text-red-500"}`}>
-                                ({utilPct}%)
-                              </span>
-                            )}
+                            <span className="font-mono text-sm">{row.workedHrs}</span>
+                            {utilPct !== null && <span className={`ml-1 text-xs ${utilPct >= 90 ? "text-green-600" : utilPct >= 75 ? "text-amber-500" : "text-red-500"}`}>({utilPct}%)</span>}
                           </TableCell>
-                          <TableCell className="text-right text-sm">{row.auxMinutes["break"] ?? 0}</TableCell>
-                          <TableCell className="text-right text-sm">{row.auxMinutes["lunch"] ?? 0}</TableCell>
-                          <TableCell className="text-right text-sm">{row.auxMinutes["training"] ?? 0}</TableCell>
-                          <TableCell className="text-right text-sm">
-                            <span className={row.auxMinutes["system_down"] ? "text-red-600 font-medium" : ""}>
-                              {row.auxMinutes["system_down"] ?? 0}
-                            </span>
-                          </TableCell>
-                          <TableCell className="text-right text-sm">{row.auxMinutes["idle"] ?? 0}</TableCell>
+                          <TableCell className="text-right font-mono text-sm">{row.ptoHrs}</TableCell>
+                          <TableCell className="text-right font-mono text-sm">{row.unplannedHrs > 0 ? <span className="text-red-600">{row.unplannedHrs}</span> : 0}</TableCell>
+                          <TableCell className="text-right font-mono text-sm">{row.lateEarly}</TableCell>
+                          <TableCell className="text-sm">{row.status}</TableCell>
                         </TableRow>
                       );
-                    })
-                  )}
+                    };
+                    return groups.flatMap(([role, list]) => [
+                      ...(hoursGroupByRole ? [
+                        <TableRow key={`g-${role}`} className="bg-muted/40">
+                          <TableCell colSpan={10} className="py-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{role} · {list.length}</TableCell>
+                        </TableRow>,
+                      ] : []),
+                      ...list.map(renderRow),
+                    ]);
+                  })()}
                 </TableBody>
               </Table>
+              <p className="text-[11px] text-muted-foreground mt-3">
+                Worked = clocked time minus AUX. PTO = approved leave days × scheduled daily hours. Unplanned = scheduled − worked − PTO. Late / Early = attendance exceptions in the month.
+              </p>
             </CardContent>
           </Card>
         </TabsContent>

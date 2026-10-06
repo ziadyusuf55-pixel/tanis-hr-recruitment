@@ -143,7 +143,7 @@ export default function Advances() {
                   <p className="font-medium text-sm truncate">{agentName(a)}</p>
                   <p className="text-xs text-muted-foreground">
                     {a.traineeCode} · {a.issuedDate}
-                    {a.deductCycle && <> · deducted from <span className="font-medium">{a.deductCycle}</span></>}
+                    {a.deductCycle && <> · {a.status === "deducted" ? "deducted from" : "to be deducted from"} <span className="font-medium">{a.deductCycle}</span></>}
                   </p>
                   {a.reason && <p className="text-xs text-muted-foreground italic truncate max-w-xs">{a.reason}</p>}
                 </div>
@@ -190,6 +190,7 @@ export default function Advances() {
               <label className="text-xs font-medium text-muted-foreground block mb-1">Deduct from Pay Cycle (YYYY-MM)</label>
               <Input placeholder="e.g. 2026-10" value={form.deductCycle}
                 onChange={e => setForm(f => ({ ...f, deductCycle: e.target.value }))} />
+              <p className="text-[11px] text-muted-foreground mt-1">This only tags that cycle's payroll row with "Took salary advance". Nothing is deducted automatically — the payroll inputter applies it, then marks the advance deducted here.</p>
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">Notes</label>

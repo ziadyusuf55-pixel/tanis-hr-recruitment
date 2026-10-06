@@ -1088,12 +1088,22 @@ async function startServer() {
         };
         const item = (ev.item ?? {}) as { ts?: string };
         if (statusMap[rxn] && item.ts) {
-          const { getRequestBySlackMessageTs, updateAgentRequestStatus } = await import("../db");
+          const { getRequestBySlackMessageTs } = await import("../db");
           const reqRow = await getRequestBySlackMessageTs(item.ts);
           if (reqRow) {
-            await updateAgentRequestStatus(reqRow.id, statusMap[rxn]);
             const cHook = process.env.SLACK_ADMIN_WEBHOOK;
-            if (cHook) fetch(cHook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: `:white_check_mark: Request from *${reqRow.traineeCode}* \u2192 *${statusMap[rxn].replace("_", " ")}*` }) }).catch(() => {});
+            const target = statusMap[rxn];
+            // Leave needs a casual/annual/unpaid classification, which a reaction can't carry — those must be
+            // decided in the Hub. Everything else goes through the SAME decision helper as the Hub button,
+            // so attendance exceptions and request status stay in step.
+            const needsHub = target === "resolved" && (reqRow.type === "leave" || reqRow.type === "paid_leave");
+            if (needsHub) {
+              if (cHook) fetch(cHook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: `:warning: *${reqRow.traineeCode}*'s ${reqRow.type.replace("_", " ")} request needs the leave type (casual / annual / unpaid) \u2014 approve it in the Hub \u2192 Requests.` }) }).catch(() => {});
+              return;
+            }
+            const { applyAgentRequestDecision } = await import("../routers");
+            await applyAgentRequestDecision({ id: reqRow.id, status: target, decidedBy: "Slack reaction" });
+            if (cHook) fetch(cHook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: `:white_check_mark: Request from *${reqRow.traineeCode}* \u2192 *${target.replace("_", " ")}*` }) }).catch(() => {});
             return;
           }
         }

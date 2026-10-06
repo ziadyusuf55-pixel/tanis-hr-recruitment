@@ -33,8 +33,11 @@ const REQUEST_TYPE_LABELS: Record<string, string> = {
   day_off: "Unpaid Day Off",
   sick_note: "Sick Note",
   hr_letter: "HR Letter",
+  late_arrival: "Late Arrival",
+  early_departure: "Early Departure",
   other: "Other",
 };
+const LEAVE_TYPES = ["leave", "paid_leave", "day_off"];
 
 const STATUS_CONFIG: Record<string, { label: string; className: string; icon: React.ElementType }> = {
   pending:     { label: "Pending",     className: "bg-yellow-50 text-yellow-700 border-yellow-200", icon: Clock },
@@ -103,20 +106,25 @@ export default function Requests() {
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [filterType, setFilterType] = useState<string>("all");
   const [lastWorkingDay, setLastWorkingDay] = useState("");
+  const [leaveType, setLeaveType] = useState<"" | "casual" | "annual" | "unpaid">("");
 
   function openRequest(req: AgentRequest) {
     setSelected(req);
     setReplyText(req.adminReply ?? "");
     setNewStatus(req.status);
     setLastWorkingDay("");
+    setLeaveType(req.type === "day_off" ? "unpaid" : "");
   }
 
   function handleUpdate() {
     if (!selected) return;
+    const isLeave = LEAVE_TYPES.includes(selected.type);
+    if (isLeave && newStatus === "resolved" && !leaveType) { toast.error("Choose the leave type (casual / annual / unpaid) before approving."); return; }
     updateMutation.mutate({
       id: selected.id,
       status: newStatus as "pending" | "in_progress" | "resolved" | "rejected",
       adminReply: replyText.trim() || undefined,
+      leaveType: isLeave && newStatus === "resolved" && leaveType ? leaveType : undefined,
     });
   }
 
@@ -411,6 +419,24 @@ export default function Requests() {
                   </SelectContent>
                 </Select>
               </div>
+
+              {/* Leave classification — approving deducts the matching balance and shows in Time Tracking */}
+              {selected && LEAVE_TYPES.includes(selected.type) && newStatus === "resolved" && (
+                <div className="space-y-1.5">
+                  <label className="text-xs font-medium text-foreground">Leave type <span className="text-muted-foreground font-normal">(approving = this leave is granted)</span></label>
+                  <Select value={leaveType} onValueChange={(v) => setLeaveType(v as "casual" | "annual" | "unpaid")}>
+                    <SelectTrigger className="h-9"><SelectValue placeholder="Choose…" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="casual">Casual (عارضة) — deducts balance</SelectItem>
+                      <SelectItem value="annual">Annual (اعتيادية) — deducts balance</SelectItem>
+                      <SelectItem value="unpaid">Unpaid — no deduction</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+              {selected && (selected.type === "late_arrival" || selected.type === "early_departure") && newStatus === "resolved" && (
+                <p className="text-xs rounded-md border bg-muted/40 px-3 py-2 text-muted-foreground">Resolving records this as a reviewed attendance exception in Time Tracking.</p>
+              )}
 
               {/* Reply */}
               <div className="space-y-1.5">

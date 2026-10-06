@@ -118,9 +118,16 @@ export default function ClientDashboardPage() {
     month: string;
   };
 
-  const isQuantum = (client as { timeTrackingEnabled?: boolean }).timeTrackingEnabled ?? client.name.toLowerCase().includes("quantum");
+  // Position-based client: positions are the agents' job titles (one client, many positions), not campaigns.
+  const isQuantum = (client as { positionBased?: boolean; timeTrackingEnabled?: boolean }).positionBased ?? (client as { timeTrackingEnabled?: boolean }).timeTrackingEnabled ?? client.name.toLowerCase().includes("quantum");
+
   // Filter to only truly active-status agents (backend returns inactive/nesting too)
   const activeAgents = _rawActiveAgents.filter(a => a.agentStatus === "active");
+  const positionCounts = (() => {
+    const m = new Map<string, number>();
+    for (const a of activeAgents) { const k = (a.jobTitle ?? "").trim() || "No position set"; m.set(k, (m.get(k) ?? 0) + 1); }
+    return Array.from(m.entries()).sort((x, y) => y[1] - x[1] || x[0].localeCompare(y[0]));
+  })();
 
   // Computed metrics
   const totalActive = activeAgents.length;
@@ -222,7 +229,7 @@ export default function ClientDashboardPage() {
                 {!client.isActive && <Badge variant="secondary" className="text-xs">Inactive</Badge>}
               </div>
               <p className="text-sm text-muted-foreground">
-                {campaigns.length} {isQuantum ? "position" : "campaign"}{campaigns.length !== 1 ? "s" : ""} · {totalActive} active agents
+                {isQuantum ? positionCounts.length : campaigns.length} {isQuantum ? "position" : "campaign"}{(isQuantum ? positionCounts.length : campaigns.length) !== 1 ? "s" : ""} · {totalActive} active agents
               </p>
             </div>
           </div>
@@ -272,7 +279,7 @@ export default function ClientDashboardPage() {
             <Card>
               <CardContent className="pt-5">
                 <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">{isQuantum ? "Positions" : "Campaigns"}</p>
-                <p className="text-3xl font-bold mt-1">{campaigns.length}</p>
+                <p className="text-3xl font-bold mt-1">{isQuantum ? positionCounts.length : campaigns.length}</p>
               </CardContent>
             </Card>
             <Card>
@@ -295,7 +302,23 @@ export default function ClientDashboardPage() {
               <CardTitle className="text-sm font-semibold">{isQuantum ? "Positions" : "Campaigns"}</CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
-              {campaigns.length === 0 ? (
+              {isQuantum ? (
+                positionCounts.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-3">No active agents yet.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {positionCounts.map(([pos, n]) => (
+                      <span
+                        key={pos}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium"
+                        style={pos === "No position set" ? { backgroundColor: "#f59e0b22", color: "#b45309" } : { backgroundColor: client.colorHex + "22", color: client.colorHex }}
+                      >
+                        {pos} <span className="text-xs opacity-70">× {n}</span>
+                      </span>
+                    ))}
+                  </div>
+                )
+              ) : campaigns.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-3">No campaigns assigned to this client.</p>
               ) : (
                 <div className="flex flex-wrap gap-2">

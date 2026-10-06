@@ -451,9 +451,13 @@ type ClientItem = {
   shortCode: string;
   colorHex: string;
   isActive: boolean;
+  /** Position-based client (Quantum): agents are grouped by job title, not campaign. */
+  positionBased?: boolean;
+  timeTrackingEnabled?: boolean;
 };
 
 type WorkforceAgent = {
+  jobTitle?: string | null;
   id: number;
   traineeCode: string;
   candidateId: number;
@@ -790,6 +794,7 @@ export default function Operations() {
   );
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | "all">("all");
   const [clientFilter, setClientFilter] = useState<number | "all">("all");
+  const [selectedPosition, setSelectedPosition] = useState<string | "all">("all");
   const [search, setSearch] = useState("");
   const [tlFilter, setTlFilter] = useState<string>("all");
   const [agentStatusFilter, setAgentStatusFilter] = useState<"active" | "all">("active");
@@ -881,7 +886,7 @@ export default function Operations() {
     { key: "fullName", label: "Full Name" },
     { key: "alias", label: "Alias" },
     { key: "crdts", label: "CRDTS" },
-    { key: "campaignName", label: "Campaign" },
+    { key: "campaignName", label: "Campaign / Position" },
     { key: "shiftHours", label: "Shift Hours" },
     { key: "teamLeader", label: "Team Leader" },
     { key: "offDay1", label: "Off Day 1" },
@@ -1016,6 +1021,14 @@ export default function Operations() {
     ? (campaigns as Campaign[])
     : (campaigns as Campaign[]).filter(c => c.clientId === clientFilter);
   const visibleCampaignIds = new Set(visibleCampaigns.map(c => c.id));
+  // Position-based client (e.g. Quantum): one client, many positions — group by job title instead of campaign.
+  const selectedClient = clientFilter === "all" ? null : (clients as ClientItem[]).find(c => c.id === clientFilter) ?? null;
+  const positionMode = !!selectedClient?.positionBased;
+  const positions = positionMode
+    ? Array.from(new Set((agents as WorkforceAgent[])
+        .filter(a => a.isActive && a.campaignId != null && visibleCampaignIds.has(a.campaignId))
+        .map(a => (a.jobTitle ?? "").trim() || "No position set"))).sort()
+    : [];
 
   const filteredAgents = (agents as WorkforceAgent[]).filter(a => {
     const q = search.toLowerCase();
@@ -1033,7 +1046,8 @@ export default function Operations() {
     const matchesClient = clientFilter === "all" || selectedCampaignId !== "all"
       ? true
       : (a.campaignId != null && visibleCampaignIds.has(a.campaignId));
-    return matchesSearch && matchesTL && matchesStatus && matchesClient;
+    const matchesPosition = !positionMode || selectedPosition === "all" || ((a.jobTitle ?? "").trim() || "No position set") === selectedPosition;
+    return matchesSearch && matchesTL && matchesStatus && matchesClient && matchesPosition;
   });
 
   // Former agents (resigned/terminated/blacklisted) still visible ONLY because salary isn't settled
@@ -1166,7 +1180,7 @@ export default function Operations() {
       {(clients as ClientItem[]).length > 1 && (
         <div className="flex flex-wrap gap-2 mb-4">
           <button
-            onClick={() => { setClientFilter("all"); setSelectedCampaignId("all"); }}
+            onClick={() => { setClientFilter("all"); setSelectedCampaignId("all"); setSelectedPosition("all"); }}
             className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${
               clientFilter === "all"
                 ? "bg-primary text-primary-foreground border-primary"
@@ -1178,7 +1192,7 @@ export default function Operations() {
           {(clients as ClientItem[]).filter(cl => cl.isActive).map(cl => (
             <button
               key={cl.id}
-              onClick={() => { setClientFilter(cl.id); setSelectedCampaignId("all"); }}
+              onClick={() => { setClientFilter(cl.id); setSelectedCampaignId("all"); setSelectedPosition("all"); }}
               className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${
                 clientFilter === cl.id
                   ? "text-white border-transparent"
@@ -1192,8 +1206,41 @@ export default function Operations() {
         </div>
       )}
 
+      {/* Position cards — position-based clients (Quantum) */}
+      {positionMode && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+          <div
+            className={`rounded-xl border p-4 cursor-pointer transition-all ${selectedPosition === "all" ? "border-primary bg-primary/5 shadow-sm" : "hover:border-primary/40"}`}
+            onClick={() => setSelectedPosition("all")}
+          >
+            <div className="flex items-center gap-2 mb-1">
+              <Users className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs font-medium text-muted-foreground">All positions · {selectedClient?.name}</span>
+            </div>
+            <div className="text-2xl font-bold">
+              {(agents as WorkforceAgent[]).filter(a => a.isActive && a.campaignId != null && visibleCampaignIds.has(a.campaignId)).length}
+            </div>
+            <div className="text-xs text-muted-foreground">active agents</div>
+          </div>
+          {positions.map(pos => {
+            const count = (agents as WorkforceAgent[]).filter(a => a.isActive && a.campaignId != null && visibleCampaignIds.has(a.campaignId) && (((a.jobTitle ?? "").trim() || "No position set") === pos)).length;
+            return (
+              <div
+                key={pos}
+                className={`rounded-xl border p-4 cursor-pointer transition-all ${selectedPosition === pos ? "border-primary bg-primary/5 shadow-sm" : "hover:border-primary/40"}`}
+                onClick={() => setSelectedPosition(pos)}
+              >
+                <span className={`text-xs font-medium truncate block mb-1 ${pos === "No position set" ? "text-amber-600" : "text-muted-foreground"}`}>{pos}</span>
+                <div className="text-2xl font-bold">{count}</div>
+                <div className="text-xs text-muted-foreground">{count === 1 ? "agent" : "agents"}</div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Campaign summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className={`grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6 ${positionMode ? "hidden" : ""}`}>
         <div
           className={`rounded-xl border p-4 cursor-pointer transition-all ${selectedCampaignId === "all" ? "border-primary bg-primary/5 shadow-sm" : "hover:border-primary/40"}`}
           onClick={() => setSelectedCampaignId("all")}
@@ -1408,9 +1455,18 @@ export default function Operations() {
                         ) : <span className="text-muted-foreground text-xs">—</span>}
                       </td>
                       <td className="px-4 py-3 hidden md:table-cell">
-                        {agent.campaignName ? (
-                          <Badge variant="outline" className="text-xs">{agent.campaignName}</Badge>
-                        ) : <span className="text-muted-foreground text-xs">—</span>}
+                        {(() => {
+                          const camp = (campaigns as Campaign[]).find(c => c.id === agent.campaignId);
+                          const cl = camp ? (clients as ClientItem[]).find(c => c.id === camp.clientId) : null;
+                          if (cl?.positionBased) {
+                            return agent.jobTitle
+                              ? <Badge variant="outline" className="text-xs">{agent.jobTitle}</Badge>
+                              : <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">position not set</Badge>;
+                          }
+                          return agent.campaignName
+                            ? <Badge variant="outline" className="text-xs">{agent.campaignName}</Badge>
+                            : <span className="text-muted-foreground text-xs">—</span>;
+                        })()}
                       </td>
                       <td className="px-4 py-3 hidden lg:table-cell text-muted-foreground text-xs">{agent.teamLeader ?? "—"}</td>
                       <td className="px-4 py-3 hidden md:table-cell">

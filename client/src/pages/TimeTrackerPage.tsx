@@ -5,11 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Clock, Coffee, CalendarOff, AlertTriangle, LogIn, LogOut } from "lucide-react";
+import { Clock, Coffee, AlertTriangle, LogIn, LogOut } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
 
 const AUX_TYPES = [
@@ -23,12 +20,6 @@ const AUX_TYPES = [
   { value: "other", label: "Other" },
 ];
 
-const PTO_TYPES = [
-  { value: "annual", label: "Annual Leave" },
-  { value: "sick", label: "Sick Leave" },
-  { value: "emergency", label: "Emergency" },
-  { value: "unpaid", label: "Unpaid" },
-];
 
 type AuxLog = {
   id: number;
@@ -87,28 +78,7 @@ export default function TimeTrackerPage() {
   // Clocked-in state: shift exists and has no clockOut yet
   const isClockedIn = !!todayShift && !todayShift.clockOut;
 
-  const [showPto, setShowPto] = useState(false);
-  const [ptoForm, setPtoForm] = useState({ requestType: "annual", startDate: today, endDate: today, halfDay: false, reason: "" });
   const { data: myPto = [] } = trpc.timeTracking.myPtoRequests.useQuery();
-  const submitPto = trpc.timeTracking.submitPto.useMutation({
-    onSuccess: () => {
-      utils.timeTracking.myPtoRequests.invalidate();
-      setShowPto(false);
-      toast.success("PTO request submitted");
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  const [showException, setShowException] = useState(false);
-  const [excForm, setExcForm] = useState({ date: today, exceptionType: "late", scheduledTime: "", actualTime: "", note: "" });
-  const logException = trpc.timeTracking.logException.useMutation({
-    onSuccess: () => {
-      setShowException(false);
-      toast.success("Exception logged");
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
   const logs = auxLogs as AuxLog[];
   const currentActive = [...logs].filter(l => !l.endTime).sort((a, b) => b.startTime - a.startTime)[0];
 
@@ -280,17 +250,11 @@ export default function TimeTrackerPage() {
         </CardContent>
       </Card>
 
-      {/* Actions */}
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        <Button variant="outline" className="h-auto py-4 flex-col gap-2" onClick={() => setShowPto(true)}>
-          <CalendarOff className="w-5 h-5" />
-          <span className="text-sm">Request PTO</span>
-        </Button>
-        <Button variant="outline" className="h-auto py-4 flex-col gap-2" onClick={() => setShowException(true)}>
-          <AlertTriangle className="w-5 h-5" />
-          <span className="text-sm">Log Exception</span>
-        </Button>
-      </div>
+      {/* Leave, late arrival and early departure are all requested from the portal's Request Center */}
+      <Button variant="outline" className="w-full h-auto py-3 mb-4 gap-2" onClick={() => { window.location.href = "/agent"; }}>
+        <AlertTriangle className="w-4 h-4" />
+        <span className="text-sm">Request leave, report late arrival or early departure → Requests tab</span>
+      </Button>
 
       {/* My PTO requests */}
       {(myPto as PtoReq[]).length > 0 && (
@@ -317,124 +281,6 @@ export default function TimeTrackerPage() {
         </Card>
       )}
 
-      {/* PTO Dialog */}
-      <Dialog open={showPto} onOpenChange={setShowPto}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Request PTO</DialogTitle></DialogHeader>
-          <div className="space-y-3 py-1">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Type</label>
-              <Select value={ptoForm.requestType} onValueChange={v => setPtoForm(f => ({ ...f, requestType: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {PTO_TYPES.map(t => <SelectItem key={t.value} value={t.value}>{t.label}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">From</label>
-                <Input type="date" value={ptoForm.startDate} onChange={e => setPtoForm(f => ({ ...f, startDate: e.target.value }))} />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">To</label>
-                <Input type="date" value={ptoForm.endDate} onChange={e => setPtoForm(f => ({ ...f, endDate: e.target.value }))} />
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="halfDay"
-                checked={ptoForm.halfDay}
-                onChange={e => setPtoForm(f => ({ ...f, halfDay: e.target.checked }))}
-                className="rounded"
-              />
-              <label htmlFor="halfDay" className="text-sm">Half day</label>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Reason (optional)</label>
-              <Textarea
-                placeholder="Reason for leave…"
-                value={ptoForm.reason}
-                onChange={e => setPtoForm(f => ({ ...f, reason: e.target.value }))}
-                rows={2}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowPto(false)}>Cancel</Button>
-            <Button
-              disabled={submitPto.isPending}
-              onClick={() => submitPto.mutate({
-                requestType: ptoForm.requestType as "annual" | "sick" | "emergency" | "unpaid",
-                startDate: ptoForm.startDate,
-                endDate: ptoForm.endDate,
-                halfDay: ptoForm.halfDay,
-                reason: ptoForm.reason || undefined,
-              })}
-            >
-              {submitPto.isPending ? "Submitting…" : "Submit"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Exception Dialog */}
-      <Dialog open={showException} onOpenChange={setShowException}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Log Attendance Exception</DialogTitle></DialogHeader>
-          <div className="space-y-3 py-1">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Date</label>
-              <Input type="date" value={excForm.date} onChange={e => setExcForm(f => ({ ...f, date: e.target.value }))} />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Type</label>
-              <Select value={excForm.exceptionType} onValueChange={v => setExcForm(f => ({ ...f, exceptionType: v }))}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="late">Late Arrival</SelectItem>
-                  <SelectItem value="early_departure">Early Departure</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Scheduled Time</label>
-                <Input type="time" value={excForm.scheduledTime} onChange={e => setExcForm(f => ({ ...f, scheduledTime: e.target.value }))} />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">Actual Time</label>
-                <Input type="time" value={excForm.actualTime} onChange={e => setExcForm(f => ({ ...f, actualTime: e.target.value }))} />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Note</label>
-              <Textarea
-                placeholder="Brief note…"
-                value={excForm.note}
-                onChange={e => setExcForm(f => ({ ...f, note: e.target.value }))}
-                rows={2}
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowException(false)}>Cancel</Button>
-            <Button
-              disabled={logException.isPending}
-              onClick={() => logException.mutate({
-                date: excForm.date,
-                exceptionType: excForm.exceptionType as "late" | "early_departure",
-                scheduledTime: excForm.scheduledTime || undefined,
-                actualTime: excForm.actualTime || undefined,
-                note: excForm.note || undefined,
-              })}
-            >
-              {logException.isPending ? "Logging…" : "Log Exception"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

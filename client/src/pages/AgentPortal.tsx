@@ -557,7 +557,7 @@ export default function AgentPortal() {
         {activeTab === "referrals" && <ReferralTab referrerCandidateId={agent.candidateId} theme={theme} />}
         {activeTab === "notifications" && <AgentNotificationsTab theme={theme} candidateId={agent.candidateId} />}
         {activeTab === "comments" && <AgentCommentsTab theme={theme} />}
-        {activeTab === "aux" && <AuxTrackerTab theme={theme} />}
+        {activeTab === "aux" && <AuxTrackerTab theme={theme} goToRequests={() => setActiveTab("requests")} />}
       </main>
 
 
@@ -1349,10 +1349,14 @@ const REQUEST_TYPE_LABELS: Record<string, string> = {
   day_off: "Unpaid Day Off",
   sick_note: "Sick Note",
   hr_letter: "HR Letter",
+  late_arrival: "Late Arrival",
+  early_departure: "Early Departure",
   other: "Other",
 };
-const DATE_REQUIRED_TYPES = ["leave", "paid_leave", "day_off", "resignation"];
-const MULTI_DATE_TYPES = ["leave", "paid_leave", "day_off"];;
+const DATE_REQUIRED_TYPES = ["leave", "paid_leave", "day_off", "resignation", "late_arrival", "early_departure"];
+const MULTI_DATE_TYPES = ["leave", "paid_leave", "day_off"];
+/** Attendance exceptions — reported after the fact, no advance notice, with scheduled vs actual time. */
+const ATTENDANCE_TYPES = ["late_arrival", "early_departure"];
 
 function getStatusStyle(status: string, theme: Theme) {
   const map: Record<string, string> = {
@@ -1376,8 +1380,9 @@ function getStatusLabel(status: string) {
 
 function getMinDateStr(type?: string) {
   const d = new Date();
-  // Unpaid day off can be requested for any day (including today)
+  // Unpaid day off / attendance exceptions can be for any day (including today or past days)
   if (type === "day_off") return d.toISOString().split("T")[0];
+  if (type === "late_arrival" || type === "early_departure") return "2020-01-01";
   d.setDate(d.getDate() + 14);
   return d.toISOString().split("T")[0];
 }
@@ -1541,14 +1546,17 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
     attachmentName: "",
     hrLetterPurpose: "",
     hrLetterLanguage: "" as "arabic" | "english" | "",
+    scheduledTime: "",
+    actualTime: "",
   });
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const needsDate = DATE_REQUIRED_TYPES.includes(form.type);
   const isMultiDate = MULTI_DATE_TYPES.includes(form.type);
   const isHrLetter = form.type === "hr_letter";
+  const isAttendance = ATTENDANCE_TYPES.includes(form.type);
   function resetForm() {
-    setForm({ type: "", subject: "", message: "", requestedDate: "", requestedDates: [], attachmentUrl: "", attachmentName: "", hrLetterPurpose: "", hrLetterLanguage: "" });
+    setForm({ type: "", subject: "", message: "", requestedDate: "", requestedDates: [], attachmentUrl: "", attachmentName: "", hrLetterPurpose: "", hrLetterLanguage: "", scheduledTime: "", actualTime: "" });
   }
 
   async function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
@@ -1595,16 +1603,19 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
     if (!form.message.trim()) { toast.error("Please describe your request"); return; }
     if (needsDate) {
       if (isMultiDate && form.requestedDates.length === 0) { toast.error("Please select at least one date"); return; }
-      if (!isMultiDate && !form.requestedDate) { toast.error("Please select a date (minimum 2 weeks from today)"); return; }
+      if (!isMultiDate && !form.requestedDate) { toast.error(isAttendance ? "Please select the date" : "Please select a date (minimum 2 weeks from today)"); return; }
     }
+    if (isAttendance && (!form.scheduledTime || !form.actualTime)) { toast.error("Please enter the scheduled and actual time"); return; }
     if (isHrLetter) {
       if (!form.hrLetterPurpose.trim()) { toast.error("Please describe the purpose of the HR letter"); return; }
       if (!form.hrLetterLanguage) { toast.error("Please select the letter language"); return; }
     }
     submitMutation.mutate({
-      type: form.type as "leave" | "paid_leave" | "salary" | "schedule" | "complaint" | "resignation" | "day_off" | "sick_note" | "hr_letter" | "other",
+      type: form.type as "leave" | "paid_leave" | "salary" | "schedule" | "complaint" | "resignation" | "day_off" | "sick_note" | "hr_letter" | "late_arrival" | "early_departure" | "other",
       subject: form.subject.trim(),
       message: form.message.trim(),
+      scheduledTime: isAttendance && form.scheduledTime ? form.scheduledTime : undefined,
+      actualTime: isAttendance && form.actualTime ? form.actualTime : undefined,
       requestedDate: (!isMultiDate && form.requestedDate) ? new Date(form.requestedDate).getTime() : undefined,
       requestedDates: (isMultiDate && form.requestedDates.length > 0) ? form.requestedDates : undefined,
       attachmentUrl: form.attachmentUrl || undefined,
@@ -1666,6 +1677,8 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
                       );
                     })()}
                 <SelectItem value="sick_note">Sick Note</SelectItem>
+                <SelectItem value="late_arrival">Late Arrival</SelectItem>
+                <SelectItem value="early_departure">Early Departure</SelectItem>
                 <SelectItem value="resignation">Resignation</SelectItem>
                 <SelectItem value="salary">Salary Inquiry</SelectItem>
                 <SelectItem value="schedule">Schedule Change</SelectItem>
@@ -1694,10 +1707,23 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
           {needsDate && !isMultiDate && (
             <div className="space-y-1.5">
               <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>
-                {form.type === "resignation" ? "Last Working Day" : "Requested Date"}
-                <span className="ml-1 normal-case" style={{ color: theme.textFaint }}>{form.type === "day_off" ? "(any date)" : "(min. 2 weeks from today)"}</span>
+                {form.type === "resignation" ? "Last Working Day" : isAttendance ? "Date" : "Requested Date"}
+                <span className="ml-1 normal-case" style={{ color: theme.textFaint }}>{form.type === "day_off" || isAttendance ? "(any date)" : "(min. 2 weeks from today)"}</span>
               </Label>
               <Input type="date" min={getMinDateStr(form.type)} value={form.requestedDate} onChange={(e) => setForm((f) => ({ ...f, requestedDate: e.target.value }))} style={inputStyle} />
+            </div>
+          )}
+
+          {isAttendance && (
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>Scheduled {form.type === "late_arrival" ? "start" : "end"}</Label>
+                <Input type="time" value={form.scheduledTime} onChange={(e) => setForm((f) => ({ ...f, scheduledTime: e.target.value }))} style={inputStyle} />
+              </div>
+              <div className="space-y-1.5">
+                <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>Actual {form.type === "late_arrival" ? "arrival" : "departure"}</Label>
+                <Input type="time" value={form.actualTime} onChange={(e) => setForm((f) => ({ ...f, actualTime: e.target.value }))} style={inputStyle} />
+              </div>
             </div>
           )}
 
@@ -3285,9 +3311,17 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
             style={{ background: theme.surface, borderColor: theme.surfaceBorder, color: theme.text }}
           >
             {(leaderboardCycles as { cycleKey: string; performanceMonth: string | null }[]).length > 0
-              ? (leaderboardCycles as { cycleKey: string; performanceMonth: string | null }[]).map(c => (
-                  <option key={c.cycleKey} value={c.cycleKey}>{c.performanceMonth || formatMonthLabel(c.cycleKey)}</option>
-                ))
+              ? (() => {
+                  const seen = new Set<string>();
+                  return (leaderboardCycles as { cycleKey: string; performanceMonth: string | null }[]).filter(c => {
+                    const label = (c.performanceMonth || formatMonthLabel(c.cycleKey)).trim().toLowerCase();
+                    if (seen.has(label)) return false;
+                    seen.add(label);
+                    return true;
+                  }).map(c => (
+                    <option key={c.cycleKey} value={c.cycleKey}>{c.performanceMonth || formatMonthLabel(c.cycleKey)}</option>
+                  ));
+                })()
               : Array.from({ length: 6 }, (_, i) => {
                   const d = new Date(); d.setMonth(d.getMonth() - i);
                   const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
@@ -5044,7 +5078,7 @@ function localDateKey(d = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
-function AuxTrackerTab({ theme }: { theme: Theme }) {
+function AuxTrackerTab({ theme, goToRequests }: { theme: Theme; goToRequests: () => void }) {
   const utils = trpc.useUtils();
   const today = localDateKey();
 
@@ -5077,26 +5111,10 @@ function AuxTrackerTab({ theme }: { theme: Theme }) {
   // Admin notes
   const { data: adminComments = [] } = trpc.agentComments.listMine.useQuery();
 
-  const [auxType, setAuxType] = useState("break");
-  const [showException, setShowException] = useState(false);
-  const [excForm, setExcForm] = useState({ date: today, exceptionType: "late", scheduledTime: "", actualTime: "", note: "" });
   const [showFullHistory, setShowFullHistory] = useState(false);
 
-  const startAux = trpc.timeTracking.startAux.useMutation({
-    onSuccess: () => { refetchAux(); utils.timeTracking.myAuxLogsAll.invalidate(); toast.success("AUX started"); },
-    onError: (e) => toast.error(e.message),
-  });
-  const endAux = trpc.timeTracking.endAux.useMutation({
-    onSuccess: (res) => {
-      refetchAux();
-      utils.timeTracking.myAuxLogsAll.invalidate();
-      const mins = Math.floor(((res as { durationMs?: number }).durationMs ?? 0) / 60000);
-      toast.success(`AUX ended — ${mins}m logged`);
-    },
-    onError: (e) => toast.error(e.message),
-  });
-  const logException = trpc.timeTracking.logException.useMutation({
-    onSuccess: () => { setShowException(false); toast.success("Exception logged"); },
+  const setState = trpc.timeTracking.setState.useMutation({
+    onSuccess: (res) => { refetchAux(); utils.timeTracking.myAuxLogsAll.invalidate(); if (res.changed) toast.success(res.state === "available" ? "Back to Available" : `Now on ${AUX_TYPES.find(t => t.value === res.state)?.label ?? res.state}`); },
     onError: (e) => toast.error(e.message),
   });
 
@@ -5149,17 +5167,77 @@ function AuxTrackerTab({ theme }: { theme: Theme }) {
   return (
     <div className="p-4 space-y-4 max-w-2xl mx-auto">
 
-      {/* ── Clock In / Out ── */}
+      {/* ── My Shift: clock in → state (Available / Break / Lunch …) → clock out, all in one place ── */}
       <div style={cardStyle}>
         {sectionTitle(<Clock className="w-4 h-4" style={{ color: BRAND_LIGHT }} />, "My Shift")}
-        {isClockedIn && shift ? (
-          <div style={{ background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.25)", borderRadius: 12, padding: 12 }} className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium" style={{ color: theme.text }}>On shift since {fmtTime(shift.clockIn)}</span>
-              <span className="text-xs font-semibold px-2 py-1 rounded-full" style={{ background: "rgba(34,197,94,0.15)", color: "#15803d" }}>{fmtDur(shift.clockIn)}</span>
-            </div>
+
+        {!isClockedIn ? (
+          <div className="space-y-3">
+            {shift && shift.clockOut && (
+              <p className="text-xs" style={{ color: theme.textMuted }}>
+                Last shift · {fmtTime(shift.clockIn)} – {fmtTime(shift.clockOut)} · {fmtDur(shift.clockIn, shift.clockOut)}
+              </p>
+            )}
             <button
-              onClick={() => { if (confirm("Clock out now? Any open AUX will be ended too.")) clockOut.mutate(); }}
+              onClick={() => clockIn.mutate()}
+              disabled={clockIn.isPending}
+              className="w-full h-11 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-50"
+              style={{ background: BRAND }}
+            >
+              Clock In
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {/* Current state */}
+            <div
+              className="rounded-xl px-4 py-3 flex items-center justify-between"
+              style={active
+                ? { background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.25)" }
+                : { background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.25)" }}
+            >
+              <div>
+                <p className="text-sm font-semibold" style={{ color: theme.text }}>
+                  {active ? (AUX_TYPES.find(t => t.value === active.auxType)?.label ?? active.auxType) : "Available"}
+                </p>
+                <p className="text-[11px]" style={{ color: theme.textMuted }}>
+                  {active ? `since ${fmtTime(active.startTime)}` : `on shift since ${fmtTime(shift!.clockIn)}`}
+                </p>
+              </div>
+              <span className="text-xs font-semibold px-2 py-1 rounded-full"
+                style={active ? { background: "rgba(251,191,36,0.15)", color: "#d97706" } : { background: "rgba(34,197,94,0.15)", color: "#15803d" }}>
+                {active ? fmtDur(active.startTime) : fmtDur(shift!.clockIn)}
+              </span>
+            </div>
+
+            {/* State buttons — tap to switch; the previous state ends automatically */}
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                onClick={() => setState.mutate({ state: "available" })}
+                disabled={setState.isPending || !active}
+                className="h-9 rounded-lg text-xs font-semibold transition-opacity disabled:opacity-40"
+                style={!active ? { background: "rgba(34,197,94,0.15)", color: "#15803d", border: "1px solid rgba(34,197,94,0.35)" } : { background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, color: theme.text }}
+              >
+                Available
+              </button>
+              {AUX_TYPES.map(t => {
+                const on = active?.auxType === t.value;
+                return (
+                  <button
+                    key={t.value}
+                    onClick={() => setState.mutate({ state: t.value as AuxType })}
+                    disabled={setState.isPending || on}
+                    className="h-9 rounded-lg text-xs font-semibold transition-opacity disabled:opacity-40"
+                    style={on ? { background: "rgba(251,191,36,0.15)", color: "#d97706", border: "1px solid rgba(251,191,36,0.4)" } : { background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, color: theme.text }}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={() => { if (confirm("Clock out now? This ends your shift for today.")) clockOut.mutate(); }}
               disabled={clockOut.isPending}
               className="w-full h-9 rounded-xl text-sm font-semibold transition-opacity disabled:opacity-50"
               style={{ background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, color: theme.text }}
@@ -5167,73 +5245,20 @@ function AuxTrackerTab({ theme }: { theme: Theme }) {
               Clock Out
             </button>
           </div>
-        ) : shift && shift.clockOut ? (
-          <div className="flex items-center justify-between">
-            <span className="text-sm" style={{ color: theme.textMuted }}>Shift complete · {fmtTime(shift.clockIn)} – {fmtTime(shift.clockOut)} · {fmtDur(shift.clockIn, shift.clockOut)}</span>
-            <button onClick={() => clockIn.mutate()} disabled={clockIn.isPending} className="h-8 px-3 rounded-lg text-xs font-semibold" style={{ background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, color: theme.text }}>Clock in again</button>
-          </div>
-        ) : (
-          <button
-            onClick={() => clockIn.mutate()}
-            disabled={clockIn.isPending}
-            className="w-full h-10 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-50"
-            style={{ background: BRAND }}
-          >
-            Clock In
-          </button>
-        )}
-      </div>
-
-      {/* ── AUX timer card ── */}
-      <div style={cardStyle}>
-        {sectionTitle(<Coffee className="w-4 h-4" style={{ color: BRAND_LIGHT }} />, "AUX Time")}
-
-        {active ? (
-          <div style={{ background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.25)", borderRadius: 12, padding: 12 }} className="space-y-2">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-medium capitalize" style={{ color: theme.text }}>{active.auxType} in progress</span>
-              <span className="text-xs font-semibold px-2 py-1 rounded-full" style={{ background: "rgba(251,191,36,0.15)", color: "#d97706" }}>
-                {fmtDur(active.startTime)}
-              </span>
-            </div>
-            <button
-              onClick={() => endAux.mutate({ id: active?.id })}
-              disabled={endAux.isPending}
-              className="w-full h-9 rounded-xl text-sm font-semibold transition-opacity disabled:opacity-50"
-              style={{ background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, color: theme.text }}
-            >
-              End {active.auxType}
-            </button>
-          </div>
-        ) : (
-          <div className="flex gap-2">
-            <select value={auxType} onChange={e => setAuxType(e.target.value)} style={{ ...inputStyle, flex: 1 }}>
-              {AUX_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-            </select>
-            <button
-              onClick={() => startAux.mutate({ auxType: auxType as AuxType })}
-              disabled={startAux.isPending || !isClockedIn}
-              title={!isClockedIn ? "Clock in first" : undefined}
-              className="h-9 px-4 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-50"
-              style={{ background: BRAND }}
-            >
-              Start
-            </button>
-          </div>
         )}
 
-        {/* Today's AUX summary */}
+        {/* Today's timeline */}
         {logs.filter(l => l.endTime).length > 0 && (
           <div className="mt-3 space-y-1">
-            <p style={{ fontSize: 11, color: theme.textMuted, marginBottom: 6, fontWeight: 600 }}>Today's AUX</p>
+            <p style={{ fontSize: 11, color: theme.textMuted, marginBottom: 6, fontWeight: 600 }}>Today</p>
             {logs.filter(l => l.endTime).map(log => (
               <div key={log.id} className="flex items-center justify-between py-1" style={{ borderBottom: `1px solid ${theme.cardBorder}` }}>
-                <span className="text-sm capitalize" style={{ color: theme.text }}>{log.auxType}</span>
+                <span className="text-sm" style={{ color: theme.text }}>{AUX_TYPES.find(t => t.value === log.auxType)?.label ?? log.auxType}</span>
                 <span className="text-xs" style={{ color: theme.textMuted }}>{fmtTime(log.startTime)} · {fmtDur(log.startTime, log.endTime)}</span>
               </div>
             ))}
             <div className="flex items-center justify-between pt-1">
-              <span className="text-xs font-semibold" style={{ color: theme.textMuted }}>Total today</span>
+              <span className="text-xs font-semibold" style={{ color: theme.textMuted }}>Total not-ready today</span>
               <span className="text-xs font-semibold" style={{ color: theme.text }}>
                 {(() => {
                   const totalMs = logs.filter(l => l.durationMs).reduce((acc, l) => acc + (l.durationMs ?? 0), 0);
@@ -5372,72 +5397,14 @@ function AuxTrackerTab({ theme }: { theme: Theme }) {
         </div>
       )}
 
-      {/* ── Log Exception ── */}
+      {/* ── Late / early departure / PTO all go through the Request Center ── */}
       <button
-        onClick={() => setShowException(true)}
+        onClick={goToRequests}
         className="w-full flex items-center justify-center gap-2 h-11 rounded-xl text-sm font-semibold transition-opacity"
         style={{ background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, color: theme.text }}
       >
-        <AlertTriangle className="w-4 h-4" /> Log Attendance Exception
+        <AlertTriangle className="w-4 h-4" /> Request leave, report late arrival or early departure
       </button>
-
-      {showException && (
-        <div style={{ ...cardStyle, border: `1px solid ${BRAND}40` }}>
-          <p className="text-sm font-semibold mb-3" style={{ color: theme.text }}>Log Attendance Exception</p>
-          <div className="space-y-3">
-            <div>
-              <label style={labelStyle}>Date</label>
-              <input type="date" value={excForm.date} onChange={e => setExcForm(f => ({ ...f, date: e.target.value }))} style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>Type</label>
-              <select value={excForm.exceptionType} onChange={e => setExcForm(f => ({ ...f, exceptionType: e.target.value }))} style={inputStyle}>
-                <option value="late">Late Arrival</option>
-                <option value="early_departure">Early Departure</option>
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label style={labelStyle}>Scheduled</label>
-                <input type="time" value={excForm.scheduledTime} onChange={e => setExcForm(f => ({ ...f, scheduledTime: e.target.value }))} style={inputStyle} />
-              </div>
-              <div>
-                <label style={labelStyle}>Actual</label>
-                <input type="time" value={excForm.actualTime} onChange={e => setExcForm(f => ({ ...f, actualTime: e.target.value }))} style={inputStyle} />
-              </div>
-            </div>
-            <div>
-              <label style={labelStyle}>Note</label>
-              <textarea
-                value={excForm.note}
-                onChange={e => setExcForm(f => ({ ...f, note: e.target.value }))}
-                rows={2}
-                placeholder="Brief note…"
-                style={{ ...inputStyle, resize: "none" }}
-              />
-            </div>
-          </div>
-          <div className="flex gap-2 mt-4">
-            <button onClick={() => setShowException(false)} className="flex-1 h-9 rounded-xl text-sm font-semibold transition-opacity" style={{ background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, color: theme.text }}>
-              Cancel
-            </button>
-            <button
-              disabled={logException.isPending}
-              onClick={() => logException.mutate({
-                date: excForm.date,
-                exceptionType: excForm.exceptionType as "late" | "early_departure",
-                scheduledTime: excForm.scheduledTime || undefined,
-                actualTime: excForm.actualTime || undefined,
-                note: excForm.note || undefined,
-              })}
-              className="flex-1 h-9 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-50"
-              style={{ background: BRAND }}
-            >
-              {logException.isPending ? "Logging…" : "Submit"}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

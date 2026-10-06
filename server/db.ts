@@ -933,7 +933,7 @@ export async function deletePerformanceRecord(id: number) {
 export async function createAgentRequest(data: {
   candidateId: number;
   traineeCode: string;
-  type: "leave" | "paid_leave" | "salary" | "schedule" | "complaint" | "resignation" | "day_off" | "sick_note" | "hr_letter" | "other";
+  type: "leave" | "paid_leave" | "salary" | "schedule" | "complaint" | "resignation" | "day_off" | "sick_note" | "hr_letter" | "late_arrival" | "early_departure" | "other";
   subject: string;
   message: string;
   requestedDate?: number | null;
@@ -1379,7 +1379,7 @@ export async function createClient(data: { name: string; shortCode: string; colo
   });
 }
 
-export async function updateClient(id: number, data: Partial<{ name: string; shortCode: string; colorHex: string; isActive: boolean; timeTrackingEnabled: boolean }>) {
+export async function updateClient(id: number, data: Partial<{ name: string; shortCode: string; colorHex: string; isActive: boolean; timeTrackingEnabled: boolean; positionBased: boolean }>) {
   const db = await getDb();
   if (!db) return;
   const { clients } = await import("../drizzle/schema");
@@ -2477,12 +2477,25 @@ export async function getPayrollStatusPage(month: string) {
     if (!adjByCrdts.has(k)) adjByCrdts.set(k, []);
     adjByCrdts.get(k)!.push(a);
   }
+  // Salary advances scheduled against THIS pay cycle (or still pending from earlier) are a TAG for the
+  // inputter — nothing is deducted automatically. Payroll shows "Took salary advance · EGP X" on the row.
+  const { agentAdvances: advT } = await import("../drizzle/schema");
+  let advRows: Array<typeof advT.$inferSelect> = [];
+  try {
+    advRows = await db.select().from(advT)
+      .where(and(eq(advT.status, "pending"), or(eq(advT.deductCycle, month), isNull(advT.deductCycle), sql`${advT.deductCycle} < ${month}`)));
+  } catch { advRows = []; /* advances table absent on this env — payroll must still load */ }
+  const advByCode = new Map<string, Array<typeof advRows[number]>>();
+  for (const a of advRows) { if (!advByCode.has(a.traineeCode)) advByCode.set(a.traineeCode, []); advByCode.get(a.traineeCode)!.push(a); }
   return rows.map(r => {
     const primary = String(r.crdts ?? "").split(",")[0].trim();
+    const advances = (r.traineeCode ? advByCode.get(r.traineeCode) : undefined) ?? [];
     return {
       ...r,
       pendingLeave: r.traineeCode ? (pendMap.get(r.traineeCode) ?? null) : null,
       adjustments: adjByCrdts.get(primary) ?? [],
+      advances: advances.map(a => ({ id: a.id, amountEgp: a.amountEgp, issuedDate: a.issuedDate, deductCycle: a.deductCycle, reason: a.reason })),
+      advanceTotalEgp: advances.reduce((s, a) => s + Number(a.amountEgp || 0), 0),
     };
   });
 }

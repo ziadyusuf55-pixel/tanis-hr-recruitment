@@ -62,6 +62,8 @@ type StatusRecord = {
   paidAt: number | null;
   month: string;
   pendingLeave?: { effectiveAt: number | null; lastWorkingDay: string | null } | null;
+  advances?: Array<{ id: number; amountEgp: string; issuedDate: string; deductCycle: string | null; reason: string | null }>;
+  advanceTotalEgp?: number;
   adjustments?: Array<{ type: string; label: string; amount: string | number }>;
 };
 
@@ -678,6 +680,14 @@ export default function PayrollPage() {
                                 {r.agentStatus === "resigned" && <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-orange-100 text-orange-700 border border-orange-200">Resigned</span>}
                                 {r.agentStatus === "terminated" && <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-red-100 text-red-700 border border-red-200">Terminated</span>}
                                 {r.pendingLeave && <span className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-amber-100 text-amber-700 border border-amber-200">Leaving {r.pendingLeave.lastWorkingDay ?? ""}</span>}
+                                {(r.advances?.length ?? 0) > 0 && (
+                                  <span
+                                    className="inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-medium bg-purple-100 text-purple-700 border border-purple-200"
+                                    title={(r.advances ?? []).map(a => `EGP ${Number(a.amountEgp).toLocaleString()} on ${a.issuedDate}${a.deductCycle ? ` → ${a.deductCycle}` : ""}${a.reason ? ` — ${a.reason}` : ""}`).join("\n") + "\nNot deducted automatically — handle in the Advances page."}
+                                  >
+                                    Took salary advance · EGP {Number(r.advanceTotalEgp ?? 0).toLocaleString()}
+                                  </span>
+                                )}
                               </div>
                             </td>
                             <td className="px-4 py-3 text-right text-muted-foreground">{fmtEGP(n(r.netPay))}</td>
