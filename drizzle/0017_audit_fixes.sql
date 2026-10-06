@@ -115,28 +115,29 @@ UPDATE `workforce_agents` SET `sessionRevokedAt` = (UNIX_TIMESTAMP() * 1000) WHE
 
 -- 9. Re-key rows that the sheet-push paths filed by CALENDAR month. The UI and every reader use the
 --    26th→25th pay cycle, so a row dated the 26th–31st belongs to the NEXT month's cycle.
---    Only rows whose cycleKey still equals their own calendar month are touched (idempotent).
+--    Only well-formed YYYY-MM-DD rows whose cycleKey still equals their own calendar month are touched
+--    (idempotent). Pure string math — no STR_TO_DATE, which strict mode rejects on junk like '?'.
 UPDATE `cycle_ot`
-   SET `cycleKey` = DATE_FORMAT(DATE_ADD(STR_TO_DATE(`date`, '%Y-%m-%d'), INTERVAL 1 MONTH), '%Y-%m')
- WHERE DAY(STR_TO_DATE(`date`, '%Y-%m-%d')) >= 26 AND `cycleKey` = LEFT(`date`, 7);
+   SET `cycleKey` = DATE_FORMAT(DATE_ADD(CONCAT(LEFT(`date`, 7), '-01'), INTERVAL 1 MONTH), '%Y-%m')
+ WHERE `date` REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND CAST(SUBSTRING(`date`, 9, 2) AS UNSIGNED) >= 26 AND `cycleKey` = LEFT(`date`, 7);
 UPDATE `cycle_deductions`
-   SET `cycleKey` = DATE_FORMAT(DATE_ADD(STR_TO_DATE(`date`, '%Y-%m-%d'), INTERVAL 1 MONTH), '%Y-%m')
- WHERE DAY(STR_TO_DATE(`date`, '%Y-%m-%d')) >= 26 AND `cycleKey` = LEFT(`date`, 7);
+   SET `cycleKey` = DATE_FORMAT(DATE_ADD(CONCAT(LEFT(`date`, 7), '-01'), INTERVAL 1 MONTH), '%Y-%m')
+ WHERE `date` REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND CAST(SUBSTRING(`date`, 9, 2) AS UNSIGNED) >= 26 AND `cycleKey` = LEFT(`date`, 7);
 UPDATE `coaching_sessions`
-   SET `cycleKey` = DATE_FORMAT(DATE_ADD(STR_TO_DATE(`sessionDate`, '%Y-%m-%d'), INTERVAL 1 MONTH), '%Y-%m')
- WHERE DAY(STR_TO_DATE(`sessionDate`, '%Y-%m-%d')) >= 26 AND `cycleKey` = LEFT(`sessionDate`, 7);
+   SET `cycleKey` = DATE_FORMAT(DATE_ADD(CONCAT(LEFT(`sessionDate`, 7), '-01'), INTERVAL 1 MONTH), '%Y-%m')
+ WHERE `sessionDate` REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND CAST(SUBSTRING(`sessionDate`, 9, 2) AS UNSIGNED) >= 26 AND `cycleKey` = LEFT(`sessionDate`, 7);
 UPDATE `client_logouts`
-   SET `cycleKey` = DATE_FORMAT(DATE_ADD(STR_TO_DATE(`date`, '%Y-%m-%d'), INTERVAL 1 MONTH), '%Y-%m')
- WHERE DAY(STR_TO_DATE(`date`, '%Y-%m-%d')) >= 26 AND `cycleKey` = LEFT(`date`, 7);
+   SET `cycleKey` = DATE_FORMAT(DATE_ADD(CONCAT(LEFT(`date`, 7), '-01'), INTERVAL 1 MONTH), '%Y-%m')
+ WHERE `date` REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND CAST(SUBSTRING(`date`, 9, 2) AS UNSIGNED) >= 26 AND `cycleKey` = LEFT(`date`, 7);
 UPDATE `agent_quality_flags`
-   SET `cycleKey` = DATE_FORMAT(DATE_ADD(STR_TO_DATE(`date`, '%Y-%m-%d'), INTERVAL 1 MONTH), '%Y-%m')
- WHERE DAY(STR_TO_DATE(`date`, '%Y-%m-%d')) >= 26 AND `cycleKey` = LEFT(`date`, 7);
+   SET `cycleKey` = DATE_FORMAT(DATE_ADD(CONCAT(LEFT(`date`, 7), '-01'), INTERVAL 1 MONTH), '%Y-%m')
+ WHERE `date` REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND CAST(SUBSTRING(`date`, 9, 2) AS UNSIGNED) >= 26 AND `cycleKey` = LEFT(`date`, 7);
 
 -- 10. Fold legacy pto_requests into leave_requests (the ONE leave system). Each copied row carries a
 --     "[pto#<id>" marker in reason so re-running never duplicates. ptoStatus → status, reviewer → decidedBy.
 INSERT INTO `leave_requests` (`traineeCode`, `requesterName`, `startDate`, `endDate`, `days`, `reason`, `leaveType`, `status`, `decidedBy`, `createdAt`, `decidedAt`)
 SELECT p.`traineeCode`, p.`agentName`, p.`startDate`, p.`endDate`,
-       GREATEST(1, DATEDIFF(STR_TO_DATE(p.`endDate`, '%Y-%m-%d'), STR_TO_DATE(p.`startDate`, '%Y-%m-%d')) + 1),
+       GREATEST(1, IF(p.`startDate` REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' AND p.`endDate` REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}$', DATEDIFF(p.`endDate`, p.`startDate`) + 1, 1)),
        CONCAT('[pto#', p.`id`, ' ', p.`requestType`, IF(p.`halfDay` = 1, ', half day', ''), '] ', COALESCE(p.`reason`, '')),
        CASE WHEN p.`requestType` = 'annual' THEN 'annual' ELSE NULL END,
        p.`ptoStatus`, p.`reviewedBy`, p.`createdAt`, p.`reviewedAt`
