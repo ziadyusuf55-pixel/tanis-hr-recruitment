@@ -180,10 +180,16 @@ type Tab = "profile" | "opplan" | "performance" | "academy" | "payroll" | "commi
 
 export default function AgentPortal() {
   const [, navigate] = useLocation();
-  const { data: agent, isLoading, isFetching } = trpc.agent.me.useQuery(undefined, {
-    retry: false,
+  // Session check. A FAILED request (phone asleep, Wi-Fi blip, server redeploying) is NOT a logout:
+  // only an explicit `null` from the server (no/invalid/revoked cookie) sends the agent to /login.
+  // On error we keep the last known agent, show a reconnect banner and retry every 5s.
+  const { data: agent, isLoading, isFetching, isError, isSuccess, refetch: refetchMe } = trpc.agent.me.useQuery(undefined, {
+    retry: 2,
+    retryDelay: a => Math.min(1000 * 2 ** a, 8000),
     refetchOnWindowFocus: false,
+    refetchOnReconnect: true,
     staleTime: 0,
+    refetchInterval: q => (q.state.status === "error" ? 5000 : false),
   });
 
   // Dedicated lock poller — completely independent of auth state
@@ -255,10 +261,10 @@ export default function AgentPortal() {
   }
 
   useEffect(() => {
-    if (!isLoading && !isFetching && !agent) {
+    if (isSuccess && !isFetching && agent === null) {
       navigate("/login");
     }
-  }, [isLoading, isFetching, agent, navigate]);
+  }, [isSuccess, isFetching, agent, navigate]);
 
     // Auto-mark orientation shown on first visit (no popup)
   const { data: orientationData } = trpc.orientation.getStatus.useQuery(
@@ -275,7 +281,21 @@ export default function AgentPortal() {
     navigate("/login");
   }
 
-  if (isLoading || isFetching) {
+  // Connection problem with no cached session yet (e.g. first load while offline): show reconnecting, never bounce to login.
+  if (isError && !agent) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6" style={{ background: theme.bg }}>
+        <div className="text-center max-w-sm space-y-3">
+          <div className="text-4xl">📶</div>
+          <h1 className="text-lg font-bold" style={{ color: theme.text }}>Reconnecting…</h1>
+          <p className="text-sm" style={{ color: theme.textMuted }}>We couldn't reach the Hub. You are still signed in — this will retry automatically.</p>
+          <button onClick={() => refetchMe()} className="text-sm underline" style={{ color: BRAND_LIGHT }}>Retry now</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading || (isFetching && !agent)) {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: theme.bg }}>
         <div className="flex flex-col items-center gap-3">
@@ -329,6 +349,11 @@ export default function AgentPortal() {
 
   return (
     <div className="min-h-screen transition-colors duration-200" style={{ background: theme.bg, color: theme.text }}>
+      {isError && (
+        <div className="sticky top-0 z-50 text-center text-xs py-1.5 px-3" style={{ background: "#b45309", color: "#fff" }}>
+          Connection lost — reconnecting… you are still signed in. <button onClick={() => refetchMe()} className="underline ml-1">Retry now</button>
+        </div>
+      )}
       {/* ── Top Bar ── */}
       <header
         className="sticky top-0 z-30"

@@ -1137,6 +1137,12 @@ const agentRouter = router({
           }
         }
       }
+      // Sliding session: agents are never logged out for inactivity. If the token is older than a day,
+      // re-issue a fresh 30-day cookie so a session that is used at least monthly lives forever.
+      if (payload.iat && Date.now() - payload.iat * 1000 > 24 * 60 * 60 * 1000) {
+        const fresh = jwt.sign({ candidateId: payload.candidateId, traineeCode: payload.traineeCode, type: "agent" }, ENV.cookieSecret, { expiresIn: "30d" });
+        ctx.res.cookie(AGENT_COOKIE, fresh, { ...getSessionCookieOptions(ctx.req), maxAge: 30 * 24 * 60 * 60 * 1000 });
+      }
       const candidate = await getCandidateById(payload.candidateId);
       if (!candidate) return null;
       // Get batch info

@@ -43,7 +43,11 @@ export default function TimeTrackerPage() {
   const d0 = new Date();
   const today = `${d0.getFullYear()}-${String(d0.getMonth() + 1).padStart(2, "0")}-${String(d0.getDate()).padStart(2, "0")}`;
 
-  const { data: access, isLoading: accessLoading } = trpc.timeTracking.checkAccess.useQuery();
+  // A failed request (offline / redeploy) must not look like "no access" — keep the last answer and retry.
+  const { data: access, isLoading: accessLoading, isError: accessError, refetch: refetchAccess } = trpc.timeTracking.checkAccess.useQuery(undefined, {
+    retry: 2, refetchOnReconnect: true, staleTime: 5 * 60 * 1000,
+    refetchInterval: q => (q.state.status === "error" ? 5000 : false),
+  });
   const { data: auxLogs = [], refetch: refetchAux } = trpc.timeTracking.myAuxLogs.useQuery({ date: today }, { refetchInterval: 30000 });
   const { data: todayShift, refetch: refetchShift } = trpc.timeTracking.myShiftToday.useQuery({ date: today }, { refetchInterval: 30000 });
   const [auxType, setAuxType] = useState("break");
@@ -95,6 +99,16 @@ export default function TimeTrackerPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Clock className="w-6 h-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (accessError && !access) {
+    return (
+      <div className="min-h-screen bg-background p-4 max-w-md mx-auto flex flex-col items-center justify-center gap-3 text-center">
+        <h1 className="text-lg font-semibold">Reconnecting…</h1>
+        <p className="text-sm text-muted-foreground">We couldn't reach the Hub. You are still signed in — retrying automatically.</p>
+        <Button variant="outline" size="sm" onClick={() => refetchAccess()}>Retry now</Button>
       </div>
     );
   }
