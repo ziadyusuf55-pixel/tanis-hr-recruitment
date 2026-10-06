@@ -1454,7 +1454,11 @@ export const agentAdvances = mysqlTable("agent_advances", {
   createdBy:   varchar("createdBy", { length: 255 }),
   createdAt:   bigint("createdAt", { mode: "number" }).notNull(),
   updatedAt:   bigint("updatedAt", { mode: "number" }).notNull(),
-});
+}, (t) => ({
+  traineeCreated: index("idx_adv_trainee_created").on(t.traineeCode, t.createdAt),
+  statusCycle:    index("idx_adv_status_cycle").on(t.status, t.deductCycle),
+  created:        index("idx_adv_created").on(t.createdAt),
+}));
 export type AgentAdvance = typeof agentAdvances.$inferSelect;
 
 // ─── Time Tracking ────────────────────────────────────────────────────────────

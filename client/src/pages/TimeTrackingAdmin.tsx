@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { toast } from "sonner";
-import { Clock, CalendarOff, AlertTriangle, CheckCircle2, XCircle, Activity, BarChart2, Download, Trash2, LogOut, Users } from "lucide-react";
+import { Clock, CalendarOff, AlertTriangle, CheckCircle2, Activity, BarChart2, Download, Trash2, LogOut, Users } from "lucide-react";
 
 type PtoReq = {
   id: number;
@@ -42,8 +42,11 @@ type AuxLogRow = {
   endTime: number | null;
   durationMs: number | null;
   note: string | null;
-  createdAt: number;
+  fullName?: string | null;
+  jobTitle?: string | null;
+  clientName?: string | null;
 };
+const toLocalInput = (ms: number | null) => { if (ms == null) return ""; const d = new Date(ms); const p = (n: number) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
 
 type HoursSummaryRow = {
   traineeCode: string;
@@ -83,15 +86,21 @@ export default function TimeTrackingAdmin() {
     return `${hoursMonth}-${String(last).padStart(2, "0")}`;
   })();
 
-  const { data: ptoRequests = [] } = trpc.timeTracking.allPtoRequests.useQuery({ status: "all" });
+  const { data: ptoRequests = [] } = trpc.timeTracking.allPtoRequests.useQuery({ status: "decided" });
   const { data: exceptions = [] } = trpc.timeTracking.allExceptions.useQuery({ month: excMonth });
   const { data: auxLogs = [] } = trpc.timeTracking.auxLogs.useQuery({ date: auxDate || undefined });
+  const [auxEdit, setAuxEdit] = useState<AuxLogRow | null>(null);
+  const [auxEditForm, setAuxEditForm] = useState({ auxType: "break", start: "", end: "", note: "" });
+  const updateAux = trpc.timeTracking.updateAux.useMutation({
+    onSuccess: () => { utils.timeTracking.auxLogs.invalidate(); utils.timeTracking.workedSummary.invalidate(); setAuxEdit(null); toast.success("AUX entry updated"); },
+    onError: (e) => toast.error(e.message),
+  });
+  const auxExport = trpc.timeTracking.auxLogs.useQuery({ from: hoursFrom, to: hoursTo }, { enabled: false });
   const { data: hoursSummary = [], isFetching: hoursLoading } = trpc.timeTracking.workedSummary.useQuery(
     { from: hoursFrom, to: hoursTo },
     { enabled: tab === "hours" }
   );
 
-  const [leaveTypeById, setLeaveTypeById] = useState<Record<number, "casual" | "annual" | "unpaid">>({});
   const { data: openShifts = [] } = trpc.timeTracking.openShifts.useQuery(undefined, { refetchInterval: 60000, enabled: tab === "open" });
   const deleteAux = trpc.timeTracking.deleteAux.useMutation({
     onSuccess: () => { utils.timeTracking.auxLogs.invalidate(); utils.timeTracking.workedSummary.invalidate(); toast.success("AUX entry deleted"); },
@@ -105,15 +114,7 @@ export default function TimeTrackingAdmin() {
     onSuccess: () => { utils.timeTracking.allExceptions.invalidate(); toast.success("Marked as reviewed"); },
     onError: (e) => toast.error(e.message),
   });
-  const reviewPto = trpc.timeTracking.reviewPto.useMutation({
-    onSuccess: () => {
-      utils.timeTracking.allPtoRequests.invalidate();
-      toast.success("PTO request updated");
-    },
-    onError: (e) => toast.error(e.message),
-  });
 
-  const pending = (ptoRequests as PtoReq[]).filter(r => r.status === "pending").length;
 
   return (
     <div className="p-6 space-y-5 max-w-5xl mx-auto">
@@ -127,10 +128,7 @@ export default function TimeTrackingAdmin() {
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="pto" className="gap-1.5">
-            <CalendarOff className="w-3.5 h-3.5" /> PTO Requests
-            {pending > 0 && (
-              <Badge className="ml-1 text-xs px-1.5 py-0 bg-red-500 text-white">{pending}</Badge>
-            )}
+            <CalendarOff className="w-3.5 h-3.5" /> PTO Log
           </TabsTrigger>
           <TabsTrigger value="exceptions" className="gap-1.5">
             <AlertTriangle className="w-3.5 h-3.5" /> Attendance Exceptions
@@ -198,6 +196,7 @@ export default function TimeTrackingAdmin() {
         <TabsContent value="pto" className="mt-4">
           <Card>
             <CardContent className="pt-4">
+              <p className="text-xs text-muted-foreground mb-3">Decided leave for time-tracking clients. Agents submit leave in their portal's Request Center and it is approved or rejected in <strong>Requests</strong>; the outcome is logged here.</p>
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -206,7 +205,7 @@ export default function TimeTrackingAdmin() {
                     <TableHead>Dates</TableHead>
                     <TableHead>Reason</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Actions</TableHead>
+                    <TableHead>Decided by</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -239,40 +238,7 @@ export default function TimeTrackingAdmin() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          {req.status === "pending" && (
-                            <div className="flex gap-1.5 items-center">
-                              {/* Approving deducts a balance, so HR must classify the leave first. */}
-                              <select
-                                className="h-8 rounded-md border bg-background px-2 text-xs"
-                                value={leaveTypeById[req.id] ?? ""}
-                                onChange={e => setLeaveTypeById(m => ({ ...m, [req.id]: e.target.value as "casual" | "annual" | "unpaid" }))}
-                              >
-                                <option value="">Type…</option>
-                                <option value="casual">Casual (عارضة) — deducts</option>
-                                <option value="annual">Annual (اعتيادية) — deducts</option>
-                                <option value="unpaid">Unpaid / sick — no deduction</option>
-                              </select>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="gap-1 text-green-700 border-green-200 hover:bg-green-50"
-                                disabled={reviewPto.isPending || !leaveTypeById[req.id]}
-                                title={!leaveTypeById[req.id] ? "Pick casual or annual first" : undefined}
-                                onClick={() => reviewPto.mutate({ id: req.id, status: "approved", leaveType: leaveTypeById[req.id] })}
-                              >
-                                <CheckCircle2 className="w-3.5 h-3.5" /> Approve
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="gap-1 text-red-600 border-red-200 hover:bg-red-50"
-                                disabled={reviewPto.isPending}
-                                onClick={() => reviewPto.mutate({ id: req.id, status: "rejected" })}
-                              >
-                                <XCircle className="w-3.5 h-3.5" /> Reject
-                              </Button>
-                            </div>
-                          )}
+                          <span className="text-xs text-muted-foreground">{(req as PtoReq & { reviewedBy?: string | null; leaveType?: string | null }).reviewedBy ?? "—"}{(req as PtoReq & { leaveType?: string | null }).leaveType ? ` · ${(req as PtoReq & { leaveType?: string | null }).leaveType}` : ""}</span>
                         </TableCell>
                       </TableRow>
                     ))
@@ -377,13 +343,64 @@ export default function TimeTrackingAdmin() {
                 Clear
               </Button>
             )}
+            <Button size="sm" variant="outline" className="gap-1.5 ml-auto" onClick={async () => {
+              const res = await auxExport.refetch();
+              const rows = (res.data ?? []) as AuxLogRow[];
+              if (!rows.length) { toast.message(`No AUX entries in ${hoursMonth}`); return; }
+              const esc = (v: unknown) => { const t = String(v ?? ""); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+              const fmt = (ms: number | null) => ms == null ? "" : new Date(ms).toLocaleString("en-US", { month: "numeric", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
+              const header = ["Employee", "Quantum Client", "Role", "Date", "AUX Type", "Start", "End", "Duration (min)", "Note"];
+              const lines = [header.join(","), ...rows.map(r => [
+                esc(r.fullName ?? r.traineeCode), esc(r.clientName ?? ""), esc(r.jobTitle ?? ""),
+                new Date(r.startTime).toLocaleDateString("en-US"), esc(r.auxType.replace(/_/g, " ")), fmt(r.startTime), fmt(r.endTime),
+                r.durationMs != null ? Math.round(r.durationMs / 60000) : "", esc(r.note ?? ""),
+              ].join(","))];
+              const blob = new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+              const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `aux_logs_${hoursMonth}.csv`; a.click(); URL.revokeObjectURL(url);
+            }}>
+              <Download className="w-3.5 h-3.5" /> Export month ({hoursMonth})
+            </Button>
           </div>
+          {auxEdit && (
+            <Card className="mb-4 border-primary/40">
+              <CardContent className="pt-4 grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
+                <div>
+                  <label className="text-xs font-medium block mb-1">Type</label>
+                  <select className="w-full h-9 rounded-md border px-2 text-sm bg-background" value={auxEditForm.auxType} onChange={e => setAuxEditForm(f => ({ ...f, auxType: e.target.value }))}>
+                    {["break", "lunch", "bathroom", "training", "meeting", "coaching", "system_down", "idle", "other"].map(t => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-xs font-medium block mb-1">Start</label>
+                  <input type="datetime-local" className="w-full h-9 rounded-md border px-2 text-sm bg-background" value={auxEditForm.start} onChange={e => setAuxEditForm(f => ({ ...f, start: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium block mb-1">End {auxEdit.endTime == null && <span className="text-muted-foreground font-normal">(blank = still open)</span>}</label>
+                  <input type="datetime-local" className="w-full h-9 rounded-md border px-2 text-sm bg-background" value={auxEditForm.end} onChange={e => setAuxEditForm(f => ({ ...f, end: e.target.value }))} />
+                </div>
+                <div>
+                  <label className="text-xs font-medium block mb-1">Note</label>
+                  <input className="w-full h-9 rounded-md border px-2 text-sm bg-background" value={auxEditForm.note} onChange={e => setAuxEditForm(f => ({ ...f, note: e.target.value }))} />
+                </div>
+                <div className="flex gap-2">
+                  <Button size="sm" disabled={updateAux.isPending || (auxEdit.endTime != null && !auxEditForm.end)} title={auxEdit.endTime != null && !auxEditForm.end ? "A closed AUX needs an end time" : undefined} onClick={() => updateAux.mutate({
+                    id: auxEdit.id,
+                    auxType: auxEditForm.auxType as "break",
+                    startTime: auxEditForm.start ? new Date(auxEditForm.start).getTime() : undefined,
+                    endTime: auxEditForm.end ? new Date(auxEditForm.end).getTime() : null,
+                    note: auxEditForm.note || null,
+                  })}>Save</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setAuxEdit(null)}>Cancel</Button>
+                </div>
+              </CardContent>
+            </Card>
+          )}
           <Card>
             <CardContent className="pt-4">
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Agent Code</TableHead>
+                    <TableHead>Agent</TableHead>
                     <TableHead>AUX Type</TableHead>
                     <TableHead>Start Time</TableHead>
                     <TableHead>End Time</TableHead>
@@ -415,7 +432,10 @@ export default function TimeTrackingAdmin() {
                         : "—";
                       return (
                         <TableRow key={log.id}>
-                          <TableCell className="font-mono text-xs">{log.traineeCode}</TableCell>
+                          <TableCell>
+                            <div className="font-medium text-sm">{log.fullName ?? log.traineeCode}</div>
+                            <div className="text-xs text-muted-foreground font-mono">{log.traineeCode}{log.jobTitle ? ` · ${log.jobTitle}` : ""}</div>
+                          </TableCell>
                           <TableCell>
                             <Badge variant="outline" className="capitalize text-xs">
                               {log.auxType.replace(/_/g, " ")}
@@ -433,7 +453,11 @@ export default function TimeTrackingAdmin() {
                           <TableCell className="text-sm text-muted-foreground max-w-[200px] truncate">
                             {log.note ?? "—"}
                           </TableCell>
-                          <TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" title="Adjust this AUX entry"
+                              onClick={() => { setAuxEdit(log); setAuxEditForm({ auxType: log.auxType, start: toLocalInput(log.startTime), end: toLocalInput(log.endTime), note: log.note ?? "" }); }}>
+                              Edit
+                            </Button>
                             <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-red-600" title="Delete this AUX entry"
                               disabled={deleteAux.isPending}
                               onClick={() => { if (confirm(`Delete this ${log.auxType.replace(/_/g, " ")} entry for ${log.traineeCode}?`)) deleteAux.mutate({ id: log.id }); }}>

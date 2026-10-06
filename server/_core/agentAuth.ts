@@ -124,7 +124,9 @@ export async function resolveAgentSession(req: Request): Promise<AgentSession | 
       stripAgentCookie(req);
       return null;
     }
-    if (row.isDemo && ENV.isProduction && process.env.ALLOW_DEMO_AGENT_LOGIN !== "true") {
+    // Demo/test agents (isDemo) may log in — the owner uses them to test the portal — but they are excluded
+    // from every report and headcount. Set BLOCK_DEMO_AGENT_LOGIN=true to refuse them entirely.
+    if (row.isDemo && process.env.BLOCK_DEMO_AGENT_LOGIN === "true") {
       stripAgentCookie(req);
       return null;
     }

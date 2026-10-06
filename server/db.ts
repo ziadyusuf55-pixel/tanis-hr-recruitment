@@ -1511,6 +1511,7 @@ export async function listWorkforceAgents(campaignId?: number, teamLeader?: stri
     profileLocked: workforceAgents.profileLocked,
     promotedAt: workforceAgents.promotedAt,
     employeeType: workforceAgents.employeeType,
+    isDemo: workforceAgents.isDemo,
   }).from(workforceAgents)
     .leftJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
     .orderBy(workforceAgents.fullName);
@@ -2089,7 +2090,8 @@ export async function getHeadcountForecast(campaignId: number, days = 30) {
     offDay1: workforceAgents.offDay1,
     offDay2: workforceAgents.offDay2,
   }).from(workforceAgents)
-    .where(and(eq(workforceAgents.campaignId, campaignId), eq(workforceAgents.isActive, true)));
+    .where(and(eq(workforceAgents.campaignId, campaignId), eq(workforceAgents.isActive, true),
+      or(isNull(workforceAgents.isDemo), eq(workforceAgents.isDemo, false))));
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);

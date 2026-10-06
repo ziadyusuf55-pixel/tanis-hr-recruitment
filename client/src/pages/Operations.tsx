@@ -23,7 +23,6 @@ import {
   ChevronRight,
   AlertTriangle,
   CheckCircle2,
-  Bell,
   Calendar,
   BarChart3,
   Settings,
@@ -458,6 +457,7 @@ type ClientItem = {
 
 type WorkforceAgent = {
   jobTitle?: string | null;
+  isDemo?: boolean | null;
   id: number;
   traineeCode: string;
   candidateId: number;
@@ -794,6 +794,7 @@ export default function Operations() {
   );
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | "all">("all");
   const [clientFilter, setClientFilter] = useState<number | "all">("all");
+
   const [selectedPosition, setSelectedPosition] = useState<string | "all">("all");
   const [search, setSearch] = useState("");
   const [tlFilter, setTlFilter] = useState<string>("all");
@@ -810,9 +811,19 @@ export default function Operations() {
   // Data
   const { data: campaigns = [], isLoading: loadingCampaigns } = trpc.campaigns.list.useQuery();
   const { data: clients = [] } = trpc.clients.list.useQuery();
+  // No "All Clients" view any more — Apello and Quantum are separate worlds. Default to the first active client.
+  useEffect(() => {
+    if (clientFilter === "all" && (clients as ClientItem[]).length > 0) {
+      const active = (clients as ClientItem[]).filter(c => c.isActive);
+      const first = active.find(c => !c.positionBased) ?? active[0];
+      if (first) setClientFilter(first.id);
+    }
+  }, [clients, clientFilter]);
   const { data: agents = [], isLoading: loadingAgents } = trpc.workforce.list.useQuery({
     campaignId: selectedCampaignId === "all" ? undefined : selectedCampaignId,
   });
+  // Demo/test accounts (isDemo) stay visible in the table (so credentials can be generated) but NEVER count in headcount.
+  const headcountAgents = useMemo(() => (agents as WorkforceAgent[]).filter(a => !a.isDemo), [agents]);
   const [forecastCampaignId, setForecastCampaignId] = useState<number | null>(null);
   const { data: forecast = [], isLoading: loadingForecast } = trpc.campaigns.headcountForecast.useQuery(
     { campaignId: forecastCampaignId! },
@@ -854,8 +865,15 @@ export default function Operations() {
     militaryStatus?: string;
     city?: string;
     profileLocked?: boolean;
+    jobTitle?: string;
   };
   const [editForm, setEditForm] = useState<EditForm>({});
+  // Is the agent being edited (by its chosen campaign) under a position-based client?
+  const editIsPositionBased = (() => {
+    const camp = (campaigns as Campaign[]).find(c => String(c.id) === String(editForm.campaignId ?? ""));
+    const cl = camp ? (clients as ClientItem[]).find(x => x.id === camp.clientId) : null;
+    return !!cl?.positionBased;
+  })();
   const [exitAgent, setExitAgent] = useState<WorkforceAgent | null>(null);
   const { data: pendingChecklistAgents = [] } = trpc.exit.pendingChecklist.useQuery();
   const markSettled = trpc.exit.markSettled.useMutation({
@@ -1000,15 +1018,6 @@ export default function Operations() {
     URL.revokeObjectURL(url);
   };
 
-  // Overtime alert
-  const [overtimeDialog, setOvertimeDialog] = useState(false);
-  const [overtimeDate, setOvertimeDate] = useState("");
-  const [overtimeCampaignId, setOvertimeCampaignId] = useState<number | null>(null);
-  const [overtimeMessage, setOvertimeMessage] = useState("");
-  const sendOvertimeAlert = trpc.campaigns.sendOvertimeAlert.useMutation({
-    onSuccess: (data) => { toast.success(`Overtime alert sent to ${data.sent} agents`); setOvertimeDialog(false); },
-    onError: (e) => toast.error(getErrorMessage(e)),
-  });
 
   const uniqueTLs = useMemo(() => {
     const tls = new Set<string>();
@@ -1024,8 +1033,11 @@ export default function Operations() {
   // Position-based client (e.g. Quantum): one client, many positions — group by job title instead of campaign.
   const selectedClient = clientFilter === "all" ? null : (clients as ClientItem[]).find(c => c.id === clientFilter) ?? null;
   const positionMode = !!selectedClient?.positionBased;
+  useEffect(() => {
+    if (positionMode && (activeTab === "campaigns" || activeTab === "forecast")) setActiveTab("agents");
+  }, [positionMode, activeTab]);
   const positions = positionMode
-    ? Array.from(new Set((agents as WorkforceAgent[])
+    ? Array.from(new Set(headcountAgents
         .filter(a => a.isActive && a.campaignId != null && visibleCampaignIds.has(a.campaignId))
         .map(a => (a.jobTitle ?? "").trim() || "No position set"))).sort()
     : [];
@@ -1080,6 +1092,7 @@ export default function Operations() {
       militaryStatus: agent.militaryStatus ?? "",
       city: agent.city ?? "",
       profileLocked: agent.profileLocked ?? false,
+      jobTitle: agent.jobTitle ?? "",
     });
     setEditDialog(true);
   };
@@ -1117,6 +1130,7 @@ export default function Operations() {
       joinDate: editForm.joinDateStr ? new Date(editForm.joinDateStr).getTime() : undefined,
       isActive: editForm.isActive,
       crdts: editForm.crdts || undefined,
+      jobTitle: editForm.jobTitle !== undefined ? (editForm.jobTitle.trim() || undefined) : undefined,
       workLocation: (editForm.workLocation as "office" | "wfh" | undefined) || undefined,
       nationalId: editForm.nationalId || undefined,
       nationalIdExpiry: editForm.nationalIdExpiry || undefined,
@@ -1150,18 +1164,11 @@ export default function Operations() {
             Operations
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Manage active workforce agents, campaigns, and headcount coverage
+            {positionMode ? `Manage ${selectedClient?.name} agents by position` : "Manage active workforce agents, campaigns, and headcount coverage"}
           </p>
         </div>
         <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1.5 text-amber-700 border-amber-200 hover:bg-amber-50"
-            onClick={() => setOvertimeDialog(true)}
-          >
-            <Bell className="h-4 w-4" /> Overtime Alert
-          </Button>
+          {!positionMode && (
           <Button
             size="sm"
             className="gap-1.5"
@@ -1173,22 +1180,13 @@ export default function Operations() {
           >
             <Plus className="h-4 w-4" /> New Campaign
           </Button>
+          )}
         </div>
       </div>
 
       {/* Client filter chips */}
       {(clients as ClientItem[]).length > 1 && (
         <div className="flex flex-wrap gap-2 mb-4">
-          <button
-            onClick={() => { setClientFilter("all"); setSelectedCampaignId("all"); setSelectedPosition("all"); }}
-            className={`px-3 py-1 rounded-full text-xs font-medium border transition-all ${
-              clientFilter === "all"
-                ? "bg-primary text-primary-foreground border-primary"
-                : "border-border text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            All Clients
-          </button>
           {(clients as ClientItem[]).filter(cl => cl.isActive).map(cl => (
             <button
               key={cl.id}
@@ -1218,12 +1216,12 @@ export default function Operations() {
               <span className="text-xs font-medium text-muted-foreground">All positions · {selectedClient?.name}</span>
             </div>
             <div className="text-2xl font-bold">
-              {(agents as WorkforceAgent[]).filter(a => a.isActive && a.campaignId != null && visibleCampaignIds.has(a.campaignId)).length}
+              {headcountAgents.filter(a => a.isActive && a.campaignId != null && visibleCampaignIds.has(a.campaignId)).length}
             </div>
             <div className="text-xs text-muted-foreground">active agents</div>
           </div>
           {positions.map(pos => {
-            const count = (agents as WorkforceAgent[]).filter(a => a.isActive && a.campaignId != null && visibleCampaignIds.has(a.campaignId) && (((a.jobTitle ?? "").trim() || "No position set") === pos)).length;
+            const count = headcountAgents.filter(a => a.isActive && a.campaignId != null && visibleCampaignIds.has(a.campaignId) && (((a.jobTitle ?? "").trim() || "No position set") === pos)).length;
             return (
               <div
                 key={pos}
@@ -1250,12 +1248,12 @@ export default function Operations() {
             <span className="text-xs font-medium text-muted-foreground">All Campaigns</span>
           </div>
           <div className="text-2xl font-bold">
-            {(agents as WorkforceAgent[]).filter(a => a.isActive && (clientFilter === "all" || (a.campaignId != null && visibleCampaignIds.has(a.campaignId)))).length}
+            {headcountAgents.filter(a => a.isActive && (clientFilter === "all" || (a.campaignId != null && visibleCampaignIds.has(a.campaignId)))).length}
           </div>
           <div className="text-xs text-muted-foreground">active agents</div>
         </div>
         {visibleCampaigns.map(c => {
-          const count = (agents as WorkforceAgent[]).filter(a => a.campaignId === c.id && a.isActive).length;
+          const count = headcountAgents.filter(a => a.campaignId === c.id && a.isActive).length;
           return (
             <div
               key={c.id}
@@ -1291,7 +1289,7 @@ export default function Operations() {
           { id: "forecast", label: "Headcount Forecast", icon: BarChart3 },
           { id: "plan", label: "Operation Plan", icon: Grid3X3 },
           { id: "breaks", label: "Break Schedule", icon: Clock },
-        ].map(tab => (
+        ].filter(tab => !(positionMode && (tab.id === "campaigns" || tab.id === "forecast"))).map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as typeof activeTab)}
@@ -1365,7 +1363,7 @@ export default function Operations() {
               { value: "active", label: "Active", color: "text-emerald-700 bg-emerald-50 border-emerald-200" },
               { value: "all", label: "All Active", color: "text-foreground bg-muted/40 border-border" },
             ] as const).map(opt => {
-              const count = (agents as WorkforceAgent[]).filter(a => opt.value === "all" || (a.agentStatus ?? "active") === opt.value).length;
+              const count = headcountAgents.filter(a => opt.value === "all" || (a.agentStatus ?? "active") === opt.value).length;
               return (
                 <button
                   key={opt.value}
@@ -1424,9 +1422,9 @@ export default function Operations() {
                 <thead className="bg-muted/40 border-b">
                   <tr>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground">Agent</th>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell">CRDTS</th>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden md:table-cell">Campaign</th>
-                    <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden lg:table-cell">Team Leader</th>
+                    <th className={`text-left px-4 py-3 font-medium text-muted-foreground ${positionMode ? "hidden" : "hidden sm:table-cell"}`}>CRDTS</th>
+                    <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden md:table-cell">{positionMode ? "Position / Role" : "Campaign"}</th>
+                    <th className={`text-left px-4 py-3 font-medium text-muted-foreground ${positionMode ? "hidden" : "hidden lg:table-cell"}`}>Team Leader</th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden md:table-cell">Off Days</th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground hidden sm:table-cell">Join Date</th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
@@ -1437,13 +1435,13 @@ export default function Operations() {
                   {filteredAgents.map(agent => (
                     <tr key={agent.traineeCode ?? agent.crdts} className={`hover:bg-muted/20 transition-colors cursor-pointer${isHighlightMode && highlightCodes.has(agent.traineeCode) ? " bg-amber-50 border-l-4 border-l-amber-400" : ""}`} onClick={() => { const id = agent.traineeCode || agent.crdts; if (id) navigate(`/operations/agents/${encodeURIComponent(String(id))}`); else toast.error("Agent has no ID — edit the agent to assign a T-code or CRDTS first."); }}>
                       <td className="px-4 py-3">
-                        <div className="font-medium">{agent.fullName}</div>
+                        <div className="font-medium flex items-center gap-1.5">{agent.fullName}{agent.isDemo && <span title="Test account — excluded from headcount and all reports" className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200 font-semibold">TEST</span>}</div>
                         <div className="flex items-center gap-1.5 mt-0.5">
                           <span className="font-mono text-xs bg-muted px-1.5 py-0.5 rounded text-muted-foreground">{agent.traineeCode}</span>
                           {agent.alias && <span className="text-xs text-muted-foreground">({agent.alias})</span>}
                         </div>
                       </td>
-                      <td className="px-4 py-3 hidden sm:table-cell">
+                      <td className={`px-4 py-3 ${positionMode ? "hidden" : "hidden sm:table-cell"}`}>
                         {agent.crdts ? (
                           <button
                             className="font-mono text-xs bg-muted hover:bg-muted/80 px-2 py-1 rounded cursor-pointer border border-transparent hover:border-border transition-colors"
@@ -1468,7 +1466,7 @@ export default function Operations() {
                             : <span className="text-muted-foreground text-xs">—</span>;
                         })()}
                       </td>
-                      <td className="px-4 py-3 hidden lg:table-cell text-muted-foreground text-xs">{agent.teamLeader ?? "—"}</td>
+                      <td className={`px-4 py-3 text-muted-foreground text-xs ${positionMode ? "hidden" : "hidden lg:table-cell"}`}>{agent.teamLeader ?? "—"}</td>
                       <td className="px-4 py-3 hidden md:table-cell">
                         <div className="flex gap-1">
                           {agent.offDay1 !== null && agent.offDay1 !== undefined && (
@@ -1561,7 +1559,7 @@ export default function Operations() {
             </div>
           ) : (
             (campaigns as Campaign[]).map(c => {
-              const agentCount = (agents as WorkforceAgent[]).filter(a => a.campaignId === c.id && a.isActive).length;
+              const agentCount = headcountAgents.filter(a => a.campaignId === c.id && a.isActive).length;
               return (
                 <div key={c.id} className="rounded-xl border p-4 flex items-center justify-between gap-4">
                   <div className="flex-1 min-w-0">
@@ -1645,8 +1643,7 @@ export default function Operations() {
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground">Approved Leaves</th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground">Projected</th>
                     <th className="text-left px-4 py-3 font-medium text-muted-foreground">Status</th>
-                    <th className="px-4 py-3 w-32"></th>
-                  </tr>
+                                      </tr>
                 </thead>
                 <tbody className="divide-y">
                   {(forecast as ForecastDay[]).map(day => {
@@ -1671,23 +1668,6 @@ export default function Operations() {
                             <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 text-xs" variant="outline">
                               <CheckCircle2 className="h-3 w-3 inline mr-0.5" /> OK
                             </Badge>
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          {isUnder && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-7 text-xs gap-1 text-amber-700 border-amber-200 hover:bg-amber-50"
-                              onClick={() => {
-                                setOvertimeCampaignId(forecastCampaignId);
-                                setOvertimeDate(day.date);
-                                setOvertimeMessage(`Overtime needed on ${day.date}. We are ${min - day.projected} agent(s) short. Are you available?`);
-                                setOvertimeDialog(true);
-                              }}
-                            >
-                              <Bell className="h-3 w-3" /> Alert
-                            </Button>
                           )}
                         </td>
                       </tr>
@@ -1834,13 +1814,25 @@ export default function Operations() {
               <Input value={editForm.alias ?? ""} onChange={e => setEditForm(f => ({ ...f, alias: e.target.value }))} />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Campaign</label>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">{editIsPositionBased ? "Client" : "Campaign"}</label>
               <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={editForm.campaignId ?? ""} onChange={e => setEditForm(f => ({ ...f, campaignId: e.target.value }))}>
-                <option value="">No campaign</option>
-                {(campaigns as Campaign[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                <option value="">{editIsPositionBased ? "No client" : "No campaign"}</option>
+                {(campaigns as Campaign[]).map(c => {
+                  const cl = (clients as ClientItem[]).find(x => x.id === c.clientId);
+                  return <option key={c.id} value={c.id}>{cl?.positionBased ? `${cl.name}${c.name && c.name !== cl.name ? ` · ${c.name}` : ""}` : c.name}</option>;
+                })}
               </select>
             </div>
-            <div>
+            {editIsPositionBased && (
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Position / Role</label>
+                <Input list="position-options" value={editForm.jobTitle ?? ""} onChange={e => setEditForm(f => ({ ...f, jobTitle: e.target.value }))} placeholder="e.g. Scheduler, Accounts Receivable Rep" />
+                <datalist id="position-options">
+                  {Array.from(new Set((agents as WorkforceAgent[]).map(a => (a.jobTitle ?? "").trim()).filter(Boolean))).sort().map(t => <option key={t} value={t} />)}
+                </datalist>
+              </div>
+            )}
+            <div className={editIsPositionBased ? "hidden" : ""}>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">CRDTS</label>
               <Input value={editForm.crdts ?? ""} onChange={e => { setEditForm(f => ({ ...f, crdts: e.target.value })); setCrdtsOverride(false); }} placeholder="Enter credentials" />
               {crdtsConflict && (
@@ -1864,7 +1856,7 @@ export default function Operations() {
                 </div>
               )}
             </div>
-            <div>
+            <div className={editIsPositionBased ? "hidden" : ""}>
               <label className="text-xs font-medium text-muted-foreground mb-1 block">Team Leader</label>
               <Input value={editForm.teamLeader ?? ""} onChange={e => setEditForm(f => ({ ...f, teamLeader: e.target.value }))} />
             </div>
@@ -2211,50 +2203,6 @@ export default function Operations() {
         </DialogContent>
       </Dialog>
 
-      {/* Overtime Alert Dialog */}
-      <Dialog open={overtimeDialog} onOpenChange={setOvertimeDialog}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><Bell className="h-5 w-5 text-amber-600" /> Send Overtime Alert</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Campaign</label>
-              <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={overtimeCampaignId ?? ""} onChange={e => setOvertimeCampaignId(e.target.value ? Number(e.target.value) : null)}>
-                <option value="">Select campaign...</option>
-                {(campaigns as Campaign[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Date</label>
-              <Input type="date" value={overtimeDate} onChange={e => setOvertimeDate(e.target.value)} />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Message to agents</label>
-              <textarea
-                className="w-full min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm resize-none"
-                value={overtimeMessage}
-                onChange={e => setOvertimeMessage(e.target.value)}
-                placeholder="Overtime needed on this date. Are you available?"
-              />
-            </div>
-            <p className="text-xs text-muted-foreground">This will send a notification to all active agents in the selected campaign. They can respond with Available/Unavailable in their portal.</p>
-          </div>
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="outline" onClick={() => setOvertimeDialog(false)}>Cancel</Button>
-            <Button
-              className="bg-amber-600 hover:bg-amber-700 text-white gap-1.5"
-              disabled={!overtimeCampaignId || !overtimeDate || sendOvertimeAlert.isPending}
-              onClick={() => {
-                if (!overtimeCampaignId || !overtimeDate) return;
-                sendOvertimeAlert.mutate({ campaignId: overtimeCampaignId, date: overtimeDate, message: overtimeMessage || undefined });
-              }}
-            >
-              <Bell className="h-4 w-4" /> Send Alert
-            </Button>
-          </div>
-        </DialogContent>
-
       {/* ── Export Modal ── */}
       <Dialog open={showExportModal} onOpenChange={setShowExportModal}>
         <DialogContent className="max-w-sm">
@@ -2303,7 +2251,6 @@ export default function Operations() {
             </div>
           </div>
         </DialogContent>
-      </Dialog>
       </Dialog>
     </div>
   );
