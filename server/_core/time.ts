@@ -36,6 +36,44 @@ export function businessDayBounds(dateKey: string): { start: number; end: number
   return { start, end: start + 86_400_000 };
 }
 
+// ─── Time-tracking day (Quantum shifts / AUX) ────────────────────────────────
+// Quantum agents work US hours. Their "day" for shifts, AUX and productivity is the
+// US Eastern calendar day (EST/EDT), so an overnight Cairo shift is one day, not two.
+export const TIME_TRACKING_TZ = "America/New_York"; // mirrored in client/src/lib/tz.ts — change both together
+
+const _ttFmt = new Intl.DateTimeFormat("en-CA", {
+  timeZone: TIME_TRACKING_TZ,
+  year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false,
+});
+
+/** YYYY-MM-DD of the given instant in the time-tracking timezone (US Eastern). */
+export function ttDateKey(ms: number = Date.now()): string {
+  const parts = _ttFmt.formatToParts(new Date(ms));
+  const get = (t: string) => parts.find(p => p.type === t)?.value ?? "00";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+function ttOffsetMs(ms: number): number {
+  const parts = _ttFmt.formatToParts(new Date(ms));
+  const get = (t: string) => Number(parts.find(p => p.type === t)?.value ?? 0);
+  const asUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour") % 24, get("minute"), get("second"));
+  return asUtc - Math.floor(ms / 1000) * 1000;
+}
+
+/** [startMs, endMs) of the US-Eastern calendar day `YYYY-MM-DD`. */
+export function ttDayBounds(dateKey: string): { start: number; end: number } {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const guess = Date.UTC(y!, m! - 1, d!, 0, 0, 0);
+  let start = guess - ttOffsetMs(guess);
+  start = guess - ttOffsetMs(start);
+  // DST days are 23h/25h: compute the end as the start of the next calendar day.
+  const next = Date.UTC(y!, m! - 1, d! + 1, 0, 0, 0);
+  let end = next - ttOffsetMs(next);
+  end = next - ttOffsetMs(end);
+  return { start, end };
+}
+
 /** Is `dateKey` a well-formed YYYY-MM-DD? */
 export function isDateKey(s: unknown): s is string {
   return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);

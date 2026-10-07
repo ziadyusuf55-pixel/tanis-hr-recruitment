@@ -1441,6 +1441,18 @@ export type AgentContract = typeof agentContracts.$inferSelect;
  * HR creates the record; when the advance is recovered via payroll,
  * status moves to 'deducted'. 'cancelled' = forgiven / written off.
  */
+/**
+ * trainee_code_ledger — every agent ID ever issued. PK = atomic allocation; released codes stay forever
+ * so an ID is never reused. See server/db.ts allocateTraineeCode / reserveTraineeCode / releaseTraineeCode.
+ */
+export const traineeCodeLedger = mysqlTable("trainee_code_ledger", {
+  code:        varchar("code", { length: 100 }).primaryKey(),
+  candidateId: int("candidateId"),
+  source:      varchar("source", { length: 40 }).default("backfill").notNull(),
+  assignedAt:  bigint("assignedAt", { mode: "number" }).notNull(),
+  releasedAt:  bigint("releasedAt", { mode: "number" }),
+});
+
 export const agentAdvances = mysqlTable("agent_advances", {
   id:          int("id").autoincrement().primaryKey(),
   traineeCode: varchar("traineeCode", { length: 100 }).notNull(),

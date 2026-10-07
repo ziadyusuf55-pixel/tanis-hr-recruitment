@@ -313,31 +313,55 @@ const batchesRouter = router({
       .input(z.object({ batchId: z.number(), candidateId: z.number() }))
       .mutation(({ input }) => removeCandidateFromBatch(input.batchId, input.candidateId)),
 
+    /** Clear a trainee's ID (retires it — it can never be reused). Manual codes are no longer accepted. */
     setTraineeCode: staffProcedure
       .input(z.object({ batchId: z.number(), candidateId: z.number(), code: z.string().nullable() }))
       .mutation(async ({ input }) => {
-        // Guard: reject if code is already in use by another active agent
-        if (input.code) {
-          const { getDb } = await import("./db");
-          const { workforceAgents, batchCandidates: bc } = await import("../drizzle/schema");
-          const { eq, and, ne } = await import("drizzle-orm");
-          const db = await getDb();
-          if (db) {
-            // Check workforce_agents (graduated agents)
-            const [existing] = await db.select({ traineeCode: workforceAgents.traineeCode, agentStatus: workforceAgents.agentStatus })
-              .from(workforceAgents).where(eq(workforceAgents.traineeCode, input.code)).limit(1);
-            if (existing && existing.agentStatus === "active") {
-              throw new TRPCError({ code: "CONFLICT", message: `${input.code} is already assigned to an active agent.` });
-            }
-            // Check other candidates in training (not this one)
-            const [otherCandidate] = await db.select({ id: bc.candidateId })
-              .from(bc).where(and(eq(bc.traineeCode, input.code), ne(bc.candidateId, input.candidateId))).limit(1);
-            if (otherCandidate) {
-              throw new TRPCError({ code: "CONFLICT", message: `${input.code} is already assigned to another trainee in this batch.` });
-            }
+        if (input.code != null) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "Agent IDs are generated, not typed — use Generate ID." });
+        }
+        const { getDb, releaseTraineeCode } = await import("./db");
+        const { batchCandidates: bc } = await import("../drizzle/schema");
+        const { eq, and } = await import("drizzle-orm");
+        const db = await getDb();
+        if (db) {
+          const [cur] = await db.select({ code: bc.traineeCode }).from(bc).where(and(eq(bc.batchId, input.batchId), eq(bc.candidateId, input.candidateId))).limit(1);
+          if (cur?.code) {
+            const { workforceAgents, agentCredentials } = await import("../drizzle/schema");
+            const [wa] = await db.select({ x: workforceAgents.id }).from(workforceAgents).where(eq(workforceAgents.traineeCode, cur.code)).limit(1);
+            const [cr] = await db.select({ x: agentCredentials.id }).from(agentCredentials).where(eq(agentCredentials.traineeCode, cur.code)).limit(1);
+            if (wa || cr) throw new TRPCError({ code: "CONFLICT", message: `${cur.code} is a live agent ID and cannot be cleared here.` });
+            await releaseTraineeCode(cur.code);
           }
         }
-        return setTraineeCode(input.batchId, input.candidateId, input.code);
+        return setTraineeCode(input.batchId, input.candidateId, null);
+      }),
+
+    /**
+     * Generate (or regenerate) a trainee's agent ID. Random T-NNNNN, ledger-backed: never a duplicate,
+     * never a previously used code. The old code (if any) is retired for good.
+     */
+    assignTraineeCode: staffProcedure
+      .input(z.object({ batchId: z.number(), candidateId: z.number() }))
+      .mutation(async ({ input, ctx }) => {
+        const { getDb, allocateTraineeCode, releaseTraineeCode } = await import("./db");
+        const { batchCandidates: bc, workforceAgents, agentCredentials } = await import("../drizzle/schema");
+        const { eq, and } = await import("drizzle-orm");
+        const db = await getDb();
+        if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+        const [cur] = await db.select({ code: bc.traineeCode }).from(bc).where(and(eq(bc.batchId, input.batchId), eq(bc.candidateId, input.candidateId))).limit(1);
+        if (!cur) throw new TRPCError({ code: "NOT_FOUND", message: "Trainee not in this batch" });
+        if (cur.code) {
+          // Once the ID is live (agent exists / has portal credentials) it is their identity — do not regenerate here.
+          const [wa] = await db.select({ x: workforceAgents.id }).from(workforceAgents).where(eq(workforceAgents.traineeCode, cur.code)).limit(1);
+          const [cr] = await db.select({ x: agentCredentials.id }).from(agentCredentials).where(eq(agentCredentials.traineeCode, cur.code)).limit(1);
+          if (wa || cr) throw new TRPCError({ code: "CONFLICT", message: `${cur.code} is already a live agent ID (portal/Operations) and cannot be regenerated.` });
+        }
+        const code = await allocateTraineeCode(input.candidateId, "training");
+        await setTraineeCode(input.batchId, input.candidateId, code);
+        await releaseTraineeCode(cur.code);
+        await auditEntry(ctx.user, "assign_trainee_code", "batch_candidate", String(input.candidateId), JSON.stringify({ batchId: input.batchId, from: cur.code, to: code }));
+        return { code, previous: cur.code ?? null };
       }),
 
     getUsedCodes: staffProcedure.query(async () => {
@@ -1109,9 +1133,17 @@ const agentRouter = router({
     if (_meLocked) {
       throw new TRPCError({ code: "FORBIDDEN", message: _meMsg || "The agent portal is temporarily locked. Please contact your manager." });
     }
+    // Only an INVALID token means "not logged in". Any DB / infrastructure error below must surface as an
+    // error (the portal keeps the session and retries) — never as `null`, which the portal treats as logout.
+    let payload: { candidateId: number; traineeCode: string; type: string; iat?: number };
     try {
-      const payload = jwt.verify(token, ENV.cookieSecret) as { candidateId: number; traineeCode: string; type: string; iat?: number };
-      if (payload.type !== "agent") return null;
+      payload = jwt.verify(token, ENV.cookieSecret) as typeof payload;
+    } catch {
+      ctx.res.clearCookie(AGENT_COOKIE, { path: "/" });
+      return null;
+    }
+    if (payload.type !== "agent") return null;
+    {
       // Session revocation check: if the token was issued before sessionRevokedAt, reject it
       if (payload.traineeCode && payload.iat) {
         const { getDb: _meGdb } = await import("./db");
@@ -1144,7 +1176,11 @@ const agentRouter = router({
         ctx.res.cookie(AGENT_COOKIE, fresh, { ...getSessionCookieOptions(ctx.req), maxAge: 30 * 24 * 60 * 60 * 1000 });
       }
       const candidate = await getCandidateById(payload.candidateId);
-      if (!candidate) return null;
+      if (!candidate) {
+        const { getDb: _cGdb } = await import("./db");
+        if (!(await _cGdb())) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Database unavailable — please retry" });
+        return null; // candidate really gone
+      }
       // Get batch info
       const batch = await getCandidateBatch(payload.candidateId);
       let batchDetail = null;
@@ -1176,8 +1212,6 @@ const agentRouter = router({
         createdAt: candidate.createdAt,
         batch: batchDetail,
       };
-    } catch {
-      return null;
     }
   }),
 
@@ -2056,7 +2090,7 @@ const workforceRouter = router({
     }),
   allInTraining: staffProcedure
     .query(() => listAllAgentsInTraining()),
-  // Returns the next available T-{N} code (lowest unused sequential number)
+  // Preview of a free random agent ID (nothing reserved — workforce.create claims it atomically)
   nextTraineeCode: staffProcedure
     .query(() => getNextAvailableTraineeCode()),
 
@@ -2124,6 +2158,12 @@ const workforceRouter = router({
         }
       }
       // ─────────────────────────────────────────────────────────────────────
+      // Ledger: the code must be unowned, or already this candidate's (assigned in Training). Never a retired one.
+      {
+        const { reserveTraineeCode } = await import("./db");
+        try { await reserveTraineeCode(input.traineeCode, input.candidateId, "operations"); }
+        catch (e) { throw new TRPCError({ code: "CONFLICT", message: e instanceof Error ? e.message : "Agent ID unavailable" }); }
+      }
       await createWorkforceAgent(input);
       // Auto-create leave balance for new agent (default: 6 casual, 21 annual)
       try {
@@ -2453,6 +2493,7 @@ const workforceRouter = router({
   forceDelete: adminProcedure
     .input(z.object({ traineeCode: z.string() }))
     .mutation(async ({ input, ctx }) => {
+      { const { releaseTraineeCode } = await import("./db"); await releaseTraineeCode(input.traineeCode); }
       await auditEntry(ctx.user, "force_delete_agent", "agent", input.traineeCode);
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
@@ -7586,15 +7627,6 @@ const crdtsArchiveRouter = router({
 
 // ═══ LEAVE MANAGEMENT — casual (عارضة) / annual (اعتيادية) ═══
 const leaveRouter = router({
-  // Agent: submit a request (no type — HR classifies on decision). Identity from session.
-  request: agentProcedure
-    .input(z.object({ traineeCode: z.string().optional(), startDate: z.string(), endDate: z.string(), days: z.number().min(1), reason: z.string().optional() }))
-    .mutation(async ({ input, ctx }) => {
-      const { createLeaveRequestRow } = await import("./db");
-      await createLeaveRequestRow({ traineeCode: ctx.agent.traineeCode, startDate: input.startDate, endDate: input.endDate, days: input.days, reason: input.reason ?? null });
-      return { ok: true };
-    }),
-  // Agent: own requests. (Staff use listRequests / hr.myLeaveRequests for a given agent.)
   mine: agentProcedure.query(async ({ ctx }) => {
     const { getDb } = await import("./db");
     const db = await getDb();
@@ -8233,10 +8265,12 @@ const timeTrackingRouter = router({
       const { agentAuxLogs } = await import("../drizzle/schema");
       const { getDb } = await import("./db");
       const { eq, and, gte, lt, or, isNull } = await import("drizzle-orm");
-      const { businessDateKey, businessDayBounds } = await import("./_core/time");
+      const { ttDateKey, ttDayBounds } = await import("./_core/time");
       const db = await getDb();
       if (!db) return [];
-      const { start, end } = businessDayBounds(input?.date ?? businessDateKey());
+      // The agent's browser is in Cairo; the time-tracking day is US Eastern → ignore the client's date.
+      void input;
+      const { start, end } = ttDayBounds(ttDateKey());
       // Include any still-open row even if it started yesterday (overnight shifts).
       return db.select().from(agentAuxLogs)
         .where(and(eq(agentAuxLogs.traineeCode, ctx.agent.traineeCode),
@@ -8253,29 +8287,6 @@ const timeTrackingRouter = router({
     if (!db) return [];
     return db.select().from(agentAuxLogs).where(eq(agentAuxLogs.traineeCode, ctx.agent.traineeCode)).orderBy(agentAuxLogs.startTime);
   }),
-
-  // ─── PTO — thin wrapper over the ONE leave system (leave_requests) ────────────
-  submitPto: agentProcedure
-    .input(z.object({
-      requestType: z.enum(["annual", "sick", "emergency", "unpaid", "casual"]),
-      startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      halfDay: z.boolean().optional(),
-      reason: z.string().max(1000).optional(),
-    }))
-    .mutation(async ({ ctx, input }) => {
-      await assertTimeTrackingAccess(ctx.agent.traineeCode);
-      if (input.endDate < input.startDate) throw new TRPCError({ code: "BAD_REQUEST", message: "End date is before start date." });
-      const { createLeaveRequestRow } = await import("./db");
-      const agent = await getWorkforceAgentByCode(ctx.agent.traineeCode);
-      const id = await createLeaveRequestRow({
-        traineeCode: ctx.agent.traineeCode,
-        requesterName: agent?.fullName ?? null,
-        startDate: input.startDate, endDate: input.endDate,
-        reason: `[${input.requestType}${input.halfDay ? ", half day" : ""}] ${input.reason ?? ""}`.trim(),
-      });
-      return { ok: true, id };
-    }),
 
   myPtoRequests: agentProcedure.query(async ({ ctx }) => {
     const { getDb } = await import("./db");
@@ -8301,12 +8312,12 @@ const timeTrackingRouter = router({
       const db = await getDb();
       if (!db) return [];
       const { leaveRequests, workforceAgents, campaigns, clients } = await import("../drizzle/schema");
-      const { eq, desc, and, inArray } = await import("drizzle-orm");
+      const { eq, desc, and, inArray, or, isNull } = await import("drizzle-orm");
       // Only agents of time-tracking clients
       const codesRows = await db.select({ code: workforceAgents.traineeCode }).from(workforceAgents)
         .innerJoin(campaigns, eq(campaigns.id, workforceAgents.campaignId))
         .innerJoin(clients, eq(clients.id, campaigns.clientId))
-        .where(eq(clients.timeTrackingEnabled, true));
+        .where(and(eq(clients.timeTrackingEnabled, true), or(isNull(workforceAgents.isDemo), eq(workforceAgents.isDemo, false))));
       const codes = codesRows.map(r => r.code);
       if (!codes.length) return [];
       const statusCond = !input.status || input.status === "decided"
@@ -8324,54 +8335,12 @@ const timeTrackingRouter = router({
       }));
     }),
 
-  reviewPto: roleProcedure("hr", "manager", "ops_manager", "team_lead")
-    .input(z.object({ id: z.number().int().positive(), status: z.enum(["approved", "rejected"]), leaveType: z.enum(["casual", "annual", "unpaid"]).optional() }))
-    .mutation(async ({ ctx, input }) => {
-      const { decideLeaveRequest } = await import("./db");
-      try {
-        await decideLeaveRequest({ id: input.id, decision: input.status, leaveType: input.leaveType, decidedBy: ctx.user.name ?? ctx.user.email ?? "unknown", defaults: { casualTotal: 6, annualTotal: 21 } });
-      } catch (e) {
-        throw toTrpcError(e, "Failed");
-      }
-      await auditEntry(ctx.user, `pto_${input.status}`, "leave_request", String(input.id));
-      return { ok: true };
-    }),
-
-  // ─── Attendance exceptions ────────────────────────────────────────────────────
-  logException: agentProcedure
-    .input(z.object({
-      date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      exceptionType: z.enum(["late", "early_departure"]),
-      scheduledTime: z.string().optional(),
-      actualTime: z.string().optional(),
-      minutesLate: z.number().int().optional(),
-      note: z.string().max(500).optional(),
-    }))
-    .mutation(async ({ ctx, input }) => {
-      await assertTimeTrackingAccess(ctx.agent.traineeCode);
-      const { attendanceExceptions } = await import("../drizzle/schema");
-      const { getDb } = await import("./db");
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const agent = await getWorkforceAgentByCode(ctx.agent.traineeCode);
-      await db.insert(attendanceExceptions).values({
-        traineeCode: ctx.agent.traineeCode, agentName: agent?.fullName ?? null, date: input.date,
-        exceptionType: input.exceptionType,
-        scheduledTime: input.scheduledTime ?? null,
-        actualTime: input.actualTime ?? null,
-        minutesLate: input.minutesLate ?? null,
-        note: input.note ?? null,
-        status: "pending", createdAt: Date.now(),
-      });
-      return { ok: true };
-    }),
-
   allExceptions: staffProcedure
     .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/).optional(), status: z.enum(["pending", "reviewed"]).optional() }))
     .query(async ({ input }) => {
       const { attendanceExceptions } = await import("../drizzle/schema");
       const { getDb } = await import("./db");
-      const { and, like, eq } = await import("drizzle-orm");
+      const { and, like, eq, or, isNull } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) return [];
       const conds = [];
@@ -8384,7 +8353,7 @@ const timeTrackingRouter = router({
       const codesRows = await db.select({ code: workforceAgents.traineeCode }).from(workforceAgents)
         .innerJoin(campaigns, eq(campaigns.id, workforceAgents.campaignId))
         .innerJoin(clients, eq(clients.id, campaigns.clientId))
-        .where(eq(clients.timeTrackingEnabled, true));
+        .where(and(eq(clients.timeTrackingEnabled, true), or(isNull(workforceAgents.isDemo), eq(workforceAgents.isDemo, false))));
       const codes = new Set(codesRows.map(r => r.code));
       return all.filter(e => codes.has(e.traineeCode));
     }),
@@ -8457,6 +8426,15 @@ const timeTrackingRouter = router({
       const [row] = await db.select().from(agentShifts).where(eq(agentShifts.id, input.id)).limit(1);
       if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Shift not found" });
       await db.delete(agentShifts).where(eq(agentShifts.id, input.id));
+      if (!row.clockOut) {
+        // Deleting an OPEN shift must not strand the agent inside an AUX (setState would then refuse "Clock in first").
+        const { agentAuxLogs } = await import("../drizzle/schema");
+        const { and, isNull } = await import("drizzle-orm");
+        const now = Date.now();
+        const open = await db.select().from(agentAuxLogs).where(and(eq(agentAuxLogs.traineeCode, row.traineeCode), isNull(agentAuxLogs.endTime)));
+        for (const a of open) await db.update(agentAuxLogs).set({ endTime: now, durationMs: Math.max(0, now - a.startTime) }).where(eq(agentAuxLogs.id, a.id));
+        await syncPresenceFromState(row.traineeCode, null);
+      }
       await auditEntry(ctx.user, "delete_shift", "agent_shift", String(input.id), JSON.stringify(row));
       return { ok: true };
     }),
@@ -8465,12 +8443,12 @@ const timeTrackingRouter = router({
   openShifts: staffProcedure.query(async () => {
     const { agentShifts, agentAuxLogs, workforceAgents } = await import("../drizzle/schema");
     const { getDb } = await import("./db");
-    const { eq, isNull, inArray, and } = await import("drizzle-orm");
+    const { eq, isNull, inArray, and, or } = await import("drizzle-orm");
     const db = await getDb();
     if (!db) return [];
     const shifts = await db.select({ id: agentShifts.id, traineeCode: agentShifts.traineeCode, clockIn: agentShifts.clockIn, date: agentShifts.date, fullName: workforceAgents.fullName, jobTitle: workforceAgents.jobTitle })
       .from(agentShifts).leftJoin(workforceAgents, eq(workforceAgents.traineeCode, agentShifts.traineeCode))
-      .where(isNull(agentShifts.clockOut)).orderBy(agentShifts.clockIn);
+      .where(and(isNull(agentShifts.clockOut), or(isNull(workforceAgents.isDemo), eq(workforceAgents.isDemo, false)))).orderBy(agentShifts.clockIn);
     if (!shifts.length) return [];
     const codes = shifts.map(s => s.traineeCode);
     const openAux = await db.select().from(agentAuxLogs).where(and(inArray(agentAuxLogs.traineeCode, codes), isNull(agentAuxLogs.endTime)));
@@ -8511,16 +8489,17 @@ const timeTrackingRouter = router({
       const { agentAuxLogs, workforceAgents, campaigns, clients } = await import("../drizzle/schema");
       const { getDb } = await import("./db");
       const { eq, and, gte, lt, or, isNull } = await import("drizzle-orm");
-      const { businessDateKey, businessDayBounds } = await import("./_core/time");
+      const { ttDateKey, ttDayBounds } = await import("./_core/time");
       const db = await getDb();
       if (!db) return [];
       const conds = [];
       if (input.traineeCode) conds.push(eq(agentAuxLogs.traineeCode, input.traineeCode));
+      // Days are US-Eastern calendar days (Quantum works US hours) so an overnight shift's AUX stays on one day.
       if (input.from && input.to) {
-        conds.push(gte(agentAuxLogs.startTime, businessDayBounds(input.from).start), lt(agentAuxLogs.startTime, businessDayBounds(input.to).end));
+        conds.push(gte(agentAuxLogs.startTime, ttDayBounds(input.from).start), lt(agentAuxLogs.startTime, ttDayBounds(input.to).end));
       } else {
-        const date = input.date ?? (input.traineeCode ? null : businessDateKey());
-        if (date) { const { start, end } = businessDayBounds(date); conds.push(gte(agentAuxLogs.startTime, start), lt(agentAuxLogs.startTime, end)); }
+        const date = input.date ?? (input.traineeCode ? null : ttDateKey());
+        if (date) { const { start, end } = ttDayBounds(date); conds.push(gte(agentAuxLogs.startTime, start), lt(agentAuxLogs.startTime, end)); }
       }
       return db.select({
         id: agentAuxLogs.id, traineeCode: agentAuxLogs.traineeCode, auxType: agentAuxLogs.auxType,
@@ -8547,14 +8526,14 @@ const timeTrackingRouter = router({
     const { agentShifts } = await import("../drizzle/schema");
     const { getDb } = await import("./db");
     const { eq, and, isNull } = await import("drizzle-orm");
-    const { businessDateKey } = await import("./_core/time");
+    const { ttDateKey } = await import("./_core/time");
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
     const [open] = await db.select({ id: agentShifts.id }).from(agentShifts)
       .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut))).limit(1);
     if (open) throw new TRPCError({ code: "CONFLICT", message: "Already clocked in" });
     const now = Date.now();
-    const [inserted] = await db.insert(agentShifts).values({ traineeCode, clockIn: now, date: businessDateKey(now), createdAt: now }).$returningId();
+    const [inserted] = await db.insert(agentShifts).values({ traineeCode, clockIn: now, date: ttDateKey(now), createdAt: now }).$returningId();
     await syncPresenceFromState(traineeCode, null);
     return { ok: true, shiftId: inserted?.id ?? null };
   }),
@@ -8590,14 +8569,15 @@ const timeTrackingRouter = router({
       const { agentShifts } = await import("../drizzle/schema");
       const { getDb } = await import("./db");
       const { eq, and, isNull, desc } = await import("drizzle-orm");
-      const { businessDateKey } = await import("./_core/time");
+      const { ttDateKey } = await import("./_core/time");
       const db = await getDb();
       if (!db) return null;
+      void input; // time-tracking day is US Eastern, not the agent's browser day
       const [open] = await db.select().from(agentShifts)
         .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut))).orderBy(desc(agentShifts.clockIn)).limit(1);
       if (open) return open;
       const [shift] = await db.select().from(agentShifts)
-        .where(and(eq(agentShifts.traineeCode, traineeCode), eq(agentShifts.date, input?.date ?? businessDateKey())))
+        .where(and(eq(agentShifts.traineeCode, traineeCode), eq(agentShifts.date, ttDateKey())))
         .orderBy(desc(agentShifts.clockIn)).limit(1);
       return shift ?? null;
     }),
@@ -8617,12 +8597,13 @@ const timeTrackingRouter = router({
       const { agentShifts, agentAuxLogs, workforceAgents } = await import("../drizzle/schema");
       const { getDb, listWorkforceAgentsByClient } = await import("./db");
       const { eq, and, gte, lt, inArray, or, isNull } = await import("drizzle-orm");
-      const { businessDayBounds } = await import("./_core/time");
+      const { ttDayBounds } = await import("./_core/time");
       const db = await getDb();
       if (!db) return [];
 
-      const fromMs = businessDayBounds(input.from).start;
-      const toMs = businessDayBounds(input.to).end;
+      // Range is in US-Eastern calendar days (Quantum works US hours).
+      const fromMs = ttDayBounds(input.from).start;
+      const toMs = ttDayBounds(input.to).end;
 
       type AgentRow = { traineeCode: string; fullName: string; shiftHours: string | null; offDay1: number | null; offDay2: number | null; jobTitle: string | null; joinDate: number | null; agentStatus: string | null; nestingStatus: string | null; campaignId: number | null };
       const cols = { traineeCode: workforceAgents.traineeCode, fullName: workforceAgents.fullName, shiftHours: workforceAgents.shiftHours, offDay1: workforceAgents.offDay1, offDay2: workforceAgents.offDay2, jobTitle: workforceAgents.jobTitle, joinDate: workforceAgents.joinDate, agentStatus: workforceAgents.agentStatus, nestingStatus: workforceAgents.nestingStatus, campaignId: workforceAgents.campaignId };
@@ -8652,8 +8633,26 @@ const timeTrackingRouter = router({
       const campRows = await db.select({ id: campaigns.id, clientName: clients.name }).from(campaigns).leftJoin(clients, eq(campaigns.clientId, clients.id));
       const clientByCampaign = new Map(campRows.map(c => [c.id, c.clientName ?? null]));
 
-      const shifts = await db.select().from(agentShifts).where(and(inArray(agentShifts.traineeCode, traineeCodes), gte(agentShifts.clockIn, fromMs), lt(agentShifts.clockIn, toMs)));
-      const auxLogs = await db.select().from(agentAuxLogs).where(and(inArray(agentAuxLogs.traineeCode, traineeCodes), gte(agentAuxLogs.startTime, fromMs), lt(agentAuxLogs.startTime, toMs)));
+      // Shifts in range own the hours. Shifts that started up to 20h BEFORE the range are fetched too, only so
+      // their AUX can be attributed to them (and therefore excluded here) — they are never counted.
+      const AUX_WINDOW_MS = 20 * 3600000;
+      const shiftsWide = await db.select().from(agentShifts).where(and(inArray(agentShifts.traineeCode, traineeCodes), gte(agentShifts.clockIn, fromMs - AUX_WINDOW_MS), lt(agentShifts.clockIn, toMs)));
+      const shifts = shiftsWide.filter(s => s.clockIn >= fromMs);
+      const shiftsByCode = new Map<string, typeof shiftsWide>();
+      for (const sh of shiftsWide) { const arr = shiftsByCode.get(sh.traineeCode) ?? []; arr.push(sh); shiftsByCode.set(sh.traineeCode, arr); }
+      // AUX belongs to the SHIFT it falls inside: an overnight shift's late AUX counts against that shift's day,
+      // not the next day. Fetch a wider window, keep rows inside one of the range's shifts, plus orphan rows
+      // (no shift at all) that start inside the range.
+      const auxRaw = await db.select().from(agentAuxLogs).where(and(inArray(agentAuxLogs.traineeCode, traineeCodes), gte(agentAuxLogs.startTime, fromMs), lt(agentAuxLogs.startTime, toMs + AUX_WINDOW_MS)));
+      const nowForAttr = Date.now();
+      // Exclusive ownership: an AUX belongs to the (single) shift it falls inside; it is counted here iff that
+      // shift is in range. An orphan AUX (no shift) counts iff it starts inside the range. Never double-counted
+      // across adjacent months.
+      const auxLogs = auxRaw.filter(l => {
+        const owner = (shiftsByCode.get(l.traineeCode) ?? []).find(s => l.startTime >= s.clockIn && l.startTime < (s.clockOut ?? Math.min(nowForAttr, s.clockIn + AUX_WINDOW_MS)));
+        if (owner) return owner.clockIn >= fromMs && owner.clockIn < toMs;
+        return l.startTime >= fromMs && l.startTime < toMs;
+      });
       // Approved leave overlapping the range → PTO hours; reviewed/pending late-early exceptions → count
       const { lte: lteOp, like } = await import("drizzle-orm");
       const leaves = await db.select().from(leaveRequests).where(and(inArray(leaveRequests.traineeCode, traineeCodes), eq(leaveRequests.status, "approved"), lteOp(leaveRequests.startDate, input.to), gte(leaveRequests.endDate, input.from)));
@@ -8698,7 +8697,8 @@ const timeTrackingRouter = router({
         const shiftMs = myShifts.reduce((acc, s) => acc + (s.clockOut ? Math.max(0, s.clockOut - s.clockIn) : Math.min(Math.max(0, now - s.clockIn), openCapMs)), 0);
         const auxByType: Record<string, number> = {};
         for (const log of myAux) {
-          const durMs = log.durationMs ?? Math.max(0, (log.endTime ?? now) - log.startTime);
+          // An abandoned open AUX never counts more than one scheduled day (same cap as an open shift).
+          const durMs = log.durationMs ?? (log.endTime != null ? Math.max(0, log.endTime - log.startTime) : Math.min(Math.max(0, now - log.startTime), openCapMs));
           auxByType[log.auxType] = (auxByType[log.auxType] ?? 0) + durMs;
         }
         const totalAuxMs = Object.values(auxByType).reduce((a, b) => a + b, 0);

@@ -3271,55 +3271,100 @@ export async function upsertCommissionLeaderboard(
 // Finds the lowest T-{N} not already used across workforce_agents AND agent_credentials.
 // Starts at T-1 and increments until a free slot is found.
 export async function getNextAvailableTraineeCode(): Promise<string> {
-  const db = await getDb();
-  if (!db) throw new Error("Database not available");
-  const { workforceAgents, agentCredentials, batchCandidates } = await import("../drizzle/schema");
-  const { isNotNull } = await import("drizzle-orm");
-
-  // Collect ALL used T- codes:
-  // 1. Active + archived workforce agents (even former agents must not recycle their code
-  //    — they still use it to log in to the Hub portal for historical data)
-  const existing    = await db.select({ code: workforceAgents.traineeCode }).from(workforceAgents);
-  // 2. Agent credentials table (covers graduated trainees)
-  const existingCreds = await db.select({ code: agentCredentials.traineeCode }).from(agentCredentials);
-  // 3. Current trainees in batches
-  const traineeCodes  = await db.select({ code: batchCandidates.traineeCode }).from(batchCandidates).where(isNotNull(batchCandidates.traineeCode));
-
-  const usedNums = new Set<number>();
-  for (const { code } of [...existing, ...existingCreds, ...traineeCodes]) {
-    if (typeof code === "string" && /^T-\d+$/.test(code)) {
-      usedNums.add(parseInt(code.slice(2), 10));
-    }
+  // Sequential IDs are gone. This is a PREVIEW only (nothing reserved): the Operations dialog shows it,
+  // and workforce.create claims it atomically via reserveTraineeCode — a lost race surfaces as CONFLICT.
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const code = randomTraineeCode();
+    if (!(await traineeCodeInUse(code))) return code;
   }
-
-  // Find the next sequential number not in use
-  let n = 1;
-  while (usedNums.has(n)) n++;
-  return `T-${n}`;
+  throw new Error("Could not find a free agent ID — please try again");
 }
 
 // ─── Generate unique trainee code (6-digit, not already in use) ───────────────
-export async function generateUniqueTraineeCode(): Promise<string> {
+// ─── Agent IDs (trainee codes) ───────────────────────────────────────────────
+// ONE format, ONE allocator. IDs are `T-` + 5 random digits (T-10000 … T-99999). They are never typed by
+// hand and never reused: `trainee_code_ledger` holds every code ever issued (PK), so allocation is atomic
+// and a released code can never be handed out again.
+
+function randomTraineeCode(): string {
+  return `T-${Math.floor(10000 + Math.random() * 90000)}`;
+}
+
+/** Codes present in ANY table (defensive — the ledger should already cover them after 0021). */
+async function traineeCodeInUse(code: string): Promise<boolean> {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
-  const { workforceAgents, agentCredentials } = await import("../drizzle/schema");
+  const { workforceAgents, agentCredentials, batchCandidates, traineeCodeLedger } = await import("../drizzle/schema");
+  const [[a], [b], [c], [l]] = await Promise.all([
+    db.select({ x: workforceAgents.id }).from(workforceAgents).where(eq(workforceAgents.traineeCode, code)).limit(1),
+    db.select({ x: agentCredentials.id }).from(agentCredentials).where(eq(agentCredentials.traineeCode, code)).limit(1),
+    db.select({ x: batchCandidates.id }).from(batchCandidates).where(eq(batchCandidates.traineeCode, code)).limit(1),
+    db.select({ x: traineeCodeLedger.code }).from(traineeCodeLedger).where(eq(traineeCodeLedger.code, code)).limit(1),
+  ]);
+  return !!(a || b || c || l);
+}
 
-  // Get all existing trainee codes from workforce and credentials tables
-  const existing = await db.select({ code: workforceAgents.traineeCode }).from(workforceAgents);
-  const existingCreds = await db.select({ code: agentCredentials.traineeCode }).from(agentCredentials);
-  const usedCodes = new Set([
-    ...existing.map(r => r.code as string),
-    ...existingCreds.map(r => r.code as string),
-  ].filter(Boolean) as string[]);
-
-  // Generate a random 6-digit code not in use (range 100000–999999)
-  let attempts = 0;
-  while (attempts < 1000) {
-    const code = String(Math.floor(100000 + Math.random() * 900000));
-    if (!usedCodes.has(code)) return code;
-    attempts++;
+/**
+ * Allocate a brand-new agent ID and record it in the ledger atomically.
+ * `candidateId` may be null (Operations "Generate" before a candidate is picked).
+ */
+export async function allocateTraineeCode(candidateId: number | null, source: string): Promise<string> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { traineeCodeLedger } = await import("../drizzle/schema");
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const code = randomTraineeCode();
+    if (await traineeCodeInUse(code)) continue;
+    try {
+      await db.insert(traineeCodeLedger).values({ code, candidateId, source, assignedAt: Date.now() });
+      return code; // PK insert succeeded → ours, exclusively
+    } catch (e) {
+      const err = e as { code?: string; errno?: number; cause?: { code?: string; errno?: number } };
+      const dup = err?.code === "ER_DUP_ENTRY" || err?.errno === 1062 || err?.cause?.code === "ER_DUP_ENTRY" || err?.cause?.errno === 1062;
+      if (!dup) throw e; // real failure (e.g. migration 0021 not applied) — surface it
+      /* lost a race on the PK — try another */
+    }
   }
-  throw new Error("Could not generate a unique trainee code after 1000 attempts");
+  throw new Error("Could not allocate a unique agent ID — please try again");
+}
+
+/**
+ * Make sure `code` may be used for `candidateId` (promotion from Training / Operations create).
+ * Accepts: a ledger row with no owner or the same candidate (claims it); a legacy code not in the ledger
+ * (records it). Rejects a code owned by a different candidate or already released.
+ */
+export async function reserveTraineeCode(code: string, candidateId: number | null, source: string): Promise<void> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { traineeCodeLedger } = await import("../drizzle/schema");
+  const [row] = await db.select().from(traineeCodeLedger).where(eq(traineeCodeLedger.code, code)).limit(1);
+  if (!row) {
+    await db.insert(traineeCodeLedger).values({ code, candidateId, source, assignedAt: Date.now() });
+    return;
+  }
+  if (row.releasedAt) throw new Error(`Agent ID ${code} was retired and can never be reused — generate a new one.`);
+  if (row.candidateId != null && candidateId != null && row.candidateId !== candidateId) {
+    throw new Error(`Agent ID ${code} already belongs to another person.`);
+  }
+  if (row.candidateId == null && candidateId != null) {
+    await db.update(traineeCodeLedger).set({ candidateId }).where(eq(traineeCodeLedger.code, code));
+  }
+}
+
+/** Retire a code forever (trainee regenerated, agent force-deleted). Never deletes the ledger row. */
+export async function releaseTraineeCode(code: string | null | undefined): Promise<void> {
+  if (!code) return;
+  const db = await getDb();
+  if (!db) return;
+  const { traineeCodeLedger } = await import("../drizzle/schema");
+  const [row] = await db.select({ code: traineeCodeLedger.code }).from(traineeCodeLedger).where(eq(traineeCodeLedger.code, code)).limit(1);
+  if (row) await db.update(traineeCodeLedger).set({ releasedAt: Date.now() }).where(eq(traineeCodeLedger.code, code));
+  else await db.insert(traineeCodeLedger).values({ code, candidateId: null, source: "released", assignedAt: Date.now(), releasedAt: Date.now() });
+}
+
+/** Legacy name kept for callers: allocates a new random ID (no owner yet). */
+export async function generateUniqueTraineeCode(): Promise<string> {
+  return allocateTraineeCode(null, "operations");
 }
 
 // ─── CRDTS archive + effective-dated separations ────────────────────────────

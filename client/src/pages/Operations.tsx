@@ -2079,7 +2079,7 @@ export default function Operations() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Shift Hours</label>
-                <Input placeholder="e.g. 9AM–5PM" value={addAgentForm.shiftHours} onChange={e => setAddAgentForm(f => ({ ...f, shiftHours: e.target.value }))} />
+                <Input placeholder="e.g. 9:00 AM - 5:00 PM" value={addAgentForm.shiftHours} onChange={e => setAddAgentForm(f => ({ ...f, shiftHours: e.target.value }))} />
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Team Leader</label>

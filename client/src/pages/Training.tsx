@@ -34,9 +34,6 @@ import {
   ArrowLeft,
   Search,
   Hash,
-  Pencil,
-  Check,
-  X,
   Ban,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
@@ -119,8 +116,9 @@ export default function Training() {
     onSuccess: () => { utils.batches.listCandidates.invalidate({ batchId: selectedBatchId! }); utils.batches.list.invalidate(); toast.success("Agent removed from batch"); },
     onError: (e) => toast.error(getErrorMessage(e)),
   });
-  const setTraineeCode = trpc.batches.setTraineeCode.useMutation({
-    onSuccess: () => { utils.batches.listCandidates.invalidate({ batchId: selectedBatchId! }); toast.success("Trainee code saved"); },
+  // Agent IDs are generated server-side (random T-NNNNN, never duplicated, never reused) — no manual typing.
+  const assignTraineeCode = trpc.batches.assignTraineeCode.useMutation({
+    onSuccess: (r) => { utils.batches.listCandidates.invalidate({ batchId: selectedBatchId! }); utils.batches.list.invalidate(); toast.success(r.previous ? `New ID ${r.code} (old ${r.previous} retired)` : `Agent ID ${r.code} assigned`); },
     onError: (e) => toast.error(getErrorMessage(e)),
   });
   const [bulkCredentials, setBulkCredentials] = useState<Array<{ traineeCode: string; password: string }> | null>(null);
@@ -203,9 +201,6 @@ export default function Training() {
   const [assignSearch, setAssignSearch] = useState("");
   const [assignOpen, setAssignOpen] = useState(false);
 
-  // Trainee code inline editing
-  const [editingCodeId, setEditingCodeId] = useState<number | null>(null);
-  const [editingCodeValue, setEditingCodeValue] = useState("");
 
   const handleCreate = () => {
     if (!form.name.trim()) { toast.error("Batch name is required"); return; }
@@ -217,16 +212,6 @@ export default function Training() {
     });
   };
 
-  const handleSaveCode = (candidateId: number) => {
-    if (!selectedBatchId) return;
-    setTraineeCode.mutate({
-      batchId: selectedBatchId,
-      candidateId,
-      code: editingCodeValue.trim() || null,
-    });
-    setEditingCodeId(null);
-    setEditingCodeValue("");
-  };
 
   // Candidates not yet in this batch
   const assignedIds = new Set((batchCandidates as BatchCandidate[]).map((c) => c.id));
@@ -335,50 +320,25 @@ export default function Training() {
                       ) : <span className="text-muted-foreground">—</span>}
                     </td>
                     <td className="px-4 py-3">
-                      {editingCodeId === c.id ? (
-                        <div className="flex items-center gap-1.5">
-                          <Input
-                            autoFocus
-                            className="h-7 w-32 text-xs"
-                            placeholder="e.g. T-001"
-                            value={editingCodeValue}
-                            onChange={(e) => setEditingCodeValue(e.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") handleSaveCode(c.id);
-                              if (e.key === "Escape") { setEditingCodeId(null); setEditingCodeValue(""); }
-                            }}
-                          />
-                          <button
-                            onClick={() => handleSaveCode(c.id)}
-                            className="p-1 rounded hover:bg-green-50 text-green-600"
-                            title="Save"
-                          >
-                            <Check className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            onClick={() => { setEditingCodeId(null); setEditingCodeValue(""); }}
-                            className="p-1 rounded hover:bg-red-50 text-red-500"
-                            title="Cancel"
-                          >
-                            <X className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center gap-1.5 group/code">
-                          {c.traineeCode ? (
-                            <span className="font-mono text-xs bg-muted px-2 py-0.5 rounded text-foreground">{c.traineeCode}</span>
-                          ) : (
-                            <span className="text-muted-foreground text-xs italic">Not assigned</span>
-                          )}
-                          <button
-                            onClick={() => { setEditingCodeId(c.id); setEditingCodeValue(c.traineeCode ?? ""); }}
-                            className="p-1 rounded hover:bg-muted text-muted-foreground/40 hover:text-muted-foreground opacity-0 group-hover/code:opacity-100 transition-opacity"
-                            title="Edit trainee code"
-                          >
-                            <Pencil className="h-3 w-3" />
-                          </button>
-                        </div>
-                      )}
+                      <div className="flex items-center gap-1.5 group/code">
+                        {c.traineeCode ? (
+                          <span className="font-mono text-xs bg-muted px-2 py-0.5 rounded text-foreground">{c.traineeCode}</span>
+                        ) : (
+                          <span className="text-muted-foreground text-xs italic">Not assigned</span>
+                        )}
+                        <button
+                          disabled={assignTraineeCode.isPending}
+                          onClick={() => {
+                            if (!selectedBatchId) return;
+                            if (c.traineeCode && !confirm(`Regenerate the agent ID for ${c.name}?\n${c.traineeCode} will be retired permanently and a new random ID issued.`)) return;
+                            assignTraineeCode.mutate({ batchId: selectedBatchId, candidateId: c.id });
+                          }}
+                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] border transition-colors ${c.traineeCode ? "text-muted-foreground/60 hover:text-foreground border-transparent hover:border-border opacity-0 group-hover/code:opacity-100" : "text-primary border-primary/30 hover:bg-primary/5"}`}
+                          title={c.traineeCode ? "Regenerate agent ID (retires the current one)" : "Generate a random agent ID"}
+                        >
+                          <RotateCcw className="h-3 w-3" /> {c.traineeCode ? "Regenerate" : "Generate ID"}
+                        </button>
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">
@@ -635,7 +595,7 @@ export default function Training() {
                   </div>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground mb-1 block">Shift Hours</label>
-                    <Input placeholder="e.g. 9AM–5PM" value={transferForm.shiftHours} onChange={e => setTransferForm(f => ({ ...f, shiftHours: e.target.value }))} />
+                    <Input placeholder="e.g. 9:00 AM - 5:00 PM" value={transferForm.shiftHours} onChange={e => setTransferForm(f => ({ ...f, shiftHours: e.target.value }))} />
                   </div>
                   <div>
                     <label className="text-xs font-medium text-muted-foreground mb-1 block">Team Leader</label>

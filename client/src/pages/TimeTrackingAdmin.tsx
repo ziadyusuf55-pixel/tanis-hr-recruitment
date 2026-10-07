@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { etDateKey, etMonthKey, etToInput, etFromInput, fmtEtTime, fmtEtDateTime, fmtEtDate, fmtEtFull, TT_TZ_LABEL } from "@/lib/tz";
 import { trpc } from "@/lib/trpc";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -46,7 +47,8 @@ type AuxLogRow = {
   jobTitle?: string | null;
   clientName?: string | null;
 };
-const toLocalInput = (ms: number | null) => { if (ms == null) return ""; const d = new Date(ms); const p = (n: number) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`; };
+// All shift/AUX times are shown and edited in US Eastern time (Quantum works US hours).
+const toLocalInput = etToInput;
 
 type HoursSummaryRow = {
   traineeCode: string;
@@ -69,12 +71,12 @@ const fmtUS = (iso: string | null) => { if (!iso) return "—"; const [y, m, d] 
 export default function TimeTrackingAdmin() {
   const utils = trpc.useUtils();
   const [tab, setTab] = useState("pto");
-  const [excMonth, setExcMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const today = new Date().toISOString().slice(0, 10);
+  const [excMonth, setExcMonth] = useState(() => etMonthKey());
+  const today = etDateKey();
   const [auxDate, setAuxDate] = useState(today);
   const [auxAgentFilter, setAuxAgentFilter] = useState("");
 
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  const currentMonth = etMonthKey();
   const [hoursMonth, setHoursMonth] = useState(currentMonth);
   const [hoursGroupByRole, setHoursGroupByRole] = useState(true);
 
@@ -96,6 +98,12 @@ export default function TimeTrackingAdmin() {
     onError: (e) => toast.error(e.message),
   });
   const auxExport = trpc.timeTracking.auxLogs.useQuery({ from: hoursFrom, to: hoursTo }, { enabled: false });
+  // Productivity for the selected AUX day: shift time − AUX time = productive time, per agent (Quantum only).
+  const { data: dayProd = [], isFetching: dayProdLoading } = trpc.timeTracking.workedSummary.useQuery(
+    { from: auxDate, to: auxDate },
+    { enabled: tab === "aux" && /^\d{4}-\d{2}-\d{2}$/.test(auxDate), refetchInterval: 60000 }
+  );
+  const [prodShowAll, setProdShowAll] = useState(false);
   const { data: hoursSummary = [], isFetching: hoursLoading } = trpc.timeTracking.workedSummary.useQuery(
     { from: hoursFrom, to: hoursTo },
     { enabled: tab === "hours" }
@@ -171,7 +179,7 @@ export default function TimeTrackingAdmin() {
                           <div className="text-xs font-mono text-muted-foreground">{sft.traineeCode}</div>
                         </TableCell>
                         <TableCell className="text-sm">{sft.jobTitle ?? "—"}</TableCell>
-                        <TableCell className="text-sm font-mono">{new Date(sft.clockIn).toLocaleString("en-EG", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</TableCell>
+                        <TableCell className="text-sm font-mono">{fmtEtDateTime(sft.clockIn)} {TT_TZ_LABEL}</TableCell>
                         <TableCell className="text-sm">{hrs.toFixed(1)}h{hrs > 14 && <span className="ml-1 text-xs text-amber-600">· likely forgot</span>}</TableCell>
                         <TableCell>
                           <Badge variant={sft.state === "available" ? "default" : "secondary"} className="capitalize text-xs">
@@ -180,7 +188,18 @@ export default function TimeTrackingAdmin() {
                         </TableCell>
                         <TableCell>
                           <Button size="sm" variant="outline" className="gap-1" disabled={adminClockOut.isPending}
-                            onClick={() => { if (confirm(`Clock out ${sft.fullName || sft.traineeCode} now?`)) adminClockOut.mutate({ shiftId: sft.id }); }}>
+                            onClick={() => {
+                              // A forgotten shift must be closed at the time the agent actually left, not "now" —
+                              // otherwise days of phantom hours land in Monthly Hours. Default = clock-in + 9h (or now if sooner).
+                              const def = new Date(Math.min(Date.now(), sft.clockIn + 9 * 3600000));
+                              const ans = prompt(`Clock out ${sft.fullName || sft.traineeCode} at what time?\n(YYYY-MM-DD HH:MM, 24h, US Eastern time — leave as is to accept)`, toLocalInput(def.getTime()).replace("T", " "));
+                              if (ans == null) return;
+                              const at = etFromInput(ans);
+                              if (!Number.isFinite(at)) { toast.error("Could not read that time"); return; }
+                              if (at < sft.clockIn) { toast.error("Clock-out is before clock-in"); return; }
+                              if (at > Date.now()) { toast.error("Clock-out is in the future"); return; }
+                              adminClockOut.mutate({ shiftId: sft.id, at });
+                            }}>
                             <LogOut className="w-3.5 h-3.5" /> Clock out
                           </Button>
                         </TableCell>
@@ -348,11 +367,11 @@ export default function TimeTrackingAdmin() {
               const rows = (res.data ?? []) as AuxLogRow[];
               if (!rows.length) { toast.message(`No AUX entries in ${hoursMonth}`); return; }
               const esc = (v: unknown) => { const t = String(v ?? ""); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
-              const fmt = (ms: number | null) => ms == null ? "" : new Date(ms).toLocaleString("en-US", { month: "numeric", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
-              const header = ["Employee", "Quantum Client", "Role", "Date", "AUX Type", "Start", "End", "Duration (min)", "Note"];
+              const fmt = (ms: number | null) => ms == null ? "" : fmtEtFull(ms);
+              const header = ["Employee", "Quantum Client", "Role", "Date", "AUX Type", "Start (ET)", "End (ET)", "Duration (min)", "Note"];
               const lines = [header.join(","), ...rows.map(r => [
                 esc(r.fullName ?? r.traineeCode), esc(r.clientName ?? ""), esc(r.jobTitle ?? ""),
-                new Date(r.startTime).toLocaleDateString("en-US"), esc(r.auxType.replace(/_/g, " ")), fmt(r.startTime), fmt(r.endTime),
+                fmtEtDate(r.startTime), esc(r.auxType.replace(/_/g, " ")), fmt(r.startTime), fmt(r.endTime),
                 r.durationMs != null ? Math.round(r.durationMs / 60000) : "", esc(r.note ?? ""),
               ].join(","))];
               const blob = new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
@@ -361,6 +380,78 @@ export default function TimeTrackingAdmin() {
               <Download className="w-3.5 h-3.5" /> Export month ({hoursMonth})
             </Button>
           </div>
+          {(() => {
+            const rows = (dayProd as HoursSummaryRow[])
+              .filter(r => prodShowAll || r.shiftHrs > 0 || Object.keys(r.auxMinutes ?? {}).length > 0)
+              .filter(r => !auxAgentFilter || r.traineeCode.toLowerCase().includes(auxAgentFilter.toLowerCase()) || r.name.toLowerCase().includes(auxAgentFilter.toLowerCase()))
+              .sort((a, b) => (a.role ?? "").localeCompare(b.role ?? "") || a.name.localeCompare(b.name));
+            const auxMin = (r: HoursSummaryRow) => Math.round(Object.values(r.auxMinutes ?? {}).reduce((x, y) => x + y, 0));
+            const pct = (r: HoursSummaryRow) => r.shiftHrs > 0 ? Math.round((r.workedHrs / r.shiftHrs) * 100) : null;
+            const tot = rows.reduce((acc, r) => ({ shift: acc.shift + r.shiftHrs, worked: acc.worked + r.workedHrs, aux: acc.aux + auxMin(r) }), { shift: 0, worked: 0, aux: 0 });
+            const exportDay = () => {
+              const esc = (v: unknown) => { const t = String(v ?? ""); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+              const header = ["Employee", "Quantum Client", "Role", "Date", "Shift (hrs)", "AUX (min)", "Productive (hrs)", "Productivity %"];
+              const lines = [header.join(","), ...rows.map(r => [esc(r.name), esc(r.clientName ?? ""), esc(r.role ?? ""), auxDate, r.shiftHrs.toFixed(2), auxMin(r), r.workedHrs.toFixed(2), pct(r) ?? ""].join(","))];
+              const blob = new Blob(["\ufeff" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+              const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = `productivity_${auxDate}.csv`; a.click(); URL.revokeObjectURL(url);
+            };
+            return (
+              <Card className="mb-4">
+                <CardContent className="pt-4">
+                  <div className="flex flex-wrap items-center gap-2 mb-3">
+                    <div>
+                      <h3 className="text-sm font-semibold">Productivity — {auxDate}</h3>
+                      <p className="text-xs text-muted-foreground">Productive = shift time − AUX time. Open shifts count up to one scheduled day.</p>
+                    </div>
+                    <label className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground"><input type="checkbox" checked={prodShowAll} onChange={e => setProdShowAll(e.target.checked)} /> show agents with no activity</label>
+                    <Button size="sm" variant="outline" className="gap-1.5" disabled={rows.length === 0} onClick={exportDay}><Download className="w-3.5 h-3.5" /> Export day</Button>
+                  </div>
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Agent</TableHead>
+                        <TableHead>Role</TableHead>
+                        <TableHead className="text-right">Shift (hrs)</TableHead>
+                        <TableHead className="text-right">AUX (min)</TableHead>
+                        <TableHead className="text-right">Productive (hrs)</TableHead>
+                        <TableHead className="text-right">Productivity</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {dayProdLoading && rows.length === 0 ? (
+                        <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-6">Loading…</TableCell></TableRow>
+                      ) : rows.length === 0 ? (
+                        <TableRow><TableCell colSpan={6} className="text-center text-sm text-muted-foreground py-6">No shifts or AUX on {auxDate}.</TableCell></TableRow>
+                      ) : (
+                        <>
+                          {rows.map(r => {
+                            const p = pct(r);
+                            return (
+                              <TableRow key={r.traineeCode}>
+                                <TableCell><div className="font-medium text-sm">{r.name}</div><div className="text-[11px] text-muted-foreground font-mono">{r.traineeCode}</div></TableCell>
+                                <TableCell className="text-sm">{r.role ?? <span className="text-muted-foreground">—</span>}</TableCell>
+                                <TableCell className="text-right text-sm tabular-nums">{r.shiftHrs.toFixed(2)}</TableCell>
+                                <TableCell className="text-right text-sm tabular-nums">{auxMin(r)}</TableCell>
+                                <TableCell className="text-right text-sm tabular-nums font-semibold">{r.workedHrs.toFixed(2)}</TableCell>
+                                <TableCell className="text-right text-sm tabular-nums">{p == null ? <span className="text-muted-foreground">—</span> : <span className={p >= 85 ? "text-emerald-600" : p >= 70 ? "text-amber-600" : "text-red-600"}>{p}%</span>}</TableCell>
+                              </TableRow>
+                            );
+                          })}
+                          <TableRow className="bg-muted/40 font-semibold">
+                            <TableCell colSpan={2} className="text-sm">Total ({rows.length} agent{rows.length !== 1 ? "s" : ""})</TableCell>
+                            <TableCell className="text-right text-sm tabular-nums">{tot.shift.toFixed(2)}</TableCell>
+                            <TableCell className="text-right text-sm tabular-nums">{tot.aux}</TableCell>
+                            <TableCell className="text-right text-sm tabular-nums">{tot.worked.toFixed(2)}</TableCell>
+                            <TableCell className="text-right text-sm tabular-nums">{tot.shift > 0 ? Math.round((tot.worked / tot.shift) * 100) + "%" : "—"}</TableCell>
+                          </TableRow>
+                        </>
+                      )}
+                    </TableBody>
+                  </Table>
+                </CardContent>
+              </Card>
+            );
+          })()}
           {auxEdit && (
             <Card className="mb-4 border-primary/40">
               <CardContent className="pt-4 grid grid-cols-1 md:grid-cols-5 gap-3 items-end">
@@ -386,8 +477,8 @@ export default function TimeTrackingAdmin() {
                   <Button size="sm" disabled={updateAux.isPending || (auxEdit.endTime != null && !auxEditForm.end)} title={auxEdit.endTime != null && !auxEditForm.end ? "A closed AUX needs an end time" : undefined} onClick={() => updateAux.mutate({
                     id: auxEdit.id,
                     auxType: auxEditForm.auxType as "break",
-                    startTime: auxEditForm.start ? new Date(auxEditForm.start).getTime() : undefined,
-                    endTime: auxEditForm.end ? new Date(auxEditForm.end).getTime() : null,
+                    startTime: auxEditForm.start ? etFromInput(auxEditForm.start) : undefined,
+                    endTime: auxEditForm.end ? etFromInput(auxEditForm.end) : null,
                     note: auxEditForm.note || null,
                   })}>Save</Button>
                   <Button size="sm" variant="ghost" onClick={() => setAuxEdit(null)}>Cancel</Button>
@@ -442,10 +533,10 @@ export default function TimeTrackingAdmin() {
                             </Badge>
                           </TableCell>
                           <TableCell className="text-sm font-mono">
-                            {start.toLocaleTimeString("en-EG", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+                            {fmtEtTime(start.getTime(), true)}
                           </TableCell>
                           <TableCell className="text-sm font-mono">
-                            {end ? end.toLocaleTimeString("en-EG", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : (
+                            {end ? fmtEtTime(end.getTime(), true) : (
                               <span className="text-amber-500 text-xs">Active</span>
                             )}
                           </TableCell>

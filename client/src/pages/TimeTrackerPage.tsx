@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { AuxType } from "@shared/const";
+import { fmtEtTime, etDateKey, TT_TZ, TT_TZ_LABEL } from "@/lib/tz";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,9 +40,8 @@ type PtoReq = {
 
 export default function TimeTrackerPage() {
   const utils = trpc.useUtils();
-  // The agent's LOCAL day — never the UTC day (which rolls at 02:00/03:00 Cairo).
-  const d0 = new Date();
-  const today = `${d0.getFullYear()}-${String(d0.getMonth() + 1).padStart(2, "0")}-${String(d0.getDate()).padStart(2, "0")}`;
+  // Time-tracking day = US Eastern calendar day (the server decides; this only keys the query).
+  const today = etDateKey();
 
   // A failed request (offline / redeploy) must not look like "no access" — keep the last answer and retry.
   const { data: access, isLoading: accessLoading, isError: accessError, refetch: refetchAccess } = trpc.timeTracking.checkAccess.useQuery(undefined, {
@@ -141,7 +141,7 @@ export default function TimeTrackerPage() {
           <h1 className="text-xl font-semibold">Time Tracker</h1>
         </div>
         <p className="text-sm text-muted-foreground">
-          {new Date().toLocaleDateString("en-EG", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
+          {new Date().toLocaleDateString("en-US", { timeZone: TT_TZ, weekday: "long", year: "numeric", month: "long", day: "numeric" })} · {TT_TZ_LABEL}
         </p>
       </div>
 
@@ -165,7 +165,7 @@ export default function TimeTrackerPage() {
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground">
-                Clocked in at {new Date(todayShift!.clockIn).toLocaleTimeString("en-EG", { hour: "2-digit", minute: "2-digit" })}
+                Clocked in at {fmtEtTime(todayShift!.clockIn)} {TT_TZ_LABEL}
               </p>
               <Button
                 className="w-full"
@@ -180,9 +180,9 @@ export default function TimeTrackerPage() {
             <div className="rounded-lg bg-muted/50 border p-3 space-y-1">
               <p className="text-sm font-medium">Shift complete</p>
               <p className="text-xs text-muted-foreground">
-                {new Date(todayShift.clockIn).toLocaleTimeString("en-EG", { hour: "2-digit", minute: "2-digit" })}
+                {fmtEtTime(todayShift.clockIn)}
                 {" → "}
-                {new Date(todayShift.clockOut).toLocaleTimeString("en-EG", { hour: "2-digit", minute: "2-digit" })}
+                {fmtEtTime(todayShift.clockOut)} {TT_TZ_LABEL}
                 {" · "}
                 {fmtDuration(todayShift.clockIn, todayShift.clockOut)}
               </p>

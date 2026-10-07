@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { AuxType } from "@shared/const";
+import { TT_TZ, TT_TZ_LABEL, etDateKey } from "@/lib/tz";
 import { finalPay, calcNet } from "@shared/pay";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { useLocation } from "wouter";
@@ -5099,15 +5100,16 @@ const AUX_TYPES = [
 ];
 
 /** The agent's LOCAL calendar day (YYYY-MM-DD) — never the UTC day. */
+// Time-tracking "day" = US Eastern calendar day (Quantum works US hours) — same as the server and the admin pages.
 function localDateKey(d = new Date()): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return etDateKey(d.getTime());
 }
 
 function AuxTrackerTab({ theme, goToRequests }: { theme: Theme; goToRequests: () => void }) {
   const utils = trpc.useUtils();
   const today = localDateKey();
 
-  // Today's logs (for the live timer card) — windowed on the agent's local day
+  // Today's logs (for the live timer card) — the server windows on the US-Eastern day
   const { data: auxLogs = [], refetch: refetchAux } = trpc.timeTracking.myAuxLogs.useQuery({ date: today }, { refetchInterval: 30000 });
   // Shift (clock in / out)
   const { data: todayShift, refetch: refetchShift } = trpc.timeTracking.myShiftToday.useQuery({ date: today }, { refetchInterval: 30000 });
@@ -5157,11 +5159,12 @@ function AuxTrackerTab({ theme, goToRequests }: { theme: Theme; goToRequests: ()
     const hrs = Math.floor(mins / 60);
     return hrs > 0 ? `${hrs}h ${mins % 60}m` : `${mins}m`;
   }
+  // Shift / AUX times are US Eastern (Quantum works US hours) — same clock the admins see.
   function fmtTime(ms: number) {
-    return new Date(ms).toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true });
+    return new Date(ms).toLocaleTimeString("en-US", { timeZone: TT_TZ, hour: "2-digit", minute: "2-digit", hour12: true }) + " " + TT_TZ_LABEL;
   }
   function fmtDate(ms: number) {
-    return new Date(ms).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+    return new Date(ms).toLocaleDateString("en-US", { timeZone: TT_TZ, weekday: "short", month: "short", day: "numeric" });
   }
   function to12h(t: string) {
     const [h, m] = t.split(":").map(Number);
