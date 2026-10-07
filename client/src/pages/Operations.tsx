@@ -539,6 +539,8 @@ type BreakScheduleTabProps = {
   campaigns: Campaign[];
   agents: WorkforceAgent[];
   breakCampaignId: number | null;
+  positionMode?: boolean;
+  clientName?: string | null;
   setBreakCampaignId: (id: number | null) => void;
   breakAgentCode: string | null;
   setBreakAgentCode: (code: string | null) => void;
@@ -553,7 +555,7 @@ type BreakScheduleTabProps = {
   upsertBreaks: ReturnType<typeof trpc.breakSchedule.upsert.useMutation>;
 };
 function BreakScheduleTab({
-  campaigns, agents, breakCampaignId, setBreakCampaignId,
+  campaigns, agents, breakCampaignId, setBreakCampaignId, positionMode, clientName,
   breakAgentCode, setBreakAgentCode, breakWeekOffset, setBreakWeekOffset,
   breakEntries, setBreakEntries, quickFillStart, setQuickFillStart,
   quickFillEnd, setQuickFillEnd, upsertBreaks,
@@ -636,12 +638,12 @@ function BreakScheduleTab({
     <div className="space-y-5">
       <div className="flex flex-wrap gap-3 items-end">
         <div>
-          <label className="text-xs font-medium text-muted-foreground mb-1 block">Campaign</label>
+          <label className="text-xs font-medium text-muted-foreground mb-1 block">{positionMode ? "Client" : "Campaign"}</label>
           <select className="h-9 rounded-md border border-input bg-background px-3 py-1 text-sm min-w-[180px]"
             value={breakCampaignId ?? ""}
             onChange={e => { setBreakCampaignId(e.target.value ? Number(e.target.value) : null); setBreakAgentCode(null); setBreakEntries({}); }}>
-            <option value="">Select campaign...</option>
-            {campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            <option value="">{positionMode ? "Select client..." : "Select campaign..."}</option>
+            {campaigns.map(c => <option key={c.id} value={c.id}>{positionMode ? (clientName ?? c.name) : c.name}</option>)}
           </select>
         </div>
         <div>
@@ -650,7 +652,7 @@ function BreakScheduleTab({
             value={breakAgentCode ?? ""}
             onChange={e => { setBreakAgentCode(e.target.value || null); setBreakEntries({}); }}
             disabled={!breakCampaignId}>
-            <option value="">{breakCampaignId ? "Select agent..." : "Select campaign first"}</option>
+            <option value="">{breakCampaignId ? "Select agent..." : positionMode ? "Select client first" : "Select campaign first"}</option>
             {campaignAgents.map(a => <option key={a.traineeCode} value={a.traineeCode}>{a.fullName} ({a.traineeCode})</option>)}
           </select>
         </div>
@@ -874,6 +876,12 @@ export default function Operations() {
     const cl = camp ? (clients as ClientItem[]).find(x => x.id === camp.clientId) : null;
     return !!cl?.positionBased;
   })();
+  // Managed positions for the client being edited (edit dialog) and for the selected client (cards / manage panel)
+  const editClientId = (() => {
+    const camp = (campaigns as Campaign[]).find(c => String(c.id) === String(editForm.campaignId ?? ""));
+    return camp?.clientId ?? null;
+  })();
+  const { data: editPositions = [] } = trpc.clients.positions.useQuery({ clientId: editClientId! }, { enabled: editIsPositionBased && editClientId != null });
   const [exitAgent, setExitAgent] = useState<WorkforceAgent | null>(null);
   const { data: pendingChecklistAgents = [] } = trpc.exit.pendingChecklist.useQuery();
   const markSettled = trpc.exit.markSettled.useMutation({
@@ -948,24 +956,33 @@ export default function Operations() {
     }
   }
   function runExport() {
-    if (filteredAgents.length === 0) { toast.error("No agents to export"); return; }
+    // Test accounts never leave the Hub in an export.
+    const exportAgents = filteredAgents.filter(a => !a.isDemo);
+    if (exportAgents.length === 0) { toast.error("No agents to export"); return; }
     if (selectedExportCols.size === 0) { toast.error("Select at least one column"); return; }
     const orderedCols = EXPORT_COLUMNS.filter(c => selectedExportCols.has(c.key));
     const headers = orderedCols.map(c => c.label);
-    const rows = (filteredAgents as WorkforceAgent[]).map(a => orderedCols.map(c => getAgentFieldValue(a, c.key)));
+    const rows = (exportAgents as WorkforceAgent[]).map(a => orderedCols.map(c => getAgentFieldValue(a, c.key)));
     const csv = [headers, ...rows].map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
     const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a2 = document.createElement("a");
     a2.href = url; a2.download = `agents-${new Date().toISOString().slice(0,10)}.csv`; a2.click();
     URL.revokeObjectURL(url);
-    toast.success(`Exported ${filteredAgents.length} agents (${orderedCols.length} columns)`);
+    toast.success(`Exported ${exportAgents.length} agents (${orderedCols.length} columns)`);
     setShowExportModal(false);
   }
 
-  type AddAgentForm = { candidateId: string; traineeCode: string; fullName: string; alias: string; campaignId: string; shiftHours: string; teamLeader: string; offDay1: string; offDay2: string; dialerCredentials: string; };
-  const EMPTY_ADD_FORM: AddAgentForm = { candidateId: '', traineeCode: '', fullName: '', alias: '', campaignId: '', shiftHours: '', teamLeader: '', offDay1: '', offDay2: '', dialerCredentials: '' };
+  type AddAgentForm = { candidateId: string; traineeCode: string; fullName: string; alias: string; campaignId: string; shiftHours: string; teamLeader: string; offDay1: string; offDay2: string; dialerCredentials: string; jobTitle: string; };
+  const EMPTY_ADD_FORM: AddAgentForm = { candidateId: '', traineeCode: '', fullName: '', alias: '', campaignId: '', shiftHours: '', teamLeader: '', offDay1: '', offDay2: '', dialerCredentials: '', jobTitle: '' };
   const [addAgentForm, setAddAgentForm] = useState<AddAgentForm>(EMPTY_ADD_FORM);
+  // Client of the campaign picked in the Add Agent dialog (position-based → Position select, no Team Leader)
+  const addClient = (() => {
+    const camp = (campaigns as Campaign[]).find(c => String(c.id) === addAgentForm.campaignId);
+    return camp ? (clients as ClientItem[]).find(x => x.id === camp.clientId) ?? null : null;
+  })();
+  const addIsPositionBased = !!addClient?.positionBased;
+  const { data: addPositions = [] } = trpc.clients.positions.useQuery({ clientId: addClient?.id ?? 0 }, { enabled: addIsPositionBased });
   const { data: eligibleCandidates = [] } = trpc.workforce.getEligibleCandidates.useQuery(undefined, { enabled: addAgentDialog });
   const { data: nextTraineeCodeData, isLoading: nextCodeLoading } = trpc.workforce.nextTraineeCode.useQuery(
     undefined,
@@ -1036,16 +1053,40 @@ export default function Operations() {
   useEffect(() => {
     if (positionMode && (activeTab === "campaigns" || activeTab === "forecast")) setActiveTab("agents");
   }, [positionMode, activeTab]);
+  // Switching client: drop any plan / break selection that belonged to the other client's campaigns.
+  useEffect(() => { setPlanCampaignId(null); setBreakCampaignId(null); setBreakAgentCode(null); }, [clientFilter]);
+  // Managed position list for the selected (position-based) client
+  const { data: clientPositions = [], refetch: refetchPositions } = trpc.clients.positions.useQuery(
+    { clientId: typeof clientFilter === "number" ? clientFilter : 0, includeInactive: true },
+    { enabled: positionMode && typeof clientFilter === "number" }
+  );
+  const [managePositions, setManagePositions] = useState(false);
+  const [newPositionName, setNewPositionName] = useState("");
+  const createPosition = trpc.clients.createPosition.useMutation({
+    onSuccess: (r) => { refetchPositions(); setNewPositionName(""); toast.success(r.reactivated ? "Position re-activated" : "Position added"); },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+  const updatePosition = trpc.clients.updatePosition.useMutation({
+    onSuccess: () => { refetchPositions(); utils.workforce.list.invalidate(); toast.success("Position updated"); },
+    onError: (e) => toast.error(getErrorMessage(e)),
+  });
+  // Cards: every ACTIVE managed position (even with 0 agents) + any title still in use that isn't in the list + "No position set".
   const positions = positionMode
-    ? Array.from(new Set(headcountAgents
-        .filter(a => a.isActive && a.campaignId != null && visibleCampaignIds.has(a.campaignId))
-        .map(a => (a.jobTitle ?? "").trim() || "No position set"))).sort()
+    ? (() => {
+        const inUse = headcountAgents
+          .filter(a => a.isActive && a.campaignId != null && visibleCampaignIds.has(a.campaignId))
+          .map(a => (a.jobTitle ?? "").trim() || "No position set");
+        const managed = (clientPositions as Array<{ name: string; isActive: boolean }>).filter(p => p.isActive).map(p => p.name);
+        const extra = Array.from(new Set(inUse)).filter(t => !managed.some(m => m.toLowerCase() === t.toLowerCase()));
+        return [...managed, ...extra.filter(t => t !== "No position set").sort(), ...(extra.includes("No position set") ? ["No position set"] : [])];
+      })()
     : [];
 
   const filteredAgents = (agents as WorkforceAgent[]).filter(a => {
     const q = search.toLowerCase();
     const matchesSearch = !q ||
       a.fullName.toLowerCase().includes(q) ||
+      (a.jobTitle ?? "").toLowerCase().includes(q) ||
       a.traineeCode.toLowerCase().includes(q) ||
       (a.alias ?? "").toLowerCase().includes(q) ||
       (a.crdts ?? "").toLowerCase().includes(q);
@@ -1130,7 +1171,7 @@ export default function Operations() {
       joinDate: editForm.joinDateStr ? new Date(editForm.joinDateStr).getTime() : undefined,
       isActive: editForm.isActive,
       crdts: editForm.crdts || undefined,
-      jobTitle: editForm.jobTitle !== undefined ? (editForm.jobTitle.trim() || undefined) : undefined,
+      jobTitle: editForm.jobTitle !== undefined ? editForm.jobTitle.trim() : undefined, // "" clears the position
       workLocation: (editForm.workLocation as "office" | "wfh" | undefined) || undefined,
       nationalId: editForm.nationalId || undefined,
       nationalIdExpiry: editForm.nationalIdExpiry || undefined,
@@ -1221,19 +1262,66 @@ export default function Operations() {
             <div className="text-xs text-muted-foreground">active agents</div>
           </div>
           {positions.map(pos => {
-            const count = headcountAgents.filter(a => a.isActive && a.campaignId != null && visibleCampaignIds.has(a.campaignId) && (((a.jobTitle ?? "").trim() || "No position set") === pos)).length;
+            const count = headcountAgents.filter(a => a.isActive && a.campaignId != null && visibleCampaignIds.has(a.campaignId) && (((a.jobTitle ?? "").trim() || "No position set").toLowerCase() === pos.toLowerCase())).length;
+            const managed = (clientPositions as Array<{ name: string; isActive: boolean; targetHeadcount: number | null }>).find(p => p.name.toLowerCase() === pos.toLowerCase());
+            const unmanaged = !managed && pos !== "No position set";
             return (
               <div
                 key={pos}
                 className={`rounded-xl border p-4 cursor-pointer transition-all ${selectedPosition === pos ? "border-primary bg-primary/5 shadow-sm" : "hover:border-primary/40"}`}
                 onClick={() => setSelectedPosition(pos)}
+                title={unmanaged ? "This title is not in the client's position list — add it or rename the agents" : undefined}
               >
-                <span className={`text-xs font-medium truncate block mb-1 ${pos === "No position set" ? "text-amber-600" : "text-muted-foreground"}`}>{pos}</span>
-                <div className="text-2xl font-bold">{count}</div>
-                <div className="text-xs text-muted-foreground">{count === 1 ? "agent" : "agents"}</div>
+                <span className={`text-xs font-medium truncate block mb-1 ${pos === "No position set" ? "text-amber-600" : unmanaged ? "text-amber-600" : "text-muted-foreground"}`}>{pos}{unmanaged ? " ⚠" : ""}</span>
+                <div className="text-2xl font-bold">{count}{managed?.targetHeadcount != null && <span className="text-sm font-normal text-muted-foreground"> / {managed.targetHeadcount}</span>}</div>
+                <div className="text-xs text-muted-foreground">{count === 1 ? "agent" : "agents"}{managed?.targetHeadcount != null && count < managed.targetHeadcount ? ` · ${managed.targetHeadcount - count} open` : ""}</div>
               </div>
             );
           })}
+          <button
+            className="rounded-xl border border-dashed p-4 text-left hover:border-primary/40 transition-colors"
+            onClick={() => setManagePositions(v => !v)}
+          >
+            <div className="flex items-center gap-2 mb-1"><Settings className="h-4 w-4 text-muted-foreground" /><span className="text-xs font-medium text-muted-foreground">Manage positions</span></div>
+            <div className="text-xs text-muted-foreground">{(clientPositions as Array<{ isActive: boolean }>).filter(p => p.isActive).length} defined · add, rename, set targets</div>
+          </button>
+        </div>
+      )}
+
+      {positionMode && managePositions && (
+        <div className="rounded-xl border p-4 mb-6 bg-muted/20">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <h3 className="text-sm font-semibold">Positions / roles · {selectedClient?.name}</h3>
+            <p className="text-xs text-muted-foreground">Agents pick their position from this list. Renaming a position renames it for every agent holding it.</p>
+            <div className="ml-auto flex items-center gap-2">
+              <Input className="h-8 w-56 text-sm" placeholder="New position, e.g. Scheduler" value={newPositionName} onChange={e => setNewPositionName(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && newPositionName.trim() && typeof clientFilter === "number") createPosition.mutate({ clientId: clientFilter, name: newPositionName.trim() }); }} />
+              <Button size="sm" disabled={!newPositionName.trim() || createPosition.isPending} onClick={() => typeof clientFilter === "number" && createPosition.mutate({ clientId: clientFilter, name: newPositionName.trim() })}><Plus className="h-3.5 w-3.5" /> Add</Button>
+            </div>
+          </div>
+          <table className="w-full text-sm">
+            <thead><tr className="text-xs text-muted-foreground border-b"><th className="text-left py-1.5 font-medium">Position</th><th className="text-right py-1.5 font-medium">Headcount</th><th className="text-right py-1.5 font-medium">Target</th><th className="text-right py-1.5 font-medium">Status</th><th className="py-1.5 w-40"></th></tr></thead>
+            <tbody>
+              {(clientPositions as Array<{ id: number; name: string; isActive: boolean; targetHeadcount: number | null; headcount: number }>).map(p => (
+                <tr key={p.id} className={`border-b last:border-0 ${p.isActive ? "" : "opacity-50"}`}>
+                  <td className="py-1.5">{p.name}</td>
+                  <td className="py-1.5 text-right tabular-nums">{p.headcount}</td>
+                  <td className="py-1.5 text-right">
+                    <input type="number" min={0} className="h-7 w-16 rounded border bg-background px-1.5 text-right text-xs" defaultValue={p.targetHeadcount ?? ""} key={`t-${p.id}-${p.targetHeadcount}`}
+                      onBlur={e => { const v = e.target.value.trim(); const n = v === "" ? null : Number(v); if (n !== p.targetHeadcount) updatePosition.mutate({ id: p.id, targetHeadcount: n }); }} />
+                  </td>
+                  <td className="py-1.5 text-right text-xs">{p.isActive ? <span className="text-emerald-600">active</span> : <span className="text-muted-foreground">retired</span>}</td>
+                  <td className="py-1.5 text-right space-x-1">
+                    <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => { const n = prompt(`Rename "${p.name}" to:`, p.name); if (n && n.trim() && n.trim() !== p.name) updatePosition.mutate({ id: p.id, name: n.trim() }); }}>Rename</Button>
+                    {p.isActive
+                      ? <Button size="sm" variant="ghost" className="h-7 px-2 text-xs text-red-600" disabled={p.headcount > 0} title={p.headcount > 0 ? "Move the agents to another position first" : "Retire this position"} onClick={() => updatePosition.mutate({ id: p.id, isActive: false })}>Retire</Button>
+                      : <Button size="sm" variant="ghost" className="h-7 px-2 text-xs" onClick={() => updatePosition.mutate({ id: p.id, isActive: true })}>Restore</Button>}
+                  </td>
+                </tr>
+              ))}
+              {(clientPositions as unknown[]).length === 0 && <tr><td colSpan={5} className="py-4 text-center text-xs text-muted-foreground">No positions yet — add the first one above.</td></tr>}
+            </tbody>
+          </table>
         </div>
       )}
 
@@ -1380,9 +1468,9 @@ export default function Operations() {
           <div className="flex items-center gap-3 mb-4">
             <div className="relative flex-1 max-w-sm">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input placeholder="Search by name, ID, alias, or CRDTS..." className="pl-9" value={search} onChange={e => setSearch(e.target.value)} />
+              <Input placeholder={positionMode ? "Search by name, ID, alias, or position..." : "Search by name, ID, alias, or CRDTS..."} className="pl-9" value={search} onChange={e => setSearch(e.target.value)} />
             </div>
-            {uniqueTLs.length > 0 && (
+            {!positionMode && uniqueTLs.length > 0 && (
               <select
                 className="h-9 rounded-md border bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
                 value={tlFilter}
@@ -1689,8 +1777,8 @@ export default function Operations() {
               value={planCampaignId ?? ""}
               onChange={e => { setPlanCampaignId(e.target.value ? Number(e.target.value) : null); setPlanWeekOffset(0); }}
             >
-              <option value="">Select campaign...</option>
-              {(campaigns as Campaign[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <option value="">{positionMode ? `Select ${selectedClient?.name ?? "client"} group...` : "Select campaign..."}</option>
+              {visibleCampaigns.map(c => <option key={c.id} value={c.id}>{positionMode ? (selectedClient?.name ?? c.name) : c.name}</option>)}
             </select>
             {planCampaignId !== null && (
               <div className="flex items-center gap-1">
@@ -1781,7 +1869,9 @@ export default function Operations() {
       {/* Break Schedule Tab */}
       {activeTab === "breaks" && (
         <BreakScheduleTab
-          campaigns={campaigns as Campaign[]}
+          campaigns={visibleCampaigns}
+          positionMode={positionMode}
+          clientName={selectedClient?.name ?? null}
           agents={agents as WorkforceAgent[]}
           breakCampaignId={breakCampaignId}
           setBreakCampaignId={setBreakCampaignId}
@@ -1826,10 +1916,12 @@ export default function Operations() {
             {editIsPositionBased && (
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Position / Role</label>
-                <Input list="position-options" value={editForm.jobTitle ?? ""} onChange={e => setEditForm(f => ({ ...f, jobTitle: e.target.value }))} placeholder="e.g. Scheduler, Accounts Receivable Rep" />
-                <datalist id="position-options">
-                  {Array.from(new Set((agents as WorkforceAgent[]).map(a => (a.jobTitle ?? "").trim()).filter(Boolean))).sort().map(t => <option key={t} value={t} />)}
-                </datalist>
+                <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={editForm.jobTitle ?? ""} onChange={e => setEditForm(f => ({ ...f, jobTitle: e.target.value }))}>
+                  <option value="">— no position —</option>
+                  {(editPositions as Array<{ id: number; name: string }>).map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+                  {editForm.jobTitle && !(editPositions as Array<{ name: string }>).some(p => p.name === editForm.jobTitle) && <option value={editForm.jobTitle}>{editForm.jobTitle} (not in list)</option>}
+                </select>
+                <p className="text-[11px] text-muted-foreground mt-1">Positions are managed from the client's position cards → "Manage positions".</p>
               </div>
             )}
             <div className={editIsPositionBased ? "hidden" : ""}>
@@ -2070,18 +2162,31 @@ export default function Operations() {
               <Input placeholder="e.g. Jordan" value={addAgentForm.alias} onChange={e => setAddAgentForm(f => ({ ...f, alias: e.target.value }))} />
             </div>
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">Campaign</label>
-              <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={addAgentForm.campaignId} onChange={e => setAddAgentForm(f => ({ ...f, campaignId: e.target.value }))}>
-                <option value="">Select campaign...</option>
-                {(campaigns as Campaign[]).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">Campaign / Client</label>
+              <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={addAgentForm.campaignId} onChange={e => setAddAgentForm(f => ({ ...f, campaignId: e.target.value, jobTitle: "" }))}>
+                <option value="">Select...</option>
+                {(campaigns as Campaign[]).map(c => {
+                  const cl = (clients as ClientItem[]).find(x => x.id === c.clientId);
+                  return <option key={c.id} value={c.id}>{cl?.positionBased ? `${cl.name} (positions)` : c.name}</option>;
+                })}
               </select>
             </div>
+            {addIsPositionBased && (
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Position / Role</label>
+                <select className="w-full h-9 rounded-md border border-input bg-background px-3 py-1 text-sm" value={addAgentForm.jobTitle} onChange={e => setAddAgentForm(f => ({ ...f, jobTitle: e.target.value }))}>
+                  <option value="">Select position...</option>
+                  {(addPositions as Array<{ id: number; name: string }>).map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+                </select>
+                {(addPositions as unknown[]).length === 0 && <p className="text-[11px] text-amber-600 mt-1">No positions defined for {addClient?.name} — add them from the position cards → Manage positions.</p>}
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="text-xs font-medium text-muted-foreground mb-1 block">Shift Hours</label>
+                <label className="text-xs font-medium text-muted-foreground mb-1 block">Shift Hours{addIsPositionBased ? " (ET)" : ""}</label>
                 <Input placeholder="e.g. 9:00 AM - 5:00 PM" value={addAgentForm.shiftHours} onChange={e => setAddAgentForm(f => ({ ...f, shiftHours: e.target.value }))} />
               </div>
-              <div>
+              <div className={addIsPositionBased ? "hidden" : ""}>
                 <label className="text-xs font-medium text-muted-foreground mb-1 block">Team Leader</label>
                 <Input placeholder="Team leader name" value={addAgentForm.teamLeader} onChange={e => setAddAgentForm(f => ({ ...f, teamLeader: e.target.value }))} />
               </div>
@@ -2116,6 +2221,7 @@ export default function Operations() {
                 if (!addAgentForm.traineeCode.trim()) { toast.error("Trainee code required"); return; }
                 if (!addAgentForm.fullName.trim()) { toast.error("Full name required"); return; }
                 if (!addAgentForm.candidateId) { toast.error("Please select a candidate"); return; }
+                if (addIsPositionBased && !addAgentForm.jobTitle) { toast.error("Pick a position for this agent"); return; }
                 createWorkforceAgent.mutate({
                   traineeCode: addAgentForm.traineeCode.trim(),
                   candidateId: Number(addAgentForm.candidateId),
@@ -2123,7 +2229,8 @@ export default function Operations() {
                   alias: addAgentForm.alias || undefined,
                   campaignId: addAgentForm.campaignId ? Number(addAgentForm.campaignId) : undefined,
                   shiftHours: addAgentForm.shiftHours || undefined,
-                  teamLeader: addAgentForm.teamLeader || undefined,
+                  teamLeader: addIsPositionBased ? undefined : (addAgentForm.teamLeader || undefined),
+                  jobTitle: addIsPositionBased ? (addAgentForm.jobTitle || undefined) : undefined,
                   offDay1: addAgentForm.offDay1 !== "" ? Number(addAgentForm.offDay1) : undefined,
                   offDay2: addAgentForm.offDay2 !== "" ? Number(addAgentForm.offDay2) : undefined,
                   joinDate: Date.now(),

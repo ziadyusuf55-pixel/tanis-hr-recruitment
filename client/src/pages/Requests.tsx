@@ -37,7 +37,7 @@ const REQUEST_TYPE_LABELS: Record<string, string> = {
   early_departure: "Early Departure",
   other: "Other",
 };
-const LEAVE_TYPES = ["leave", "paid_leave", "day_off"];
+const LEAVE_TYPES = ["leave", "paid_leave", "day_off", "sick_note"]; // day_off / sick_note default to unpaid if no type is picked
 
 const STATUS_CONFIG: Record<string, { label: string; className: string; icon: React.ElementType }> = {
   pending:     { label: "Pending",     className: "bg-yellow-50 text-yellow-700 border-yellow-200", icon: Clock },
@@ -119,7 +119,8 @@ export default function Requests() {
   function handleUpdate() {
     if (!selected) return;
     const isLeave = LEAVE_TYPES.includes(selected.type);
-    if (isLeave && newStatus === "resolved" && !leaveType) { toast.error("Choose the leave type (casual / annual / unpaid) before approving."); return; }
+    const needsType = isLeave && selected.type !== "day_off" && selected.type !== "sick_note"; // those default to unpaid
+    if (needsType && newStatus === "resolved" && !leaveType) { toast.error("Choose the leave type (casual / annual / unpaid) before approving."); return; }
     updateMutation.mutate({
       id: selected.id,
       status: newStatus as "pending" | "in_progress" | "resolved" | "rejected",

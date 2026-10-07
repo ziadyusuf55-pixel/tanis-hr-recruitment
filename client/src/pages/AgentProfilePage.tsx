@@ -91,8 +91,6 @@ export default function AgentProfilePage() {
 
   const { data: allClients = [] } = trpc.clients.list.useQuery();
 
-  // Known Quantum positions — user can still type a custom one
-  const QUANTUM_POSITIONS = ["Scheduler", "Servicing Account", "Call Center Agent", "Team Lead", "Quality Analyst"];
 
   const transferCampaign = trpc.exit.transferCampaign.useMutation({
     onSuccess: () => {
@@ -114,9 +112,16 @@ export default function AgentProfilePage() {
     setTransferDialog(true);
   }
 
-  const transferTargetClient = (allClients as Array<{ id: number; name: string; timeTrackingEnabled?: boolean }>).find(c => c.id === transferClientId);
-  // Feature-flag driven (clients.timeTrackingEnabled); name match kept only as a fallback for stale caches.
-  const isTransferTargetQuantum = transferTargetClient?.timeTrackingEnabled ?? transferTargetClient?.name.toLowerCase().includes("quantum") ?? false;
+  const transferTargetClient = (allClients as Array<{ id: number; name: string; timeTrackingEnabled?: boolean; positionBased?: boolean }>).find(c => c.id === transferClientId);
+  // Position-based clients (Quantum) take a position from the client's managed list instead of a campaign.
+  const isTransferTargetQuantum = transferTargetClient?.positionBased ?? transferTargetClient?.timeTrackingEnabled ?? false;
+  const { data: transferPositions = [] } = trpc.clients.positions.useQuery({ clientId: transferClientId ?? 0 }, { enabled: !!transferClientId && isTransferTargetQuantum });
+
+  // This agent's client: position-based → show Position instead of Campaign / Team Leader everywhere on this page.
+  const agentCampaignRow = (campaigns as Array<{ id: number; clientId: number | null }>).find(c => c.id === profile?.agent?.campaignId);
+  const agentClient = (allClients as Array<{ id: number; name: string; positionBased?: boolean }>).find(c => c.id === agentCampaignRow?.clientId);
+  const agentIsPositionBased = !!agentClient?.positionBased;
+  const { data: agentClientPositions = [] } = trpc.clients.positions.useQuery({ clientId: agentClient?.id ?? 0 }, { enabled: agentIsPositionBased });
   const campaignsForClient = (campaigns as Array<{ id: number; name: string; clientId: number | null; clientName: string | null }>)
     .filter(c => c.clientId === transferClientId);
 
@@ -197,8 +202,8 @@ export default function AgentProfilePage() {
   // ── Edit Info ─────────────────────────────────────────────────────────────
   const [editDialog, setEditDialog] = useState(false);
   const [editForm, setEditForm] = useState<{
-    teamLeader: string; nestingStatus: "nesting" | "active" | "senior"; shiftHours: string;
-  }>({ teamLeader: "", nestingStatus: "active", shiftHours: "" });
+    teamLeader: string; nestingStatus: "nesting" | "active" | "senior"; shiftHours: string; jobTitle: string;
+  }>({ teamLeader: "", nestingStatus: "active", shiftHours: "", jobTitle: "" });
 
   const updateAgent = trpc.workforce.update.useMutation({
     onSuccess: () => { refetch(); toast.success("Agent info updated"); setEditDialog(false); },
@@ -211,6 +216,7 @@ export default function AgentProfilePage() {
       teamLeader: profile.agent?.teamLeader ?? "",
       nestingStatus: ((profile.agent as any)?.nestingStatus as "nesting" | "active" | "senior") ?? "active",
       shiftHours: profile.agent?.shiftHours ?? "",
+      jobTitle: (profile.agent as { jobTitle?: string | null } | undefined)?.jobTitle ?? "",
     });
     setEditDialog(true);
   }
@@ -335,13 +341,15 @@ export default function AgentProfilePage() {
               </div>
               <p className="text-sm text-muted-foreground mt-0.5 font-mono">{agent.traineeCode}</p>
               <div className="mt-3 flex flex-wrap gap-4 text-sm text-muted-foreground">
-                {campaign && (
+                {agentIsPositionBased ? (
+                  <span className="flex items-center gap-1.5"><Building2 className="h-3.5 w-3.5" />{agentClient?.name}{(agent as { jobTitle?: string | null }).jobTitle ? ` · ${(agent as { jobTitle?: string | null }).jobTitle}` : <span className="text-amber-600"> · position not set</span>}</span>
+                ) : campaign && (
                   <span className="flex items-center gap-1.5"><Building2 className="h-3.5 w-3.5" />{campaign.name}</span>
                 )}
                 {agent.shiftHours && (
-                  <span className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" />{agent.shiftHours}</span>
+                  <span className="flex items-center gap-1.5"><Clock className="h-3.5 w-3.5" />{agent.shiftHours}{agentIsPositionBased ? " ET" : ""}</span>
                 )}
-                {agent.teamLeader && (
+                {!agentIsPositionBased && agent.teamLeader && (
                   <span className="flex items-center gap-1.5"><Shield className="h-3.5 w-3.5" />TL: {agent.teamLeader}</span>
                 )}
                 {agent.phone && (
@@ -884,7 +892,21 @@ export default function AgentProfilePage() {
             </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div>
+            {agentIsPositionBased && (
+              <div>
+                <Label className="text-xs font-medium text-muted-foreground mb-1.5 block">Position / Role</Label>
+                <Select value={editForm.jobTitle || "none"} onValueChange={v => setEditForm(f => ({ ...f, jobTitle: v === "none" ? "" : v }))}>
+                  <SelectTrigger><SelectValue placeholder="Select position…" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">— no position —</SelectItem>
+                    {(agentClientPositions as Array<{ id: number; name: string }>).map(p => <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>)}
+                    {editForm.jobTitle && !(agentClientPositions as Array<{ name: string }>).some(p => p.name === editForm.jobTitle) && <SelectItem value={editForm.jobTitle}>{editForm.jobTitle} (not in list)</SelectItem>}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground mt-1">Managed in Operations → {agentClient?.name} → Manage positions.</p>
+              </div>
+            )}
+            <div className={agentIsPositionBased ? "hidden" : ""}>
               <Label className="text-xs font-medium text-muted-foreground mb-1.5 block">Team Leader</Label>
               <Select value={editForm.teamLeader || "none"} onValueChange={v => setEditForm(f => ({ ...f, teamLeader: v === "none" ? "" : v }))}>
                 <SelectTrigger><SelectValue placeholder="Select TL..." /></SelectTrigger>
@@ -910,9 +932,10 @@ export default function AgentProfilePage() {
               style={{ background: BRAND }}
               onClick={() => updateAgent.mutate({
                 traineeCode,
-                teamLeader: editForm.teamLeader || undefined,
+                teamLeader: agentIsPositionBased ? undefined : (editForm.teamLeader || undefined),
                 nestingStatus: editForm.nestingStatus,
                 shiftHours: editForm.shiftHours || undefined,
+                jobTitle: agentIsPositionBased ? editForm.jobTitle : undefined,
               })}
             >
               Save Changes
@@ -1171,33 +1194,20 @@ export default function AgentProfilePage() {
             {transferClientId && isTransferTargetQuantum && (
               <div className="space-y-1.5">
                 <Label className="text-sm font-medium">Position</Label>
-                <Select
-                  value={QUANTUM_POSITIONS.includes(transferJobTitle) ? transferJobTitle : (transferJobTitle ? "__custom__" : "")}
-                  onValueChange={(val) => {
-                    if (val !== "__custom__") setTransferJobTitle(val);
-                    else setTransferJobTitle("");
-                  }}
-                >
+                <Select value={transferJobTitle} onValueChange={(val) => setTransferJobTitle(val)}>
                   <SelectTrigger>
                     <SelectValue placeholder="Select a position…" />
                   </SelectTrigger>
                   <SelectContent>
-                    {QUANTUM_POSITIONS.map(p => (
-                      <SelectItem key={p} value={p}>{p}</SelectItem>
+                    {(transferPositions as Array<{ id: number; name: string }>).map(p => (
+                      <SelectItem key={p.id} value={p.name}>{p.name}</SelectItem>
                     ))}
-                    <SelectItem value="__custom__">Other (type below)</SelectItem>
                   </SelectContent>
                 </Select>
-                {(!QUANTUM_POSITIONS.includes(transferJobTitle) || transferJobTitle === "") && (
-                  <Input
-                    placeholder="e.g. Collections Specialist"
-                    value={transferJobTitle}
-                    onChange={e => setTransferJobTitle(e.target.value)}
-                    className="mt-1.5"
-                  />
-                )}
                 <p className="text-xs text-muted-foreground">
-                  Agent will be assigned to Quantum's default campaign with this position.
+                  {(transferPositions as unknown[]).length === 0
+                    ? `No positions defined for ${transferTargetClient?.name} yet — add them in Operations → Manage positions first.`
+                    : `Positions come from ${transferTargetClient?.name}'s managed list.`}
                 </p>
                 {/* Auto-select the first Quantum campaign */}
                 {campaignsForClient.length > 0 && transferCampaignId === null && (() => {

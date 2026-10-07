@@ -969,9 +969,16 @@ export async function createAgentRequest(data: {
       const nm = String(wf?.fullName ?? "").trim();
       const al = String(wf?.alias ?? "").trim();
       const cr = String(wf?.crdts ?? "").trim();
+      const jt = String((wf as { jobTitle?: string | null } | null | undefined)?.jobTitle ?? "").trim();
+      // Position-based clients (Quantum) have no CRDTS — show client + role instead.
+      let tail = cr ? `   *CRDTS:* ${cr}` : "";
+      try {
+        const access = await getAgentTimeTrackingAccess(data.traineeCode);
+        if (access.positionBased) tail = `   *Client:* ${access.clientName ?? "—"}${jt ? `   *Role:* ${jt}` : ""}`;
+      } catch { /* keep CRDTS form */ }
       const who =
         `*Name:* ${nm || "—"}${al ? `   *Alias:* ${al}` : ""}\n` +
-        `*Code:* ${data.traineeCode}${cr ? `   *CRDTS:* ${cr}` : ""}`;
+        `*Code:* ${data.traineeCode}${tail}`;
       const text = `:bell: *New ${typeLabel} request*\n${who}\n*${data.subject}*\n${data.message}\n_React :white_check_mark: resolved · :eyes: in progress · :x: rejected_`;
       if (botToken && channelId) {
         const resp = await fetch("https://slack.com/api/chat.postMessage", {
@@ -1449,20 +1456,20 @@ export async function listWorkforceAgentsByClient(clientId: number, includeForme
  * substring match on the client name. Returns the agent's client and whether
  * the feature is enabled for it.
  */
-export async function getAgentTimeTrackingAccess(traineeCode: string): Promise<{ allowed: boolean; clientId: number | null; clientName: string | null }> {
+export async function getAgentTimeTrackingAccess(traineeCode: string): Promise<{ allowed: boolean; clientId: number | null; clientName: string | null; positionBased: boolean }> {
   const db = await getDb();
-  if (!db) return { allowed: false, clientId: null, clientName: null };
+  if (!db) return { allowed: false, clientId: null, clientName: null, positionBased: false };
   const { workforceAgents, campaigns, clients } = await import("../drizzle/schema");
   const rows = await db
-    .select({ clientId: clients.id, clientName: clients.name, enabled: clients.timeTrackingEnabled, isActive: clients.isActive })
+    .select({ clientId: clients.id, clientName: clients.name, enabled: clients.timeTrackingEnabled, isActive: clients.isActive, positionBased: clients.positionBased })
     .from(workforceAgents)
     .innerJoin(campaigns, eq(workforceAgents.campaignId, campaigns.id))
     .innerJoin(clients, eq(campaigns.clientId, clients.id))
     .where(eq(workforceAgents.traineeCode, traineeCode))
     .limit(1);
   const r = rows[0];
-  if (!r) return { allowed: false, clientId: null, clientName: null };
-  return { allowed: !!r.enabled && !!r.isActive, clientId: r.clientId, clientName: r.clientName };
+  if (!r) return { allowed: false, clientId: null, clientName: null, positionBased: false };
+  return { allowed: !!r.enabled && !!r.isActive, clientId: r.clientId, clientName: r.clientName, positionBased: !!r.positionBased };
 }
 
 // ─── Workforce Agents ─────────────────────────────────────────────────────────
@@ -1719,7 +1726,7 @@ export async function createWorkforceAgent(data: {
   traineeCode: string; candidateId: number; fullName: string;
   alias?: string; email?: string; phone?: string; campaignId?: number;
   shiftHours?: string; teamLeader?: string; offDay1?: number; offDay2?: number; joinDate?: number;
-  dialerCredentials?: string; crdts?: string;
+  dialerCredentials?: string; crdts?: string; jobTitle?: string;
 }) {
   const db = await getDb();
   if (!db) return;
@@ -2053,30 +2060,7 @@ export async function updateScheduleChangeRequest(id: number, data: Partial<{
   await db.update(scheduleChangeRequests).set(data).where(eq(scheduleChangeRequests.id, id));
 }
 
-// ─── Overtime Availability ────────────────────────────────────────────────────
-
-export async function upsertOvertimeAvailability(data: {
-  traineeCode: string; campaignId: number; date: string; status: "available" | "unavailable";
-}) {
-  const db = await getDb();
-  if (!db) return;
-  const { overtimeAvailability } = await import("../drizzle/schema");
-  // Delete existing entry for same agent+date, then insert
-  await db.delete(overtimeAvailability)
-    .where(and(eq(overtimeAvailability.traineeCode, data.traineeCode), eq(overtimeAvailability.date, data.date)));
-  await db.insert(overtimeAvailability).values(data);
-}
-
-export async function getOvertimeAvailabilityForDate(campaignId: number, date: string) {
-  const db = await getDb();
-  if (!db) return [];
-  const { overtimeAvailability } = await import("../drizzle/schema");
-  return db.select().from(overtimeAvailability)
-    .where(and(eq(overtimeAvailability.campaignId, campaignId), eq(overtimeAvailability.date, date)));
-}
-
-// ─── Headcount Forecast ───────────────────────────────────────────────────────
-// Returns projected logged-in count for each day in the next 30 days for a campaign.
+// ─── Overtime Availability — REMOVED (Overtime Alert feature retired; overtime_availability table kept for history) ─
 // Logic: total active agents - agents with approved leave/sick_note/day_off on that date.
 
 export async function getHeadcountForecast(campaignId: number, days = 30) {
@@ -2984,7 +2968,7 @@ export async function getTurnoverRate(): Promise<{ rate: number; separationsThis
   if (!db) return { rate: 0, separationsThisMonth: 0, currentHeadcount: 0 };
   const [separationsResult, headcountResult] = await Promise.all([
     db.select({ count: sql<number>`count(*)`.mapWith(Number) }).from(agentSeparations).where(gte(agentSeparations.effectiveAt, monthStart)),
-    db.select({ count: sql<number>`count(*)`.mapWith(Number) }).from(workforceAgents).where(eq(workforceAgents.agentStatus, "active")),
+    db.select({ count: sql<number>`count(*)`.mapWith(Number) }).from(workforceAgents).where(and(eq(workforceAgents.agentStatus, "active"), or(isNull(workforceAgents.isDemo), eq(workforceAgents.isDemo, false)))),
   ]);
 
   const separationsThisMonth = Number(separationsResult[0]?.count ?? 0);

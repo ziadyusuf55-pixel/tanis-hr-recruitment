@@ -7,7 +7,7 @@ import { z } from "zod";
 import { parse as parseCookieHeader } from "cookie";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { staffProcedure, protectedProcedure, adminProcedure, roleProcedure, agentProcedure, agentOrStaffProcedure, publicProcedure, router } from "./_core/trpc";
+import { staffProcedure, protectedProcedure, adminProcedure, roleProcedure, agentProcedure, agentOrStaffProcedure, publicProcedure, router, isStaff } from "./_core/trpc";
 import { requireAgent, invalidateAgentSessionCache } from "./_core/agentAuth";
 import {
   addStageNote,
@@ -1402,13 +1402,14 @@ export async function applyAgentRequestDecision(opts: {
   const { getDb } = await import("./db");
   const db = await getDb();
 
-  if (db && final && !alreadyFinal && (req.type === "leave" || req.type === "paid_leave" || req.type === "day_off")) {
+  if (db && final && !alreadyFinal && (req.type === "leave" || req.type === "paid_leave" || req.type === "day_off" || req.type === "sick_note")) {
     const { decideLeaveRequest } = await import("./db");
     const { leaveRequests } = await import("../drizzle/schema");
     const { eq } = await import("drizzle-orm");
     const [lr] = await db.select().from(leaveRequests).where(eq(leaveRequests.agentRequestId, req.id)).limit(1);
     if (lr && lr.status === "pending") {
-      const leaveType = opts.leaveType ?? (req.type === "day_off" ? "unpaid" as const : undefined);
+      // day_off and sick_note never consume casual/annual balance → unpaid unless HR explicitly picks a type.
+      const leaveType = opts.leaveType ?? (req.type === "day_off" || req.type === "sick_note" ? "unpaid" as const : undefined);
       if (opts.status === "resolved" && !leaveType) {
         throw Object.assign(new Error("Choose the leave type (casual / annual / unpaid) to approve this leave."), { code: "BAD_REQUEST" });
       }
@@ -1420,24 +1421,24 @@ export async function applyAgentRequestDecision(opts: {
   if (db && opts.status === "resolved" && !alreadyFinal && (req.type === "late_arrival" || req.type === "early_departure")) {
     const { attendanceExceptions } = await import("../drizzle/schema");
     const { eq, and } = await import("drizzle-orm");
-    const dates: string[] = (() => { try { return req.requestedDates ? JSON.parse(req.requestedDates) : []; } catch { return []; } })();
-    const date = dates[0] ?? (req.requestedDate ? new Date(req.requestedDate).toISOString().slice(0, 10) : null);
+    const parsed: string[] = (() => { try { return req.requestedDates ? JSON.parse(req.requestedDates) : []; } catch { return []; } })();
+    const dates = Array.from(new Set((parsed.length ? parsed : [req.requestedDate ? new Date(req.requestedDate).toISOString().slice(0, 10) : null]).filter((d): d is string => !!d)));
     const exceptionType = req.type === "late_arrival" ? "late" : "early_departure";
-    if (date) {
+    const sched = req.message.match(/Scheduled (\d{2}:\d{2})/)?.[1] ?? null;
+    const actual = req.message.match(/Actual (\d{2}:\d{2})/)?.[1] ?? null;
+    const minutes = sched && actual ? (() => { const [sh, sm] = sched.split(":").map(Number); const [ah, am] = actual.split(":").map(Number); const d = (ah * 60 + am) - (sh * 60 + sm); return req.type === "late_arrival" ? Math.max(0, d) : Math.max(0, -d); })() : null;
+    const agent = dates.length ? await getWorkforceAgentByCode(req.traineeCode) : null;
+    // One attendance exception per requested date (a request may cover several days).
+    for (const date of dates) {
       const [dup] = await db.select({ id: attendanceExceptions.id }).from(attendanceExceptions)
         .where(and(eq(attendanceExceptions.traineeCode, req.traineeCode), eq(attendanceExceptions.date, date), eq(attendanceExceptions.exceptionType, exceptionType))).limit(1);
-      if (!dup) {
-        const sched = req.message.match(/Scheduled (\d{2}:\d{2})/)?.[1] ?? null;
-        const actual = req.message.match(/Actual (\d{2}:\d{2})/)?.[1] ?? null;
-        const minutes = sched && actual ? (() => { const [sh, sm] = sched.split(":").map(Number); const [ah, am] = actual.split(":").map(Number); const d = (ah * 60 + am) - (sh * 60 + sm); return req.type === "late_arrival" ? Math.max(0, d) : Math.max(0, -d); })() : null;
-        const agent = await getWorkforceAgentByCode(req.traineeCode);
-        await db.insert(attendanceExceptions).values({
-          traineeCode: req.traineeCode, agentName: agent?.fullName ?? null, date, exceptionType,
-          scheduledTime: sched, actualTime: actual, minutesLate: minutes,
-          note: `${req.subject}${opts.adminReply ? ` — ${opts.adminReply}` : ""}`.slice(0, 1000),
-          status: "reviewed", reviewedBy: opts.decidedBy, createdAt: Date.now(),
-        });
-      }
+      if (dup) continue;
+      await db.insert(attendanceExceptions).values({
+        traineeCode: req.traineeCode, agentName: agent?.fullName ?? null, date, exceptionType,
+        scheduledTime: sched, actualTime: actual, minutesLate: minutes,
+        note: `${req.subject}${opts.adminReply ? ` — ${opts.adminReply}` : ""}`.slice(0, 1000),
+        status: "reviewed", reviewedBy: opts.decidedBy, createdAt: Date.now(),
+      });
     }
   }
 
@@ -1473,12 +1474,12 @@ const requestsRouter = router({
         if (bits.length) input.message = `${bits.join(" · ")}\n${input.message}`;
       }
       // Enforce 2-week minimum for date-based requests (compare calendar dates, not ms)
-      const dateRequiredTypes = ["leave", "day_off", "resignation"];
+      const dateRequiredTypes = ["leave", "paid_leave", "day_off", "sick_note", "resignation"];
       if (dateRequiredTypes.includes(input.type)) {
         const hasDates = (input.requestedDates && input.requestedDates.length > 0) || input.requestedDate;
-        if (!hasDates) throw new TRPCError({ code: "BAD_REQUEST", message: "Please select a date for this request" });
-        // Unpaid day off can be requested for any date (no advance notice required)
-        if (input.type !== "day_off") {
+        if (!hasDates) throw new TRPCError({ code: "BAD_REQUEST", message: "Please select the date(s) for this request" });
+        // Unpaid day off and sick notes can be for any date (no advance notice required)
+        if (input.type !== "day_off" && input.type !== "sick_note") {
           // Check the earliest selected date is at least 14 calendar days from today
           const today = new Date();
           today.setHours(0, 0, 0, 0);
@@ -1506,7 +1507,7 @@ const requestsRouter = router({
       });
       // Leave requests ALSO land in leave_requests so Leave Management + balances see them
       // (one leave system). The request-centre row stays for the agent's own view/replies.
-      if (input.type === "leave" || input.type === "paid_leave" || input.type === "day_off") {
+      if (input.type === "leave" || input.type === "paid_leave" || input.type === "day_off" || input.type === "sick_note") {
         const dates = (input.requestedDates ?? []).filter(Boolean).sort();
         const single = input.requestedDate ? new Date(input.requestedDate).toISOString().slice(0, 10) : null;
         const startDate = dates[0] ?? single;
@@ -1514,11 +1515,12 @@ const requestsRouter = router({
         if (startDate && endDate) {
           const newId = (created as unknown as Array<{ insertId?: number }>)[0]?.insertId ?? null;
           const { createLeaveRequestRow } = await import("./db");
+          const tag = input.type === "day_off" ? "[unpaid] " : input.type === "sick_note" ? "[sick] " : "";
           await createLeaveRequestRow({
             traineeCode: payload.traineeCode,
             startDate, endDate,
             days: dates.length || 1,
-            reason: `${input.type === "day_off" ? "[unpaid] " : ""}${input.subject}${input.message ? ` — ${input.message}` : ""}`.slice(0, 2000),
+            reason: `${tag}${input.subject}${input.message ? ` — ${input.message}` : ""}`.slice(0, 2000),
             agentRequestId: newId,
           });
         }
@@ -1543,7 +1545,7 @@ const requestsRouter = router({
   listAll: staffProcedure.query(() => listAllAgentRequests()),
 
   // Admin: update status and/or reply
-  updateStatus: staffProcedure
+  updateStatus: roleProcedure("hr", "manager", "ops_manager", "team_lead")
     .input(z.object({
       id: z.number(),
       status: z.enum(["pending", "in_progress", "resolved", "rejected"]),
@@ -2105,6 +2107,7 @@ const workforceRouter = router({
       campaignId: z.number().optional(),
       shiftHours: z.string().optional(),
       teamLeader: z.string().optional(),
+      jobTitle: z.string().max(150).optional(),
       offDay1: z.number().int().min(0).max(6).optional(),
       offDay2: z.number().int().min(0).max(6).optional(),
       joinDate: z.number().optional(),
@@ -2163,6 +2166,29 @@ const workforceRouter = router({
         const { reserveTraineeCode } = await import("./db");
         try { await reserveTraineeCode(input.traineeCode, input.candidateId, "operations"); }
         catch (e) { throw new TRPCError({ code: "CONFLICT", message: e instanceof Error ? e.message : "Agent ID unavailable" }); }
+      }
+      if (input.shiftHours && input.shiftHours.trim() !== "") {
+        const { parseShiftHours, normalizeShiftHours } = await import("../shared/shiftHours");
+        if (!parseShiftHours(input.shiftHours)) throw new TRPCError({ code: "BAD_REQUEST", message: `Shift hours "${input.shiftHours}" not understood — use e.g. "9:00 AM - 5:00 PM" or "4pm - 1am".` });
+        input.shiftHours = normalizeShiftHours(input.shiftHours);
+      }
+      // Position-based client → position required and must be in the client's list; otherwise no position stored.
+      if (input.campaignId != null) {
+        const dbc = await getDb();
+        if (dbc) {
+          const { campaigns, clients, clientPositions } = await import("../drizzle/schema");
+          const { eq, and, sql: sqlOp } = await import("drizzle-orm");
+          const [cl] = await dbc.select({ id: clients.id, name: clients.name, positionBased: clients.positionBased }).from(campaigns).innerJoin(clients, eq(clients.id, campaigns.clientId)).where(eq(campaigns.id, input.campaignId)).limit(1);
+          if (cl?.positionBased) {
+            const title = (input.jobTitle ?? "").trim();
+            if (!title) throw new TRPCError({ code: "BAD_REQUEST", message: `${cl.name} is position-based — pick a position.` });
+            const [pos] = await dbc.select({ id: clientPositions.id }).from(clientPositions).where(and(eq(clientPositions.clientId, cl.id), eq(clientPositions.isActive, true), sqlOp`LOWER(${clientPositions.name}) = LOWER(${title})`)).limit(1);
+            if (!pos) throw new TRPCError({ code: "BAD_REQUEST", message: `"${title}" is not in ${cl.name}'s position list.` });
+            input.jobTitle = title; input.teamLeader = undefined;
+          } else {
+            input.jobTitle = undefined;
+          }
+        }
       }
       await createWorkforceAgent(input);
       // Auto-create leave balance for new agent (default: 6 casual, 21 annual)
@@ -2241,6 +2267,30 @@ const workforceRouter = router({
         throw new TRPCError({ code: "FORBIDDEN", message: "Only HR and managers can edit agent profiles." });
       }
       const { traineeCode, ...rest } = input;
+      // Shift hours: store one canonical form ("9:00 AM - 5:00 PM") so Monthly Hours can always read it.
+      if (rest.shiftHours !== undefined && rest.shiftHours.trim() !== "") {
+        const { parseShiftHours, normalizeShiftHours } = await import("../shared/shiftHours");
+        if (!parseShiftHours(rest.shiftHours)) throw new TRPCError({ code: "BAD_REQUEST", message: `Shift hours "${rest.shiftHours}" not understood — use e.g. "9:00 AM - 5:00 PM" or "4pm - 1am".` });
+        rest.shiftHours = normalizeShiftHours(rest.shiftHours);
+      }
+      // Position-based client: the position must come from the client's managed list (no free-text typos).
+      if (input.jobTitle !== undefined && input.jobTitle.trim() !== "") {
+        const { getDb } = await import("./db");
+        const db = await getDb();
+        if (db) {
+          const { workforceAgents, campaigns, clients, clientPositions } = await import("../drizzle/schema");
+          const { eq, and, sql: sqlOp } = await import("drizzle-orm");
+          const campaignId = input.campaignId ?? (await getWorkforceAgentByCode(traineeCode))?.campaignId ?? null;
+          if (campaignId != null) {
+            const [cl] = await db.select({ id: clients.id, positionBased: clients.positionBased }).from(campaigns).innerJoin(clients, eq(clients.id, campaigns.clientId)).where(eq(campaigns.id, campaignId)).limit(1);
+            if (cl?.positionBased) {
+              const [pos] = await db.select({ id: clientPositions.id }).from(clientPositions)
+                .where(and(eq(clientPositions.clientId, cl.id), eq(clientPositions.isActive, true), sqlOp`LOWER(${clientPositions.name}) = LOWER(${input.jobTitle.trim()})`)).limit(1);
+              if (!pos) throw new TRPCError({ code: "BAD_REQUEST", message: `"${input.jobTitle}" is not in this client's position list. Add it under Manage positions first.` });
+            }
+          }
+        }
+      }
       // If campaignId is being set, fetch the old agent to check if it changed
       if (input.campaignId !== undefined) {
         try {
@@ -2248,10 +2298,19 @@ const workforceRouter = router({
           if (existing && existing.campaignId !== input.campaignId) {
             const campaign = await getCampaignById(input.campaignId);
             const campaignName = campaign?.name ?? `Campaign #${input.campaignId}`;
+            const { getDb: _nGdb } = await import("./db");
+            const _nDb = await _nGdb();
+            let positionBased = false;
+            if (_nDb && campaign?.clientId) {
+              const { clients: _nCl } = await import("../drizzle/schema");
+              const { eq: _nEq } = await import("drizzle-orm");
+              const [c] = await _nDb.select({ positionBased: _nCl.positionBased, name: _nCl.name }).from(_nCl).where(_nEq(_nCl.id, campaign.clientId)).limit(1);
+              positionBased = !!c?.positionBased;
+            }
             await createAgentNotification({
               candidateId: existing.candidateId,
               type: "campaign_assigned",
-              message: `You have been reassigned to the "${campaignName}" campaign.`,
+              message: positionBased ? `Your assignment has been updated${input.jobTitle ? ` — position: ${input.jobTitle}` : ""}.` : `You have been reassigned to the "${campaignName}" campaign.`,
               relatedId: input.campaignId,
             });
           }
@@ -2857,8 +2916,13 @@ const scheduleChangeRouter = router({
     try { _me = (jwt.verify(_scCTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; }
     catch { return []; }
     const all = await listWorkforceAgents();
+    // Same client only (Quantum agents swap with Quantum agents), never demo accounts.
+    const { getAgentTimeTrackingAccess } = await import("./db");
+    const myAccess = await getAgentTimeTrackingAccess(_me);
+    const campaignClient = new Map((await listCampaigns()).map(c => [c.id, c.clientId ?? null]));
     return (all as Array<Record<string, unknown>>)
-      .filter(a => a.traineeCode && a.traineeCode !== _me && a.agentStatus === "active" && a.isActive !== false)
+      .filter(a => a.traineeCode && a.traineeCode !== _me && a.agentStatus === "active" && a.isActive !== false && !a.isDemo)
+      .filter(a => myAccess.clientId == null || campaignClient.get(a.campaignId as number) === myAccess.clientId)
       .map(a => ({
         traineeCode: a.traineeCode as string,
         name: (a.fullName as string) || (a.alias as string) || (a.traineeCode as string),
@@ -3430,8 +3494,7 @@ const payrollV2Router = router({
       const paidAt = Date.now();
       const { getPayrollRecordWithAdjustments } = await import("./db");
       const { eq } = await import("drizzle-orm");
-      void inArray;
-      await db.transaction(async (tx) => {
+          await db.transaction(async (tx) => {
         for (const id of input.ids) {
           const rec = await getPayrollRecordWithAdjustments(id);
           if (!rec) continue;
@@ -7418,6 +7481,36 @@ const bdRouter = router({
 
 // ─── #5 CRDTS reuse check + archive Router ───────────────────────────────────
 // ─── Presence Router ─────────────────────────────────────────────────────────
+/**
+ * Presence rows seen within `windowMs`. Demo/test agents never appear. An AGENT only sees colleagues of
+ * their own client (Quantum agents don't see Apello and vice-versa); staff see everyone.
+ */
+async function presenceRows(ctx: { agent: { traineeCode: string } | null; user: unknown }, windowMs: number) {
+  const { getDb } = await import("./db");
+  const { agentPresence, workforceAgents, campaigns } = await import("../drizzle/schema");
+  const { gte, eq, and, or, isNull, inArray } = await import("drizzle-orm");
+  const db = await getDb();
+  if (!db) return [];
+  const since = Date.now() - windowMs;
+  const rows = await db.select({ p: agentPresence, isDemo: workforceAgents.isDemo, clientId: campaigns.clientId })
+    .from(agentPresence)
+    .leftJoin(workforceAgents, eq(workforceAgents.traineeCode, agentPresence.traineeCode))
+    .leftJoin(campaigns, eq(campaigns.id, agentPresence.campaignId))
+    .where(and(gte(agentPresence.lastSeen, since), or(isNull(workforceAgents.isDemo), eq(workforceAgents.isDemo, false))));
+  void inArray;
+  const staffRole = (ctx.user as { role?: string } | null | undefined)?.role;
+  if (ctx.agent && !(ctx.user && isStaff(staffRole))) {
+    const me = rows.find(r => r.p.traineeCode === ctx.agent!.traineeCode);
+    let myClient: number | null = me?.clientId ?? null;
+    if (myClient == null) {
+      const [w] = await db.select({ clientId: campaigns.clientId }).from(workforceAgents).innerJoin(campaigns, eq(campaigns.id, workforceAgents.campaignId)).where(eq(workforceAgents.traineeCode, ctx.agent.traineeCode)).limit(1);
+      myClient = w?.clientId ?? null;
+    }
+    return rows.filter(r => myClient == null ? r.p.traineeCode === ctx.agent!.traineeCode : r.clientId === myClient).map(r => r.p);
+  }
+  return rows.map(r => r.p);
+}
+
 const presenceRouter = router({
   /** Agent calls this every 60s to mark themselves online. Identity comes from the session cookie. */
   heartbeat: agentProcedure
@@ -7460,26 +7553,10 @@ const presenceRouter = router({
     }),
 
   /** Currently online agents (seen within last 5 minutes). Agents and staff only. */
-  list: agentOrStaffProcedure.query(async () => {
-    const { getDb } = await import("./db");
-    const { agentPresence } = await import("../drizzle/schema");
-    const { gte } = await import("drizzle-orm");
-    const db = await getDb();
-    if (!db) return [];
-    const fiveMinAgo = Date.now() - 5 * 60 * 1000;
-    return db.select().from(agentPresence).where(gte(agentPresence.lastSeen, fiveMinAgo));
-  }),
+  list: agentOrStaffProcedure.query(async ({ ctx }) => presenceRows(ctx, 5 * 60 * 1000)),
 
   /** All agents presence (online + recent offline) for the directory. Agents and staff only. */
-  listAll: agentOrStaffProcedure.query(async () => {
-    const { getDb } = await import("./db");
-    const { agentPresence } = await import("../drizzle/schema");
-    const db = await getDb();
-    if (!db) return [];
-    const oneHourAgo = Date.now() - 60 * 60 * 1000;
-    const { gte } = await import("drizzle-orm");
-    return db.select().from(agentPresence).where(gte(agentPresence.lastSeen, oneHourAgo));
-  }),
+  listAll: agentOrStaffProcedure.query(async ({ ctx }) => presenceRows(ctx, 60 * 60 * 1000)),
 
   /** Agent sets their own status */
   setStatus: agentProcedure
@@ -7862,9 +7939,27 @@ const exitRouter = router({
       // The target campaign must exist — otherwise the agent is orphaned and loses AUX/time-tracking access.
       const target = await getCampaignById(input.campaignId);
       if (!target) throw new TRPCError({ code: "NOT_FOUND", message: "Target campaign not found" });
+      // Position-based target client: a position from its managed list is REQUIRED; moving to a campaign-based
+      // client clears any old position.
+      let targetPositionBased = false;
+      {
+        const dbp = await getDb();
+        if (dbp && target.clientId) {
+          const { clients, clientPositions } = await import("../drizzle/schema");
+          const { eq, and, sql: sqlOp } = await import("drizzle-orm");
+          const [cl] = await dbp.select({ positionBased: clients.positionBased, name: clients.name }).from(clients).where(eq(clients.id, target.clientId)).limit(1);
+          targetPositionBased = !!cl?.positionBased;
+          if (targetPositionBased) {
+            if (!input.jobTitle?.trim()) throw new TRPCError({ code: "BAD_REQUEST", message: `${cl?.name} is position-based — pick a position.` });
+            const [pos] = await dbp.select({ id: clientPositions.id }).from(clientPositions)
+              .where(and(eq(clientPositions.clientId, target.clientId), eq(clientPositions.isActive, true), sqlOp`LOWER(${clientPositions.name}) = LOWER(${input.jobTitle.trim()})`)).limit(1);
+            if (!pos) throw new TRPCError({ code: "BAD_REQUEST", message: `"${input.jobTitle}" is not in ${cl?.name}'s position list.` });
+          }
+        }
+      }
       await updateWorkforceAgent(input.traineeCode, {
         campaignId: input.campaignId,
-        ...(input.jobTitle ? { jobTitle: input.jobTitle } : {}),
+        jobTitle: targetPositionBased ? input.jobTitle!.trim() : "",
       });
       // Keep presence in step so the directory shows the new campaign immediately.
       const db = await getDb();
@@ -7923,12 +8018,96 @@ const clientsRouter = router({
     }))
     .mutation(({ input }) => { const { id, ...rest } = input; return updateClient(id, rest); }),
 
-  assignCampaign: staffProcedure
+  assignCampaign: roleProcedure("manager", "ops_manager", "hr")
     .input(z.object({
       campaignId: z.number().int().positive(),
       clientId: z.number().int().positive().nullable(),
     }))
     .mutation(({ input }) => assignCampaignToClient(input.campaignId, input.clientId)),
+
+  // ─── Positions / roles per client (Quantum) ────────────────────────────────
+  /** Positions of one client, with live headcount per position (demo agents excluded). */
+  positions: staffProcedure
+    .input(z.object({ clientId: z.number().int().positive(), includeInactive: z.boolean().optional() }))
+    .query(async ({ input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) return [];
+      const { clientPositions, workforceAgents, campaigns } = await import("../drizzle/schema");
+      const { eq, and, or, isNull, asc } = await import("drizzle-orm");
+      const rows = await db.select().from(clientPositions)
+        .where(input.includeInactive ? eq(clientPositions.clientId, input.clientId) : and(eq(clientPositions.clientId, input.clientId), eq(clientPositions.isActive, true)))
+        .orderBy(asc(clientPositions.sortOrder), asc(clientPositions.name));
+      const agents = await db.select({ jobTitle: workforceAgents.jobTitle, isActive: workforceAgents.isActive, agentStatus: workforceAgents.agentStatus })
+        .from(workforceAgents).innerJoin(campaigns, eq(campaigns.id, workforceAgents.campaignId))
+        .where(and(eq(campaigns.clientId, input.clientId), or(isNull(workforceAgents.isDemo), eq(workforceAgents.isDemo, false))));
+      const count = new Map<string, number>();
+      for (const a of agents) {
+        if (!a.isActive || (a.agentStatus && a.agentStatus !== "active")) continue;
+        const k = (a.jobTitle ?? "").trim().toLowerCase();
+        count.set(k, (count.get(k) ?? 0) + 1);
+      }
+      return rows.map(r => ({ ...r, headcount: count.get(r.name.trim().toLowerCase()) ?? 0 }));
+    }),
+
+  createPosition: roleProcedure("manager", "ops_manager", "hr")
+    .input(z.object({ clientId: z.number().int().positive(), name: z.string().trim().min(1).max(150), targetHeadcount: z.number().int().min(0).nullable().optional() }))
+    .mutation(async ({ input, ctx }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { clientPositions } = await import("../drizzle/schema");
+      const { eq, and, sql: sqlOp } = await import("drizzle-orm");
+      const [dup] = await db.select({ id: clientPositions.id, isActive: clientPositions.isActive }).from(clientPositions)
+        .where(and(eq(clientPositions.clientId, input.clientId), sqlOp`LOWER(${clientPositions.name}) = LOWER(${input.name})`)).limit(1);
+      if (dup) {
+        if (!dup.isActive) { await db.update(clientPositions).set({ isActive: true, name: input.name }).where(eq(clientPositions.id, dup.id)); return { id: dup.id, reactivated: true }; }
+        throw new TRPCError({ code: "CONFLICT", message: `Position "${input.name}" already exists for this client.` });
+      }
+      const [ins] = await db.insert(clientPositions).values({ clientId: input.clientId, name: input.name, targetHeadcount: input.targetHeadcount ?? null, createdAt: Date.now() }).$returningId();
+      await auditEntry(ctx.user, "create_position", "client_position", String(ins.id), JSON.stringify(input));
+      return { id: ins.id, reactivated: false };
+    }),
+
+  /** Rename / retarget / deactivate. Renaming cascades to every agent of that client holding the old title. */
+  updatePosition: roleProcedure("manager", "ops_manager", "hr")
+    .input(z.object({ id: z.number().int().positive(), name: z.string().trim().min(1).max(150).optional(), targetHeadcount: z.number().int().min(0).nullable().optional(), isActive: z.boolean().optional(), sortOrder: z.number().int().optional() }))
+    .mutation(async ({ input, ctx }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { clientPositions, workforceAgents, campaigns } = await import("../drizzle/schema");
+      const { eq, and, inArray, sql: sqlOp } = await import("drizzle-orm");
+      const [row] = await db.select().from(clientPositions).where(eq(clientPositions.id, input.id)).limit(1);
+      if (!row) throw new TRPCError({ code: "NOT_FOUND", message: "Position not found" });
+      const patch: Partial<typeof row> = {};
+      if (input.name !== undefined && input.name !== row.name) {
+        const [dup] = await db.select({ id: clientPositions.id }).from(clientPositions)
+          .where(and(eq(clientPositions.clientId, row.clientId), sqlOp`LOWER(${clientPositions.name}) = LOWER(${input.name})`)).limit(1);
+        if (dup && dup.id !== row.id) throw new TRPCError({ code: "CONFLICT", message: `Position "${input.name}" already exists.` });
+        patch.name = input.name;
+        // cascade to agents of this client
+        const camps = await db.select({ id: campaigns.id }).from(campaigns).where(eq(campaigns.clientId, row.clientId));
+        if (camps.length) {
+          await db.update(workforceAgents).set({ jobTitle: input.name })
+            .where(and(inArray(workforceAgents.campaignId, camps.map(c => c.id)), sqlOp`LOWER(TRIM(${workforceAgents.jobTitle})) = LOWER(${row.name})`));
+        }
+      }
+      if (input.targetHeadcount !== undefined) patch.targetHeadcount = input.targetHeadcount;
+      if (input.isActive === false && row.isActive) {
+        const camps = await db.select({ id: campaigns.id }).from(campaigns).where(eq(campaigns.clientId, row.clientId));
+        if (camps.length) {
+          const [held] = await db.select({ id: workforceAgents.id }).from(workforceAgents)
+            .where(and(inArray(workforceAgents.campaignId, camps.map(c => c.id)), eq(workforceAgents.isActive, true), sqlOp`LOWER(TRIM(${workforceAgents.jobTitle})) = LOWER(${row.name})`)).limit(1);
+          if (held) throw new TRPCError({ code: "CONFLICT", message: `"${row.name}" still has active agents — move them to another position first.` });
+        }
+      }
+      if (input.isActive !== undefined) patch.isActive = input.isActive;
+      if (input.sortOrder !== undefined) patch.sortOrder = input.sortOrder;
+      if (Object.keys(patch).length) await db.update(clientPositions).set(patch).where(eq(clientPositions.id, input.id));
+      await auditEntry(ctx.user, "update_position", "client_position", String(input.id), JSON.stringify({ before: row, patch }));
+      return { ok: true };
+    }),
 
   getDashboard: staffProcedure
     .input(z.object({
@@ -7989,6 +8168,23 @@ const clientsRouter = router({
       }
       void adherenceLog;
 
+      // Monthly attrition = separations whose last working day falls in the month ÷ headcount at the start of
+      // the month (active then = active now + those who left during the month).
+      let separationsThisMonth = 0;
+      if (agentCodesList.length > 0) {
+        const { agentSeparations } = await import("../drizzle/schema");
+        const { like, or, isNull, gte, lt } = await import("drizzle-orm");
+        const monthStartMs = new Date(`${month}-01T00:00:00Z`).getTime();
+        const [y, m] = month.split("-").map(Number);
+        const monthEndMs = Date.UTC(y!, m!, 1);
+        const seps = await db.select({ agentCode: agentSeparations.agentCode }).from(agentSeparations)
+          .where(and(inArray(agentSeparations.agentCode, agentCodesList),
+            or(like(agentSeparations.lastWorkingDay, `${month}-%`), and(isNull(agentSeparations.lastWorkingDay), gte(agentSeparations.effectiveAt, monthStartMs), lt(agentSeparations.effectiveAt, monthEndMs)))));
+        separationsThisMonth = new Set(seps.map(x => x.agentCode)).size;
+      }
+      const activeNow = activeAgents.filter(a => a.agentStatus === "active").length;
+      const monthlyAttritionPct = activeNow + separationsThisMonth > 0 ? Math.round((separationsThisMonth / (activeNow + separationsThisMonth)) * 1000) / 10 : 0;
+
       return {
         client,
         campaigns: clientCampaigns,
@@ -7997,6 +8193,8 @@ const clientsRouter = router({
         payroll,
         adherence,
         month,
+        separationsThisMonth,
+        monthlyAttritionPct,
       };
     }),
 });
@@ -8166,10 +8364,14 @@ async function syncPresenceFromState(traineeCode: string, auxType: string | null
   await db.update(agentPresence).set({ status, lastSeen: Date.now() }).where(eq(agentPresence.traineeCode, traineeCode));
 }
 
+// Time-tracking data is operational: HR / managers / ops / team leads read it; finance and BD do not.
+const opsReadProcedure = roleProcedure("hr", "manager", "ops_manager", "team_lead");
+// Mutating shifts / AUX is reserved for HR, managers and ops managers (team leads read only).
+const opsWriteProcedure = roleProcedure("hr", "manager", "ops_manager");
 const timeTrackingRouter = router({
   /** Whether the current agent's client has time tracking enabled. */
   checkAccess: publicProcedure.query(async ({ ctx }) => {
-    if (!ctx.agent) return { allowed: false, clientName: null as string | null, clientId: null as number | null };
+    if (!ctx.agent) return { allowed: false, clientName: null as string | null, clientId: null as number | null, positionBased: false };
     const { getAgentTimeTrackingAccess } = await import("./db");
     return getAgentTimeTrackingAccess(ctx.agent.traineeCode);
   }),
@@ -8305,7 +8507,7 @@ const timeTrackingRouter = router({
   }),
 
   /** PTO LOG for time-tracking clients: decided (approved / rejected) leave. Pending requests live in the Request Center. */
-  allPtoRequests: staffProcedure
+  allPtoRequests: opsReadProcedure
     .input(z.object({ status: z.enum(["pending", "approved", "rejected", "all", "decided"]).optional() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -8335,7 +8537,7 @@ const timeTrackingRouter = router({
       }));
     }),
 
-  allExceptions: staffProcedure
+  allExceptions: opsReadProcedure
     .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/).optional(), status: z.enum(["pending", "reviewed"]).optional() }))
     .query(async ({ input }) => {
       const { attendanceExceptions } = await import("../drizzle/schema");
@@ -8372,7 +8574,7 @@ const timeTrackingRouter = router({
     }),
 
   /** Admin: delete an AUX entry (test rows, mis-clicks). Audited. */
-  deleteAux: roleProcedure("hr", "manager", "ops_manager", "team_lead")
+  deleteAux: opsWriteProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
       const { agentAuxLogs } = await import("../drizzle/schema");
@@ -8389,7 +8591,7 @@ const timeTrackingRouter = router({
     }),
 
   /** Admin: adjust an AUX entry (type / start / end). Audited. */
-  updateAux: roleProcedure("hr", "manager", "ops_manager", "team_lead")
+  updateAux: opsWriteProcedure
     .input(z.object({ id: z.number().int().positive(), auxType: z.enum(AUX_TYPES).optional(), startTime: z.number().optional(), endTime: z.number().nullable().optional(), note: z.string().max(500).nullable().optional() }))
     .mutation(async ({ ctx, input }) => {
       const { agentAuxLogs } = await import("../drizzle/schema");
@@ -8415,7 +8617,7 @@ const timeTrackingRouter = router({
     }),
 
   /** Admin: delete a shift (test rows). Audited. */
-  deleteShift: roleProcedure("hr", "manager", "ops_manager", "team_lead")
+  deleteShift: opsWriteProcedure
     .input(z.object({ id: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
       const { agentShifts } = await import("../drizzle/schema");
@@ -8440,7 +8642,7 @@ const timeTrackingRouter = router({
     }),
 
   /** Admin: everyone currently clocked in (and for how long), with their current AUX state. */
-  openShifts: staffProcedure.query(async () => {
+  openShifts: opsReadProcedure.query(async () => {
     const { agentShifts, agentAuxLogs, workforceAgents } = await import("../drizzle/schema");
     const { getDb } = await import("./db");
     const { eq, isNull, inArray, and, or } = await import("drizzle-orm");
@@ -8457,7 +8659,7 @@ const timeTrackingRouter = router({
   }),
 
   /** Admin: clock an agent out (forgot to clock out). Ends any open AUX too. Audited. */
-  adminClockOut: roleProcedure("hr", "manager", "ops_manager", "team_lead")
+  adminClockOut: opsWriteProcedure
     .input(z.object({ shiftId: z.number().int().positive(), at: z.number().optional() }))
     .mutation(async ({ ctx, input }) => {
       const { agentShifts, agentAuxLogs } = await import("../drizzle/schema");
@@ -8477,7 +8679,7 @@ const timeTrackingRouter = router({
     }),
 
   /** Admin AUX log. The date filter applies with OR without a traineeCode; a date is required when no agent is named. */
-  auxLogs: staffProcedure
+  auxLogs: opsReadProcedure
     .input(z.object({
       traineeCode: z.string().optional(),
       date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -8586,7 +8788,7 @@ const timeTrackingRouter = router({
    * Admin summary of productive (worked) hours per agent for a date range.
    * Productive = shift time − all AUX time. Open records are capped at now.
    */
-  workedSummary: staffProcedure
+  workedSummary: opsReadProcedure
     .input(z.object({
       clientId: z.number().int().positive().optional(),
       traineeCode: z.string().optional(),
@@ -8597,7 +8799,7 @@ const timeTrackingRouter = router({
       const { agentShifts, agentAuxLogs, workforceAgents } = await import("../drizzle/schema");
       const { getDb, listWorkforceAgentsByClient } = await import("./db");
       const { eq, and, gte, lt, inArray, or, isNull } = await import("drizzle-orm");
-      const { ttDayBounds } = await import("./_core/time");
+      const { ttDayBounds, ttDateKey: ttDateKeyFn } = await import("./_core/time");
       const db = await getDb();
       if (!db) return [];
 
@@ -8613,7 +8815,7 @@ const timeTrackingRouter = router({
         const [wa] = await db.select(cols).from(workforceAgents).where(eq(workforceAgents.traineeCode, input.traineeCode)).limit(1);
         agents = wa ? [wa] : [];
       } else if (input.clientId) {
-        const rows = await listWorkforceAgentsByClient(input.clientId);
+        const rows = await listWorkforceAgentsByClient(input.clientId, true); // former agents too — the drop rules below decide
         agents = rows.map(r => ({ traineeCode: r.traineeCode, fullName: r.fullName, shiftHours: r.shiftHours ?? null, offDay1: r.offDay1 ?? null, offDay2: r.offDay2 ?? null, jobTitle: (r as { jobTitle?: string | null }).jobTitle ?? null, joinDate: r.joinDate ?? null, agentStatus: r.agentStatus ?? null, nestingStatus: (r as { nestingStatus?: string | null }).nestingStatus ?? null, campaignId: r.campaignId ?? null }));
       } else {
         // Time tracking is a per-client feature: the monthly report only ever covers agents of clients that
@@ -8657,18 +8859,20 @@ const timeTrackingRouter = router({
       const { lte: lteOp, like } = await import("drizzle-orm");
       const leaves = await db.select().from(leaveRequests).where(and(inArray(leaveRequests.traineeCode, traineeCodes), eq(leaveRequests.status, "approved"), lteOp(leaveRequests.startDate, input.to), gte(leaveRequests.endDate, input.from)));
       const excs = await db.select({ traineeCode: attendanceExceptions.traineeCode, date: attendanceExceptions.date }).from(attendanceExceptions).where(and(inArray(attendanceExceptions.traineeCode, traineeCodes), gte(attendanceExceptions.date, input.from), lteOp(attendanceExceptions.date, input.to)));
-      void like;
-
-      function parseDailyHours(shiftHours: string | null): number {
-        if (!shiftHours) return 0;
-        const m = shiftHours.match(/(\d{1,2}):(\d{2})\s*(AM|PM)\s*[-–]\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i);
-        if (!m) return 0;
-        const toMins = (h: number, min: number, ampm: string) => ((h % 12) + (ampm.toUpperCase() === "PM" ? 12 : 0)) * 60 + min;
-        let diff = toMins(+m[1]!, +m[2]!, m[3]!) - toMins(+m[4]!, +m[5]!, m[6]!);
-        diff = -diff;
-        if (diff <= 0) diff += 24 * 60; // overnight shift
-        return diff / 60;
+      // Last working day of former agents (resigned / terminated) so their scheduled hours stop there.
+      const { agentSeparations } = await import("../drizzle/schema");
+      const seps = await db.select({ agentCode: agentSeparations.agentCode, lastWorkingDay: agentSeparations.lastWorkingDay, effectiveAt: agentSeparations.effectiveAt }).from(agentSeparations).where(inArray(agentSeparations.agentCode, traineeCodes));
+      const lastDayByCode = new Map<string, string>();
+      for (const sp of seps) {
+        const d = sp.lastWorkingDay ?? (sp.effectiveAt ? new Date(sp.effectiveAt).toISOString().slice(0, 10) : null);
+        if (!d) continue;
+        const prev = lastDayByCode.get(sp.agentCode);
+        if (!prev || d > prev) lastDayByCode.set(sp.agentCode, d);
       }
+      const FORMER = new Set(["resigned", "terminated", "blacklisted"]);
+
+      const { shiftHoursPerDay } = await import("../shared/shiftHours");
+      const parseDailyHours = (shiftHours: string | null): number => shiftHoursPerDay(shiftHours);
       function countWorkingDays(from: string, to: string, offDay1: number | null, offDay2: number | null): number {
         let count = 0;
         const cur = new Date(from + "T00:00:00Z"); const end = new Date(to + "T00:00:00Z");
@@ -8685,9 +8889,22 @@ const timeTrackingRouter = router({
       }
 
       const now = Date.now();
-      return agents.map(agent => {
+      const rowsOut = agents.map(agent => {
         const myShifts = shifts.filter(s => s.traineeCode === agent.traineeCode);
         const myAux = auxLogs.filter(l => l.traineeCode === agent.traineeCode);
+        // Scheduled window = report range clipped to [join date, last working day]. A mid-month joiner or
+        // leaver is only scheduled for the days they were actually employed.
+        const joinKey = agent.joinDate ? ttDateKeyFn(agent.joinDate) : null;
+        const isFormer = FORMER.has(agent.agentStatus ?? "");
+        const lastKey = isFormer ? (lastDayByCode.get(agent.traineeCode) ?? null) : null;
+        const schedFrom = joinKey && joinKey > input.from ? joinKey : input.from;
+        const schedTo = lastKey && lastKey < input.to ? lastKey : input.to;
+        const schedDays = schedTo < schedFrom ? 0 : countWorkingDays(schedFrom, schedTo, agent.offDay1, agent.offDay2);
+        const hadActivity = myShifts.length > 0 || myAux.length > 0;
+        // Former agents with no scheduled days AND no activity in the range do not belong in this month's report.
+        if (isFormer && schedDays === 0 && !hadActivity) return null;
+        // A former agent whose last day is unknown and who has no activity this month: also drop (they left earlier).
+        if (isFormer && !lastKey && !hadActivity) return null;
         const dailyHrsForPto = parseDailyHours(agent.shiftHours);
         const ptoDays = leaves.filter(l => l.traineeCode === agent.traineeCode).reduce((s, l) => s + leaveDaysInRange(l.startDate, l.endDate, agent.offDay1, agent.offDay2), 0);
         const ptoHrs = Math.round(ptoDays * dailyHrsForPto * 100) / 100;
@@ -8703,7 +8920,7 @@ const timeTrackingRouter = router({
         }
         const totalAuxMs = Object.values(auxByType).reduce((a, b) => a + b, 0);
         const productiveMs = Math.max(0, shiftMs - totalAuxMs);
-        const scheduledHrs = Math.round(parseDailyHours(agent.shiftHours) * countWorkingDays(input.from, input.to, agent.offDay1, agent.offDay2) * 100) / 100;
+        const scheduledHrs = Math.round(parseDailyHours(agent.shiftHours) * schedDays * 100) / 100;
         const auxMinutes: Record<string, number> = {};
         for (const [type, ms] of Object.entries(auxByType)) auxMinutes[type] = Math.round((ms / 60000) * 100) / 100;
         const workedHrs = Math.round((productiveMs / 3600000) * 100) / 100;
@@ -8730,6 +8947,7 @@ const timeTrackingRouter = router({
           agentStatus: agent.agentStatus,
         };
       });
+      return rowsOut.filter((r): r is NonNullable<typeof r> => r !== null);
     }),
 });
 

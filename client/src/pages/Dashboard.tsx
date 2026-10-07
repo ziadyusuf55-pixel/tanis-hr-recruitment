@@ -49,7 +49,9 @@ export default function Dashboard() {
 
   // ── Attention feeds (all existing endpoints) ──
   const { data: unreadRequests = 0 } = trpc.requests.countUnread.useQuery(undefined, { refetchInterval: 60000 });
-  const { data: allAgents = [] } = trpc.workforce.list.useQuery({});
+  const { data: _allAgentsRaw = [] } = trpc.workforce.list.useQuery({});
+  // Demo/test accounts never count in compliance lists.
+  const allAgents = (_allAgentsRaw as Array<Record<string, unknown>>).filter(a => !a.isDemo);
   const thirtyDaysFromNow = Date.now() + 30 * 24 * 60 * 60 * 1000;
 
   const unsignedContractsList = (allAgents as Array<Record<string,unknown>>).filter(a =>

@@ -7,3 +7,9 @@ export const NOT_ADMIN_ERR_MSG = 'You do not have required permission (10002)';
 /** AUX (not-ready) reason codes — the single list used by the server schema and both portals. */
 export const AUX_TYPES = ["break", "lunch", "bathroom", "training", "meeting", "coaching", "system_down", "idle", "other"] as const;
 export type AuxType = (typeof AUX_TYPES)[number];
+/** Display labels — the ONE list every picker (portal card, tracker page, admin edit) renders from. */
+export const AUX_TYPE_LABELS: Record<AuxType, string> = {
+  break: "Break", lunch: "Lunch", bathroom: "Bathroom", training: "Training", meeting: "Meeting",
+  coaching: "Coaching", system_down: "System / IT Down", idle: "Idle / No Work", other: "Other",
+};
+export const AUX_TYPE_OPTIONS = AUX_TYPES.map(value => ({ value, label: AUX_TYPE_LABELS[value] }));

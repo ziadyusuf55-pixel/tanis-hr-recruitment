@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useParams } from "wouter";
 import { trpc } from "@/lib/trpc";
+import { etMonthKey } from "@/lib/tz";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -77,13 +78,24 @@ export default function ClientDashboardPage() {
   const [, navigate] = useLocation();
   const [tab, setTab] = useState("overview");
 
-  const today = new Date();
-  const currentMonth = today.toISOString().slice(0, 7);
+  const currentMonth = etMonthKey();
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
 
   const { data, isLoading, error } = trpc.clients.getDashboard.useQuery(
     { clientId, month: selectedMonth },
     { enabled: clientId > 0 }
+  );
+  // Time-tracking clients (Quantum): hours / AUX / attendance come from the shift + AUX records.
+  const dashClient = (data as { client?: { timeTrackingEnabled?: boolean; positionBased?: boolean } } | undefined)?.client;
+  const monthFrom = `${selectedMonth}-01`;
+  const monthTo = (() => { const [y, m] = selectedMonth.split("-").map(Number); return `${selectedMonth}-${String(new Date(Date.UTC(y!, m!, 0)).getUTCDate()).padStart(2, "0")}`; })();
+  const { data: hours = [], error: hoursError } = trpc.timeTracking.workedSummary.useQuery(
+    { clientId, from: monthFrom, to: monthTo },
+    { enabled: clientId > 0 && !!dashClient?.timeTrackingEnabled }
+  );
+  const { data: managedPositions = [] } = trpc.clients.positions.useQuery(
+    { clientId },
+    { enabled: clientId > 0 && !!dashClient?.positionBased }
   );
 
   if (isLoading) {
@@ -108,15 +120,31 @@ export default function ClientDashboardPage() {
     );
   }
 
-  const { client, campaigns, activeAgents: _rawActiveAgents, allAgents, payroll, adherence, month } = data as unknown as {
-    client: { id: number; name: string; shortCode: string; colorHex: string; isActive: boolean };
+  const { client, campaigns, activeAgents: _rawActiveAgents, allAgents, payroll, adherence, month, monthlyAttritionPct, separationsThisMonth } = data as unknown as {
+    client: { id: number; name: string; shortCode: string; colorHex: string; isActive: boolean; timeTrackingEnabled?: boolean; positionBased?: boolean };
     campaigns: { id: number; name: string }[];
     activeAgents: Agent[];
     allAgents: Agent[];
     payroll: PayrollRecord[];
     adherence: AdherenceEntry[];
     month: string;
+    monthlyAttritionPct: number;
+    separationsThisMonth: number;
   };
+  type HoursRow = { traineeCode: string; name: string; role: string | null; scheduledHrs: number; workedHrs: number; shiftHrs: number; ptoHrs: number; unplannedHrs: number; lateEarly: number; auxMinutes: Record<string, number> };
+  const hoursRows = hours as HoursRow[];
+  const hoursTot = hoursRows.reduce((acc, r) => ({
+    scheduled: acc.scheduled + r.scheduledHrs, worked: acc.worked + r.workedHrs, shift: acc.shift + r.shiftHrs,
+    pto: acc.pto + r.ptoHrs, unplanned: acc.unplanned + r.unplannedHrs, lateEarly: acc.lateEarly + r.lateEarly,
+  }), { scheduled: 0, worked: 0, shift: 0, pto: 0, unplanned: 0, lateEarly: 0 });
+  const auxTotals = hoursRows.reduce<Record<string, number>>((acc, r) => { for (const [k, v] of Object.entries(r.auxMinutes ?? {})) acc[k] = (acc[k] ?? 0) + v; return acc; }, {});
+  const auxTotalMin = Object.values(auxTotals).reduce((a, b) => a + b, 0);
+  const pct = (num: number, den: number) => den > 0 ? Math.round((num / den) * 1000) / 10 : null;
+  // Attendance = (scheduled − unplanned) / scheduled; Adherence = productive / shift time (time on task while clocked in).
+  const attendanceRate = pct(hoursTot.scheduled - hoursTot.unplanned, hoursTot.scheduled);
+  const adherenceRate = pct(hoursTot.worked, hoursTot.shift);
+  const unplannedRate = pct(hoursTot.unplanned, hoursTot.scheduled);
+  const hasHours = !!client.timeTrackingEnabled && hoursRows.length > 0;
 
   // Position-based client: positions are the agents' job titles (one client, many positions), not campaigns.
   const isQuantum = (client as { positionBased?: boolean; timeTrackingEnabled?: boolean }).positionBased ?? (client as { timeTrackingEnabled?: boolean }).timeTrackingEnabled ?? client.name.toLowerCase().includes("quantum");
@@ -131,8 +159,7 @@ export default function ClientDashboardPage() {
 
   // Computed metrics
   const totalActive = activeAgents.length;
-  const resignedThisMonth = allAgents.filter(a => a.agentStatus === "resigned" || a.agentStatus === "terminated").length;
-  const attritionRate = allAgents.length > 0 ? ((resignedThisMonth / allAgents.length) * 100).toFixed(1) : "0.0";
+  const attritionRate = (monthlyAttritionPct ?? 0).toFixed(1);
 
   const lateEvents = adherence.filter(a => a.type === "late" || a.type === "early_departure").length;
 
@@ -148,7 +175,10 @@ export default function ClientDashboardPage() {
   const getComputedValue = (key: string): string | null => {
     switch (key) {
       case "monthly_attrition": return attritionRate + "%";
-      case "late_arrivals": return String(lateEvents);
+      case "late_arrivals": return String(hasHours ? hoursTot.lateEarly : lateEvents);
+      case "attendance_rate": return hasHours && attendanceRate != null ? attendanceRate + "%" : null;
+      case "schedule_adherence": return hasHours && adherenceRate != null ? adherenceRate + "%" : null;
+      case "unplanned_absence_rate": return hasHours && unplannedRate != null ? unplannedRate + "%" : null;
       case "payroll_hr_issues": return "0";
       default: return null;
     }
@@ -286,6 +316,7 @@ export default function ClientDashboardPage() {
               <CardContent className="pt-5">
                 <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Monthly Attrition</p>
                 <p className="text-3xl font-bold mt-1">{attritionRate}%</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">{separationsThisMonth ?? 0} left in {month}</p>
               </CardContent>
             </Card>
             <Card>
@@ -296,29 +327,75 @@ export default function ClientDashboardPage() {
             </Card>
           </div>
 
+          {client.timeTrackingEnabled && !hoursError && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+              <Card>
+                <CardHeader><CardTitle className="text-sm font-semibold">Hours — {month} (ET)</CardTitle></CardHeader>
+                <CardContent className="pt-0">
+                  {!hasHours ? <p className="text-sm text-muted-foreground py-3">No shift data for this month yet.</p> : (
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
+                      {[
+                        ["Scheduled", hoursTot.scheduled.toFixed(1) + " h"], ["Clocked", hoursTot.shift.toFixed(1) + " h"], ["Productive", hoursTot.worked.toFixed(1) + " h"],
+                        ["PTO (approved)", hoursTot.pto.toFixed(1) + " h"], ["Unplanned", hoursTot.unplanned.toFixed(1) + " h"], ["Late / early", String(hoursTot.lateEarly)],
+                      ].map(([k, v]) => (
+                        <div key={k} className="rounded-lg border p-2.5"><p className="text-[11px] text-muted-foreground uppercase tracking-wider">{k}</p><p className="font-semibold tabular-nums mt-0.5">{v}</p></div>
+                      ))}
+                      <div className="rounded-lg border p-2.5"><p className="text-[11px] text-muted-foreground uppercase tracking-wider">Attendance</p><p className="font-semibold tabular-nums mt-0.5">{attendanceRate ?? "—"}%</p></div>
+                      <div className="rounded-lg border p-2.5"><p className="text-[11px] text-muted-foreground uppercase tracking-wider">Adherence</p><p className="font-semibold tabular-nums mt-0.5">{adherenceRate ?? "—"}%</p></div>
+                      <div className="rounded-lg border p-2.5"><p className="text-[11px] text-muted-foreground uppercase tracking-wider">Unplanned</p><p className="font-semibold tabular-nums mt-0.5">{unplannedRate ?? "—"}%</p></div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+              <Card>
+                <CardHeader><CardTitle className="text-sm font-semibold">AUX breakdown — {month}</CardTitle></CardHeader>
+                <CardContent className="pt-0">
+                  {auxTotalMin === 0 ? <p className="text-sm text-muted-foreground py-3">No AUX logged this month.</p> : (
+                    <div className="space-y-2">
+                      {Object.entries(auxTotals).sort((a, b) => b[1] - a[1]).map(([type, min]) => (
+                        <div key={type}>
+                          <div className="flex justify-between text-xs mb-0.5"><span className="capitalize">{type.replace(/_/g, " ")}</span><span className="tabular-nums text-muted-foreground">{Math.round(min)} min · {Math.round((min / auxTotalMin) * 100)}%</span></div>
+                          <div className="h-2 rounded bg-muted overflow-hidden"><div className="h-full rounded" style={{ width: `${Math.max(2, (min / auxTotalMin) * 100)}%`, backgroundColor: client.colorHex }} /></div>
+                        </div>
+                      ))}
+                      <p className="text-[11px] text-muted-foreground pt-1">Total AUX {Math.round(auxTotalMin / 60 * 10) / 10} h · {hoursTot.shift > 0 ? Math.round((auxTotalMin / 60 / hoursTot.shift) * 100) : 0}% of clocked time</p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          )}
+
           {/* Campaigns list */}
           <Card>
             <CardHeader>
               <CardTitle className="text-sm font-semibold">{isQuantum ? "Positions" : "Campaigns"}</CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
-              {isQuantum ? (
-                positionCounts.length === 0 ? (
-                  <p className="text-sm text-muted-foreground py-3">No active agents yet.</p>
+              {isQuantum ? (() => {
+                type MP = { id: number; name: string; headcount: number; targetHeadcount: number | null };
+                const managed = managedPositions as MP[];
+                const rows: Array<{ pos: string; n: number; target: number | null; unmanaged: boolean }> = [
+                  ...managed.map(p => ({ pos: p.name, n: positionCounts.find(([k]) => k.toLowerCase() === p.name.toLowerCase())?.[1] ?? 0, target: p.targetHeadcount, unmanaged: false })),
+                  ...positionCounts.filter(([k]) => !managed.some(p => p.name.toLowerCase() === k.toLowerCase())).map(([k, n]) => ({ pos: k, n, target: null, unmanaged: k !== "No position set" })),
+                ];
+                return rows.length === 0 ? (
+                  <p className="text-sm text-muted-foreground py-3">No positions defined yet.</p>
                 ) : (
                   <div className="flex flex-wrap gap-2">
-                    {positionCounts.map(([pos, n]) => (
+                    {rows.map(r => (
                       <span
-                        key={pos}
+                        key={r.pos}
                         className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-medium"
-                        style={pos === "No position set" ? { backgroundColor: "#f59e0b22", color: "#b45309" } : { backgroundColor: client.colorHex + "22", color: client.colorHex }}
+                        title={r.unmanaged ? "Not in the client's position list" : r.target != null ? `Target ${r.target}` : undefined}
+                        style={r.pos === "No position set" || r.unmanaged ? { backgroundColor: "#f59e0b22", color: "#b45309" } : { backgroundColor: client.colorHex + "22", color: client.colorHex }}
                       >
-                        {pos} <span className="text-xs opacity-70">× {n}</span>
+                        {r.pos} <span className="text-xs opacity-70">× {r.n}{r.target != null ? ` / ${r.target}` : ""}</span>
                       </span>
                     ))}
                   </div>
-                )
-              ) : campaigns.length === 0 ? (
+                );
+              })() : campaigns.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-3">No campaigns assigned to this client.</p>
               ) : (
                 <div className="flex flex-wrap gap-2">
@@ -366,7 +443,7 @@ export default function ClientDashboardPage() {
                     <TableHead>Name</TableHead>
                     <TableHead>Code</TableHead>
                     <TableHead>{isQuantum ? "Position" : "Campaign"}</TableHead>
-                    <TableHead>Team Leader</TableHead>
+                    {!isQuantum && <TableHead>Team Leader</TableHead>}
                     <TableHead>Location</TableHead>
                     <TableHead>Status</TableHead>
                   </TableRow>
@@ -374,7 +451,7 @@ export default function ClientDashboardPage() {
                 <TableBody>
                   {activeAgents.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      <TableCell colSpan={isQuantum ? 5 : 6} className="text-center text-muted-foreground py-8">
                         No active agents for this client.
                       </TableCell>
                     </TableRow>
@@ -383,8 +460,8 @@ export default function ClientDashboardPage() {
                       <TableRow key={a.id}>
                         <TableCell className="font-medium">{a.fullName}</TableCell>
                         <TableCell className="font-mono text-xs">{a.traineeCode}</TableCell>
-                        <TableCell>{isQuantum ? (a.jobTitle ?? a.campaignName ?? "—") : (a.campaignName ?? "—")}</TableCell>
-                        <TableCell>{a.teamLeader ?? "—"}</TableCell>
+                        <TableCell>{isQuantum ? (a.jobTitle ?? <span className="text-amber-600">not set</span>) : (a.campaignName ?? "—")}</TableCell>
+                        {!isQuantum && <TableCell>{a.teamLeader ?? "—"}</TableCell>}
                         <TableCell className="capitalize">{a.workLocation ?? "—"}</TableCell>
                         <TableCell>
                           <Badge className="text-xs bg-green-100 text-green-800 border-green-200 hover:bg-green-100">Active</Badge>

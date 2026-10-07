@@ -185,7 +185,7 @@ const checkLeaveEligibility = async () => {
       WHERE wa.agentStatus = 'active'
         AND (wa.isDemo = false OR wa.isDemo IS NULL)
         AND wa.joinDate IS NOT NULL
-        AND wa.joinDate <= ${sevenMonthsAgo.toISOString().slice(0,10)}
+        AND wa.joinDate <= ${sevenMonthsAgo.getTime()}
         AND NOT EXISTS (
           SELECT 1 FROM leave_balances lb
           WHERE lb.traineeCode = wa.traineeCode AND lb.year = ${year}
@@ -1093,16 +1093,25 @@ async function startServer() {
           if (reqRow) {
             const cHook = process.env.SLACK_ADMIN_WEBHOOK;
             const target = statusMap[rxn];
+            // Only approvers may decide by reaction. SLACK_APPROVER_USER_IDS = comma-separated Slack user IDs
+            // (U0123…). When set, reactions from anyone else are ignored (and noted in the channel).
+            const approvers = (process.env.SLACK_APPROVER_USER_IDS ?? "").split(",").map(x => x.trim()).filter(Boolean);
+            const reactor = String(ev.user ?? "");
+            if (approvers.length && !approvers.includes(reactor)) {
+              if (cHook) fetch(cHook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: `:no_entry: <@${reactor}> is not an approver — reaction on *${reqRow.traineeCode}*'s request ignored.` }) }).catch(() => {});
+              return;
+            }
+            const decidedBy = approvers.length ? `Slack <@${reactor}>` : "Slack reaction";
             // Leave needs a casual/annual/unpaid classification, which a reaction can't carry — those must be
             // decided in the Hub. Everything else goes through the SAME decision helper as the Hub button,
             // so attendance exceptions and request status stay in step.
-            const needsHub = target === "resolved" && (reqRow.type === "leave" || reqRow.type === "paid_leave");
+            const needsHub = target === "resolved" && (reqRow.type === "leave" || reqRow.type === "paid_leave"); // sick_note / day_off default to unpaid
             if (needsHub) {
               if (cHook) fetch(cHook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: `:warning: *${reqRow.traineeCode}*'s ${reqRow.type.replace("_", " ")} request needs the leave type (casual / annual / unpaid) \u2014 approve it in the Hub \u2192 Requests.` }) }).catch(() => {});
               return;
             }
             const { applyAgentRequestDecision } = await import("../routers");
-            await applyAgentRequestDecision({ id: reqRow.id, status: target, decidedBy: "Slack reaction" });
+            await applyAgentRequestDecision({ id: reqRow.id, status: target, decidedBy });
             if (cHook) fetch(cHook, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: `:white_check_mark: Request from *${reqRow.traineeCode}* \u2192 *${target.replace("_", " ")}*` }) }).catch(() => {});
             return;
           }

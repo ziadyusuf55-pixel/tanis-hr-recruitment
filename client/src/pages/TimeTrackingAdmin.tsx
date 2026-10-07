@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { etDateKey, etMonthKey, etToInput, etFromInput, fmtEtTime, fmtEtDateTime, fmtEtDate, fmtEtFull, TT_TZ_LABEL } from "@/lib/tz";
 import { trpc } from "@/lib/trpc";
+import { AUX_TYPE_OPTIONS } from "@shared/const";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -458,7 +459,7 @@ export default function TimeTrackingAdmin() {
                 <div>
                   <label className="text-xs font-medium block mb-1">Type</label>
                   <select className="w-full h-9 rounded-md border px-2 text-sm bg-background" value={auxEditForm.auxType} onChange={e => setAuxEditForm(f => ({ ...f, auxType: e.target.value }))}>
-                    {["break", "lunch", "bathroom", "training", "meeting", "coaching", "system_down", "idle", "other"].map(t => <option key={t} value={t}>{t.replace(/_/g, " ")}</option>)}
+                    {AUX_TYPE_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
                   </select>
                 </div>
                 <div>

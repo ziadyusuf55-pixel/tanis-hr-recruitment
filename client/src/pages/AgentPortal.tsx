@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { AuxType } from "@shared/const";
+import { AUX_TYPE_LABELS, AUX_TYPE_OPTIONS, type AuxType } from "@shared/const";
 import { TT_TZ, TT_TZ_LABEL, etDateKey } from "@/lib/tz";
 import { finalPay, calcNet } from "@shared/pay";
 import { getErrorMessage } from "@/lib/errorMessage";
@@ -54,7 +54,6 @@ import {
   ClipboardCheck,
   Coffee,
   AlertTriangle,
-  ChevronDown,
   CalendarDays,
   History,
   StickyNote,
@@ -221,26 +220,9 @@ export default function AgentPortal() {
   );
   const [activeTab, setActiveTab] = useState<Tab>("profile");
   const [showMoreNav, setShowMoreNav] = useState(false);
-  const [showAuxMenu, setShowAuxMenu] = useState(false);
-  const [headerAuxType, setHeaderAuxType] = useState("break");
-  const portalUtils = trpc.useUtils();
   const { data: headerAuxLogs = [] } = trpc.timeTracking.myAuxLogs.useQuery({ date: localDateKey() }, { enabled: !!auxAccess?.allowed, refetchInterval: 30000 });
   const headerAuxLogsTyped = headerAuxLogs as { id: number; auxType: string; startTime: number; endTime: number | null; durationMs: number | null }[];
   const headerActiveAux = headerAuxLogsTyped.find(l => !l.endTime);
-  const headerStartAux = trpc.timeTracking.startAux.useMutation({
-    onSuccess: () => { portalUtils.timeTracking.myAuxLogs.invalidate(); portalUtils.timeTracking.myAuxLogsAll.invalidate(); toast.success("AUX started"); setShowAuxMenu(false); },
-    onError: (e) => toast.error(e.message),
-  });
-  const headerEndAux = trpc.timeTracking.endAux.useMutation({
-    onSuccess: (res) => {
-      portalUtils.timeTracking.myAuxLogs.invalidate();
-      portalUtils.timeTracking.myAuxLogsAll.invalidate();
-      const mins = Math.floor(((res as { durationMs?: number }).durationMs ?? 0) / 60000);
-      toast.success(`AUX ended — ${mins}m logged`);
-      setShowAuxMenu(false);
-    },
-    onError: (e) => toast.error(e.message),
-  });
   // Auto-redirect to profile if profile is incomplete
   useEffect(() => {
     if (_wfProfile !== undefined && !_profileComplete && activeTab !== "profile") {
@@ -327,11 +309,13 @@ export default function AgentPortal() {
   if (!agent) return null;
 
   // Primary nav (shown prominently) — 6 tabs max
+  // Position-based (Quantum) agents have no CRDTS / campaign leaderboard / commission / campaign op-plan.
+  const positionBased = !!auxAccess?.positionBased;
   const primaryNavItems: { id: Tab; label: string; icon: React.ReactNode }[] = [
     { id: "profile",     label: "Profile",      icon: <User className="w-4 h-4" /> },
-    { id: "performance", label: "Performance",  icon: <TrendingUp className="w-4 h-4" /> },
+    ...(positionBased ? [] : [{ id: "performance" as Tab, label: "Performance",  icon: <TrendingUp className="w-4 h-4" /> }]),
     { id: "payroll",     label: "Payroll",      icon: <CreditCard className="w-4 h-4" /> },
-    { id: "commission",  label: "Commission",   icon: <BarChart2 className="w-4 h-4" /> },
+    ...(positionBased ? [] : [{ id: "commission" as Tab,  label: "Commission",   icon: <BarChart2 className="w-4 h-4" /> }]),
     { id: "requests",    label: "Requests",     icon: <MessageSquare className="w-4 h-4" /> },
     { id: "notifications", label: "Alerts",      icon: <Bell className="w-4 h-4" /> },
     { id: "documents",   label: "Documents",    icon: <FileText className="w-4 h-4" /> },
@@ -340,7 +324,7 @@ export default function AgentPortal() {
   ];
   // Secondary nav (in "More" section)
   const secondaryNavItems: { id: Tab; label: string; icon: React.ReactNode }[] = [
-    { id: "opplan",   label: "Op Plan",       icon: <LayoutGrid className="w-4 h-4" /> },
+    ...(positionBased ? [] : [{ id: "opplan" as Tab,   label: "Op Plan",       icon: <LayoutGrid className="w-4 h-4" /> }]),
     { id: "academy",  label: "Tanis Academy", icon: <GraduationCap className="w-4 h-4" /> },
     { id: "payment",  label: "Payment",       icon: <Wallet className="w-4 h-4" /> },
     { id: "referrals",label: "Refer",         icon: <Users className="w-4 h-4" /> },
@@ -414,72 +398,20 @@ export default function AgentPortal() {
             </button>
             <NotificationBell candidateId={agent.candidateId} theme={theme} />
 
-            {/* AUX Quick-Start — Quantum agents only */}
+            {/* AUX status — Quantum agents only. ONE place to change state: the unified Shift + AUX card. */}
             {auxAccess?.allowed && (
-              <div className="relative">
-                <button
-                  onClick={() => setShowAuxMenu(!showAuxMenu)}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm font-semibold transition-all"
-                  style={headerActiveAux
-                    ? { background: "rgba(251,191,36,0.15)", color: "#d97706", border: "1px solid rgba(251,191,36,0.3)" }
-                    : { background: theme.toggleBg, color: theme.toggleText }
-                  }
-                  title={headerActiveAux ? `${headerActiveAux.auxType} in progress` : "Start AUX"}
-                >
-                  <Coffee className="w-4 h-4" />
-                  <span className="hidden sm:inline text-xs">{headerActiveAux ? "AUX ▪" : "AUX"}</span>
-                  <ChevronDown className="w-3 h-3" />
-                </button>
-                {showAuxMenu && (
-                  <div
-                    className="absolute right-0 top-full mt-1 z-50 rounded-xl shadow-lg p-3 min-w-[200px] space-y-2"
-                    style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}
-                  >
-                    {headerActiveAux ? (
-                      <>
-                        <p className="text-xs font-semibold capitalize" style={{ color: theme.text }}>
-                          {headerActiveAux.auxType} in progress…
-                        </p>
-                        <button
-                          onClick={() => headerEndAux.mutate({ id: headerActiveAux?.id })}
-                          disabled={headerEndAux.isPending}
-                          className="w-full h-8 rounded-lg text-sm font-semibold transition-opacity disabled:opacity-50"
-                          style={{ background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, color: theme.text }}
-                        >
-                          End AUX
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-xs font-semibold" style={{ color: theme.textMuted }}>Start AUX</p>
-                        <select
-                          value={headerAuxType}
-                          onChange={e => setHeaderAuxType(e.target.value)}
-                          className="w-full rounded-lg text-sm"
-                          style={{ background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, color: theme.text, padding: "6px 10px", outline: "none" }}
-                        >
-                          {AUX_TYPES_HEADER.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-                        </select>
-                        <button
-                          onClick={() => headerStartAux.mutate({ auxType: headerAuxType as AuxType })}
-                          disabled={headerStartAux.isPending}
-                          className="w-full h-8 rounded-lg text-sm font-semibold text-white transition-opacity disabled:opacity-50"
-                          style={{ background: BRAND }}
-                        >
-                          Start
-                        </button>
-                      </>
-                    )}
-                    <button
-                      onClick={() => { setShowAuxMenu(false); setActiveTab("aux"); }}
-                      className="w-full text-xs py-1 rounded-lg text-center transition-all"
-                      style={{ color: theme.textFaint }}
-                    >
-                      Open AUX tab →
-                    </button>
-                  </div>
-                )}
-              </div>
+              <button
+                onClick={() => setActiveTab("aux")}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-sm font-semibold transition-all"
+                style={headerActiveAux
+                  ? { background: "rgba(251,191,36,0.15)", color: "#d97706", border: "1px solid rgba(251,191,36,0.3)" }
+                  : { background: theme.toggleBg, color: theme.toggleText }
+                }
+                title={headerActiveAux ? `${AUX_TYPE_LABELS[headerActiveAux.auxType as AuxType] ?? headerActiveAux.auxType} in progress — open AUX` : "Open Shift & AUX"}
+              >
+                <Coffee className="w-4 h-4" />
+                <span className="hidden sm:inline text-xs">{headerActiveAux ? `${AUX_TYPE_LABELS[headerActiveAux.auxType as AuxType] ?? headerActiveAux.auxType} ▪` : "AUX"}</span>
+              </button>
             )}
 
             <button
@@ -687,6 +619,8 @@ function ProfileCompletionBanner({ wfProfile, payMethods, theme, onGoToProfile, 
 }
 
 function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
+  const { data: ttAccess } = trpc.timeTracking.checkAccess.useQuery();
+  const positionBased = !!ttAccess?.positionBased;
   const { data: myContract } = trpc.contracts.getMine.useQuery();
   const { data: myAdvances = [] } = trpc.advances.listMine.useQuery();
   const { data: wfProfile } = trpc.workforce.getMyProfile.useQuery();
@@ -752,10 +686,17 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
     { label: "Alias / English Name", value: (wfProfile.alias as string | null) ?? "—" },
     { label: "Phone", value: (wfProfile.phone as string | null) ?? "—" },
     { label: "Email", value: (wfProfile.email as string | null) ?? "—" },
-    { label: "CRDTS", value: (wfProfile.crdts as string | null) ?? "—" },
-    { label: "Campaign", value: (wfProfile.campaignName as string | null) ?? "—" },
+    ...(positionBased
+      ? [
+          { label: "Client", value: ttAccess?.clientName ?? "—" },
+          { label: "Position / Role", value: (wfProfile.jobTitle as string | null) ?? "—" },
+        ]
+      : [
+          { label: "CRDTS", value: (wfProfile.crdts as string | null) ?? "—" },
+          { label: "Campaign", value: (wfProfile.campaignName as string | null) ?? "—" },
+        ]),
     { label: "Join Date", value: joinDate },
-    { label: "Team Leader", value: (wfProfile.teamLeader as string | null) ?? "—" },
+    ...(positionBased ? [] : [{ label: "Team Leader", value: (wfProfile.teamLeader as string | null) ?? "—" }]),
     { label: "Off Day 1", value: wfProfile.offDay1 != null ? DAY_NAMES_FULL[wfProfile.offDay1 as number] : "—" },
     { label: "Off Day 2", value: wfProfile.offDay2 != null ? DAY_NAMES_FULL[wfProfile.offDay2 as number] : "—" },
   ] : [
@@ -909,12 +850,12 @@ function ProfileTab({ agent, theme }: { agent: AgentData; theme: Theme }) {
             <div className="rounded-xl p-4" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
               <div className="flex items-center gap-2 mb-2">
                 <Briefcase className="w-4 h-4" style={{ color: BRAND_LIGHT }} />
-                <p className="text-xs uppercase tracking-wider font-medium" style={{ color: theme.textFaint }}>Campaign</p>
+                <p className="text-xs uppercase tracking-wider font-medium" style={{ color: theme.textFaint }}>{positionBased ? "Position" : "Campaign"}</p>
               </div>
               <p className="font-semibold text-base" style={{ color: theme.text }}>
-                {(wfProfile.campaignName as string | null) ?? "—"}
+                {positionBased ? ((wfProfile.jobTitle as string | null) ?? "Not set yet") : ((wfProfile.campaignName as string | null) ?? "—")}
               </p>
-              <p className="text-xs mt-1" style={{ color: theme.textMuted }}>Your active campaign assignment</p>
+              <p className="text-xs mt-1" style={{ color: theme.textMuted }}>{positionBased ? `${ttAccess?.clientName ?? "Client"} · your role` : "Your active campaign assignment"}</p>
             </div>
             {/* Day Offs card */}
             <div className="rounded-xl p-4" style={{ background: theme.surface, border: `1px solid ${theme.surfaceBorder}` }}>
@@ -1379,8 +1320,8 @@ const REQUEST_TYPE_LABELS: Record<string, string> = {
   early_departure: "Early Departure",
   other: "Other",
 };
-const DATE_REQUIRED_TYPES = ["leave", "paid_leave", "day_off", "resignation", "late_arrival", "early_departure"];
-const MULTI_DATE_TYPES = ["leave", "paid_leave", "day_off"];
+const DATE_REQUIRED_TYPES = ["leave", "paid_leave", "day_off", "sick_note", "resignation", "late_arrival", "early_departure"];
+const MULTI_DATE_TYPES = ["leave", "paid_leave", "day_off", "sick_note"];
 /** Attendance exceptions — reported after the fact, no advance notice, with scheduled vs actual time. */
 const ATTENDANCE_TYPES = ["late_arrival", "early_departure"];
 
@@ -5082,22 +5023,7 @@ function ProfileCompletionWall({ agent, wfProfile }: { agent: { traineeCode: str
 }
 
 // ─── AUX Tracker Tab (Quantum agents only) ────────────────────────────────────
-const AUX_TYPES_HEADER = [
-  { value: "break",    label: "Break" },
-  { value: "lunch",    label: "Lunch" },
-  { value: "training", label: "Training" },
-  { value: "meeting",  label: "Meeting" },
-  { value: "bathroom", label: "Bathroom" },
-  { value: "other",    label: "Other" },
-];
-const AUX_TYPES = [
-  { value: "break",    label: "Break" },
-  { value: "lunch",    label: "Lunch" },
-  { value: "training", label: "Training" },
-  { value: "meeting",  label: "Meeting" },
-  { value: "bathroom", label: "Bathroom" },
-  { value: "other",    label: "Other" },
-];
+const AUX_TYPES = AUX_TYPE_OPTIONS;
 
 /** The agent's LOCAL calendar day (YYYY-MM-DD) — never the UTC day. */
 // Time-tracking "day" = US Eastern calendar day (Quantum works US hours) — same as the server and the admin pages.

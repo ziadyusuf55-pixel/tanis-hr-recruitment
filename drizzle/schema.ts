@@ -334,6 +334,8 @@ export const agentRequests = mysqlTable("agent_requests", {
   adminReply: text("adminReply"),
   slackMessageTs: varchar("slackMessageTs", { length: 50 }),   // Slack message ts of the request alert (for react-to-action)
   adminLastWorkingDay: varchar("adminLastWorkingDay", { length: 10 }), // YYYY-MM-DD — admin sets this when approving resignation
+  resolvedBy: varchar("resolvedBy", { length: 255 }),      // who decided (column added in 0009; was missing here so Drizzle silently dropped the write)
+  resolvedAt: bigint("resolvedAt", { mode: "number" }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
@@ -438,6 +440,20 @@ export const clients = mysqlTable("clients", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 });
 export type Client = typeof clients.$inferSelect;
+
+/** Managed positions / roles per (position-based) client. Agents' jobTitle is picked from this list. */
+export const clientPositions = mysqlTable("client_positions", {
+  id: int("id").autoincrement().primaryKey(),
+  clientId: int("clientId").notNull(),
+  name: varchar("name", { length: 150 }).notNull(),
+  sortOrder: int("sortOrder").notNull().default(0),
+  isActive: boolean("isActive").notNull().default(true),
+  targetHeadcount: int("targetHeadcount"),
+  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
+}, (t) => ({
+  uq: uniqueIndex("uq_client_position").on(t.clientId, t.name),
+}));
+export type ClientPosition = typeof clientPositions.$inferSelect;
 export type InsertClient = typeof clients.$inferInsert;
 
 /**
@@ -1494,25 +1510,7 @@ export const agentAuxLogs = mysqlTable("agent_aux_logs", {
 export type AgentAuxLog = typeof agentAuxLogs.$inferSelect;
 export type InsertAgentAuxLog = typeof agentAuxLogs.$inferInsert;
 
-/**
- * pto_requests — PTO requests from agents.
- */
-export const ptoRequests = mysqlTable("pto_requests", {
-  id: int("id").autoincrement().primaryKey(),
-  traineeCode: varchar("traineeCode", { length: 100 }).notNull(),
-  agentName: varchar("agentName", { length: 255 }),
-  requestType: varchar("requestType", { length: 50 }).notNull(),
-  startDate: varchar("startDate", { length: 10 }).notNull(),
-  endDate: varchar("endDate", { length: 10 }).notNull(),
-  halfDay: boolean("halfDay").default(false),
-  status: mysqlEnum("ptoStatus", ["pending", "approved", "rejected"]).default("pending").notNull(),
-  reason: text("reason"),
-  reviewedBy: varchar("reviewedBy", { length: 255 }),
-  reviewedAt: bigint("reviewedAt", { mode: "number" }),
-  createdAt: bigint("createdAt", { mode: "number" }).notNull(),
-});
-export type PtoRequest = typeof ptoRequests.$inferSelect;
-export type InsertPtoRequest = typeof ptoRequests.$inferInsert;
+// pto_requests — LEGACY table, unused: PTO lives in leave_requests via Request Center. Left in the DB for history, not mapped.
 
 /**
  * attendance_exceptions — lateness / early departure records submitted by agents.

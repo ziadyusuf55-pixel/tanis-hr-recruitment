@@ -9,17 +9,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner";
 import { Clock, Coffee, AlertTriangle, LogIn, LogOut } from "lucide-react";
 import { Toaster } from "@/components/ui/sonner";
+import { AUX_TYPE_OPTIONS } from "@shared/const";
 
-const AUX_TYPES = [
-  { value: "break", label: "Break" },
-  { value: "lunch", label: "Lunch" },
-  { value: "training", label: "Training" },
-  { value: "meeting", label: "Meeting" },
-  { value: "bathroom", label: "Bathroom" },
-  { value: "system_down", label: "System / IT Down" },
-  { value: "idle", label: "Idle / No Work" },
-  { value: "other", label: "Other" },
-];
+const AUX_TYPES = AUX_TYPE_OPTIONS;
 
 
 type AuxLog = {
