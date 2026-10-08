@@ -116,3 +116,6 @@ client/public/__manus__/version.json
 # Auto-added — exclude Manus debug files and migration scripts
 .manus/
 scripts/
+
+# Deliverable zips built locally
+tanis-hub-*.zip
