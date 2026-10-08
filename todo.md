@@ -510,7 +510,7 @@
 ## Round 39 — Restore Op Plan, Headcount Alert, Bulk Credentials
 - [x] Restore Operation Plan to previous week-based arrows view (rollback calendar)
 - [x] Wire Headcount Forecast alert button to send Manus notification when headcount < minimum
-- [x] Add bulk credential generation: generate Tanis2025 password for all agents without credentials, export CSV (name, code, password)
+- [x] Add bulk credential generation for all agents without credentials, export CSV (name, code, password) — originally used a shared default password, later replaced by per-agent random passwords (see 0017 revocation)
 - [x] Add "Add Agent" button to Operations Agents tab header
 - [x] 40/40 tests still passing
 

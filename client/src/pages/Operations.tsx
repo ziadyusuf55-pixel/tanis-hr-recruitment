@@ -70,11 +70,14 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
     },
     onError: (e) => toast.error(e.message),
   });
-  const { data: docs = [] } = trpc.documents.listByAgent.useQuery({ traineeCode: agent.traineeCode });
-  // Bank/wallet details are financial PII — fetched and shown only to money roles
-  // (the server rejects everyone else anyway; don't fire a doomed query).
+  // ID documents and bank details are PII — fetched and shown only to the roles
+  // the server allows (hr/manager for docs; money roles for payments). Don't
+  // fire doomed queries for everyone else.
   const { user: _payUser } = useAuth();
-  const canSeePayments = ["owner", "admin", "manager", "hr", "finance"].includes((_payUser as { role?: string } | null)?.role ?? "");
+  const _drawerRole = (_payUser as { role?: string } | null)?.role ?? "";
+  const canSeeDocs = ["owner", "admin", "manager", "hr"].includes(_drawerRole);
+  const canSeePayments = ["owner", "admin", "manager", "hr", "finance"].includes(_drawerRole);
+  const { data: docs = [] } = trpc.documents.listByAgent.useQuery({ traineeCode: agent.traineeCode }, { enabled: canSeeDocs });
   const { data: allPayments = [] } = trpc.paymentMethods.listAll.useQuery(undefined, { enabled: canSeePayments });
   const payments = (allPayments as Array<{ traineeCode?: string } & Record<string, unknown>>).filter(p => p.traineeCode === agent.traineeCode);
   const [activeSection, setActiveSection] = useState<"docs" | "payments">("docs");
@@ -245,7 +248,10 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
           ))}
         </div>
 
-        {activeSection === "docs" && (
+        {activeSection === "docs" && !canSeeDocs && (
+          <p className="text-sm text-muted-foreground text-center py-8">Documents are visible to HR and Managers only.</p>
+        )}
+        {activeSection === "docs" && canSeeDocs && (
           <div className="space-y-3">
             {(docs as Doc[]).length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-8">No documents uploaded yet</p>

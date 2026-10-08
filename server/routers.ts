@@ -1310,11 +1310,11 @@ const agentRouter = router({
   getPayroll: publicProcedure
     .input(z.object({ candidateId: z.number() }))
     .query(async ({ input, ctx }) => {
-      // Allow if admin OR if agent session matches candidateId
-      // Staff with an assigned role, or the agent reading THEIR OWN record. A bare Google login
-      // (role user/viewer) is NOT staff — it must not read other people's pay.
+      // The agent reading THEIR OWN record, or a MONEY role (finance/hr/manager/
+      // owner/admin). "Any staff" was too broad: team leads and BD must not be
+      // able to pull another employee's pay through the API (owner decision).
       const isOwnRecord = ctx.agent?.candidateId === input.candidateId;
-      if (!isOwnRecord && !isStaff((ctx.user as { role?: string } | null)?.role)) throw new TRPCError({ code: "UNAUTHORIZED" });
+      if (!isOwnRecord && !canSeeMoney((ctx.user as { role?: string } | null)?.role)) throw new TRPCError({ code: "UNAUTHORIZED" });
       return getPayrollByCandidateId(input.candidateId);
     }),
 
@@ -1376,11 +1376,11 @@ const agentRouter = router({
       );
       return { success: true, count: results.length };
     }),
-  getPayrollMonths: staffProcedure
+  getPayrollMonths: roleProcedure("finance", "hr", "manager")
     .query(async () => {
       return getPayrollMonths();
     }),
-  getPayrollByMonth: staffProcedure
+  getPayrollByMonth: roleProcedure("finance", "hr", "manager")
     .input(z.object({ month: z.string() }))
     .query(async ({ input }) => {
       return getPayrollByMonth(input.month);
@@ -1422,7 +1422,7 @@ const agentRouter = router({
       return getPerformanceByCandidateId(input.candidateId);
     }),
 
-  upsertPerformance: staffProcedure
+  upsertPerformance: roleProcedure("hr", "manager", "ops_manager")
     .input(z.object({
       candidateId: z.number(),
       period: z.string().regex(/^\d{4}-\d{2}$/),
@@ -1439,7 +1439,7 @@ const agentRouter = router({
       return { success: true };
     }),
 
-  deletePerformance: staffProcedure
+  deletePerformance: roleProcedure("hr", "manager", "ops_manager")
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       await deletePerformanceRecord(input.id);
@@ -2186,6 +2186,7 @@ const workforceRouter = router({
         emergencyContactName: workforceAgents.emergencyContactName,
         emergencyContactPhone: workforceAgents.emergencyContactPhone,
       }).from(workforceAgents).where(eq(workforceAgents.agentStatus, "active"));
+      // PII values stay server-side: the page only needs WHICH fields are missing.
       const REQUIRED = [
         { key: "phone", label: "Phone" },
         { key: "email", label: "Email" },
@@ -2199,7 +2200,7 @@ const workforceRouter = router({
       return agents
         .map(a => {
           const missing = REQUIRED.filter(f => !a[f.key as keyof typeof a]).map(f => f.label);
-          return { ...a, missing };
+          return { traineeCode: a.traineeCode, fullName: a.fullName, alias: a.alias, missing };
         })
         .filter(a => a.missing.length > 0)
         .sort((a, b) => b.missing.length - a.missing.length);
@@ -2729,7 +2730,9 @@ const workforceRouter = router({
 });
 // ─── Agent Comments Router ────────────────────────────────────────────────────
 const agentCommentsRouter = router({
-  listByCode: staffProcedure
+  // Comments/warnings are supervisory records — the approval layer reads and
+  // writes them (hr/managers/ops/team leads); BD and other staff do not.
+  listByCode: roleProcedure("hr", "manager", "ops_manager", "team_lead")
     .input(z.object({ traineeCode: z.string() }))
     .query(({ input }) => getCommentsByCode(input.traineeCode)),
   listMine: agentProcedure.query(({ ctx }) => getCommentsByCode(ctx.agent.traineeCode)),
@@ -2754,7 +2757,7 @@ const agentCommentsRouter = router({
       if (!affected) throw new TRPCError({ code: "BAD_REQUEST", message: "Warning not found or already acknowledged." });
       return { ok: true };
     }),
-  add: staffProcedure
+  add: roleProcedure("hr", "manager", "ops_manager", "team_lead")
     .input(z.object({
       traineeCode: z.string(),
       content: z.string().min(1),
@@ -2766,7 +2769,7 @@ const agentCommentsRouter = router({
       content: input.content,
       tag: input.tag,
     })),
-  delete: staffProcedure
+  delete: roleProcedure("hr", "manager")
     .input(z.object({ id: z.number() }))
     .mutation(({ input }) => deleteAgentComment(input.id)),
 });
@@ -2925,7 +2928,7 @@ const documentsRouter = router({
       return { updated: input.traineeCodes.length };
     }),
 
-  listByAgent: staffProcedure
+  listByAgent: roleProcedure("hr", "manager")
     .input(z.object({ traineeCode: z.string() }))
     .query(({ input }) => getDocumentsByCode(input.traineeCode)),
 
@@ -2960,7 +2963,7 @@ const documentsRouter = router({
       return { url };
     }),
 
-  review: roleProcedure("hr", "manager", "team_lead")
+  review: roleProcedure("hr", "manager")
     .input(z.object({
       id: z.number(),
       status: z.enum(["approved", "rejected"]),
@@ -2969,7 +2972,7 @@ const documentsRouter = router({
     .mutation(({ input }) => reviewAgentDocument(input.id, input.status, input.adminComment)),
 
   /** Admin uploads a document on behalf of an agent (no agent cookie required). */
-  uploadForAgent: staffProcedure
+  uploadForAgent: roleProcedure("hr", "manager")
     .input(z.object({
       traineeCode: z.string().min(1),
       docType: z.string().min(1),
@@ -3309,7 +3312,8 @@ const separationRouter = router({
     .query(({ input }) => getSeparationsByAgent(input.agentCode)),
   /** Full list of resigned + terminated + archived agents with all their data. */
   listFormerAgents: staffProcedure
-    .query(async () => {
+    .query(async ({ ctx }) => {
+      const money = canSeeMoney(ctx.user?.role);
       const { getDb } = await import("./db");
       const { eq, or, inArray, desc } = await import("drizzle-orm");
       const db = await getDb();
@@ -3339,19 +3343,24 @@ const separationRouter = router({
       const coachByCode = coaching.reduce((m, r) => { const k = r.agentCode ?? ""; (m[k] = m[k] ?? []).push(r); return m; }, {} as Record<string, typeof coaching>);
       const crdtsCycles = (cycles as typeof cycleStats.$inferSelect[]).reduce((m, r) => { (m[r.crdts] = m[r.crdts] ?? []).push(r); return m; }, {} as Record<string, typeof cycleStats.$inferSelect[]>);
       const logoutsByCrdts = (logouts as typeof clientLogouts.$inferSelect[]).reduce((m, r) => { const k = r.crdts ?? ""; (m[k] = m[k] ?? []).push(r); return m; }, {} as Record<string, typeof clientLogouts.$inferSelect[]>);
-      return agents.map(a => ({
-        agent: a,
-        requests: reqByCode[a.traineeCode] ?? [],
-        payroll: payByCode[a.traineeCode] ?? [],
-        performance: crdtsCycles[a.crdts ?? ""] ?? [],
-        violations: violByCode[a.traineeCode] ?? [],
-        coaching: coachByCode[a.traineeCode] ?? [],
-        logouts: logoutsByCrdts[a.crdts ?? ""] ?? [],
-        totalPaidEgp: (payByCode[a.traineeCode] ?? []).filter(p => p.paymentStatus === "paid").reduce((s, p) => s + parseFloat(String(p.netPay ?? 0)), 0),
-        totalCycles: (crdtsCycles[a.crdts ?? ""] ?? []).length,
-        totalRevenue: (crdtsCycles[a.crdts ?? ""] ?? []).reduce((s, r) => s + parseFloat(String(r.revenue ?? 0)), 0),
-        totalProfit: (crdtsCycles[a.crdts ?? ""] ?? []).reduce((s, r) => s + parseFloat(String(r.profit ?? 0)), 0),
-      }));
+      // Money + PII redaction for non-money roles (team leads/ops see the roster
+      // and history, never salaries or ID fields) — same rule as the live roster.
+      return agents.map(a => {
+        const pay = payByCode[a.traineeCode] ?? [];
+        return {
+          agent: money ? a : redactAgentRow(a as unknown as Record<string, unknown>, ctx.user?.role) as typeof a,
+          requests: reqByCode[a.traineeCode] ?? [],
+          payroll: money ? pay : ([] as typeof pay),
+          performance: crdtsCycles[a.crdts ?? ""] ?? [],
+          violations: violByCode[a.traineeCode] ?? [],
+          coaching: coachByCode[a.traineeCode] ?? [],
+          logouts: logoutsByCrdts[a.crdts ?? ""] ?? [],
+          totalPaidEgp: money ? pay.filter(p => p.paymentStatus === "paid").reduce((s, p) => s + parseFloat(String(p.netPay ?? 0)), 0) : 0,
+          totalCycles: (crdtsCycles[a.crdts ?? ""] ?? []).length,
+          totalRevenue: (crdtsCycles[a.crdts ?? ""] ?? []).reduce((s, r) => s + parseFloat(String(r.revenue ?? 0)), 0),
+          totalProfit: (crdtsCycles[a.crdts ?? ""] ?? []).reduce((s, r) => s + parseFloat(String(r.profit ?? 0)), 0),
+        };
+      });
     }),
   // Admin: get all terminated/resigned agents pending deletion
   pendingDeletion: staffProcedure
@@ -6744,7 +6753,7 @@ const hrRouter = router({
       const rows = await db.select().from(exitProcess).where(eq(exitProcess.traineeCode, input.traineeCode)).limit(1);
       return rows[0] ?? null;
     }),
-  updateExit: staffProcedure
+  updateExit: roleProcedure("hr", "manager")
     .input(z.object({
       traineeCode: z.string(),
       exitType: z.enum(["resignation", "termination", "contract_end"]).optional(),
@@ -7710,7 +7719,7 @@ const warningsRouter = router({
     }),
 
   /** Delete a warning — admin/owner only */
-  delete: staffProcedure
+  delete: adminProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
       if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN" });
@@ -7750,7 +7759,7 @@ const crdtsArchiveRouter = router({
   }),
   // Record a handover on override, then clear CRDTS off the previous holder so it
   // points to the new agent going forward. Previous agent's records are untouched.
-  archiveHandover: staffProcedure
+  archiveHandover: roleProcedure("hr", "manager")
     .input(z.object({ crdts: z.string(), previousCode: z.string().optional(), newCode: z.string().optional(), archivedBy: z.string().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -7967,7 +7976,7 @@ const exitRouter = router({
       await auditEntry(ctx.user, input.settled ? "mark_settled" : "mark_unsettled", "agent", input.traineeCode, undefined);
       return { ok: true };
     }),
-  upsert: staffProcedure
+  upsert: roleProcedure("hr", "manager")
     .input(z.object({
       traineeCode: z.string(),
       exitType: z.enum(["resignation", "termination", "contract_end"]).optional(),
@@ -7991,7 +8000,7 @@ const exitRouter = router({
       return { ok: true };
     }),
   // Archive: requires salary settled AND checklist complete (interview, clearance, assets, last day)
-  archive: staffProcedure
+  archive: roleProcedure("hr", "manager")
     .input(z.object({ traineeCode: z.string() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
