@@ -12,9 +12,13 @@ export type AppRole =
   | "user" | "viewer";         // no access until assigned
 
 // Every page in the app, grouped the way the sidebar groups them.
-const OPERATIONS = ["/operations", "/adherence", "/quality", "/coaching-admin", "/client-logouts", "/cycle-tracker"];
-const HR_TABS    = ["/candidates", "/performance-reports", "/payroll", "/commission", "/payment-preferences", "/all-documents", "/agent-profiles", "/leave-management", "/academy", "/contracts", "/advances"];
-const FINANCE    = ["/payroll", "/commission", "/payment-preferences"];
+const OPERATIONS = ["/operations", "/former-agents", "/adherence", "/quality", "/coaching-admin", "/client-logouts", "/cycle-tracker", "/ot", "/performance"];
+// Money pages — visible to finance + HR + managers (+ owner/admin). Owner decision:
+// team leads and BD do NOT see salaries, commissions or advances.
+const MONEY      = ["/payroll", "/commission", "/payment-preferences", "/advances"];
+// /all-documents holds IDs and contracts (PII) — HR/manager only, not team leads.
+const HR_NO_MONEY = ["/candidates", "/performance-reports", "/agent-profiles", "/leave-management", "/academy", "/contracts", "/former-agents"];
+const HR_TABS    = [...HR_NO_MONEY, ...MONEY, "/all-documents", "/coaching-admin"];
 const EXTRAS     = ["/requests", "/training"];
 
 // A "manager" can reach everything except /settings and /time-tracking (Quantum-only feature, owner/admin only).
@@ -26,9 +30,9 @@ const ROLE_PATHS: Record<string, string[]> = {
   manager: EVERYTHING_BUT_SETTINGS,
   hr: ["/", ...HR_TABS, "/requests", "/training", "/business-development", "/my-profile"],
   ops_manager: ["/", ...OPERATIONS, "/performance-reports", "/clients", "/training", "/requests", "/business-development", "/my-profile"],
-  // Near-admin: Operations + HR + Finance + BD
-  team_lead: ["/", ...OPERATIONS, ...HR_TABS, ...FINANCE, ...EXTRAS, "/business-development", "/my-profile"],
-  finance: ["/", ...FINANCE, "/my-profile"],
+  // Team leads: Operations + HR (WITHOUT money pages) + BD
+  team_lead: ["/", ...OPERATIONS, ...HR_NO_MONEY, ...EXTRAS, "/business-development", "/my-profile"],
+  finance: ["/", ...MONEY, "/coaching-admin", "/my-profile"],
   bd: ["/business-development", ...OPERATIONS, "/my-profile"],
 };
 
@@ -82,7 +86,7 @@ export const ROLE_SUMMARY: Record<string, string> = {
   manager: "Everything except Settings",
   hr: "Recruitment, Performance Reports, Salary, Commission, Payment Preferences, Documents, Employee Profiles, Leave, Requests, Training, Business Development",
   ops_manager: "Operations, Adherence, Quality, Coaching, Client Logouts, Cycle Tracker, Performance Reports, Requests, Training, Business Development",
-  team_lead: "Operations + HR + Finance + Business Development (no Settings)",
+  team_lead: "Operations + HR (no salary/commission pages) + Business Development",
   finance: "Salary, Commission, Payment Preferences",
   bd: "Business Development + Operations",
   viewer: "Nothing — waiting for access",

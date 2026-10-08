@@ -33,6 +33,9 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
   throw new Error(`No available port found starting from ${startPort}`);
 }
 
+// Slack event replay guard: event_id → expiry ms (10-minute memory).
+const _slackSeenEvents = new Map<string, number>();
+
 // ─── In-memory rate limiters (no external dep needed) ──────────────────────
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 function rateLimit(key: string, maxPerMinute: number): boolean {
@@ -67,7 +70,8 @@ const runProbationCheck = async () => {
     const { and, eq, lte, isNotNull } = await import("drizzle-orm");
     const db = await getDb();
     if (!db) return;
-    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const { businessDateKey } = await import("./time");
+    const today = businessDateKey(Date.now()); // Cairo calendar day, not server UTC
     // Find agents still flagged as on probation but whose probation end date has passed
     const expired = await db.select({ traineeCode: workforceAgents.traineeCode, alias: workforceAgents.alias })
       .from(workforceAgents)
@@ -96,7 +100,8 @@ const runContractExpiryCheck = async () => {
     const { and, eq, lte, isNotNull, ne } = await import("drizzle-orm");
     const db = await getDb();
     if (!db) return;
-    const today = new Date().toISOString().slice(0, 10);
+    const { businessDateKey } = await import("./time");
+    const today = businessDateKey(Date.now()); // Cairo calendar day
     // Find active agents whose contract has expired
     const expired = await db.select({ traineeCode: workforceAgents.traineeCode, alias: workforceAgents.alias, contractEndDate: workforceAgents.contractEndDate })
       .from(workforceAgents)
@@ -125,7 +130,8 @@ const runScheduleSwapRevert = async () => {
     const { and, eq, isNull, lte, isNotNull } = await import("drizzle-orm");
     const db = await getDb();
     if (!db) return;
-    const today = new Date().toISOString().slice(0, 10);
+    const { businessDateKey } = await import("./time");
+    const today = businessDateKey(Date.now()); // Cairo calendar day
     // Find approved swaps whose swapWeekOf + 7 days has passed and haven't been reverted yet
     const dueReverts = await db.select().from(scheduleChangeRequests)
       .where(and(
@@ -142,12 +148,12 @@ const runScheduleSwapRevert = async () => {
       // Restore original off days
       if (swap.requesterOrigOff1 !== null && swap.requesterOrigOff1 !== undefined) {
         await db.update(workforceAgents)
-          .set({ offDay1: swap.requesterOrigOff1, offDay2: swap.requesterOrigOff2 ?? undefined, updatedAt: new Date() })
+          .set({ offDay1: swap.requesterOrigOff1, offDay2: swap.requesterOrigOff2 ?? null, updatedAt: new Date() })
           .where(eq(workforceAgents.traineeCode, swap.requesterCode));
       }
       if (swap.targetOrigOff1 !== null && swap.targetOrigOff1 !== undefined) {
         await db.update(workforceAgents)
-          .set({ offDay1: swap.targetOrigOff1, offDay2: swap.targetOrigOff2 ?? undefined, updatedAt: new Date() })
+          .set({ offDay1: swap.targetOrigOff1, offDay2: swap.targetOrigOff2 ?? null, updatedAt: new Date() })
           .where(eq(workforceAgents.traineeCode, swap.targetCode));
       }
       await db.update(scheduleChangeRequests)
@@ -158,53 +164,47 @@ const runScheduleSwapRevert = async () => {
   } catch (e) { console.error("[schedule] swap revert error:", e); }
 };
 
-// Run all hourly jobs on startup then every hour
+// Run all hourly jobs on startup then every hour.
+// RUN_JOBS=false turns the scheduler off on extra replicas, so only one
+// instance runs the background work (each job is also idempotent on its own).
+let _jobsRunning = false;
 const runHourlyJobs = async () => {
-  await runDueSeparations();
-  await runProbationCheck();
-  await runContractExpiryCheck();
-  await runScheduleSwapRevert();
-};
-
-runHourlyJobs();
-setInterval(runHourlyJobs, 60 * 60 * 1000).unref(); // every hour
-
-// Daily: auto-create leave balance for agents who reached 7 months of service
-const checkLeaveEligibility = async () => {
+  if (_jobsRunning) { console.warn("[jobs] previous run still in progress — skipping this tick"); return; }
+  _jobsRunning = true;
+  const failures: string[] = [];
+  const step = async (name: string, fn: () => Promise<void>) => {
+    try { await fn(); } catch (e) { failures.push(name); console.error(`[jobs] ${name} failed:`, e); }
+  };
   try {
-    const { getDb } = await import("../db");
-    const db = await getDb();
-    if (!db) return;
-    const { sql } = await import("drizzle-orm");
-    const sevenMonthsAgo = new Date();
-    sevenMonthsAgo.setMonth(sevenMonthsAgo.getMonth() - 7);
-    const year = new Date().getFullYear();
-    const rows = await db.execute(sql`
-      SELECT wa.traineeCode, wa.fullName
-      FROM workforce_agents wa
-      WHERE wa.agentStatus = 'active'
-        AND (wa.isDemo = false OR wa.isDemo IS NULL)
-        AND wa.joinDate IS NOT NULL
-        AND wa.joinDate <= ${sevenMonthsAgo.getTime()}
-        AND NOT EXISTS (
-          SELECT 1 FROM leave_balances lb
-          WHERE lb.traineeCode = wa.traineeCode AND lb.year = ${year}
-        )
-    `) as unknown as { rows?: Array<Record<string,unknown>> } | Array<Record<string,unknown>>;
-    const eligible = Array.isArray(rows) ? rows : ((rows as { rows?: Array<Record<string,unknown>> }).rows ?? []);
-    if (eligible.length > 0) {
-      console.log(`[LeaveEligibility] Creating leave balance for ${eligible.length} agent(s) who reached 7 months`);
-      const { leaveBalances } = await import("../../drizzle/schema");
-      for (const agent of eligible) {
-        const code = String(agent.traineeCode ?? "");
-        if (!code) continue;
-        await db.insert(leaveBalances).values({ traineeCode: code, year, casualTotal: 6, annualTotal: 21, casualUsed: 0, annualUsed: 0, updatedAt: Date.now() }).catch(() => {});
-      }
+    await step("dueSeparations", runDueSeparations);
+    await step("probationCheck", runProbationCheck);
+    await step("contractExpiryCheck", runContractExpiryCheck);
+    await step("scheduleSwapRevert", runScheduleSwapRevert);
+  } finally {
+    _jobsRunning = false;
+  }
+  // Surface repeated silent failures where someone will see them.
+  if (failures.length) {
+    const hook = process.env.SLACK_MANAGEMENT_WEBHOOK || process.env.SLACK_ADMIN_WEBHOOK;
+    if (hook) {
+      fetch(hook, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: `:rotating_light: Hub background job(s) failed this hour: ${failures.join(", ")}. Check the server logs.` }),
+      }).catch(() => {});
     }
-  } catch (e) { console.error("[LeaveEligibility] error:", e); }
+  }
 };
-checkLeaveEligibility();
-setInterval(checkLeaveEligibility, 24 * 60 * 60 * 1000).unref(); // daily
+
+if (process.env.RUN_JOBS !== "false") {
+  runHourlyJobs();
+  setInterval(runHourlyJobs, 60 * 60 * 1000).unref(); // every hour
+} else {
+  console.log("[jobs] RUN_JOBS=false — background scheduler disabled on this instance");
+}
+
+// (Removed) the 7-month leave-eligibility job: by owner decision every agent gets
+// their 6 casual / 21 annual days from day one — decideLeaveRequest seeds the
+// balance row with those defaults on first approval, so no job is needed.
 
 /**
  * Are we behind a reverse proxy we trust to set X-Forwarded-*?
@@ -246,12 +246,12 @@ async function startServer() {
   const server = createServer(app);
   if (TRUST_PROXY) app.set("trust proxy", 1);
 
-  // ── CORS — restrict to hub domain in production ──
+  // ── CORS — same-origin app; echo only allow-listed Origins, never "*" with credentials ──
   app.use((req, res, next) => {
-    const allowedOrigin = process.env.ALLOWED_ORIGIN ?? "https://hub.tanis-eg.com";
     const origin = req.headers.origin;
-    if (!origin || origin === allowedOrigin || process.env.NODE_ENV !== "production") {
-      res.setHeader("Access-Control-Allow-Origin", origin || "*");
+    if (origin && isAllowedOrigin(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
       res.setHeader("Access-Control-Allow-Credentials", "true");
       res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type,Authorization,X-API-Key");
@@ -268,9 +268,29 @@ async function startServer() {
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
     res.setHeader("Content-Security-Policy",
-      "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https:; font-src 'self' https:;"
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self' https:; font-src 'self' https:;"
     );
+    if (process.env.NODE_ENV === "production") {
+      res.setHeader("Strict-Transport-Security", "max-age=15552000; includeSubDomains");
+    }
     next();
+  });
+
+  // ── Health check for the load balancer / uptime monitor: no auth, touches the DB ──
+  app.get("/healthz", async (_req, res) => {
+    try {
+      const { getDb } = await import("../db");
+      const { sql: sqlTag } = await import("drizzle-orm");
+      const db = await getDb();
+      if (!db) throw new Error("no db");
+      await Promise.race([
+        db.execute(sqlTag`SELECT 1`),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("db timeout")), 1500)),
+      ]);
+      res.status(200).json({ ok: true });
+    } catch (e) {
+      res.status(503).json({ ok: false, error: (e as Error).message });
+    }
   });
 
   // ── Global rate limit: 300 req/min per IP (stops scrapers & brute-force) ──
@@ -310,9 +330,22 @@ async function startServer() {
     next();
   });
 
-  // Configure body parser with larger size limit for file uploads
-  app.use(express.json({ limit: "50mb", verify: (req, _res, buf) => { (req as unknown as { rawBody?: Buffer }).rawBody = buf; } }));
-  app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  // Body parser limits are per-route (the Content-Length pre-check above is advisory only —
+  // a chunked request carries none). Upload routes get 50 MB; everything else 512 KB.
+  const bigJson = express.json({ limit: "50mb", verify: (req, _res, buf) => { (req as unknown as { rawBody?: Buffer }).rawBody = buf; } });
+  const smallJson = express.json({ limit: "512kb", verify: (req, _res, buf) => { (req as unknown as { rawBody?: Buffer }).rawBody = buf; } });
+  app.use((req, res, next) => {
+    const isUpload = req.path.startsWith("/api/upload") || req.path.includes("upload-doc") || req.path.startsWith("/api/trpc");
+    // tRPC keeps 50 MB only for its three upload-ish procedures; everything else there is small too.
+    if (req.path.startsWith("/api/trpc")) {
+      const BIG = ["candidates.uploadCv", "candidates.bulkImport", "requests.uploadAttachment", "documents.uploadFile", "documents.uploadForAgent", "workforce.setMyAvatar", "payrollV2.uploadPayrollV2", "commission.upload", "commission.uploadLeaderboard", "coaching.upload", "cycleTracker.upload", "academy"];
+      const procs = req.path.slice("/api/trpc/".length).split(",");
+      const needsBig = procs.some(p => BIG.some(b => p.startsWith(b)));
+      return (needsBig ? bigJson : smallJson)(req, res, next);
+    }
+    return (isUpload ? bigJson : smallJson)(req, res, next);
+  });
+  app.use(express.urlencoded({ limit: "512kb", extended: true }));
   // OAuth callback under /api/oauth/callback
   registerOAuthRoutes(app);
 
@@ -619,16 +652,47 @@ async function startServer() {
       const mon = (d: string) => cycleKeyFor(d);
       let inserted = 0, skipped = 0, invalid = 0;
       const rejected: Array<{ row: number; reason: string }> = [];
+      // Resolve each sheet CRDTS once per batch: the real trainee code for the
+      // agentCode column, and the archived label when the holder already left
+      // (the sheets always carry the bare number).
+      const { workforceAgents: waIngest } = await import("../../drizzle/schema");
+      const waRows = await db.select({ traineeCode: waIngest.traineeCode, crdts: waIngest.crdts, agentStatus: waIngest.agentStatus }).from(waIngest);
+      const TERMINAL_ST = ["resigned", "terminated", "blacklisted"];
+      const activeByEntry = new Map<string, string>();
+      const anyByEntry = new Map<string, string>();
+      const allEntries: Array<{ entry: string; code: string }> = [];
+      for (const a of waRows) {
+        for (const entry of String(a.crdts ?? "").split(",").map(x => x.trim()).filter(Boolean)) {
+          allEntries.push({ entry, code: a.traineeCode });
+          if (!anyByEntry.has(entry)) anyByEntry.set(entry, a.traineeCode);
+          if (!TERMINAL_ST.includes(a.agentStatus ?? "")) activeByEntry.set(entry, a.traineeCode);
+        }
+      }
+      const escRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const resolveIngest = (num: string): { crdts: string; traineeCode: string | null } => {
+        const active = activeByEntry.get(num);
+        if (active) return { crdts: num, traineeCode: active };
+        const re = new RegExp(`^${escRe(num)} \\((\\d+)\\)$`);
+        let best: { entry: string; k: number; code: string } | null = null;
+        for (const e of allEntries) {
+          const m = re.exec(e.entry);
+          if (m && (!best || Number(m[1]) > best.k)) best = { entry: e.entry, k: Number(m[1]), code: e.code };
+        }
+        if (best) return { crdts: best.entry, traineeCode: best.code };
+        return { crdts: num, traineeCode: anyByEntry.get(num) ?? null };
+      };
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i];
-        const crdts = s(r.crdts).replace(/\.0+$/, "");
+        const crdtsRaw = s(r.crdts).replace(/\.0+$/, "");
         const date = s(r.date);
-        if (!crdts || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { invalid++; rejected.push({ row: i + 1, reason: "missing CRDTS or bad date" }); continue; }
+        if (!crdtsRaw || !/^\d{4}-\d{2}-\d{2}$/.test(date)) { invalid++; rejected.push({ row: i + 1, reason: "missing CRDTS or bad date" }); continue; }
+        const { crdts, traineeCode: resolvedCode } = resolveIngest(crdtsRaw);
+        const agentCodeVal = resolvedCode ?? crdts;
         if (kind === "adherence" || kind === "quality") {
           const category = kind === "quality" ? "quality" : "attendance";
           const type = s(r.type) || "Other";
           const existing = await db.select().from(agentViolations).where(and(
-            eq(agentViolations.agentCode, crdts),
+            eq(agentViolations.crdts, crdts),
             eq(agentViolations.date, date),
             eq(agentViolations.type, type),
             eq(agentViolations.category, category),
@@ -647,7 +711,7 @@ async function startServer() {
           if (vHours == null) { invalid++; rejected.push({ row: i + 1, reason: `unreadable hours "${s(r.hours)}"` }); continue; }
           try {
             await db.insert(agentViolations).values({
-              crdts, agentCode: crdts,
+              crdts, agentCode: agentCodeVal,
               date, month: mon(date), type, category,
               hours: String(vHours), deduction: String(n(r.deduction)),
               description: bits.filter(Boolean).join(" · ") || null,
@@ -675,7 +739,7 @@ async function startServer() {
           )).limit(1);
           if (existing.length) { skipped++; continue; }
           await db.insert(cycleOT).values({
-            crdts, agentCode: crdts, alias: s(r.alias) || null,
+            crdts, agentCode: agentCodeVal, alias: s(r.alias) || null,
             date, cycleKey: mon(date), otType,
             hours: String(otHours), egpAmount: String(n(r.egp)),
             uploadedAt: now,
@@ -692,7 +756,7 @@ async function startServer() {
           const cHours = hrs(r.hours);
           if (cHours == null) { invalid++; rejected.push({ row: i + 1, reason: `unreadable coaching hours "${s(r.hours)}"` }); continue; }
           await db.insert(coachingSessions).values({
-            crdts, agentCode: crdts, alias: s(r.alias) || null,
+            crdts, agentCode: agentCodeVal, alias: s(r.alias) || null,
             sessionDate: date, cycleKey: mon(date),
             sessionType: topic,
             coachingHours: String(cHours), bonusAmount: String(n(r.egp)),
@@ -1074,8 +1138,18 @@ async function startServer() {
       // 3) Acknowledge immediately (Slack requires a fast 200, then we act)
       res.status(200).send("");
 
-      // 4) Process the event
+      // 4) Process the event — once. Slack retries and a captured request can be replayed
+      // inside the 5-minute signature window, so every event_id is remembered for 10 minutes.
       if (body.type !== "event_callback") return;
+      {
+        const evId = String((body as Record<string, unknown>).event_id ?? "");
+        if (evId) {
+          const now = Date.now();
+          _slackSeenEvents.forEach((exp, k) => { if (exp < now) _slackSeenEvents.delete(k); });
+          if (_slackSeenEvents.has(evId)) { console.log("[slack] duplicate event", evId, "— ignored"); return; }
+          _slackSeenEvents.set(evId, now + 10 * 60_000);
+        }
+      }
       const ev = (body.event ?? {}) as Record<string, unknown>;
 
       // 4a) React-to-action on a request alert: ✅ resolved · 👀 in progress · ❌ rejected
@@ -1166,9 +1240,10 @@ async function startServer() {
       router: appRouter,
       createContext,
       onError({ error, path }) {
-        // Log full error server-side but never expose internal details to client
+        // Log message + path ONLY. The raw error object can carry the failed query's
+        // parameters (bank numbers, national IDs) — those must never reach the logs.
         if (error.code === "INTERNAL_SERVER_ERROR") {
-          console.error(`[tRPC] ${path ?? "unknown"}:`, error);
+          console.error(`[tRPC] ${path ?? "unknown"}: ${error.message}`);
         }
         // Sanitize: replace generic internal errors with a safe message
         if (error.code === "INTERNAL_SERVER_ERROR" && process.env.NODE_ENV === "production") {
@@ -1186,15 +1261,41 @@ async function startServer() {
   }
 
   const preferredPort = parseInt(process.env.PORT || "3000");
-  const port = await findAvailablePort(preferredPort);
-
-  if (port !== preferredPort) {
-    console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
+  // In production the reverse proxy points at ONE port — silently moving to another
+  // is an outage that looks healthy. Fail fast instead; dev keeps the convenience.
+  let port = preferredPort;
+  if (process.env.NODE_ENV === "production") {
+    if (!(await isPortAvailable(preferredPort))) {
+      console.error(`FATAL: port ${preferredPort} is already in use.`);
+      process.exit(1);
+    }
+  } else {
+    port = await findAvailablePort(preferredPort);
+    if (port !== preferredPort) console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
 
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
   });
+
+  // ── Graceful shutdown: stop accepting, finish in-flight requests, close the DB pool ──
+  let shuttingDown = false;
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`${signal} received — shutting down gracefully…`);
+    const hardExit = setTimeout(() => { console.error("Forced exit after 15s."); process.exit(1); }, 15_000);
+    hardExit.unref();
+    server.close(async () => {
+      try {
+        const { closeDbPool } = await import("../db");
+        await closeDbPool();
+      } catch { /* pool may not be open */ }
+      process.exit(0);
+    });
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 }
 
 startServer().catch(console.error);

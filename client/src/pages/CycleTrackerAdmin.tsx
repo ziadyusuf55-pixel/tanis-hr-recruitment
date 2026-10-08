@@ -314,7 +314,8 @@ export default function CycleTrackerAdmin() {
     if (rej.count) return { tab: TAB_NAMES.coaching, status: "error", error: `${rej.count} row(s) rejected — nothing uploaded. ${rej.summary()}` };
     if (sessions.length === 0) return { tab: TAB_NAMES.coaching, status: "error", error: "No valid rows. Ensure CRDTS and Date columns are present." };
     const result = await uploadCoachingMutation.mutateAsync({ cycleKey, sessions });
-    return { tab: TAB_NAMES.coaching, status: "done", count: result.inserted, cycleKey };
+    const r = result as { inserted: number; replaced?: number; skippedApproved?: number };
+    return { tab: TAB_NAMES.coaching, status: "done", count: r.inserted + (r.replaced ?? 0), cycleKey };
   }
 
   // ── Main upload handler ──────────────────────────────────────────────────────

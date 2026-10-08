@@ -7,7 +7,26 @@ import { z } from "zod";
 import { parse as parseCookieHeader } from "cookie";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { staffProcedure, protectedProcedure, adminProcedure, roleProcedure, agentProcedure, agentOrStaffProcedure, publicProcedure, router, isStaff } from "./_core/trpc";
+import { staffProcedure, protectedProcedure, adminProcedure, roleProcedure, agentProcedure, agentOrStaffProcedure, publicProcedure, router, isStaff, isFullAccess, canSeeMoney } from "./_core/trpc";
+
+// ─── PII / money redaction ────────────────────────────────────────────────────
+// Identity and pay data leaves the server only for MONEY_ROLES (owner/admin/manager/hr/finance).
+// Other staff (ops_manager, team_lead, bd) get the operational fields with these nulled.
+const SENSITIVE_AGENT_FIELDS = [
+  "nationalId", "nationalIdExpiry", "dateOfBirth", "address",
+  "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation",
+  "dialerCredentials",
+] as const;
+function redactAgentRow<T extends Record<string, unknown>>(row: T, role?: string | null): T {
+  if (canSeeMoney(role)) return row;
+  const copy: Record<string, unknown> = { ...row };
+  for (const k of SENSITIVE_AGENT_FIELDS) if (k in copy) copy[k] = null;
+  return copy as T;
+}
+function redactAgentRows<T extends Record<string, unknown>>(rows: T[], role?: string | null): T[] {
+  if (canSeeMoney(role)) return rows;
+  return rows.map(r => redactAgentRow(r, role));
+}
 import { requireAgent, invalidateAgentSessionCache } from "./_core/agentAuth";
 import {
   addStageNote,
@@ -87,6 +106,7 @@ import {
   getReferralsByReferrer,
   listAllReferrals,
   updateReferralStatus,
+  getReferralById,
   // Request unread tracking
   countUnreadAgentRequests,
   markAllAgentRequestsRead,
@@ -189,6 +209,7 @@ import {
   getCampaignRanking,
   getPendingDeletionAgents,
   getNextAvailableTraineeCode,
+  revokeAgentSessions,
 } from "./db";
 import { notifyOwner } from "./_core/notification";
 import { sendInterviewNotification } from "./email";
@@ -242,15 +263,21 @@ const authRouter = router({
     .input(z.object({ openId: z.string(), role: z.enum(["owner", "admin", "manager", "hr", "ops_manager", "team_lead", "finance", "bd", "viewer", "user"]) }))
     .mutation(async ({ ctx, input }) => {
       if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN" });
-      if (input.openId === ctx.user?.openId && input.role !== "owner" && input.role !== "admin") {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "You can't remove your own full access. Ask another owner to change your role." });
-      }
+      // Only an owner may create another owner, and only an owner may change an owner's role.
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { users } = await import("../drizzle/schema");
+      const [target] = await db.select({ role: users.role, email: users.email }).from(users).where(eq(users.openId, input.openId)).limit(1);
+      if ((input.role === "owner" || target?.role === "owner") && ctx.user?.role !== "owner") {
+        throw new TRPCError({ code: "FORBIDDEN", message: "Only an owner can grant or change the owner role." });
+      }
+      if (input.openId === ctx.user?.openId && input.role !== "owner" && input.role !== "admin") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "You can't remove your own full access. Ask another owner to change your role." });
+      }
       await db.update(users).set({ role: input.role }).where(eq(users.openId, input.openId));
+      await auditEntry(ctx.user, "set_user_role", "user", input.openId, JSON.stringify({ from: target?.role ?? null, to: input.role, email: target?.email ?? null }));
       return { ok: true } as const;
     }),
 
@@ -264,8 +291,12 @@ const authRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { users } = await import("../drizzle/schema");
+      const { users: _ruUsers } = await import("../drizzle/schema");
+      const [_ruTarget] = await db.select({ role: _ruUsers.role, email: _ruUsers.email }).from(_ruUsers).where(eq(_ruUsers.openId, input.openId)).limit(1);
+      if (_ruTarget?.role === "owner" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN", message: "Only an owner can remove an owner." });
       // Set to "viewer" (no access) — preserves login history and audit trail
       await db.update(users).set({ role: "viewer" }).where(eq(users.openId, input.openId));
+      await auditEntry(ctx.user, "remove_user", "user", input.openId, JSON.stringify({ hadRole: _ruTarget?.role ?? null, email: _ruTarget?.email ?? null }));
       return { ok: true } as const;
     }),
 });
@@ -392,19 +423,29 @@ const batchesRouter = router({
   allAssignments: staffProcedure
     .query(() => getAllBatchAssignments()),
   // Bulk generate credentials for all agents in a batch
-  bulkGenerateCredentials: staffProcedure
-    .input(z.object({ batchId: z.number() }))
-    .mutation(async ({ input }) => {
+  /**
+   * Generate portal passwords for a batch. SKIPS trainees who already have credentials —
+   * regenerating them would silently lock out everyone already using the portal. Pass
+   * force:true (behind a confirm dialog) to regenerate those too.
+   */
+  bulkGenerateCredentials: roleProcedure("hr", "manager")
+    .input(z.object({ batchId: z.number(), force: z.boolean().optional() }))
+    .mutation(async ({ ctx, input }) => {
       const candidates = await listCandidatesInBatch(input.batchId);
+      const { getAgentCredentialByCandidateId } = await import("./db");
       const results: Array<{ candidateId: number; traineeCode: string; password: string }> = [];
+      let skippedExisting = 0;
       for (const c of candidates) {
-        if (!c.traineeCode) continue; // skip agents without trainee code
+        if (!c.traineeCode) continue; // skip trainees without an agent ID
+        const existing = await getAgentCredentialByCandidateId(c.id);
+        if (existing && !input.force) { skippedExisting++; continue; }
         const plainPassword = generatePassword(c.traineeCode);
         const passwordHash = await bcrypt.hash(plainPassword, 10);
         await upsertAgentCredential(c.id, c.traineeCode, passwordHash);
         results.push({ candidateId: c.id, traineeCode: c.traineeCode, password: plainPassword });
       }
-      return { generated: results.length, credentials: results };
+      await auditEntry(ctx.user, "bulk_generate_credentials", "batch", String(input.batchId), JSON.stringify({ generated: results.length, skippedExisting, force: !!input.force }));
+      return { generated: results.length, skippedExisting, credentials: results };
     }),
 });
 
@@ -478,10 +519,14 @@ const candidatesRouter = router({
         detail: z.string().optional(), // e.g. rejection reason
       }))
       .mutation(async ({ input, ctx }) => {
+        // The REAL previous stage comes from the row — the client's fromStage is
+        // display-only (a stale tab used to skip or mis-log the batch cascade).
+        const current = await getCandidateById(input.id);
+        const fromStage = (current?.status as string | undefined) ?? input.fromStage;
         await updateCandidateStatus(input.id, input.status);
         // Cascade: remove from batch when moving away from whatsapp_group_added OR when rejected/blacklisted
         const removeFromBatchStages = ["whatsapp_group_added"];
-        const shouldRemove = (input.fromStage && removeFromBatchStages.includes(input.fromStage) && !removeFromBatchStages.includes(input.status))
+        const shouldRemove = (fromStage && removeFromBatchStages.includes(fromStage) && !removeFromBatchStages.includes(input.status))
           || ["rejected", "blacklisted"].includes(input.status);
         if (shouldRemove) {
           const batch = await getCandidateBatch(input.id);
@@ -492,7 +537,7 @@ const candidatesRouter = router({
         await logActivity({
           candidateId: input.id,
           action: "stage_change",
-          fromStage: input.fromStage,
+          fromStage: fromStage as typeof input.fromStage,
           toStage: input.status,
           detail: input.detail,
           performedBy: ctx.user?.name ?? undefined,
@@ -517,10 +562,25 @@ const candidatesRouter = router({
         return { success: true };
       }),
 
-    delete: roleProcedure("hr", "manager", "team_lead")
+    delete: roleProcedure("hr", "manager")
       .input(z.object({ id: z.number() }))
-      .mutation(({ input }) => deleteCandidate(input.id)),
-    blacklist: staffProcedure
+      .mutation(async ({ ctx, input }) => {
+        // A candidate promoted to Operations is deleted through the workforce
+        // force-delete flow (payroll guard + full cascade), never from the pipeline.
+        const { getDb } = await import("./db");
+        const db = await getDb();
+        if (db) {
+          const { workforceAgents } = await import("../drizzle/schema");
+          const { eq } = await import("drizzle-orm");
+          const [wf] = await db.select({ traineeCode: workforceAgents.traineeCode })
+            .from(workforceAgents).where(eq(workforceAgents.candidateId, input.id)).limit(1);
+          if (wf) throw new TRPCError({ code: "BAD_REQUEST", message: `This candidate is in Operations (${wf.traineeCode}). Remove them from Workforce first.` });
+        }
+        await deleteCandidate(input.id);
+        await auditEntry(ctx.user, "delete_candidate", "candidate", String(input.id), undefined);
+        return { success: true };
+      }),
+    blacklist: roleProcedure("hr", "manager")
       .input(z.object({ id: z.number(), reason: z.string().min(1) }))
       .mutation(async ({ input, ctx }) => {
         await blacklistCandidate(input.id, input.reason);
@@ -574,8 +634,8 @@ const candidatesRouter = router({
       )
       .mutation(async ({ input }) => {
         const { storagePut } = await import("./storage");
-        const buffer = Buffer.from(input.fileBase64, "base64");
-        const ext = input.fileName.split(".").pop() ?? "pdf";
+        // Same validation as every other upload: MIME whitelist + magic bytes + cap.
+        const { buf: buffer, ext } = validateUpload(input.fileBase64, input.mimeType, { maxBytes: 10 * 1024 * 1024 });
         const key = `cvs/${input.id}-${Date.now()}.${ext}`;
         const { url } = await storagePut(key, buffer, input.mimeType);
         await updateCandidate(input.id, { cvUrl: url, cvFileName: input.fileName });
@@ -646,6 +706,30 @@ const interviewsRouter = router({
           notes: input.notes,
         });
 
+        // Scheduling an interview IS the stage change — move the candidate and
+        // log it, so the pipeline and the activity feed reflect reality.
+        try {
+          const cand = await getCandidateById(input.candidateId);
+          if (cand && !["interview_scheduled", "accepted", "whatsapp_group_added", "hired", "rejected", "blacklisted"].includes(String(cand.status))) {
+            await updateCandidateStatus(input.candidateId, "interview_scheduled");
+            await logActivity({
+              candidateId: input.candidateId,
+              action: "stage_change",
+              fromStage: cand.status as Parameters<typeof logActivity>[0]["fromStage"],
+              toStage: "interview_scheduled",
+              detail: `Interview scheduled for ${new Date(input.scheduledAt).toLocaleString("en-GB", { timeZone: "Africa/Cairo" })} (Cairo)`,
+              performedBy: ctx.user?.name ?? undefined,
+            });
+          } else {
+            await logActivity({
+              candidateId: input.candidateId,
+              action: "note",
+              detail: `Interview scheduled for ${new Date(input.scheduledAt).toLocaleString("en-GB", { timeZone: "Africa/Cairo" })} (Cairo)`,
+              performedBy: ctx.user?.name ?? undefined,
+            });
+          }
+        } catch (e) { console.warn("[interviews] stage/activity update failed:", e); }
+
         // Send email notification to recruiter
         const recruiterEmail = input.recruiterEmail ?? ctx.user?.email ?? undefined;
         if (recruiterEmail) {
@@ -708,8 +792,12 @@ const dashboardRouter = router({
         const rejectedCount = allTimeCounts.find((p) => p.status === "rejected")?.count ?? 0;
         const blacklistedCount = allTimeCounts.find((p) => p.status === "blacklisted")?.count ?? 0;
 
-        // Conversion rate: Applied → Accepted (of all non-rejected/blacklisted)
-        const activeTotal = totalInPipeline - rejectedCount - blacklistedCount;
+        // Conversion rate: Applied → Accepted among candidates still in play.
+        // Sum the ACTIVE stages of the SAME period — subtracting all-time
+        // rejected/blacklisted from a period total went negative, and it kept
+        // hired/resigned/terminated rows in the denominator.
+        const ACTIVE_STAGES = new Set(["applied", "whatsapp_sent", "no_answer", "voice_note_reviewed", "interview_scheduled", "accepted", "whatsapp_group_added"]);
+        const activeTotal = pipelineCounts.filter(p => ACTIVE_STAGES.has(String(p.status))).reduce((sum, p) => sum + p.count, 0);
         const conversionRate = activeTotal > 0 ? Math.round((acceptedCount + whatsappGroupCount) / activeTotal * 100) : 0;
 
         // WhatsApp response rate: whatsapp_sent+ / applied+
@@ -863,13 +951,35 @@ async function isPortalLocked(): Promise<{ locked: boolean; message: string }> {
   return { locked: _portalLocked, message: _lockMessage };
 }
 
-function getAgentCookieFromReq(req: { headers: { cookie?: string } }): string | undefined {
-  // Sync check only — async lock is checked in each endpoint individually
-  if (process.env.AGENT_PORTAL_LOCKED === "true") return undefined;
-  if (!req.headers.cookie) return undefined;
-  const parsed = parseCookieHeader(req.headers.cookie);
-  return parsed[AGENT_COOKIE];
+/** Validate a base64-uploaded file: size cap, MIME whitelist, magic-byte sniff.
+ *  Returns the buffer + a server-chosen safe extension. Mirrors /api/upload-doc. */
+const UPLOAD_MIME_EXT: Record<string, string> = {
+  "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png",
+  "image/webp": "webp", "image/gif": "gif", "application/pdf": "pdf",
+};
+function validateUpload(fileBase64: string, mimeType: string, opts: { maxBytes: number; imagesOnly?: boolean }) {
+  const mime = mimeType.toLowerCase();
+  const ext = UPLOAD_MIME_EXT[mime];
+  if (!ext || (opts.imagesOnly && ext === "pdf")) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: opts.imagesOnly ? "Only JPEG, PNG, WebP or GIF images are allowed." : "Only JPEG, PNG, WebP, GIF or PDF files are allowed." });
+  }
+  const buf = Buffer.from(fileBase64, "base64");
+  if (buf.length === 0) throw new TRPCError({ code: "BAD_REQUEST", message: "Empty file." });
+  if (buf.length > opts.maxBytes) {
+    throw new TRPCError({ code: "BAD_REQUEST", message: `File too large (max ${Math.round(opts.maxBytes / (1024 * 1024))}MB).` });
+  }
+  // Never trust the client's MIME: sniff the magic bytes.
+  const hex = buf.subarray(0, 4).toString("hex");
+  const magicOk =
+    ext === "jpg"  ? hex.startsWith("ffd8ff") :
+    ext === "png"  ? hex === "89504e47" :
+    ext === "gif"  ? hex.startsWith("474946") :
+    ext === "webp" ? buf.subarray(0, 4).toString("ascii") === "RIFF" && buf.subarray(8, 12).toString("ascii") === "WEBP" :
+    ext === "pdf"  ? buf.subarray(0, 5).toString("ascii") === "%PDF-" : false;
+  if (!magicOk) throw new TRPCError({ code: "BAD_REQUEST", message: "File content does not match its type." });
+  return { buf, ext };
 }
+
 /** Cryptographically random one-time password: <code>-<6 chars, no ambiguous glyphs>. */
 function generatePassword(traineeCode: string): string {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789";
@@ -881,16 +991,9 @@ function generatePassword(traineeCode: string): string {
 
 /** Agent-facing: an agent's OWN adherence / quality / coaching / OT records.
  *  Pushed nightly from the sheets — DISPLAY ONLY, no payroll effect. */
-const agentMyRecordsProcedure = publicProcedure.query(async ({ ctx }) => {
+const agentMyRecordsProcedure = agentProcedure.query(async ({ ctx }) => {
   const empty = { adherence: [], quality: [], coaching: [], ot: [] };
-  const token = getAgentCookieFromReq(ctx.req);
-  if (!token) return empty;
-  let traineeCode = "";
-  try {
-    const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-    if (payload.type !== "agent") return empty;
-    traineeCode = payload.traineeCode;
-  } catch { return empty; }
+  const traineeCode = ctx.agent.traineeCode;
 
   const { getDb } = await import("./db");
   const { eq, or, desc } = await import("drizzle-orm");
@@ -923,10 +1026,12 @@ const agentRouter = router({
   // Generate credentials for a candidate — called by admin from CandidateDetail
   generateCredentials: roleProcedure("manager", "hr")
     .input(z.object({ candidateId: z.number(), traineeCode: z.string().min(1) }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const plainPassword = generatePassword(input.traineeCode);
       const passwordHash = await bcrypt.hash(plainPassword, 10);
       await upsertAgentCredential(input.candidateId, input.traineeCode, passwordHash);
+      await revokeAgentSessions(input.traineeCode); // any old session dies with the old password
+      await auditEntry(ctx.user, "generate_credentials", "agent", input.traineeCode, "{}");
       // Return plain password ONCE — admin must share it with agent
       return { traineeCode: input.traineeCode, password: plainPassword };
     }),
@@ -958,8 +1063,10 @@ const agentRouter = router({
           message: _lockMsg || "The agent portal is temporarily locked. Please contact your manager.",
         });
       }
-      // Check lockout before any credential lookup
-      const lockoutStatus = await isLockedOut(input.traineeCode, "agent");
+      // Lockout is keyed on code+IP so a stranger hammering a code cannot lock the real agent out.
+      const _loginIp = (ctx.req.ip ?? ctx.req.headers["x-forwarded-for"] ?? "?").toString().split(",")[0].trim();
+      const _lockKey = `${input.traineeCode}|${_loginIp}`;
+      const lockoutStatus = await isLockedOut(_lockKey, "agent");
       if (lockoutStatus.locked) {
         const remainingMins = Math.ceil(lockoutStatus.remainingMs / 60000);
         throw new TRPCError({
@@ -967,27 +1074,10 @@ const agentRouter = router({
           message: `Account locked due to too many failed attempts. Try again in ${remainingMins} minute${remainingMins !== 1 ? "s" : ""}.`,
         });
       }
-      // Block non-active agents from logging in at all
-      {
-        const { getDb: _lgGdb } = await import("./db");
-        const { eq: _lgEq } = await import("drizzle-orm");
-        const _lgDb = await _lgGdb();
-        if (_lgDb) {
-          const { workforceAgents: _lgWa } = await import("../drizzle/schema");
-          const [_lgAgent] = await _lgDb.select({ agentStatus: _lgWa.agentStatus })
-            .from(_lgWa).where(_lgEq(_lgWa.traineeCode, input.traineeCode)).limit(1);
-          if (_lgAgent && _lgAgent.agentStatus && !["active"].includes(_lgAgent.agentStatus)) {
-            throw new TRPCError({
-              code: "FORBIDDEN",
-              message: "This account is no longer active. Please contact HR.",
-            });
-          }
-        }
-      }
       const cred = await getAgentCredentialByTraineeCode(input.traineeCode);
       if (!cred) {
-        await recordFailedLogin(input.traineeCode, "agent");
-        const attempts = await countRecentFailedLogins(input.traineeCode, "agent");
+        await recordFailedLogin(_lockKey, "agent", _loginIp);
+        const attempts = await countRecentFailedLogins(_lockKey, "agent");
         const remaining = Math.max(0, 5 - attempts);
         throw new TRPCError({
           code: "UNAUTHORIZED",
@@ -998,8 +1088,8 @@ const agentRouter = router({
       }
       const valid = await bcrypt.compare(input.password, cred.passwordHash);
       if (!valid) {
-        await recordFailedLogin(input.traineeCode, "agent");
-        const attempts = await countRecentFailedLogins(input.traineeCode, "agent");
+        await recordFailedLogin(_lockKey, "agent", _loginIp);
+        const attempts = await countRecentFailedLogins(_lockKey, "agent");
         const remaining = Math.max(0, 5 - attempts);
         throw new TRPCError({
           code: "UNAUTHORIZED",
@@ -1008,8 +1098,24 @@ const agentRouter = router({
             : "Account locked. Too many failed attempts.",
         });
       }
+      // Password is right — NOW the status gate (saying "no longer active" before the password
+      // check let anyone probe which codes exist). Frozen / notice-period agents keep portal
+      // access (owner's decision); only the terminal statuses are blocked.
+      {
+        const { getDb: _lgGdb } = await import("./db");
+        const { eq: _lgEq } = await import("drizzle-orm");
+        const _lgDb = await _lgGdb();
+        if (_lgDb) {
+          const { workforceAgents: _lgWa } = await import("../drizzle/schema");
+          const [_lgAgent] = await _lgDb.select({ agentStatus: _lgWa.agentStatus })
+            .from(_lgWa).where(_lgEq(_lgWa.traineeCode, input.traineeCode)).limit(1);
+          if (_lgAgent?.agentStatus && ["resigned", "terminated", "blacklisted"].includes(_lgAgent.agentStatus)) {
+            throw new TRPCError({ code: "FORBIDDEN", message: "This account is no longer active. Please contact HR." });
+          }
+        }
+      }
       // Successful login — clear failed attempts
-      await clearLoginAttempts(input.traineeCode, "agent");
+      await clearLoginAttempts(_lockKey, "agent");
       // Track first login and last login timestamps
       {
         const { getDb } = await import("./db");
@@ -1043,7 +1149,7 @@ const agentRouter = router({
   // Reset agent password — admin only, generates a new random password
   resetPassword: roleProcedure("manager", "hr")
     .input(z.object({ candidateId: z.number().optional(), traineeCode: z.string().optional(), crdts: z.string().optional() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       // Look up credentials by traineeCode first (more reliable for Operations agents),
       // fall back to candidateId for legacy Training-flow agents
       let cred = input.traineeCode
@@ -1100,6 +1206,8 @@ const agentRouter = router({
             .where(eqOp(agentCredentials.traineeCode, resolvedTraineeCode));
         }
       }
+      await revokeAgentSessions(resolvedTraineeCode); // an HR reset must kill any live session
+      await auditEntry(ctx.user, "reset_agent_password", "agent", resolvedTraineeCode, "{}");
       return { traineeCode: resolvedTraineeCode, password: newPassword };
     }),
   // Agent logout
@@ -1107,68 +1215,51 @@ const agentRouter = router({
     ctx.res.clearCookie(AGENT_COOKIE, { path: "/" });
     return { success: true };
   }),
-  // Change password — agent must be logged in (verified via cookie)
-  changePassword: publicProcedure
-    .input(z.object({ newPassword: z.string().min(6) }))
+  // Change password — agent must be logged in. Requires the CURRENT password (except on the
+  // forced first-login change), kills every other session, and keeps this one alive.
+  changePassword: agentProcedure
+    .input(z.object({ currentPassword: z.string().optional(), newPassword: z.string().min(8, "At least 8 characters") }))
     .mutation(async ({ input, ctx }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) throw new TRPCError({ code: "UNAUTHORIZED", message: "Not authenticated" });
-      let payload: { candidateId: number; traineeCode: string; type: string };
-      try {
-        payload = jwt.verify(token, ENV.cookieSecret) as { candidateId: number; traineeCode: string; type: string };
-      } catch {
-        throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid session" });
+      const cred = await getAgentCredentialByTraineeCode(ctx.agent.traineeCode);
+      if (!cred) throw new TRPCError({ code: "UNAUTHORIZED" });
+      if (!cred.mustChangePassword) {
+        if (!input.currentPassword) throw new TRPCError({ code: "BAD_REQUEST", message: "Enter your current password" });
+        const ok = await bcrypt.compare(input.currentPassword, cred.passwordHash);
+        if (!ok) throw new TRPCError({ code: "UNAUTHORIZED", message: "Current password is incorrect" });
       }
-      if (payload.type !== "agent") throw new TRPCError({ code: "UNAUTHORIZED" });
       const newHash = await bcrypt.hash(input.newPassword, 10);
-      await changeAgentPassword(payload.candidateId, newHash);
+      await changeAgentPassword(ctx.agent.candidateId, newHash);
+      // Revoke every session, then re-issue THIS one so the agent is not logged out mid-flow.
+      await revokeAgentSessions(ctx.agent.traineeCode);
+      const freshToken = jwt.sign(
+        { candidateId: ctx.agent.candidateId, traineeCode: ctx.agent.traineeCode, type: "agent" },
+        ENV.cookieSecret,
+        { expiresIn: "30d" }
+      );
+      ctx.res.cookie(AGENT_COOKIE, freshToken, { ...getSessionCookieOptions(ctx.req), maxAge: 30 * 24 * 60 * 60 * 1000 });
       return { success: true };
     }),
   // Get current agent session info (from cookie))
   me: publicProcedure.query(async ({ ctx }) => {
-    const token = getAgentCookieFromReq(ctx.req);
-    if (!token) return null;
-    // Check portal lock — kicks active sessions within one poll cycle
+    // Cookie verification (signature, revocation, agent status, env lock) happens once per
+    // request in resolveAgentSession — any failed check strips the cookie, so ctx.agent is
+    // null here and the portal treats it as logged out. DB errors inside the resolver fall
+    // back to token-only trust, so infrastructure trouble never logs anyone out.
+    if (!ctx.agent) {
+      ctx.res.clearCookie(AGENT_COOKIE, { path: "/" });
+      return null;
+    }
+    // DB-backed portal lock — kicks active sessions within one poll cycle
     const { locked: _meLocked, message: _meMsg } = await isPortalLocked();
     if (_meLocked) {
       throw new TRPCError({ code: "FORBIDDEN", message: _meMsg || "The agent portal is temporarily locked. Please contact your manager." });
     }
-    // Only an INVALID token means "not logged in". Any DB / infrastructure error below must surface as an
-    // error (the portal keeps the session and retries) — never as `null`, which the portal treats as logout.
-    let payload: { candidateId: number; traineeCode: string; type: string; iat?: number };
-    try {
-      payload = jwt.verify(token, ENV.cookieSecret) as typeof payload;
-    } catch {
-      ctx.res.clearCookie(AGENT_COOKIE, { path: "/" });
-      return null;
-    }
-    if (payload.type !== "agent") return null;
+    const payload = {
+      candidateId: ctx.agent.candidateId,
+      traineeCode: ctx.agent.traineeCode,
+      iat: ctx.agent.issuedAt ? Math.floor(ctx.agent.issuedAt / 1000) : undefined,
+    };
     {
-      // Session revocation check: if the token was issued before sessionRevokedAt, reject it
-      if (payload.traineeCode && payload.iat) {
-        const { getDb: _meGdb } = await import("./db");
-        const { eq: _meEq } = await import("drizzle-orm");
-        const _meDb = await _meGdb();
-        if (_meDb) {
-          const { workforceAgents: _meWa } = await import("../drizzle/schema");
-          const [_meAgent] = await _meDb.select({ sessionRevokedAt: _meWa.sessionRevokedAt, agentStatus: _meWa.agentStatus })
-            .from(_meWa).where(_meEq(_meWa.traineeCode, payload.traineeCode)).limit(1);
-          if (_meAgent) {
-            // Reject if session was issued before revocation timestamp
-            const issuedAt = payload.iat * 1000; // JWT iat is in seconds
-            if (_meAgent.sessionRevokedAt && issuedAt < _meAgent.sessionRevokedAt) {
-              // Clear the stale cookie
-              ctx.res.clearCookie(AGENT_COOKIE, { path: "/" });
-              return null;
-            }
-            // Also reject if agent is no longer active
-            if (_meAgent.agentStatus && !["active"].includes(_meAgent.agentStatus)) {
-              ctx.res.clearCookie(AGENT_COOKIE, { path: "/" });
-              return null;
-            }
-          }
-        }
-      }
       // Sliding session: agents are never logged out for inactivity. If the token is older than a day,
       // re-issue a fresh 30-day cookie so a session that is used at least monthly lives forever.
       if (payload.iat && Date.now() - payload.iat * 1000 > 24 * 60 * 60 * 1000) {
@@ -1220,19 +1311,14 @@ const agentRouter = router({
     .input(z.object({ candidateId: z.number() }))
     .query(async ({ input, ctx }) => {
       // Allow if admin OR if agent session matches candidateId
-      const agentToken = getAgentCookieFromReq(ctx.req);
-      let isAgent = false;
-      if (agentToken) {
-        try {
-          const p = jwt.verify(agentToken, ENV.cookieSecret) as { candidateId: number; type: string };
-          isAgent = p.type === "agent" && p.candidateId === input.candidateId;
-        } catch { /* invalid token */ }
-      }
-      if (!ctx.user && !isAgent) throw new TRPCError({ code: "UNAUTHORIZED" });
+      // Staff with an assigned role, or the agent reading THEIR OWN record. A bare Google login
+      // (role user/viewer) is NOT staff — it must not read other people's pay.
+      const isOwnRecord = ctx.agent?.candidateId === input.candidateId;
+      if (!isOwnRecord && !isStaff((ctx.user as { role?: string } | null)?.role)) throw new TRPCError({ code: "UNAUTHORIZED" });
       return getPayrollByCandidateId(input.candidateId);
     }),
 
-  upsertPayroll: staffProcedure
+  upsertPayroll: roleProcedure("finance", "hr", "manager")
     .input(z.object({
       candidateId: z.number(),
       month: z.string().regex(/^\d{4}-\d{2}$/),
@@ -1258,7 +1344,7 @@ const agentRouter = router({
     }),
 
   // Payroll Excel Upload procedures
-  uploadPayroll: staffProcedure
+  uploadPayroll: roleProcedure("finance", "hr", "manager")
     .input(z.object({
       month: z.string().regex(/^\d{4}-\d{2}$/),
       rows: z.array(z.object({
@@ -1313,29 +1399,15 @@ const agentRouter = router({
       return { deleted: (result as { rowsAffected?: number }).rowsAffected ?? 0 };
     }),
   // Agent-facing payroll procedures
-  getMyPayrollMonths: publicProcedure
+  getMyPayrollMonths: agentProcedure
     .query(async ({ ctx }) => {
-      const agentToken = getAgentCookieFromReq(ctx.req);
-      if (!agentToken) throw new TRPCError({ code: "UNAUTHORIZED" });
-      let traineeCode: string | null = null;
-      try {
-        const p = jwt.verify(agentToken, ENV.cookieSecret) as { traineeCode?: string; type: string };
-        if (p.type === "agent" && p.traineeCode) traineeCode = p.traineeCode;
-      } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
-      if (!traineeCode) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const traineeCode = ctx.agent.traineeCode;
       return getPayrollMonthsByAgentCode(traineeCode);
     }),
-  getMyPayrollRecord: publicProcedure
+  getMyPayrollRecord: agentProcedure
     .input(z.object({ month: z.string() }))
     .query(async ({ input, ctx }) => {
-      const agentToken = getAgentCookieFromReq(ctx.req);
-      if (!agentToken) throw new TRPCError({ code: "UNAUTHORIZED" });
-      let traineeCode: string | null = null;
-      try {
-        const p = jwt.verify(agentToken, ENV.cookieSecret) as { traineeCode?: string; type: string };
-        if (p.type === "agent" && p.traineeCode) traineeCode = p.traineeCode;
-      } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
-      if (!traineeCode) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const traineeCode = ctx.agent.traineeCode;
       const records = await getPayrollByAgentCode(traineeCode);
       return records.find(r => r.month === input.month) ?? null;
     }),
@@ -1343,15 +1415,10 @@ const agentRouter = router({
   getPerformance: publicProcedure
     .input(z.object({ candidateId: z.number() }))
     .query(async ({ input, ctx }) => {
-      const agentToken = getAgentCookieFromReq(ctx.req);
-      let isAgent = false;
-      if (agentToken) {
-        try {
-          const p = jwt.verify(agentToken, ENV.cookieSecret) as { candidateId: number; type: string };
-          isAgent = p.type === "agent" && p.candidateId === input.candidateId;
-        } catch { /* invalid token */ }
-      }
-      if (!ctx.user && !isAgent) throw new TRPCError({ code: "UNAUTHORIZED" });
+      // Staff with an assigned role, or the agent reading THEIR OWN record. A bare Google login
+      // (role user/viewer) is NOT staff — it must not read other people's pay.
+      const isOwnRecord = ctx.agent?.candidateId === input.candidateId;
+      if (!isOwnRecord && !isStaff((ctx.user as { role?: string } | null)?.role)) throw new TRPCError({ code: "UNAUTHORIZED" });
       return getPerformanceByCandidateId(input.candidateId);
     }),
 
@@ -1413,7 +1480,8 @@ export async function applyAgentRequestDecision(opts: {
       if (opts.status === "resolved" && !leaveType) {
         throw Object.assign(new Error("Choose the leave type (casual / annual / unpaid) to approve this leave."), { code: "BAD_REQUEST" });
       }
-      await decideLeaveRequest({ id: lr.id, decision: opts.status === "resolved" ? "approved" : "rejected", leaveType, decidedBy: opts.decidedBy, defaults: { casualTotal: 6, annualTotal: 21 } });
+      const { LEAVE_DEFAULTS } = await import("@shared/const");
+      await decideLeaveRequest({ id: lr.id, decision: opts.status === "resolved" ? "approved" : "rejected", leaveType, decidedBy: opts.decidedBy, defaults: LEAVE_DEFAULTS });
       await auditEntry(opts.actor, opts.status === "resolved" ? "leave_approved" : "leave_rejected", "leave_request", String(lr.id), JSON.stringify({ via: "request_center", agentRequestId: req.id, leaveType }));
     }
   }
@@ -1442,8 +1510,37 @@ export async function applyAgentRequestDecision(opts: {
     }
   }
 
+  // Resignation approved via the Request Center → actually schedule the separation.
+  // (The Approve button used to hide after resolve with nothing ever happening.)
+  if (db && opts.status === "resolved" && !alreadyFinal && req.type === "resignation") {
+    const { scheduleResignation } = await import("./db");
+    const effDate = (() => {
+      try {
+        const dates: string[] = req.requestedDates ? JSON.parse(req.requestedDates) : [];
+        if (dates.length) return String(dates[dates.length - 1]).slice(0, 10);
+      } catch { /* fall through */ }
+      if (req.requestedDate) return new Date(req.requestedDate).toISOString().slice(0, 10);
+      return new Date().toISOString().slice(0, 10);
+    })();
+    await scheduleResignation(req.traineeCode, effDate, `Request Center #${req.id}: ${req.subject}`.slice(0, 500), opts.decidedBy);
+    await auditEntry(opts.actor, "resignation_scheduled", "agent", req.traineeCode, JSON.stringify({ via: "request_center", agentRequestId: req.id, effectiveDate: effDate }));
+  }
+
   // Always stamp status / reply / resolvedBy / resolvedAt on the request itself.
   await updateAgentRequestStatus(opts.id, opts.status, opts.adminReply ?? undefined, opts.decidedBy);
+
+  // Tell the agent the outcome where they will see it (portal notifications).
+  if (final && !alreadyFinal && req.candidateId) {
+    try {
+      const outcome = opts.status === "resolved" ? "approved" : "rejected";
+      await createAgentNotification({
+        candidateId: req.candidateId,
+        message: `Your ${req.type.replace(/_/g, " ")} request "${req.subject}" was ${outcome}${opts.adminReply ? ` — ${opts.adminReply}` : ""}`.slice(0, 500),
+        type: "request_reply",
+        relatedId: req.id,
+      });
+    } catch { /* notification failure never blocks the decision */ }
+  }
 }
 
 const requestsRouter = router({
@@ -1529,20 +1626,10 @@ const requestsRouter = router({
     }),
 
   // Agent: list own requests
-  listMine: publicProcedure.query(async ({ ctx }) => {
-    const agentToken = getAgentCookieFromReq(ctx.req);
-    if (!agentToken) return [];
-    try {
-      const payload = jwt.verify(agentToken, ENV.cookieSecret) as { candidateId: number; type: string };
-      if (payload.type !== "agent") return [];
-      return listAgentRequestsByCandidate(payload.candidateId);
-    } catch {
-      return [];
-    }
-  }),
+  listMine: agentProcedure.query(({ ctx }) => listAgentRequestsByCandidate(ctx.agent.candidateId)),
 
   // Admin: list all requests
-  listAll: staffProcedure.query(() => listAllAgentRequests()),
+  listAll: roleProcedure("hr", "manager", "ops_manager", "team_lead").query(() => listAllAgentRequests()),
 
   // Admin: update status and/or reply
   updateStatus: roleProcedure("hr", "manager", "ops_manager", "team_lead")
@@ -1564,31 +1651,27 @@ const requestsRouter = router({
   // Admin: count unread requests (for red dot badge)
   countUnread: protectedProcedure.query(({ ctx }) => countUnreadAgentRequests(ctx.user?.openId ?? undefined)),
 
+  /** Open (pending/in_progress) requests — what the Dashboard tile should show. */
+  countOpen: staffProcedure.query(async () => {
+    const { countOpenAgentRequests } = await import("./db");
+    return countOpenAgentRequests();
+  }),
+
   // Admin: mark all requests as read (called when admin opens the Requests page)
   markAllRead: staffProcedure.mutation(({ ctx }) => markAllAgentRequestsRead(ctx.user?.openId ?? undefined)),
 
   // Agent: upload an attachment file (returns S3 URL)
-  uploadAttachment: publicProcedure
+  uploadAttachment: agentProcedure
     .input(z.object({
       fileBase64: z.string(), // base64-encoded file content
       fileName: z.string().max(255),
       mimeType: z.string().max(100),
     }))
-    .mutation(async ({ input, ctx }) => {
-      // Must be authenticated as agent
-      const agentToken = getAgentCookieFromReq(ctx.req);
-      if (!agentToken) throw new TRPCError({ code: "UNAUTHORIZED", message: "Not authenticated as agent" });
-      try {
-        jwt.verify(agentToken, ENV.cookieSecret);
-      } catch {
-        throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid agent session" });
-      }
+    .mutation(async ({ input }) => {
       const { storagePut } = await import("./storage");
-      const buffer = Buffer.from(input.fileBase64, "base64");
-      if (buffer.length > 16 * 1024 * 1024) throw new TRPCError({ code: "BAD_REQUEST", message: "File too large (max 16MB)" });
-      const ext = input.fileName.split(".").pop() ?? "bin";
+      const { buf, ext } = validateUpload(input.fileBase64, input.mimeType, { maxBytes: 16 * 1024 * 1024 });
       const key = `agent-attachments/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
-      const { url } = await storagePut(key, buffer, input.mimeType);
+      const { url } = await storagePut(key, buf, input.mimeType);
       return { url };
     }),
 });
@@ -1741,15 +1824,17 @@ const referralsRouter = router({
     .input(z.object({
       id: z.number(),
       status: z.enum(["pending", "contacted", "hired", "rejected"]),
-      referrerCandidateId: z.number().optional(),
     }))
     .mutation(async ({ input }) => {
+      // Notification target comes from the referral row itself — a client-supplied
+      // candidateId could spoof notifications to any agent.
+      const referralRow = await getReferralById(input.id);
+      if (!referralRow) throw new TRPCError({ code: "NOT_FOUND", message: "Referral not found" });
       await updateReferralStatus(input.id, input.status);
-      // Notify the referring agent
-      if (input.referrerCandidateId) {
-        const statusLabel = { pending: "Pending", contacted: "Contacted", hired: "Hired! 🎉", rejected: "Not selected" }[input.status];
+      if (referralRow.referrerCandidateId) {
+        const statusLabel = { pending: "Pending", contacted: "Contacted", hired: "Hired! \u{1F389}", rejected: "Not selected" }[input.status];
         await createAgentNotification({
-          candidateId: input.referrerCandidateId,
+          candidateId: referralRow.referrerCandidateId,
           message: `Your referral status has been updated: ${statusLabel}`,
           type: "referral_update",
           relatedId: input.id,
@@ -2037,20 +2122,49 @@ const workforceRouter = router({
       await auditEntry(ctx.user, "update_hr_info", "agent", traineeCode, JSON.stringify(rest));
       return { ok: true };
     }),
-  markSettled: staffProcedure
+  markSettled: roleProcedure("finance", "hr", "manager")
     .input(z.object({ traineeCode: z.string(), settled: z.boolean() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
+      const { settleAgent } = await import("./db");
+      await settleAgent(input.traineeCode, input.settled);
+      await auditEntry(ctx.user, input.settled ? "mark_settled" : "mark_unsettled", "agent", input.traineeCode, undefined);
+      return { ok: true };
+    }),
+  /** Bring a former agent back. The ONLY sanctioned way to reactivate a leaver. */
+  rehire: roleProcedure("hr", "manager")
+    .input(z.object({ traineeCode: z.string().min(1) }))
+    .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
-      const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { workforceAgents } = await import("../drizzle/schema");
-      await db.update(workforceAgents).set({ salarySettled: input.settled, settledAt: input.settled ? Date.now() : null }).where(eq(workforceAgents.traineeCode, input.traineeCode));
-      return { ok: true };
+      const { workforceAgents, candidates: candT, agentSeparations } = await import("../drizzle/schema");
+      const { eq, and, isNull } = await import("drizzle-orm");
+      const [ag] = await db.select().from(workforceAgents).where(eq(workforceAgents.traineeCode, input.traineeCode)).limit(1);
+      if (!ag) throw new TRPCError({ code: "NOT_FOUND", message: "Agent not found" });
+      if (!["resigned", "terminated", "inactive", "frozen"].includes(ag.agentStatus ?? "")) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: ag.agentStatus === "blacklisted" ? "Blacklisted agents cannot be rehired." : `Agent is ${ag.agentStatus} — nothing to rehire.` });
+      }
+      if (ag.rehireEligible === false) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `This agent is marked NOT eligible for rehire${ag.rehireNote ? ` — ${ag.rehireNote}` : ""}. Clear the flag on their HR profile first.` });
+      }
+      await db.update(workforceAgents)
+        .set({ agentStatus: "active", isActive: true, updatedAt: new Date() })
+        .where(eq(workforceAgents.traineeCode, input.traineeCode));
+      // Clear any still-pending scheduled separation so it can't fire later.
+      await db.delete(agentSeparations)
+        .where(and(eq(agentSeparations.agentCode, input.traineeCode), isNull(agentSeparations.appliedAt)));
+      if (ag.candidateId) {
+        try { await db.update(candT).set({ status: "hired", updatedAt: new Date() }).where(eq(candT.id, ag.candidateId)); } catch { /* label only */ }
+      }
+      await auditEntry(ctx.user, "rehire_agent", "agent", input.traineeCode, JSON.stringify({ previousStatus: ag.agentStatus }));
+      // Credentials were deleted at separation — the UI reminds HR to regenerate.
+      const { getAgentCredentialByCandidateId } = await import("./db");
+      const hasCreds = ag.candidateId ? !!(await getAgentCredentialByCandidateId(ag.candidateId)) : false;
+      return { ok: true, hasCredentials: hasCreds };
     }),
   list: staffProcedure
     .input(z.object({ campaignId: z.number().optional(), teamLeader: z.string().optional(), includeFormer: z.boolean().optional() }))
-    .query(({ input }) => listWorkforceAgents(input.campaignId, input.teamLeader, input.includeFormer)),
+    .query(async ({ ctx, input }) => redactAgentRows(await listWorkforceAgents(input.campaignId, input.teamLeader, input.includeFormer), ctx.user?.role)),
   /** Active agents missing required personal info — for Slack pings. */
   incompleteProfiles: staffProcedure
     .query(async () => {
@@ -2126,25 +2240,30 @@ const workforceRouter = router({
           fullName: waTable.fullName,
           agentStatus: waTable.agentStatus,
           isActive: waTable.isActive,
+          alias: waTable.alias,
+          campaignId: waTable.campaignId,
         }).from(waTable).where(eqGuard(waTable.traineeCode, input.traineeCode)).limit(1);
         if (existing.length > 0) {
           const ex = existing[0];
-          const isInactive = ex.agentStatus === "resigned" || ex.agentStatus === "terminated" || ex.agentStatus === "inactive";
-          if (!isInactive) {
-            // Active agent — hard block
+          // Only a plain INACTIVE row may be silently restored here. A leaver
+          // (resigned/terminated/blacklisted) goes through workforce.rehire,
+          // which checks rehire eligibility — this path used to reactivate them
+          // unchecked and wipe alias/campaign.
+          if (ex.agentStatus !== "inactive") {
             throw new TRPCError({
               code: "CONFLICT",
-              message: `"${input.traineeCode}" is already assigned to an active agent (${ex.fullName}). Free the T-code first.`,
+              message: ex.agentStatus === "active"
+                ? `"${input.traineeCode}" is already assigned to an active agent (${ex.fullName}). Free the T-code first.`
+                : `"${input.traineeCode}" belongs to a ${ex.agentStatus} agent (${ex.fullName}). Use Rehire on the Former Agents page instead.`,
             });
           }
-          // Inactive/terminated/resigned — allow restore: update existing record instead of inserting
           const { eq: eqUpd } = await import("drizzle-orm");
           await dbGuard.update(waTable).set({
             fullName: input.fullName ?? ex.fullName,
-            alias: (input as Record<string,unknown>).alias as string ?? null,
+            alias: input.alias ?? ex.alias,
             agentStatus: "active",
             isActive: true,
-            campaignId: (input as Record<string,unknown>).campaignId as number ?? null,
+            campaignId: input.campaignId ?? ex.campaignId,
           }).where(eqUpd(waTable.traineeCode, input.traineeCode));
           // Skip the createWorkforceAgent call below — record already updated
           return { restored: true, traineeCode: input.traineeCode };
@@ -2266,7 +2385,18 @@ const workforceRouter = router({
       if (!allowedRoles.includes(ctx.user?.role ?? "")) {
         throw new TRPCError({ code: "FORBIDDEN", message: "Only HR and managers can edit agent profiles." });
       }
+      // Terminal statuses are NEVER plain profile writes — they need the separation
+      // cascade (settlement queue, exit row, session revoke, CRDTS archive).
+      if (input.agentStatus && ["resigned", "terminated", "blacklisted"].includes(input.agentStatus)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Use the Separation flow (resign/terminate) to set this status — a plain edit skips settlement and exit steps." });
+      }
       const { traineeCode, ...rest } = input;
+      // Clearing a text field in the dialog sends "" — store NULL, not an empty
+      // string (an "" crdts or team leader broke lookups and groupings).
+      const CLEARABLE = ["alias", "phone", "teamLeader", "dialerCredentials", "crdts", "nationalId", "nationalIdExpiry", "contractEndDate", "probationEndDate", "rehireNote", "dateOfBirth", "nationality", "jobTitle", "city", "address", "emergencyContactName", "emergencyContactPhone", "emergencyContactRelation"] as const;
+      for (const k of CLEARABLE) {
+        if ((rest as Record<string, unknown>)[k] === "") (rest as Record<string, unknown>)[k] = null;
+      }
       // Shift hours: store one canonical form ("9:00 AM - 5:00 PM") so Monthly Hours can always read it.
       if (rest.shiftHours !== undefined && rest.shiftHours.trim() !== "") {
         const { parseShiftHours, normalizeShiftHours } = await import("../shared/shiftHours");
@@ -2321,26 +2451,13 @@ const workforceRouter = router({
       await auditEntry(ctx.user, "update_agent_profile", "agent", traineeCode, JSON.stringify(rest));
       return updateWorkforceAgent(traineeCode, rest);
     }),
-  getMyProfile: publicProcedure.query(({ ctx }) => {
-    const token = getAgentCookieFromReq(ctx.req);
-    if (!token) return null;
-    try {
-      const { traineeCode } = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
-      return getWorkforceAgentByCode(traineeCode);
-    } catch { return null; }
-  }),
+  getMyProfile: agentProcedure.query(({ ctx }) => getWorkforceAgentByCode(ctx.agent.traineeCode)),
   // Agent: upload my profile picture (stores the file + saves the URL on my record)
-  setMyAvatar: publicProcedure
+  setMyAvatar: agentProcedure
     .input(z.object({ fileBase64: z.string(), fileName: z.string().max(255), mimeType: z.string().max(100) }))
     .mutation(async ({ input, ctx }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) throw new TRPCError({ code: "UNAUTHORIZED", message: "Not authenticated as agent" });
-      let traineeCode: string;
-      try { ({ traineeCode } = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string }); }
-      catch { throw new TRPCError({ code: "UNAUTHORIZED", message: "Invalid agent session" }); }
-      const buffer = Buffer.from(input.fileBase64, "base64");
-      if (buffer.length > 5 * 1024 * 1024) throw new TRPCError({ code: "BAD_REQUEST", message: "Image too large (max 5MB)" });
-      const ext = (input.fileName.split(".").pop() ?? "jpg").toLowerCase();
+      const traineeCode = ctx.agent.traineeCode;
+      const { buf: buffer, ext } = validateUpload(input.fileBase64, input.mimeType, { maxBytes: 5 * 1024 * 1024, imagesOnly: true });
       const key = `agent-avatars/${traineeCode}-${Date.now()}.${ext}`;
       const { storagePut } = await import("./storage");
       const { url } = await storagePut(key, buffer, input.mimeType);
@@ -2372,11 +2489,8 @@ const workforceRouter = router({
 
   getCampaignAgents: agentOrStaffProcedure
     .input(z.object({ campaignId: z.number() }))
-    .query(async ({ input, ctx }) => {
-      // Require either admin session or valid agent cookie
-      const agentToken = getAgentCookieFromReq(ctx.req);
-      const hasAgentSession = agentToken && (() => { try { jwt.verify(agentToken, ENV.cookieSecret); return true; } catch { return false; } })();
-      if (!ctx.user && !hasAgentSession) throw new TRPCError({ code: "UNAUTHORIZED" });
+    .query(async ({ input }) => {
+      // agentOrStaffProcedure already guarantees a staff login or a verified agent session.
       // Return limited fields only — no national ID, DOB, salary, emergency contacts
       const agents = await listWorkforceAgents(input.campaignId) as Array<Record<string,unknown>>;
       return agents.map(a => ({
@@ -2397,7 +2511,7 @@ const workforceRouter = router({
   getEligibleCandidates: staffProcedure.query(() => getEligibleCandidatesForOps()),
   getAgentFullProfile: staffProcedure
     .input(z.object({ traineeCode: z.string() }))
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
       const lookup = decodeURIComponent(input.traineeCode).trim();
       // Try exact traineeCode match first
       let agent = await getWorkforceAgentByCode(lookup);
@@ -2448,16 +2562,22 @@ const workforceRouter = router({
           }
         } catch { /* non-fatal */ }
       }
+      // Identity documents, bank details and pay only leave for MONEY_ROLES.
+      if (!canSeeMoney(ctx.user?.role)) {
+        return {
+          agent: redactAgentRow(agent as unknown as Record<string, unknown>, ctx.user?.role) as typeof agent,
+          documents: [] as typeof documents, paymentMethods: [] as typeof paymentMethods, comments,
+          candidate: (candidate ? redactAgentRow(candidate as unknown as Record<string, unknown>, ctx.user?.role) : null) as typeof candidate | null,
+          payroll: ([] as typeof payroll), adjustments: [] as typeof adjustments,
+        };
+      }
       return { agent, documents, paymentMethods, comments, candidate: candidate ?? null, payroll: payroll ?? [], adjustments };
     }),
 
-  getMyOperationPlan: publicProcedure
+  getMyOperationPlan: agentProcedure
     .input(z.object({ weekOffset: z.number().int().optional() }))
     .query(async ({ ctx, input }) => {
-      const _opTok = getAgentCookieFromReq(ctx.req);
-      if (!_opTok) return null;
-      let _opCode: string;
-      try { _opCode = (jwt.verify(_opTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; } catch { return null; }
+      const _opCode = ctx.agent.traineeCode;
       const agent = await getWorkforceAgentByCode(_opCode);
       if (!agent || !agent.campaignId) return null;
       // Only show op plan for active agents — resigned/terminated don't appear here
@@ -2488,13 +2608,10 @@ const workforceRouter = router({
         shiftHours: agent.shiftHours,
       };
     }),
-  getFullCampaignPlan: publicProcedure
+  getFullCampaignPlan: agentProcedure
     .input(z.object({ weekOffset: z.number().int().optional() }))
     .query(async ({ ctx, input }) => {
-      const _tok = getAgentCookieFromReq(ctx.req);
-      if (!_tok) return null;
-      let _code: string;
-      try { _code = (jwt.verify(_tok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; } catch { return null; }
+      const _code = ctx.agent.traineeCode;
       const me = await getWorkforceAgentByCode(_code);
       if (!me || !me.campaignId) return null;
       const campaignId = me.campaignId as number;
@@ -2533,28 +2650,35 @@ const workforceRouter = router({
       };
     }),
   bulkGenerateCredentials: roleProcedure("manager", "hr")
-    .input(z.object({ campaignId: z.number().optional() }))
+    .input(z.object({ campaignId: z.number().optional(), force: z.boolean().optional() }))
     .mutation(async ({ input, ctx }) => {
       const agents = await listWorkforceAgents(input.campaignId);
       // One UNIQUE random password per agent (never a shared default), must be changed on first login.
+      // Agents who ALREADY have credentials are skipped — regenerating silently
+      // locked out everyone mid-shift. force:true (behind a confirm) resets them too.
+      const { getAgentCredentialByCandidateId } = await import("./db");
       const results: Array<{ fullName: string; traineeCode: string; password: string }> = [];
+      let skippedExisting = 0;
       for (const agent of agents) {
         if (!agent.traineeCode || !agent.candidateId) continue;
+        const existing = await getAgentCredentialByCandidateId(agent.candidateId);
+        if (existing && !input.force) { skippedExisting++; continue; }
         const pw = generatePassword(agent.traineeCode);
         const passwordHash = await bcrypt.hash(pw, 10);
         await upsertAgentCredential(agent.candidateId, agent.traineeCode, passwordHash, true);
+        if (existing) { try { await revokeAgentSessions(agent.traineeCode); } catch { /* non-fatal */ } }
         results.push({ fullName: agent.fullName, traineeCode: agent.traineeCode, password: pw });
       }
-      await auditEntry(ctx.user, "bulk_generate_credentials", "campaign", String(input.campaignId ?? "all"), JSON.stringify({ count: results.length }));
-      return { generated: results.length, credentials: results };
+      await auditEntry(ctx.user, "bulk_generate_credentials", "campaign", String(input.campaignId ?? "all"), JSON.stringify({ count: results.length, skippedExisting, force: !!input.force }));
+      return { generated: results.length, skippedExisting, credentials: results };
     }),
   // Admin: force-delete an agent and their candidate record (for test/cleanup)
   forceDelete: adminProcedure
     .input(z.object({ traineeCode: z.string() }))
     .mutation(async ({ input, ctx }) => {
-      { const { releaseTraineeCode } = await import("./db"); await releaseTraineeCode(input.traineeCode); }
-      await auditEntry(ctx.user, "force_delete_agent", "agent", input.traineeCode);
-      const { getDb } = await import("./db");
+      // Order matters: VERIFY first — the old version released the T-code and
+      // wrote the audit entry before checking the agent even existed.
+      const { getDb, agentHasPayrollHistory, releaseTraineeCode } = await import("./db");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
@@ -2562,7 +2686,14 @@ const workforceRouter = router({
       const agent = await db.select({ candidateId: workforceAgents.candidateId })
         .from(workforceAgents).where(eq(workforceAgents.traineeCode, input.traineeCode)).limit(1);
       if (!agent[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Agent not found" });
+      // Money history must survive: an agent with payroll/commission records is
+      // archived through the separation flow, never erased.
+      if (await agentHasPayrollHistory(input.traineeCode)) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "This agent has payroll/commission history and cannot be force-deleted. Use the separation flow (resign/terminate + settle) instead." });
+      }
       await deleteCandidate(agent[0].candidateId);
+      await releaseTraineeCode(input.traineeCode);
+      await auditEntry(ctx.user, "force_delete_agent", "agent", input.traineeCode);
       return { success: true };
     }),
 
@@ -2601,14 +2732,28 @@ const agentCommentsRouter = router({
   listByCode: staffProcedure
     .input(z.object({ traineeCode: z.string() }))
     .query(({ input }) => getCommentsByCode(input.traineeCode)),
-  listMine: publicProcedure.query(({ ctx }) => {
-    const _cmtTok = getAgentCookieFromReq(ctx.req);
-    if (!_cmtTok) return [];
-    try {
-      const { traineeCode: _cmtCode } = jwt.verify(_cmtTok, ENV.cookieSecret) as { traineeCode: string };
-      return getCommentsByCode(_cmtCode);
-    } catch { return []; }
-  }),
+  listMine: agentProcedure.query(({ ctx }) => getCommentsByCode(ctx.agent.traineeCode)),
+  /** Agent confirms they have READ a warning. Own warnings only, stamped once. */
+  acknowledge: agentProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const { getDb } = await import("./db");
+      const db = await getDb();
+      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+      const { agentComments } = await import("../drizzle/schema");
+      const { eq, and, isNull } = await import("drizzle-orm");
+      const r = await db.update(agentComments)
+        .set({ acknowledgedAt: Date.now() })
+        .where(and(
+          eq(agentComments.id, input.id),
+          eq(agentComments.traineeCode, ctx.agent.traineeCode),
+          eq(agentComments.tag, "warning"),
+          isNull(agentComments.acknowledgedAt),
+        ));
+      const affected = (r as unknown as [{ affectedRows?: number }])[0]?.affectedRows ?? 0;
+      if (!affected) throw new TRPCError({ code: "BAD_REQUEST", message: "Warning not found or already acknowledged." });
+      return { ok: true };
+    }),
   add: staffProcedure
     .input(z.object({
       traineeCode: z.string(),
@@ -2628,19 +2773,12 @@ const agentCommentsRouter = router({
 
 // ─── Payment Methods Router ───────────────────────────────────────────────────
 const paymentMethodsRouter = router({
-  listMine: publicProcedure.query(({ ctx }) => {
-    const _pmTok = getAgentCookieFromReq(ctx.req);
-    if (!_pmTok) return [];
-    try {
-      const { traineeCode: _pmCode } = jwt.verify(_pmTok, ENV.cookieSecret) as { traineeCode: string };
-      return getPaymentMethodsByCode(_pmCode);
-    } catch { return []; }
-  }),
+  listMine: agentProcedure.query(({ ctx }) => getPaymentMethodsByCode(ctx.agent.traineeCode)),
 
-  listAll: staffProcedure.query(() => listAllPaymentMethods()),
-  listGrouped: staffProcedure.query(() => listPaymentMethodsGrouped()),
+  listAll: roleProcedure("hr", "finance", "manager").query(() => listAllPaymentMethods()),
+  listGrouped: roleProcedure("hr", "finance", "manager").query(() => listPaymentMethodsGrouped()),
 
-  upsert: publicProcedure
+  upsert: agentProcedure
     .input(z.object({
       id: z.number().optional(),
       type: z.enum(["wallet", "bank"]),
@@ -2653,31 +2791,21 @@ const paymentMethodsRouter = router({
       isPreferred: z.boolean().optional(),
     }))
     .mutation(({ ctx, input }) => {
-      const _pmUTok = getAgentCookieFromReq(ctx.req);
-      if (!_pmUTok) throw new TRPCError({ code: "UNAUTHORIZED" });
-      let _pmUCode: string;
-      try { _pmUCode = (jwt.verify(_pmUTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      const _pmUCode = ctx.agent.traineeCode;
       return upsertPaymentMethod({ ...input, traineeCode: _pmUCode });
     }),
 
-  setPreferred: publicProcedure
+  setPreferred: agentProcedure
     .input(z.object({ id: z.number() }))
     .mutation(({ ctx, input }) => {
-      const _pmPTok = getAgentCookieFromReq(ctx.req);
-      if (!_pmPTok) throw new TRPCError({ code: "UNAUTHORIZED" });
-      let _pmPCode: string;
-      try { _pmPCode = (jwt.verify(_pmPTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      const _pmPCode = ctx.agent.traineeCode;
       return setPaymentMethodPreferred(input.id, _pmPCode);
     }),
 
-  delete: publicProcedure
+  delete: agentProcedure
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      const _pmDTok = getAgentCookieFromReq(ctx.req);
-      if (!_pmDTok) throw new TRPCError({ code: "UNAUTHORIZED" });
-      let _pmDCode: string;
-      try { _pmDCode = (jwt.verify(_pmDTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; }
-      catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      const _pmDCode = ctx.agent.traineeCode;
       // Verify ownership — only delete if this payment method belongs to the caller
       const { getDb } = await import("./db");
       const { agentPaymentMethods } = await import("../drizzle/schema");
@@ -2693,7 +2821,7 @@ const paymentMethodsRouter = router({
   addComment: staffProcedure
     .input(z.object({ id: z.number(), comment: z.string() }))
     .mutation(({ input }) => addPaymentMethodComment(input.id, input.comment)),
-  adminUpsert: staffProcedure
+  adminUpsert: roleProcedure("hr", "finance", "manager")
     .input(z.object({
       id: z.number().optional(),
       traineeCode: z.string(),
@@ -2707,7 +2835,7 @@ const paymentMethodsRouter = router({
       isPreferred: z.boolean().optional(),
     }))
     .mutation(({ input }) => upsertPaymentMethod(input)),
-  adminDelete: staffProcedure
+  adminDelete: roleProcedure("hr", "finance", "manager")
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       // Safety check: warn if this payment method is referenced in payroll records
@@ -2726,23 +2854,16 @@ const paymentMethodsRouter = router({
       }
       return deletePaymentMethod(input.id);
     }),
-  adminSetPreferred: staffProcedure
+  adminSetPreferred: roleProcedure("hr", "finance", "manager")
     .input(z.object({ id: z.number(), traineeCode: z.string() }))
     .mutation(({ input }) => setPaymentMethodPreferred(input.id, input.traineeCode)),
 });
 
 // ─── Documents Router ─────────────────────────────────────────────────────────
 const documentsRouter = router({
-  listMine: publicProcedure.query(({ ctx }) => {
-    const _docTok = getAgentCookieFromReq(ctx.req);
-    if (!_docTok) return [];
-    try {
-      const { traineeCode: _docCode } = jwt.verify(_docTok, ENV.cookieSecret) as { traineeCode: string };
-      return getDocumentsByCode(_docCode);
-    } catch { return []; }
-  }),
+  listMine: agentProcedure.query(({ ctx }) => getDocumentsByCode(ctx.agent.traineeCode)),
 
-  listAll: staffProcedure.query(() => listAllDocuments()),
+  listAll: roleProcedure("hr", "manager").query(() => listAllDocuments()),
 
   /** Get/set agent portal lock state — admin/owner only */
   getPortalLock: staffProcedure.query(async () => {
@@ -2771,6 +2892,11 @@ const documentsRouter = router({
         await db.insert(appSettings).values({ key: "portal_lock_message", value: input.message, updatedAt: now, updatedBy: ctx.user?.name ?? ctx.user?.email ?? "admin" })
           .onDuplicateKeyUpdate({ set: { value: input.message, updatedAt: now } });
       }
+      // Reset the 30s cache so the lock takes effect on the NEXT poll, not
+      // up to half a minute later (and unlock doesn't keep kicking agents).
+      _portalLocked = input.locked;
+      if (input.message !== undefined) _lockMessage = input.message;
+      _lockLastCheck = Date.now();
       await auditEntry(ctx.user, input.locked ? "portal_locked" : "portal_unlocked", "system", "portal", JSON.stringify({ message: input.message, by: ctx.user?.name }));
       return { ok: true };
     }),
@@ -2803,7 +2929,7 @@ const documentsRouter = router({
     .input(z.object({ traineeCode: z.string() }))
     .query(({ input }) => getDocumentsByCode(input.traineeCode)),
 
-  upload: publicProcedure
+  upload: agentProcedure
     .input(z.object({
       id: z.number().optional(),
       docType: z.string().min(1),
@@ -2811,14 +2937,11 @@ const documentsRouter = router({
       fileName: z.string().optional(),
     }))
     .mutation(({ ctx, input }) => {
-      const _docUTok = getAgentCookieFromReq(ctx.req);
-      if (!_docUTok) throw new TRPCError({ code: "UNAUTHORIZED" });
-      let _docUCode: string;
-      try { _docUCode = (jwt.verify(_docUTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      const _docUCode = ctx.agent.traineeCode;
       return upsertAgentDocument({ ...input, traineeCode: _docUCode });
     }),
 
-  uploadFile: publicProcedure
+  uploadFile: agentProcedure
     .input(z.object({
       id: z.number().optional(),
       docType: z.string().min(1),
@@ -2827,14 +2950,11 @@ const documentsRouter = router({
       mimeType: z.string().default("application/octet-stream"),
     }))
     .mutation(async ({ ctx, input }) => {
-      const _docFTok = getAgentCookieFromReq(ctx.req);
-      if (!_docFTok) throw new TRPCError({ code: "UNAUTHORIZED" });
-      let _docFCode: string;
-      try { _docFCode = (jwt.verify(_docFTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      const _docFCode = ctx.agent.traineeCode;
       const { storagePut } = await import("./storage");
-      const buf = Buffer.from(input.fileBase64, "base64");
-      const ext = input.fileName.split(".").pop() ?? "bin";
-      const key = `agent-docs/${_docFCode}/${input.docType}-${Date.now()}.${ext}`;
+      const { buf, ext } = validateUpload(input.fileBase64, input.mimeType, { maxBytes: 10 * 1024 * 1024 });
+      const safeDocType = input.docType.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 40);
+      const key = `agent-docs/${_docFCode}/${safeDocType}-${Date.now()}.${ext}`;
       const { url } = await storagePut(key, buf, input.mimeType);
       await upsertAgentDocument({ id: input.id, traineeCode: _docFCode, docType: input.docType, fileUrl: url, fileName: input.fileName });
       return { url };
@@ -2859,9 +2979,10 @@ const documentsRouter = router({
     }))
     .mutation(async ({ ctx, input }) => {
       const { storagePut } = await import("./storage");
-      const buf = Buffer.from(input.fileBase64, "base64");
-      const ext = input.fileName.split(".").pop() ?? "bin";
-      const key = `agent-docs/${input.traineeCode}/${input.docType}-${Date.now()}.${ext}`;
+      const { buf, ext } = validateUpload(input.fileBase64, input.mimeType, { maxBytes: 10 * 1024 * 1024 });
+      const safeCode = input.traineeCode.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 64);
+      const safeDocType = input.docType.replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 40);
+      const key = `agent-docs/${safeCode}/${safeDocType}-${Date.now()}.${ext}`;
       const { url } = await storagePut(key, buf, input.mimeType);
       await upsertAgentDocument({ traineeCode: input.traineeCode, docType: input.docType, fileUrl: url, fileName: input.fileName });
       await auditEntry(ctx.user, "admin_upload_document", "agent", input.traineeCode, JSON.stringify({ docType: input.docType, fileName: input.fileName }));
@@ -2871,7 +2992,7 @@ const documentsRouter = router({
 
 // ─── Schedule Change Router ───────────────────────────────────────────────────
 const scheduleChangeRouter = router({
-  request: publicProcedure
+  request: agentProcedure
     .input(z.object({
       targetCode: z.string().min(1),
       requesterNewOff1: z.number().int().min(0).max(6).optional(),
@@ -2881,10 +3002,7 @@ const scheduleChangeRouter = router({
       message: z.string().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const _scTok = getAgentCookieFromReq(ctx.req);
-      if (!_scTok) throw new TRPCError({ code: "UNAUTHORIZED" });
-      let _scCode: string;
-      try { _scCode = (jwt.verify(_scTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      const _scCode = ctx.agent.traineeCode;
       await createScheduleChangeRequest({ ...input, requesterCode: _scCode });
       // Notify target agent
       const target = await getWorkforceAgentByCode(input.targetCode);
@@ -2899,22 +3017,11 @@ const scheduleChangeRouter = router({
       return { success: true };
     }),
 
-  listMine: publicProcedure.query(({ ctx }) => {
-    const _scLTok = getAgentCookieFromReq(ctx.req);
-    if (!_scLTok) return [];
-    try {
-      const { traineeCode: _scLCode } = jwt.verify(_scLTok, ENV.cookieSecret) as { traineeCode: string };
-      return listScheduleChangeRequestsByCode(_scLCode);
-    } catch { return []; }
-  }),
+  listMine: agentProcedure.query(({ ctx }) => listScheduleChangeRequestsByCode(ctx.agent.traineeCode)),
 
   // Active colleagues an agent can pick to swap with (excludes self + resigned).
-  listColleagues: publicProcedure.query(async ({ ctx }) => {
-    const _scCTok = getAgentCookieFromReq(ctx.req);
-    if (!_scCTok) return [];
-    let _me: string;
-    try { _me = (jwt.verify(_scCTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; }
-    catch { return []; }
+  listColleagues: agentProcedure.query(async ({ ctx }) => {
+    const _me = ctx.agent.traineeCode;
     const all = await listWorkforceAgents();
     // Same client only (Quantum agents swap with Quantum agents), never demo accounts.
     const { getAgentTimeTrackingAccess } = await import("./db");
@@ -2935,19 +3042,19 @@ const scheduleChangeRouter = router({
 
   listAll: staffProcedure.query(() => listAllScheduleChangeRequests()),
 
-  peerApprove: publicProcedure
+  peerApprove: agentProcedure
     .input(z.object({ id: z.number(), approve: z.boolean() }))
     .mutation(async ({ ctx, input }) => {
-      const _scRTok = getAgentCookieFromReq(ctx.req);
-      if (!_scRTok) throw new TRPCError({ code: "UNAUTHORIZED" });
-      let _scCallerCode: string;
-      try { _scCallerCode = (jwt.verify(_scRTok, ENV.cookieSecret) as { traineeCode: string }).traineeCode; }
-      catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      const _scCallerCode = ctx.agent.traineeCode;
       const reqs = await listAllScheduleChangeRequests();
       const req = reqs.find(r => r.id === input.id);
+      if (!req) throw new TRPCError({ code: "NOT_FOUND", message: "Swap request not found" });
       // Verify caller is the target of this swap request
-      if (req && _scCallerCode !== req.targetCode) {
+      if (_scCallerCode !== req.targetCode) {
         throw new TRPCError({ code: "FORBIDDEN", message: "You can only approve schedule swaps where you are the target agent." });
+      }
+      if (req.status !== "pending_peer") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `This swap is already ${req.status.replace(/_/g, " ")}.` });
       }
       if (input.approve) {
         await updateScheduleChangeRequest(input.id, {
@@ -3000,6 +3107,11 @@ const scheduleChangeRouter = router({
       const requests = await listAllScheduleChangeRequests();
       const req = requests.find(r => r.id === input.id);
       if (!req) throw new TRPCError({ code: "NOT_FOUND" });
+      // Double-approval would re-capture the ALREADY-SWAPPED days as "original"
+      // and break the auto-revert — only a peer-approved swap can be decided.
+      if (req.status !== "pending_manager") {
+        throw new TRPCError({ code: "BAD_REQUEST", message: `This swap is already ${req.status.replace(/_/g, " ")}.` });
+      }
       if (input.approve) {
         // Fetch current off days BEFORE swapping — needed for auto-revert after swap week
         const requesterAgent = await getWorkforceAgentByCode(req.requesterCode);
@@ -3008,21 +3120,37 @@ const scheduleChangeRouter = router({
         const { scheduleChangeRequests: _scTable } = await import("../drizzle/schema");
         const { eq: _scEq } = await import("drizzle-orm");
         const _db = await _scDb();
-        // Store original off days for revert
+        // The swap week is pinned AT APPROVAL: without a swapWeekOf the revert job
+        // never fires (permanent swap), and one already in the past reverts instantly.
+        const mondayOfCurrentWeek = (() => {
+          const d = new Date();
+          const dow = d.getDay();
+          d.setDate(d.getDate() + (dow === 0 ? -6 : 1 - dow));
+          return d.toISOString().slice(0, 10);
+        })();
+        const weekStale = !req.swapWeekOf || (() => {
+          const end = new Date(req.swapWeekOf);
+          end.setDate(end.getDate() + 7);
+          return end.toISOString().slice(0, 10) <= new Date().toISOString().slice(0, 10);
+        })();
+        // Store original off days for revert (+ repaired swap week when needed)
         if (_db) {
           await _db.update(_scTable).set({
             requesterOrigOff1: requesterAgent?.offDay1 ?? null,
             requesterOrigOff2: requesterAgent?.offDay2 ?? null,
             targetOrigOff1: targetAgent?.offDay1 ?? null,
             targetOrigOff2: targetAgent?.offDay2 ?? null,
+            ...(weekStale ? { swapWeekOf: mondayOfCurrentWeek } : {}),
           }).where(_scEq(_scTable.id, input.id));
         }
-        // Apply the ONE-TIME swap (temporary — will be reverted by hourly job after swap week)
+        // Apply the ONE-TIME swap (temporary — will be reverted by hourly job after swap week).
+        // offDay2 is written EXPLICITLY (null = single off day): `?? undefined` used to
+        // keep the old second day, giving the agent one day too many or too few.
         if (req.requesterNewOff1 !== null && req.requesterNewOff1 !== undefined) {
-          await updateWorkforceAgent(req.requesterCode, { offDay1: req.requesterNewOff1, offDay2: req.requesterNewOff2 ?? undefined });
+          await updateWorkforceAgent(req.requesterCode, { offDay1: req.requesterNewOff1, offDay2: req.requesterNewOff2 ?? null });
         }
         if (req.targetNewOff1 !== null && req.targetNewOff1 !== undefined) {
-          await updateWorkforceAgent(req.targetCode, { offDay1: req.targetNewOff1, offDay2: req.targetNewOff2 ?? undefined });
+          await updateWorkforceAgent(req.targetCode, { offDay1: req.targetNewOff1, offDay2: req.targetNewOff2 ?? null });
         }
         await updateScheduleChangeRequest(input.id, {
           status: "approved",
@@ -3076,17 +3204,10 @@ const breakScheduleRouter = router({
     .input(z.object({ agentCode: z.string(), date: z.string() }))
     .mutation(({ input }) => deleteBreakSchedule(input.agentCode, input.date)),
   // Agent: get own breaks for current week
-  getMyBreaks: publicProcedure
+  getMyBreaks: agentProcedure
     .input(z.object({ startDate: z.string(), endDate: z.string() }))
     .query(async ({ input, ctx }) => {
-      const agentToken = getAgentCookieFromReq(ctx.req);
-      if (!agentToken) throw new TRPCError({ code: "UNAUTHORIZED" });
-      let traineeCode: string | null = null;
-      try {
-        const p = jwt.verify(agentToken, ENV.cookieSecret) as { traineeCode?: string; type: string };
-        if (p.type === "agent" && p.traineeCode) traineeCode = p.traineeCode;
-      } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
-      if (!traineeCode) throw new TRPCError({ code: "UNAUTHORIZED" });
+      const traineeCode = ctx.agent.traineeCode;
       return getBreakSchedulesByAgent(traineeCode, input.startDate, input.endDate);
     }),
 });
@@ -3194,10 +3315,10 @@ const separationRouter = router({
       const db = await getDb();
       if (!db) return [];
       const { workforceAgents, agentRequests, payrollRecords, cycleStats, agentViolations, coachingSessions, clientLogouts } = await import("../drizzle/schema");
-      // All non-active agents — use ne() instead of inArray to catch any status value
-      const { ne: neActive, or: orStatus, isNull: isNullStatus } = await import("drizzle-orm");
+      // Former = TERMINAL statuses only. Frozen/inactive/on-notice agents are still
+      // on the roster — listing them here invited "Rehire" on people who never left.
       const agents = await db.select().from(workforceAgents).where(
-        orStatus(neActive(workforceAgents.agentStatus, "active"), isNullStatus(workforceAgents.agentStatus))
+        inArray(workforceAgents.agentStatus, ["resigned", "terminated", "blacklisted"])
       );
       if (agents.length === 0) return [];
       const codes = agents.map(a => a.traineeCode);
@@ -3261,7 +3382,7 @@ const separationRouter = router({
 });
 // ─── Payroll v2 Router ───────────────────────────────────────────────────────
 const payrollV2Router = router({
-  uploadPayrollV2: staffProcedure
+  uploadPayrollV2: roleProcedure("finance", "hr", "manager")
     .input(z.object({
       month: z.string(), // YYYY-MM
       rows: z.array(z.object({
@@ -3339,14 +3460,17 @@ const payrollV2Router = router({
         }
       }
 
+      if ((batch as { skippedPaid?: number }).skippedPaid) {
+        warnings.push({ crdts: "—", type: "skipped_paid", message: `${(batch as { skippedPaid?: number }).skippedPaid} row(s) skipped: already marked PAID. Unmark them first if a correction is intended.` });
+      }
       return { success: true, count: input.rows.length, commissionCycle: "", commissionAttached: 0, warnings: [...dupWarnings, ...warnings] };
     }),
 
-  getStatusPage: staffProcedure
+  getStatusPage: roleProcedure("finance", "hr", "manager")
     .input(z.object({ month: z.string() }))
     .query(({ input }) => getPayrollStatusPage(input.month)),
 
-  setStatus: roleProcedure("finance", "hr", "manager", "team_lead")
+  setStatus: roleProcedure("finance", "hr", "manager")
     .input(z.object({ id: z.number(), status: z.enum(["pending", "paid"]) }))
     .mutation(async ({ input, ctx }) => {
       const { getDb, getPayrollRecordWithAdjustments } = await import("./db");
@@ -3368,7 +3492,7 @@ const payrollV2Router = router({
       return { ok: true };
     }),
 
-  updateRecord: staffProcedure
+  updateRecord: roleProcedure("finance", "hr", "manager")
     .input(z.object({
       id: z.number(),
       lastKnownPaidAt: z.number().nullable().optional(),
@@ -3438,35 +3562,28 @@ const payrollV2Router = router({
       // Stamp the edit timestamp — used as optimistic lock token on next edit
       (updates as Record<string, unknown>).recordUpdatedAt = Date.now();
       await db.update(payrollRecords).set(updates).where(eq(payrollRecords.id, input.id));
+      // Amounts may have changed on a record already marked paid — re-derive status.
+      const { recomputePaymentStatus } = await import("./db");
+      await recomputePaymentStatus(input.id);
       await auditEntry(ctx.user, "edit_payroll_record", "payroll", String(input.id), JSON.stringify({ changes: updates }));
       return { success: true };
     }),
 
   // Agent portal: derive CRDTS from cookie automatically
-  getMyMonthsFromCookie: publicProcedure.query(async ({ ctx }) => {
-    const _pr1Tok = getAgentCookieFromReq(ctx.req);
-    if (!_pr1Tok) return [];
-    try {
-      const { traineeCode: _pr1Code } = jwt.verify(_pr1Tok, ENV.cookieSecret) as { traineeCode: string };
-      const agent = await getWorkforceAgentByCode(_pr1Code);
-      if (!agent?.crdts) return [];
-      return getMyPayrollMonthsByCrdts(agent.crdts);
-    } catch { return []; }
+  getMyMonthsFromCookie: agentProcedure.query(async ({ ctx }) => {
+    const agent = await getWorkforceAgentByCode(ctx.agent.traineeCode);
+    if (!agent?.crdts) return [];
+    return getMyPayrollMonthsByCrdts(agent.crdts);
   }),
-  getMyRecordFromCookie: publicProcedure
+  getMyRecordFromCookie: agentProcedure
     .input(z.object({ month: z.string() }))
     .query(async ({ ctx, input }) => {
-      const _pr2Tok = getAgentCookieFromReq(ctx.req);
-      if (!_pr2Tok) return null;
-      try {
-        const { traineeCode: _pr2Code } = jwt.verify(_pr2Tok, ENV.cookieSecret) as { traineeCode: string };
-        const agent = await getWorkforceAgentByCode(_pr2Code);
-        if (!agent?.crdts) return null;
-        return getMyPayrollRecordByCrdts(agent.crdts, input.month);
-      } catch { return null; }
+      const agent = await getWorkforceAgentByCode(ctx.agent.traineeCode);
+      if (!agent?.crdts) return null;
+      return getMyPayrollRecordByCrdts(agent.crdts, input.month);
     }),
   // Admin: get all payroll records for a specific agent by CRDTS
-  getAgentPayrollHistory: staffProcedure
+  getAgentPayrollHistory: roleProcedure("finance", "hr", "manager")
     .input(z.object({ crdts: z.string() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -3481,7 +3598,7 @@ const payrollV2Router = router({
     }),
 
   /** Bulk mark a selected list of payroll IDs as paid. Records who clicked it. */
-  bulkMarkPaid: staffProcedure
+  bulkMarkPaid: roleProcedure("finance", "hr", "manager")
     .input(z.object({ ids: z.array(z.number()).min(1), month: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
@@ -3494,11 +3611,16 @@ const payrollV2Router = router({
       const paidAt = Date.now();
       const { getPayrollRecordWithAdjustments } = await import("./db");
       const { eq } = await import("drizzle-orm");
-          await db.transaction(async (tx) => {
-        for (const id of input.ids) {
-          const rec = await getPayrollRecordWithAdjustments(id);
-          if (!rec) continue;
-          const total = calcFinalPay(rec.record, rec.adjustments);
+      // Prefetch OUTSIDE the transaction: helper reads open their own pool
+      // connection, and doing that inside an open tx can exhaust the pool.
+      const prefetched = [] as Array<{ id: number; total: number }>;
+      for (const id of input.ids) {
+        const rec = await getPayrollRecordWithAdjustments(id);
+        if (!rec) continue;
+        prefetched.push({ id, total: calcFinalPay(rec.record, rec.adjustments) });
+      }
+      await db.transaction(async (tx) => {
+        for (const { id, total } of prefetched) {
           // Marking paid records the full amount owed so "remaining" is 0 and reports reconcile.
           await tx.update(payrollRecords)
             .set({ paymentStatus: "paid", paidAt, paidBy, amountPaid: total.toFixed(2) } as never)
@@ -3510,7 +3632,7 @@ const payrollV2Router = router({
     }),
 
   /** Bulk partial pay — pay a fixed amount to each selected agent. */
-  bulkPartialPay: staffProcedure
+  bulkPartialPay: roleProcedure("finance", "hr", "manager")
     .input(z.object({ ids: z.array(z.number()).min(1), amountEach: z.number().positive(), month: z.string() }))
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
@@ -3522,16 +3644,21 @@ const payrollV2Router = router({
       const paidBy = ctx.user.name ?? ctx.user.email ?? "Unknown Admin";
       const paidAt = Date.now();
       let count = 0;
+      // Prefetch OUTSIDE the transaction (see bulkMarkPaid) — and de-dupe ids so
+      // a double-included row can't be paid twice in one call.
+      const { getPayrollRecordWithAdjustments } = await import("./db");
+      const prefetched = [] as Array<{ id: number; totalPaid: number; fullyPaid: boolean }>;
+      for (const id of Array.from(new Set(input.ids))) {
+        const full = await getPayrollRecordWithAdjustments(id);
+        const rec = full?.record;
+        if (!rec || rec.paymentStatus === "paid") continue;
+        const owed = calcFinalPay(rec, full!.adjustments); // net + commission + adjustments
+        const prevPaid = parseFloat(String((rec as Record<string, unknown>).amountPaid ?? "0"));
+        const totalPaid = Math.min(prevPaid + input.amountEach, owed);
+        prefetched.push({ id, totalPaid, fullyPaid: totalPaid >= owed - 0.005 });
+      }
       await db.transaction(async (tx) => {
-        const { getPayrollRecordWithAdjustments } = await import("./db");
-        for (const id of input.ids) {
-          const full = await getPayrollRecordWithAdjustments(id);
-          const rec = full?.record;
-          if (!rec || rec.paymentStatus === "paid") continue;
-          const owed = calcFinalPay(rec, full!.adjustments); // net + commission + adjustments
-          const prevPaid = parseFloat(String((rec as Record<string, unknown>).amountPaid ?? "0"));
-          const totalPaid = Math.min(prevPaid + input.amountEach, owed);
-          const fullyPaid = totalPaid >= owed - 0.005;
+        for (const { id, totalPaid, fullyPaid } of prefetched) {
           await tx.update(payrollRecords).set({
             amountPaid: String(totalPaid.toFixed(2)), paidBy, paidAt,
             paymentStatus: fullyPaid ? "paid" : "pending",
@@ -3545,7 +3672,7 @@ const payrollV2Router = router({
 
   /** Partial pay: record a partial amount paid and who paid it.
    *  Status stays "pending" until pay reaches netPay (then auto-flips to paid). */
-  partialPay: staffProcedure
+  partialPay: roleProcedure("finance", "hr", "manager")
     .input(z.object({ id: z.number(), amountPaid: z.number().positive() }))
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
@@ -3582,7 +3709,7 @@ const payrollV2Router = router({
     }),
 
   /** Pay the remaining balance on a partially-paid record. */
-  payRemaining: staffProcedure
+  payRemaining: roleProcedure("finance", "hr", "manager")
     .input(z.object({ id: z.number() }))
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
@@ -3603,7 +3730,7 @@ const payrollV2Router = router({
     }),
 
   /** Monthly payroll stats and insights. */
-  statsForMonth: staffProcedure
+  statsForMonth: roleProcedure("finance", "hr", "manager")
     .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -3626,6 +3753,19 @@ const payrollV2Router = router({
       const totalQualityDeductions = rows.reduce((s, r) => s + n(r.qualityDeductions), 0);
       const totalAttendanceDeductions = rows.reduce((s, r) => s + n(r.attendanceDeductions), 0);
       const paidByMap = paid.reduce((m, r) => { const raw = (r as Record<string, unknown>).paidBy as string | null; const k = raw && raw.trim() ? raw.trim() : "Bulk Import / Legacy"; m[k] = (m[k] ?? 0) + 1; return m; }, {} as Record<string, number>);
+      // Final totals = net + commission + manual adjustments (what is actually owed/paid)
+      const { payrollAdjustments: adjT } = await import("../drizzle/schema");
+      const allAdj = await db.select().from(adjT).where(eq(adjT.month, input.month));
+      const adjByCrdts = new Map<string, Array<typeof allAdj[number]>>();
+      for (const a of allAdj) {
+        const k = String(a.crdts).split(",")[0].trim();
+        if (!adjByCrdts.has(k)) adjByCrdts.set(k, []);
+        adjByCrdts.get(k)!.push(a);
+      }
+      const adjFor = (r: typeof rows[number]) => adjByCrdts.get(String(r.crdts ?? "").split(",")[0].trim()) ?? [];
+      const totalFinalPay = rows.reduce((s, r) => s + calcFinalPay(r, adjFor(r)), 0);
+      const totalPaidAmount = rows.reduce((s, r) => s + (r.paymentStatus === "paid" ? calcFinalPay(r, adjFor(r)) : n((r as Record<string, unknown>).amountPaid)), 0);
+      const totalOutstanding = Math.max(0, totalFinalPay - totalPaidAmount);
       // Highest earner
       const sorted = [...rows].sort((a, b) => n(b.netPay) - n(a.netPay));
       return {
@@ -3633,6 +3773,7 @@ const payrollV2Router = router({
         headcount: rows.length,
         paidCount: paid.length,
         pendingCount: pending.length,
+        totalFinalPay, totalPaidAmount, totalOutstanding,
         totalNetPay, totalBaseSalary, totalOTPay, totalOTHours,
         totalDeductions, totalCommission, totalCoachingBonus,
         totalQualityDeductions, totalAttendanceDeductions,
@@ -3648,38 +3789,27 @@ const payrollV2Router = router({
     }),
 
   // Admin: delete all payroll V2 rows for a specific month (undo a bad import)
-  deleteForMonth: staffProcedure
+  deleteForMonth: adminProcedure
     .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
       const { eq: eqOp } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { payrollRecords } = await import("../drizzle/schema");
       const result = await db.delete(payrollRecords).where(eqOp(payrollRecords.month, input.month));
+      await auditEntry(ctx.user, "delete_payroll_month", "payroll", input.month, JSON.stringify({ deleted: (result as { rowsAffected?: number }).rowsAffected ?? 0 }));
       return { deleted: (result as { rowsAffected?: number }).rowsAffected ?? 0 };
     }),
 });
 // ─── Orientation Router ────────────────────────────────────────────────────────
 const orientationRouter = router({
-  getStatus: publicProcedure.query(async ({ ctx }) => {
-    const token = getAgentCookieFromReq(ctx.req);
-    if (!token) return { shown: true }; // not an agent session, skip
-    try {
-      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-      if (payload.type !== "agent") return { shown: true };
-      const shown = await getOrientationStatus(payload.traineeCode);
-      return { shown };
-    } catch { return { shown: true }; }
+  getStatus: agentProcedure.query(async ({ ctx }) => {
+    const shown = await getOrientationStatus(ctx.agent.traineeCode);
+    return { shown };
   }),
-  markShown: publicProcedure.mutation(async ({ ctx }) => {
-    const token = getAgentCookieFromReq(ctx.req);
-    if (!token) return;
-    try {
-      const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-      if (payload.type !== "agent") return;
-      await markOrientationShown(payload.traineeCode);
-    } catch { return; }
+  markShown: agentProcedure.mutation(async ({ ctx }) => {
+    await markOrientationShown(ctx.agent.traineeCode);
   }),
   reset: staffProcedure
     .input(z.object({ traineeCode: z.string() }))
@@ -3735,7 +3865,7 @@ const academyRouter = router({
       return q.orderBy(desc(academyCourses.createdAt));
     }),
 
-  createCourse: staffProcedure
+  createCourse: roleProcedure("hr", "manager")
     .input(z.object({
       title: z.string().min(1).max(255),
       description: z.string().optional(),
@@ -3763,7 +3893,7 @@ const academyRouter = router({
       return { ok: true } as const;
     }),
 
-  publishCourse: staffProcedure
+  publishCourse: roleProcedure("hr", "manager")
     .input(z.object({ id: z.number(), isPublished: z.boolean() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -3790,7 +3920,7 @@ const academyRouter = router({
         .orderBy(asc(academyModules.sortOrder));
     }),
 
-  addModule: staffProcedure
+  addModule: roleProcedure("hr", "manager")
     .input(z.object({
       courseId: z.number(),
       title: z.string().min(1).max(255),
@@ -3835,7 +3965,7 @@ const academyRouter = router({
       return q.orderBy(desc(academyAssignments.assignedAt));
     }),
 
-  assign: staffProcedure
+  assign: roleProcedure("hr", "manager")
     .input(z.object({
       courseId: z.number(),
       traineeCodes: z.array(z.string()).min(1),
@@ -3937,15 +4067,8 @@ const academyRouter = router({
 
   // ---- Agent-facing ------------------------------------------------------
   /** The logged-in agent's own courses + per-module progress. */
-  myCourses: publicProcedure.query(async ({ ctx }) => {
-    const token = getAgentCookieFromReq(ctx.req);
-    if (!token) return { assignments: [], courses: [], modules: [], progress: [] };
-    let traineeCode = "";
-    try {
-      const p = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-      if (p.type !== "agent") return { assignments: [], courses: [], modules: [], progress: [] };
-      traineeCode = p.traineeCode;
-    } catch { return { assignments: [], courses: [], modules: [], progress: [] }; }
+  myCourses: agentProcedure.query(async ({ ctx }) => {
+    const traineeCode = ctx.agent.traineeCode;
 
     const { getDb } = await import("./db");
     const { eq } = await import("drizzle-orm");
@@ -3963,17 +4086,10 @@ const academyRouter = router({
   }),
 
   /** Agent marks one module done; the course auto-completes when all are done. */
-  completeModule: publicProcedure
+  completeModule: agentProcedure
     .input(z.object({ courseId: z.number(), moduleId: z.number() }))
     .mutation(async ({ ctx, input }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) throw new TRPCError({ code: "UNAUTHORIZED" });
-      let traineeCode = "";
-      try {
-        const p = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-        if (p.type !== "agent") throw new Error("not agent");
-        traineeCode = p.traineeCode;
-      } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      const traineeCode = ctx.agent.traineeCode;
 
       const { getDb } = await import("./db");
       const { and, eq } = await import("drizzle-orm");
@@ -4029,7 +4145,7 @@ const academyRouter = router({
     const [row] = await db.select().from(appSettings).where(eq(appSettings.key, "cefr_enabled")).limit(1);
     return row ? row.value !== "false" : true;
   }),
-  setCefrEnabled: staffProcedure
+  setCefrEnabled: roleProcedure("hr", "manager")
     .input(z.object({ enabled: z.boolean() }))
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
@@ -4052,17 +4168,10 @@ const academyRouter = router({
       return { ok: true };
     }),
   /** Agent submits their CEFR result (called after they see their score). */
-  submitCefrScore: publicProcedure
+  submitCefrScore: agentProcedure
     .input(z.object({ level: z.string(), score: z.number().int().min(0).max(60), totalQuestions: z.number().int().default(60) }))
     .mutation(async ({ ctx, input }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) throw new TRPCError({ code: "UNAUTHORIZED" });
-      let traineeCode = "";
-      try {
-        const p = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-        if (p.type !== "agent") throw new Error("not agent");
-        traineeCode = p.traineeCode;
-      } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      const traineeCode = ctx.agent.traineeCode;
       const { getDb } = await import("./db");
       const { englishScores } = await import("../drizzle/schema");
       const db = await getDb();
@@ -4101,7 +4210,7 @@ const academyRouter = router({
       return rows.map(r => ({ ...r, options: JSON.parse(r.options) as string[] }));
     }),
 
-  addQuizQuestion: staffProcedure
+  addQuizQuestion: roleProcedure("hr", "manager")
     .input(z.object({
       courseId: z.number(),
       question: z.string().min(1).max(2000),
@@ -4129,7 +4238,7 @@ const academyRouter = router({
       return { ok: true } as const;
     }),
 
-  deleteQuizQuestion: staffProcedure
+  deleteQuizQuestion: roleProcedure("hr", "manager")
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -4142,7 +4251,7 @@ const academyRouter = router({
     }),
 
   /** Admin: set/change a course's pass mark (0 disables the quiz gate). */
-  setPassMark: staffProcedure
+  setPassMark: roleProcedure("hr", "manager")
     .input(z.object({ courseId: z.number(), passMark: z.number().int().min(0).max(100) }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -4156,15 +4265,9 @@ const academyRouter = router({
     }),
 
   /** Agent: fetch quiz questions for a course — correct answers stripped. */
-  getQuiz: publicProcedure
+  getQuiz: agentProcedure
     .input(z.object({ courseId: z.number() }))
     .query(async ({ ctx, input }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) throw new TRPCError({ code: "UNAUTHORIZED" });
-      try {
-        const p = jwt.verify(token, ENV.cookieSecret) as { type: string };
-        if (p.type !== "agent") throw new Error("not agent");
-      } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
 
       const { getDb } = await import("./db");
       const { eq, asc } = await import("drizzle-orm");
@@ -4183,20 +4286,13 @@ const academyRouter = router({
 
   /** Agent: submit answers — graded server-side. Writes score to the assignment;
    *  marks it completed only when score >= passMark. Retakes allowed until pass. */
-  submitQuiz: publicProcedure
+  submitQuiz: agentProcedure
     .input(z.object({
       courseId: z.number(),
       answers: z.array(z.object({ questionId: z.number(), answerIndex: z.number().int().min(0) })),
     }))
     .mutation(async ({ ctx, input }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) throw new TRPCError({ code: "UNAUTHORIZED" });
-      let traineeCode = "";
-      try {
-        const p = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-        if (p.type !== "agent") throw new Error("not agent");
-        traineeCode = p.traineeCode;
-      } catch { throw new TRPCError({ code: "UNAUTHORIZED" }); }
+      const traineeCode = ctx.agent.traineeCode;
 
       const { getDb } = await import("./db");
       const { and, eq } = await import("drizzle-orm");
@@ -4249,7 +4345,7 @@ const employeesRouter = router({
    *  Money sections are visible to all roles EXCEPT bd (checked on the client too). */
   profileFull: staffProcedure
     .input(z.object({ crdts: z.string(), traineeCode: z.string().optional() }))
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
       const { eq, or, desc, asc } = await import("drizzle-orm");
       const db = await getDb();
@@ -4273,6 +4369,16 @@ const employeesRouter = router({
         candidate = cand[0] ?? null;
       }
 
+      // Money and client-revenue data only for MONEY_ROLES — enforced here, not just in the client.
+      if (!canSeeMoney(ctx.user?.role)) {
+        const perfNoMoney = perf.map(r => ({ ...r, revenue: null, profit: null, commissionEgp: null }));
+        return {
+          payroll: [] as typeof payroll, commissions: [] as typeof commissionRows, leaderboard: [] as typeof leaderboard,
+          performance: perfNoMoney as unknown as typeof perf,
+          candidate: (candidate ? redactAgentRow(candidate as Record<string, unknown>, ctx.user?.role) : candidate) as typeof candidate,
+          joinDate: wfRow?.joinDate ?? null,
+        };
+      }
       return {
         payroll, commissions: commissionRows, leaderboard, performance: perf,
         candidate, joinDate: wfRow?.joinDate ?? null,
@@ -4282,7 +4388,7 @@ const employeesRouter = router({
   /** Everyone — agents AND management. Used by the Employee Profiles tab. */
   list: staffProcedure
     .input(z.object({ type: z.string().optional() }).optional())
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
       const { eq, desc, or, isNull } = await import("drizzle-orm");
       const db = await getDb();
@@ -4292,7 +4398,7 @@ const employeesRouter = router({
         .where(or(eq(workforceAgents.isDemo, false), isNull(workforceAgents.isDemo)))
         .$dynamic();
       if (input?.type) q.where(eq(workforceAgents.employeeType, input.type as "agent"));
-      return q.orderBy(desc(workforceAgents.createdAt));
+      return redactAgentRows(await q.orderBy(desc(workforceAgents.createdAt)), ctx.user?.role);
     }),
 
   /** Create a management employee record (Settings → Management). */
@@ -4575,15 +4681,9 @@ const cycleTrackerRouter = router({
     }),
 
   // Agent: get their own cycle tracker data
-  getMyTracker: publicProcedure
+  getMyTracker: agentProcedure
     .query(async ({ ctx }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) return null;
-      let traineeCode: string;
-      try {
-        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
-        traineeCode = decoded.traineeCode;
-      } catch { return null; }
+      const traineeCode = ctx.agent.traineeCode;
       // Get CRDTS from workforce profile
       const { workforceAgents } = await import("../drizzle/schema");
       const { getDb } = await import("./db");
@@ -4714,15 +4814,9 @@ const cycleTrackerRouter = router({
     }),
 
   // Agent: get list of all cycle keys that have data for this agent
-  getMyTrackerHistory: publicProcedure
+  getMyTrackerHistory: agentProcedure
     .query(async ({ ctx }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) return [];
-      let traineeCode: string;
-      try {
-        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
-        traineeCode = decoded.traineeCode;
-      } catch { return []; }
+      const traineeCode = ctx.agent.traineeCode;
       const { workforceAgents, cycleStats } = await import("../drizzle/schema");
       const { getDb } = await import("./db");
       const dbConn = await getDb();
@@ -4738,16 +4832,10 @@ const cycleTrackerRouter = router({
     }),
 
   // Agent: get cycle tracker data for a specific cycle (by cookie)
-  getMyTrackerByCycle: publicProcedure
+  getMyTrackerByCycle: agentProcedure
     .input(z.object({ cycleKey: z.string().regex(/^\d{4}-\d{2}$/) }))
     .query(async ({ ctx, input }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) return null;
-      let traineeCode: string;
-      try {
-        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
-        traineeCode = decoded.traineeCode;
-      } catch { return null; }
+      const traineeCode = ctx.agent.traineeCode;
       const { workforceAgents } = await import("../drizzle/schema");
       const { getDb } = await import("./db");
       const dbConn = await getDb();
@@ -4955,15 +5043,9 @@ const cycleTrackerRouter = router({
       return getCampaignRanking(crdts, input.cycleKey);
     }),
   // ─── Agent (cookie-based) versions ─────────────────────────────────────────
-  getMyClientLogoutsAgent: publicProcedure
+  getMyClientLogoutsAgent: agentProcedure
     .query(async ({ ctx }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) return [];
-      let traineeCode: string;
-      try {
-        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
-        traineeCode = decoded.traineeCode;
-      } catch { return []; }
+      const traineeCode = ctx.agent.traineeCode;
       const { workforceAgents } = await import('../drizzle/schema');
       const { getDb } = await import('./db');
       const dbConn = await getDb();
@@ -4976,15 +5058,9 @@ const cycleTrackerRouter = router({
       return getClientLogoutsByAgent(crdts);
     }),
 
-  getMyQualityFlagsAgent: publicProcedure
+  getMyQualityFlagsAgent: agentProcedure
     .query(async ({ ctx }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) return [];
-      let traineeCode: string;
-      try {
-        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
-        traineeCode = decoded.traineeCode;
-      } catch { return []; }
+      const traineeCode = ctx.agent.traineeCode;
       const { workforceAgents } = await import('../drizzle/schema');
       const { getDb } = await import('./db');
       const dbConn = await getDb();
@@ -4996,15 +5072,9 @@ const cycleTrackerRouter = router({
       if (!crdts) return [];
       return getAgentQualityFlagsByAgent(crdts);
     }),
-  getMyCommissionMonthsAgent: publicProcedure
+  getMyCommissionMonthsAgent: agentProcedure
     .query(async ({ ctx }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) return [] as string[];
-      let traineeCode: string;
-      try {
-        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
-        traineeCode = decoded.traineeCode;
-      } catch { return [] as string[]; }
+      const traineeCode = ctx.agent.traineeCode;
       const { workforceAgents } = await import('../drizzle/schema');
       const { getDb } = await import('./db');
       const dbConn = await getDb();
@@ -5016,16 +5086,10 @@ const cycleTrackerRouter = router({
       if (!crdts) return [] as string[];
       return getAvailableCommissionMonths(crdts);
     }),
-  getMyCommissionMonthAgent: publicProcedure
+  getMyCommissionMonthAgent: agentProcedure
     .input(z.object({ month: z.string() }))
     .query(async ({ ctx, input }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) return null;
-      let traineeCode: string;
-      try {
-        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
-        traineeCode = decoded.traineeCode;
-      } catch { return null; }
+      const traineeCode = ctx.agent.traineeCode;
       const { workforceAgents } = await import('../drizzle/schema');
       const { getDb } = await import('./db');
       const dbConn = await getDb();
@@ -5037,16 +5101,10 @@ const cycleTrackerRouter = router({
       if (!crdts) return null;
       return getCommissionMonthData(crdts, input.month);
     }),
-  getMyCampaignRankingAgent: publicProcedure
+  getMyCampaignRankingAgent: agentProcedure
     .input(z.object({ cycleKey: z.string() }))
     .query(async ({ ctx, input }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) return null;
-      let traineeCode: string;
-      try {
-        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
-        traineeCode = decoded.traineeCode;
-      } catch { return null; }
+      const traineeCode = ctx.agent.traineeCode;
       const { workforceAgents } = await import('../drizzle/schema');
       const { getDb } = await import('./db');
       const dbConn = await getDb();
@@ -5089,15 +5147,9 @@ const cycleTrackerRouter = router({
     }),
 
   // Agent: full performance history per cycle (uses JWT cookie)
-  getMyPerformanceHistoryAgent: publicProcedure
+  getMyPerformanceHistoryAgent: agentProcedure
     .query(async ({ ctx }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) return [];
-      let traineeCode: string;
-      try {
-        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
-        traineeCode = decoded.traineeCode;
-      } catch { return []; }
+      const traineeCode = ctx.agent.traineeCode;
       const { workforceAgents } = await import('../drizzle/schema');
       const { getDb } = await import('./db');
       const { eq } = await import('drizzle-orm');
@@ -5111,16 +5163,10 @@ const cycleTrackerRouter = router({
     }),
 
   // Agent: per-day stats for own data (uses JWT cookie)
-  getMyDailyStats: publicProcedure
+  getMyDailyStats: agentProcedure
     .input(z.object({ cycleKey: z.string().regex(/^\d{4}-\d{2}$/), viewMode: z.enum(["cycle","month"]).default("cycle") }))
     .query(async ({ ctx, input }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) return { daily: [], logoutDates: [] };
-      let traineeCode: string;
-      try {
-        const decoded = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string };
-        traineeCode = decoded.traineeCode;
-      } catch { return { daily: [], logoutDates: [] }; }
+      const traineeCode = ctx.agent.traineeCode;
       const { workforceAgents } = await import('../drizzle/schema');
       const { getDb } = await import('./db');
       const { eq, and, sql } = await import('drizzle-orm');
@@ -5176,26 +5222,61 @@ const coachingRouter = router({
       }))
     }))
     .mutation(async ({ input }) => {
-      const { getDb } = await import("./db");
+      const { getDb, resolveCrdtsForWrite } = await import("./db");
+      const { cycleKeyFor } = await import("./_core/time");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { coachingSessions } = await import("../drizzle/schema");
+      const { inArray } = await import("drizzle-orm");
       const now = Date.now();
-      const rows = input.sessions.map(s => ({
-        crdts: s.crdts,
-        agentCode: s.agentCode ?? null,
-        alias: s.alias ?? null,
-        sessionDate: s.sessionDate,
-        cycleKey: input.cycleKey,
-        coachingHours: String(s.coachingHours),
-        bonusAmount: String(s.bonusAmount),
-        sessionType: s.sessionType ?? null,
-        notes: s.notes ?? null,
-        status: "pending" as const,
-        uploadedAt: now,
-      }));
-      await db.insert(coachingSessions).values(rows);
-      return { inserted: rows.length };
+      const rows = [] as Array<Record<string, unknown> & { crdts: string; sessionDate: string; cycleKey: string }>;
+      for (const sIn of input.sessions) {
+        // The pay cycle comes from the SESSION DATE (26th→25th rule), not the picker —
+        // a late-cycle session used to land in the wrong month's bonus.
+        const derivedCycle = /^\d{4}-\d{2}-\d{2}/.test(sIn.sessionDate) ? cycleKeyFor(sIn.sessionDate) : input.cycleKey;
+        rows.push({
+          crdts: await resolveCrdtsForWrite(sIn.crdts, sIn.agentCode),
+          agentCode: sIn.agentCode ?? null,
+          alias: sIn.alias ?? null,
+          sessionDate: sIn.sessionDate,
+          cycleKey: derivedCycle,
+          coachingHours: String(sIn.coachingHours),
+          bonusAmount: String(sIn.bonusAmount),
+          sessionType: sIn.sessionType ?? null,
+          notes: sIn.notes ?? null,
+          status: "pending" as const,
+          uploadedAt: now,
+        });
+      }
+      // Re-upload safe: replace PENDING rows for the same (crdts, sessionDate); never
+      // touch approved/rejected history, and skip incoming duplicates of approved rows.
+      let inserted = 0, replaced = 0, skippedApproved = 0;
+      await db.transaction(async (tx) => {
+        const keys = rows.map(r => r.crdts);
+        const existing = keys.length ? await tx.select({
+          id: coachingSessions.id, crdts: coachingSessions.crdts,
+          sessionDate: coachingSessions.sessionDate, status: coachingSessions.status,
+        }).from(coachingSessions).where(inArray(coachingSessions.crdts, Array.from(new Set(keys)))) : [];
+        const byKey = new Map<string, Array<typeof existing[number]>>();
+        for (const e of existing) {
+          const k = `${e.crdts}|${e.sessionDate}`;
+          if (!byKey.has(k)) byKey.set(k, []);
+          byKey.get(k)!.push(e);
+        }
+        for (const r of rows) {
+          const hits = byKey.get(`${r.crdts}|${r.sessionDate}`) ?? [];
+          if (hits.some(h => h.status === "approved")) { skippedApproved++; continue; }
+          const pendingIds = hits.filter(h => h.status === "pending").map(h => h.id);
+          if (pendingIds.length) {
+            await tx.delete(coachingSessions).where(inArray(coachingSessions.id, pendingIds));
+            replaced++;
+          } else {
+            inserted++;
+          }
+          await tx.insert(coachingSessions).values(r as typeof coachingSessions.$inferInsert);
+        }
+      });
+      return { inserted, replaced, skippedApproved };
     }),
 
   // List coaching sessions for a cycle
@@ -5231,8 +5312,8 @@ const coachingRouter = router({
         .orderBy(desc(coachingSessions.sessionDate));
     }),
 
-  // Approve / reject a session
-  updateStatus: staffProcedure
+  // Approve / reject a session (pays a bonus → money roles only)
+  updateStatus: roleProcedure("finance", "hr", "manager")
     .input(z.object({ id: z.number(), status: z.enum(["pending", "approved", "rejected"]) }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -5245,7 +5326,7 @@ const coachingRouter = router({
     }),
 
   // Delete all sessions for a cycle (undo upload)
-  deleteForCycle: staffProcedure
+  deleteForCycle: roleProcedure("finance", "hr", "manager")
     .input(z.object({ cycleKey: z.string().regex(/^\d{4}-\d{2}$/) }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -5277,14 +5358,11 @@ const coachingRouter = router({
     }),
 
   // Agent: get my coaching sessions
-  getMyCoachingSessions: publicProcedure
+  getMyCoachingSessions: agentProcedure
     .input(z.object({ cycleKey: z.string().optional() }))
     .query(async ({ ctx, input }) => {
       try {
-        const token = getAgentCookieFromReq(ctx.req);
-        if (!token) return [];
-        const p = jwt.verify(token, ENV.cookieSecret) as { candidateId?: number; type?: string };
-        if (!p.candidateId) return [];
+        const p = { candidateId: ctx.agent.candidateId };
         const { getDb } = await import("./db");
         const { and, eq: eqOp } = await import("drizzle-orm");
         const db = await getDb();
@@ -5313,7 +5391,7 @@ const settingsRouter = router({
     if (!db) return [];
     return db.select().from(teamLeaders).orderBy(teamLeaders.name);
   }),
-  addTeamLeader: staffProcedure
+  addTeamLeader: roleProcedure("hr", "manager")
     .input(z.object({ name: z.string().min(1), email: z.string().email().optional(), phone: z.string().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -5323,7 +5401,7 @@ const settingsRouter = router({
       await db.insert(teamLeaders).values({ name: input.name, email: input.email, phone: input.phone });
       return { success: true };
     }),
-  updateTeamLeader: staffProcedure
+  updateTeamLeader: roleProcedure("hr", "manager")
     .input(z.object({ id: z.number(), name: z.string().min(1).optional(), email: z.string().email().optional(), phone: z.string().optional(), isActive: z.boolean().optional() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -5335,15 +5413,16 @@ const settingsRouter = router({
       await db.update(teamLeaders).set(rest).where(eq(teamLeaders.id, id));
       return { success: true };
     }),
-  deleteTeamLeader: staffProcedure
+  deleteTeamLeader: roleProcedure("hr", "manager")
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
+      // Soft delete: agents may still reference this leader by name — deactivate instead.
       const { getDb } = await import("./db");
       const { teamLeaders } = await import("../drizzle/schema");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      await db.delete(teamLeaders).where(eq(teamLeaders.id, input.id));
+      await db.update(teamLeaders).set({ isActive: false }).where(eq(teamLeaders.id, input.id));
       return { success: true };
     }),
 });
@@ -5669,14 +5748,19 @@ const integrationsRouter = router({
     };
   }),
 
-  // Disconnect Google Calendar
-  disconnectGoogle: staffProcedure.mutation(async () => {
+  // Disconnect Google Calendar — only the caller's own token (plus the legacy
+  // shared NULL-user token for full-access roles, so admins can clear it).
+  disconnectGoogle: staffProcedure.mutation(async ({ ctx }) => {
     const { getDb } = await import("./db");
     const db = await getDb();
     if (!db) return { ok: false };
     const { integrationsTokens } = await import("../drizzle/schema");
-    const { eq } = await import("drizzle-orm");
-    await db.delete(integrationsTokens).where(eq(integrationsTokens.provider, "google"));
+    const { eq, and, isNull, or } = await import("drizzle-orm");
+    const own = and(eq(integrationsTokens.provider, "google"), eq(integrationsTokens.userId, ctx.user.openId));
+    const where = isFullAccess((ctx.user as { role?: string }).role)
+      ? and(eq(integrationsTokens.provider, "google"), or(eq(integrationsTokens.userId, ctx.user.openId), isNull(integrationsTokens.userId)))
+      : own;
+    await db.delete(integrationsTokens).where(where);
     return { ok: true };
   }),
 
@@ -6057,7 +6141,7 @@ const trainerSalariesRouter = router({
         .limit(1);
       return rows[0] ?? null;
     }),
-  getForMonth: staffProcedure
+  getForMonth: roleProcedure("finance", "hr", "manager")
     .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6070,7 +6154,7 @@ const trainerSalariesRouter = router({
         .orderBy(asc(trainerSalaries.trainerName));
     }),
 
-  upsert: staffProcedure
+  upsert: roleProcedure("finance", "hr", "manager")
     .input(z.object({
       id: z.number().optional(),
       crdts: z.string().optional(),
@@ -6121,7 +6205,7 @@ const trainerSalariesRouter = router({
       return { id: (result as { insertId: number }).insertId };
     }),
 
-  delete: staffProcedure
+  delete: roleProcedure("finance", "hr", "manager")
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6164,7 +6248,7 @@ const adjustmentsRouter = router({
         .orderBy(asc(payrollAdjustments.createdAt));
     }),
 
-  add: staffProcedure
+  add: roleProcedure("finance", "hr", "manager")
     .input(z.object({
       crdts: z.string().min(1),
       month: z.string().regex(/^\d{4}-\d{2}$/),
@@ -6177,8 +6261,10 @@ const adjustmentsRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const { payrollAdjustments } = await import("../drizzle/schema");
+      const { resolveCrdtsForWrite } = await import("./db");
+      const crdts = await resolveCrdtsForWrite(input.crdts);
       const result = await db.insert(payrollAdjustments).values({
-        crdts: input.crdts,
+        crdts,
         month: input.month,
         type: input.type,
         label: input.label,
@@ -6186,10 +6272,13 @@ const adjustmentsRouter = router({
         createdAt: Date.now(),
         createdBy: (ctx as { user?: { name?: string } }).user?.name ?? "Admin",
       });
+      // The owed total changed — a record already marked paid may now owe more.
+      const { recomputePaymentStatusByCrdtsMonth } = await import("./db");
+      await recomputePaymentStatusByCrdtsMonth(crdts, input.month);
       return { id: (result as { insertId?: number }).insertId ?? 0 };
     }),
 
-  update: staffProcedure
+  update: roleProcedure("finance", "hr", "manager")
     .input(z.object({
       id: z.number(),
       type: z.enum(["bonus", "deduction"]).optional(),
@@ -6206,11 +6295,15 @@ const adjustmentsRouter = router({
       if (input.type !== undefined) updates.type = input.type;
       if (input.label !== undefined) updates.label = input.label;
       if (input.amount !== undefined) updates.amount = String(input.amount);
+      const [row] = await db.select().from(payrollAdjustments).where(eq(payrollAdjustments.id, input.id)).limit(1);
+      if (!row) throw new TRPCError({ code: "NOT_FOUND" });
       await db.update(payrollAdjustments).set(updates).where(eq(payrollAdjustments.id, input.id));
+      const { recomputePaymentStatusByCrdtsMonth } = await import("./db");
+      await recomputePaymentStatusByCrdtsMonth(row.crdts, row.month);
       return { success: true };
     }),
 
-  delete: staffProcedure
+  delete: roleProcedure("finance", "hr", "manager")
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6218,14 +6311,19 @@ const adjustmentsRouter = router({
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR" });
       const { payrollAdjustments } = await import("../drizzle/schema");
       const { eq } = await import("drizzle-orm");
+      const [row] = await db.select().from(payrollAdjustments).where(eq(payrollAdjustments.id, input.id)).limit(1);
       await db.delete(payrollAdjustments).where(eq(payrollAdjustments.id, input.id));
+      if (row) {
+        const { recomputePaymentStatusByCrdtsMonth } = await import("./db");
+        await recomputePaymentStatusByCrdtsMonth(row.crdts, row.month);
+      }
       return { success: true };
     }),
 });
 
 const commissionRouter = router({
   // Get all commission records for a given payment cycle (YYYY-MM)
-  getForMonth: staffProcedure
+  getForMonth: roleProcedure("finance", "hr", "manager")
     .input(z.object({ month: z.string() }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6237,7 +6335,7 @@ const commissionRouter = router({
     }),
 
   // Upload commission records from parsed Excel rows
-  upload: staffProcedure
+  upload: roleProcedure("finance", "hr", "manager")
     .input(z.object({
       paymentCycle: z.string().regex(/^\d{4}-\d{2}$/, "Payment cycle must be YYYY-MM"),
       rows: z.array(z.object({
@@ -6263,11 +6361,13 @@ const commissionRouter = router({
       const now = Date.now();
       const uploader = input.uploadedBy || (ctx as { user?: { name?: string } }).user?.name || "admin";
       let count = 0;
+      const { resolveCrdtsForWrite } = await import("./db");
       for (const row of input.rows) {
         if (!row.crdts || row.commissionEgp <= 0) continue;
         try {
+          const rowCrdts = await resolveCrdtsForWrite(row.crdts);
           await db.insert(commissions).values({
-            crdts: row.crdts,
+            crdts: rowCrdts,
             alias: row.alias ?? null,
             commissionEgp: String(row.commissionEgp),
             performanceMonth: row.performanceMonth ?? null,
@@ -6290,7 +6390,9 @@ const commissionRouter = router({
             const { sql: sqlFn } = await import("drizzle-orm");
             await db.update(payrollRecords)
               .set({ commissionEgp: String(row.commissionEgp) })
-              .where(sqlFn`${payrollRecords.crdts} = ${row.crdts} AND ${payrollRecords.month} = ${input.paymentCycle}`);
+              .where(sqlFn`${payrollRecords.crdts} = ${rowCrdts} AND ${payrollRecords.month} = ${input.paymentCycle}`);
+            const { recomputePaymentStatusByCrdtsMonth } = await import("./db");
+            await recomputePaymentStatusByCrdtsMonth(rowCrdts, input.paymentCycle);
           } catch { /* non-fatal: payroll record may not exist yet */ }
           count++;
         } catch (err) {
@@ -6302,7 +6404,7 @@ const commissionRouter = router({
     }),
 
   // Update a single commission record amount (manual adjustment)
-  updateCommission: staffProcedure
+  updateCommission: roleProcedure("finance", "hr", "manager")
     .input(z.object({
       id: z.number(),
       commissionEgp: z.number().min(0),
@@ -6330,7 +6432,7 @@ const commissionRouter = router({
     }),
 
   // Change the payment cycle (and performance month) on an existing commission record
-  changeCycle: staffProcedure
+  changeCycle: roleProcedure("finance", "hr", "manager")
     .input(z.object({
       id: z.number(),
       newPaymentCycle: z.string().regex(/^\d{4}-\d{2}$/),
@@ -6371,7 +6473,7 @@ const commissionRouter = router({
   // #8 — BULK move an ENTIRE commission cycle (all records + leaderboard rows) to a
   // different pay cycle in one action. Also re-syncs payroll: clears commissionEgp on
   // the old cycle's payroll records and applies it to the new cycle's records.
-  reassignCycle: staffProcedure
+  reassignCycle: roleProcedure("finance", "hr", "manager")
     .input(z.object({
       fromCycle: z.string().regex(/^\d{4}-\d{2}$/),
       toCycle: z.string().regex(/^\d{4}-\d{2}$/),
@@ -6411,15 +6513,15 @@ const commissionRouter = router({
     }),
 
   // Get full leaderboard for a cycle (all campaigns)
-  getFullLeaderboard: staffProcedure
+  getFullLeaderboard: roleProcedure("finance", "hr", "manager")
     .input(z.object({ cycleKey: z.string() }))
     .query(async ({ input }) => {
       const { getFullLeaderboard } = await import("./db");
       return getFullLeaderboard(input.cycleKey);
     }),
 
-  // Agent-facing: get full leaderboard for a cycle
-  getFullLeaderboardAgent: publicProcedure
+  // Agent-facing: get full leaderboard for a cycle (login required — this is client revenue data)
+  getFullLeaderboardAgent: agentOrStaffProcedure
     .input(z.object({ cycleKey: z.string() }))
     .query(async ({ input }) => {
       const { getFullLeaderboard } = await import("./db");
@@ -6427,7 +6529,7 @@ const commissionRouter = router({
     }),
 
   // Upload leaderboard rows from Campaign tabs of the commission file
-  uploadLeaderboard: staffProcedure
+  uploadLeaderboard: roleProcedure("finance", "hr", "manager")
     .input(z.object({
       cycleKey: z.string(),
       rows: z.array(z.object({
@@ -6463,8 +6565,8 @@ const commissionRouter = router({
         .orderBy(commissions.paymentCycle);
     }),
 
-  // Get available cycle keys that have leaderboard data
-  getLeaderboardCycles: publicProcedure
+  // Get available cycle keys that have leaderboard data (login required)
+  getLeaderboardCycles: agentOrStaffProcedure
     .query(async () => {
       const { getDb } = await import("./db");
       const db = await getDb();
@@ -6493,7 +6595,7 @@ const commissionRouter = router({
     }),
 
   // Delete a single commission record by id (also clears commissionEgp from matching payroll record)
-  deleteCommissionRecord: staffProcedure
+  deleteCommissionRecord: roleProcedure("finance", "hr", "manager")
     .input(z.object({ id: z.number() }))
     .mutation(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6517,7 +6619,7 @@ const commissionRouter = router({
     }),
 
   // Clear all commission records AND leaderboard rows for a given pay cycle
-  clearCommissionCycle: roleProcedure("finance", "hr", "manager", "team_lead")
+  clearCommissionCycle: roleProcedure("finance", "hr", "manager")
     .input(z.object({ cycleKey: z.string().regex(/^\d{4}-\d{2}$/) }))
     .mutation(async ({ input, ctx }) => {
       const { getDb } = await import("./db");
@@ -6542,79 +6644,9 @@ const commissionRouter = router({
 });
 
 // ─── Admin Invites Router ───────────────────────────────────────────────────
-const invitesRouter = router({
-  generate: adminProcedure
-    .input(z.object({ origin: z.string().url() }))
-    .mutation(async ({ ctx, input }) => {
-      const { getDb } = await import("./db");
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { adminInvites } = await import("../drizzle/schema");
-      const { randomBytes } = await import("crypto");
-      const token = randomBytes(32).toString("hex");
-      const now = new Date();
-      const expiresAt = Date.now() + 48 * 60 * 60 * 1000; // 48 hours
-      await db.insert(adminInvites).values({
-        token,
-        name: ctx.user.name ?? "Admin",
-        email: ctx.user.email ?? "",
-        invitedBy: ctx.user.name ?? ctx.user.openId,
-        expiresAt,
-      });
-      const inviteUrl = `${input.origin}/admin-invite?token=${token}`;
-      return { token, inviteUrl, expiresAt };
-    }),
-
-  list: adminProcedure
-    .query(async ({ ctx }) => {
-      const { getDb } = await import("./db");
-      const db = await getDb();
-      if (!db) return [];
-      const { adminInvites } = await import("../drizzle/schema");
-      const { desc } = await import("drizzle-orm");
-      return db.select().from(adminInvites).orderBy(desc(adminInvites.createdAt));
-    }),
-
-  revoke: adminProcedure
-    .input(z.object({ id: z.number() }))
-    .mutation(async ({ ctx, input }) => {
-      const { getDb } = await import("./db");
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { adminInvites } = await import("../drizzle/schema");
-      const { eq } = await import("drizzle-orm");
-      await db.delete(adminInvites).where(eq(adminInvites.id, input.id));
-      return { ok: true };
-    }),
-
-  use: protectedProcedure
-    .input(z.object({ token: z.string() }))
-    .mutation(async ({ input, ctx }) => {
-      const { getDb } = await import("./db");
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { adminInvites, users } = await import("../drizzle/schema");
-      const { eq } = await import("drizzle-orm");
-      const [invite] = await db.select().from(adminInvites).where(eq(adminInvites.token, input.token)).limit(1);
-      if (!invite) throw new TRPCError({ code: "NOT_FOUND", message: "Invite not found or already used" });
-      if (invite.usedAt) throw new TRPCError({ code: "BAD_REQUEST", message: "This invite link has already been used" });
-      if (Date.now() > invite.expiresAt) throw new TRPCError({ code: "BAD_REQUEST", message: "This invite link has expired" });
-      // The invite is bound to an email — only that login may redeem it, and only for itself.
-      const myEmail = (ctx.user.email ?? "").trim().toLowerCase();
-      if (!invite.email || invite.email.trim().toLowerCase() !== myEmail) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "This invite was issued to a different email address" });
-      }
-      // Atomically consume the invite first so a token can never be redeemed twice.
-      const consumed = await db.update(adminInvites).set({ usedAt: Date.now() })
-        .where(and(eq(adminInvites.id, invite.id), isNull(adminInvites.usedAt)));
-      if (((consumed as unknown as [{ affectedRows?: number }])[0]?.affectedRows ?? 1) === 0) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "This invite link has already been used" });
-      }
-      await db.update(users).set({ role: "admin" }).where(eq(users.openId, ctx.user.openId));
-      await auditEntry(ctx.user, "invite_redeemed", "user", ctx.user.openId, JSON.stringify({ inviteId: invite.id }));
-      return { ok: true };
-    }),
-});
+// (Removed) the unused `invites` router: the client uses adminAuth.* for the
+// whole invite flow, and the dead router's `use` endpoint was a second,
+// unmonitored path to the admin role.
 
 // ─── API Keys Router ─────────────────────────────────────────────────────────
 const apiKeysRouter = router({
@@ -6692,15 +6724,12 @@ const apiKeysRouter = router({
 // ─── HR Router: lifecycle (settle/archive) + exit process + leave management ──
 const hrRouter = router({
   // Mark a former agent's salary as fully paid → they drop out of Operations.
-  markSettled: staffProcedure
+  markSettled: roleProcedure("finance", "hr", "manager")
     .input(z.object({ traineeCode: z.string(), settled: z.boolean() }))
-    .mutation(async ({ input }) => {
-      const { getDb } = await import("./db");
-      const { eq } = await import("drizzle-orm");
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { workforceAgents } = await import("../drizzle/schema");
-      await db.update(workforceAgents).set({ salarySettled: input.settled }).where(eq(workforceAgents.traineeCode, input.traineeCode));
+    .mutation(async ({ ctx, input }) => {
+      const { settleAgent } = await import("./db");
+      await settleAgent(input.traineeCode, input.settled);
+      await auditEntry(ctx.user, input.settled ? "mark_settled" : "mark_unsettled", "agent", input.traineeCode, undefined);
       return { ok: true };
     }),
   // Exit checklist — read (auto-creates a blank one)
@@ -6730,7 +6759,10 @@ const hrRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { exitProcess } = await import("../drizzle/schema");
-      const { traineeCode, ...rest } = input;
+      const { traineeCode, settlementDone: _ignoreSettle, ...rest } = input;
+      // settlementDone is written ONLY through settleAgent (markSettled) so the
+      // checklist can never drift from workforce_agents.salarySettled.
+      void _ignoreSettle;
       const now = Date.now();
       const existing = await db.select().from(exitProcess).where(eq(exitProcess.traineeCode, traineeCode)).limit(1);
       if (existing[0]) await db.update(exitProcess).set({ ...rest, updatedAt: now }).where(eq(exitProcess.traineeCode, traineeCode));
@@ -6747,9 +6779,9 @@ const hrRouter = router({
       return { ok: true };
     }),
   // Archive: exit checklist must be complete → labels the linked candidate + closes out the agent.
-  archiveAgent: staffProcedure
+  archiveAgent: roleProcedure("hr", "manager")
     .input(z.object({ traineeCode: z.string(), status: z.enum(["resigned", "terminated", "blacklisted"]) }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
@@ -6765,6 +6797,7 @@ const hrRouter = router({
       if (ag.candidateId) {
         try { await db.update(candidates).set({ status: input.status }).where(eq(candidates.id, ag.candidateId)); } catch (_) { /* candidate table label optional */ }
       }
+      await auditEntry(ctx.user, "archive_agent", "agent", input.traineeCode, JSON.stringify({ status: input.status }));
       return { ok: true };
     }),
   // ── Leave ──
@@ -6777,8 +6810,8 @@ const hrRouter = router({
   }),
   // Mass-add: set/increment balances for ALL active agents for a year.
   massSetBalances: adminProcedure
-    .input(z.object({ year: z.number(), casualTotal: z.number(), annualTotal: z.number() }))
-    .mutation(async ({ input }) => {
+    .input(z.object({ year: z.number().int().min(2020).max(2100), casualTotal: z.number().min(0).max(365), annualTotal: z.number().min(0).max(365) }))
+    .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
       const { eq, and } = await import("drizzle-orm");
       const db = await getDb();
@@ -6787,17 +6820,25 @@ const hrRouter = router({
       const agents = await db.select({ traineeCode: workforceAgents.traineeCode }).from(workforceAgents).where(eq(workforceAgents.agentStatus, "active"));
       const now = Date.now();
       let updated = 0;
+      const skipped: string[] = [];
       for (const a of agents) {
         const ex = (await db.select().from(leaveBalances).where(and(eq(leaveBalances.traineeCode, a.traineeCode), eq(leaveBalances.year, input.year))).limit(1))[0];
+        // Merge, never clobber: used days survive, and an agent whose used days
+        // already exceed the new totals is skipped and reported instead of going negative.
+        if (ex && (ex.casualUsed > input.casualTotal || ex.annualUsed > input.annualTotal)) {
+          skipped.push(a.traineeCode);
+          continue;
+        }
         if (ex) await db.update(leaveBalances).set({ casualTotal: input.casualTotal, annualTotal: input.annualTotal, updatedAt: now }).where(eq(leaveBalances.id, ex.id));
         else await db.insert(leaveBalances).values({ traineeCode: a.traineeCode, year: input.year, casualTotal: input.casualTotal, annualTotal: input.annualTotal, updatedAt: now });
         updated++;
       }
-      return { ok: true, agents: updated };
+      await auditEntry(ctx.user, "mass_set_leave_balances", "leave", String(input.year), JSON.stringify({ ...input, agents: updated, skipped: skipped.length }));
+      return { ok: true, agents: updated, skipped };
     }),
-  setBalance: staffProcedure
-    .input(z.object({ traineeCode: z.string(), year: z.number(), casualTotal: z.number().optional(), annualTotal: z.number().optional(), casualUsed: z.number().optional(), annualUsed: z.number().optional() }))
-    .mutation(async ({ input }) => {
+  setBalance: roleProcedure("hr", "manager")
+    .input(z.object({ traineeCode: z.string(), year: z.number().int().min(2020).max(2100), casualTotal: z.number().min(0).max(365).optional(), annualTotal: z.number().min(0).max(365).optional(), casualUsed: z.number().min(0).max(365).optional(), annualUsed: z.number().min(0).max(365).optional() }))
+    .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
       const { eq, and } = await import("drizzle-orm");
       const db = await getDb();
@@ -6806,12 +6847,23 @@ const hrRouter = router({
       const { traineeCode, year, ...rest } = input;
       const now = Date.now();
       const ex = (await db.select().from(leaveBalances).where(and(eq(leaveBalances.traineeCode, traineeCode), eq(leaveBalances.year, year))).limit(1))[0];
+      // used may never exceed total (check the merged result, not just the patch)
+      const merged = {
+        casualTotal: rest.casualTotal ?? ex?.casualTotal ?? 0,
+        annualTotal: rest.annualTotal ?? ex?.annualTotal ?? 0,
+        casualUsed: rest.casualUsed ?? ex?.casualUsed ?? 0,
+        annualUsed: rest.annualUsed ?? ex?.annualUsed ?? 0,
+      };
+      if (merged.casualUsed > merged.casualTotal || merged.annualUsed > merged.annualTotal) {
+        throw new TRPCError({ code: "BAD_REQUEST", message: "Used days cannot exceed the total allowance." });
+      }
       if (ex) await db.update(leaveBalances).set({ ...rest, updatedAt: now }).where(eq(leaveBalances.id, ex.id));
-      else await db.insert(leaveBalances).values({ traineeCode, year, casualTotal: rest.casualTotal ?? 0, annualTotal: rest.annualTotal ?? 0, casualUsed: rest.casualUsed ?? 0, annualUsed: rest.annualUsed ?? 0, updatedAt: now });
+      else await db.insert(leaveBalances).values({ traineeCode, year, ...merged, updatedAt: now });
+      await auditEntry(ctx.user, "set_leave_balance", "agent", traineeCode, JSON.stringify({ year, ...rest }));
       return { ok: true };
     }),
   listLeaveRequests: staffProcedure
-    .input(z.object({ status: z.enum(["pending", "approved", "rejected"]).optional() }).optional())
+    .input(z.object({ status: z.enum(["pending", "approved", "rejected", "cancelled"]).optional() }).optional())
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
       const db = await getDb();
@@ -6823,23 +6875,22 @@ const hrRouter = router({
     }),
   // Agent submits a request (no type — HR classifies). Identity from session.
   requestLeave: agentProcedure
-    .input(z.object({ traineeCode: z.string().optional(), startDate: z.string(), endDate: z.string(), days: z.number().min(1), reason: z.string().optional() }))
+    .input(z.object({ traineeCode: z.string().optional(), startDate: z.string(), endDate: z.string(), days: z.number().min(1).optional(), reason: z.string().optional() }))
     .mutation(async ({ input, ctx }) => {
+      // days is computed server-side from the dates (createLeaveRequestRow) — the client's value is ignored.
       const { createLeaveRequestRow } = await import("./db");
-      await createLeaveRequestRow({ traineeCode: ctx.agent.traineeCode, startDate: input.startDate, endDate: input.endDate, days: input.days, reason: input.reason ?? null });
+      await createLeaveRequestRow({ traineeCode: ctx.agent.traineeCode, startDate: input.startDate, endDate: input.endDate, reason: input.reason ?? null });
       return { ok: true };
     }),
 
   /** Staff/admin submits their OWN leave request */
   requestMyLeave: staffProcedure
-    .input(z.object({ startDate: z.string(), endDate: z.string(), days: z.number().int().min(1), reason: z.string().optional() }))
+    .input(z.object({ startDate: z.string(), endDate: z.string(), days: z.number().int().min(1).optional(), reason: z.string().optional() }))
     .mutation(async ({ ctx, input }) => {
-      const { getDb } = await import("./db");
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { leaveRequests } = await import("../drizzle/schema");
+      // days is computed server-side from the dates — the client's value is ignored.
+      const { createLeaveRequestRow } = await import("./db");
       const staffId = `STAFF-${ctx.user?.openId ?? "unknown"}`;
-      await db.insert(leaveRequests).values({ traineeCode: staffId, startDate: input.startDate, endDate: input.endDate, days: input.days, reason: input.reason ?? null, status: "pending", createdAt: Date.now() });
+      await createLeaveRequestRow({ traineeCode: staffId, requesterName: ctx.user?.name ?? null, startDate: input.startDate, endDate: input.endDate, reason: input.reason ?? null });
       return { ok: true };
     }),
 
@@ -7232,6 +7283,36 @@ const bdRouter = router({
         .where(eq(bdDeals.id, input.id));
       return { ok: true } as const;
     }),
+  /** One-shot backfill: create bd_companies rows from legacy free-text contact
+   *  company names and link contacts to them. Idempotent — safe to re-run. */
+  backfillCompanies: adminProcedure.mutation(async ({ ctx }) => {
+    const { getDb } = await import("./db");
+    const db = await getDb();
+    if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
+    const { bdCompanies, bdContacts } = await import("../drizzle/schema");
+    const { eq, isNull, and, sql: sqlOp } = await import("drizzle-orm");
+    const unlinked = await db.select().from(bdContacts).where(and(isNull(bdContacts.companyId), sqlOp`TRIM(${bdContacts.company}) <> ''`));
+    const existing = await db.select({ id: bdCompanies.id, name: bdCompanies.name }).from(bdCompanies);
+    const byName = new Map(existing.map(c => [c.name.trim().toLowerCase(), c.id]));
+    let created = 0, linked = 0;
+    for (const c of unlinked) {
+      const key = c.company.trim().toLowerCase();
+      let companyId = byName.get(key);
+      if (!companyId) {
+        const now = Date.now();
+        const [ins] = await db.insert(bdCompanies).values({ name: c.company.trim(), createdAt: now, updatedAt: now } as typeof bdCompanies.$inferInsert).$returningId();
+        companyId = ins?.id;
+        if (companyId) byName.set(key, companyId);
+        created++;
+      }
+      if (companyId) {
+        await db.update(bdContacts).set({ companyId, updatedAt: Date.now() }).where(eq(bdContacts.id, c.id));
+        linked++;
+      }
+    }
+    await auditEntry(ctx.user, "bd_backfill_companies", "bd", "all", JSON.stringify({ created, linked }));
+    return { created, linked };
+  }),
   /** Full company timeline: its own notes + every activity on its deals. */
   listCompanyActivity: staffProcedure
     .input(z.object({ companyId: z.number() }))
@@ -7363,7 +7444,9 @@ const bdRouter = router({
       const closed = input.stage === "closed_won" || input.stage === "closed_lost";
       await db.update(bdDeals).set({
         stage: input.stage, updatedAt: Date.now(), stageChangedAt: Date.now(),
-        ...(closed ? { closedAt: Date.now(), outcomeReason: input.reason ?? null } : {}),
+        // Closing stamps the outcome; REOPENING clears it, so a revived deal
+        // doesn't keep a stale closedAt/outcomeReason from its previous life.
+        ...(closed ? { closedAt: Date.now(), outcomeReason: input.reason ?? null } : { closedAt: null, outcomeReason: null }),
       }).where(eq(bdDeals.id, input.id));
       return { ok: true };
     }),
@@ -7654,7 +7737,7 @@ const crdtsArchiveRouter = router({
       const rows = await db.select({ id: workforceAgents.id, traineeCode: workforceAgents.traineeCode, fullName: workforceAgents.fullName, alias: workforceAgents.alias, agentStatus: workforceAgents.agentStatus }).from(workforceAgents).where(sql`${workforceAgents.crdts} = ${input.crdts.trim()}`);
       const holder = rows.find(r => r.traineeCode !== input.excludeCode);
       if (!holder) return { conflict: false as const };
-      const inactive = holder.agentStatus === "resigned" || holder.agentStatus === "terminated";
+      const inactive = ["resigned", "terminated", "blacklisted"].includes(holder.agentStatus ?? "");
       return { conflict: true as const, inactive, holder };
     }),
   listArchive: staffProcedure.query(async () => {
@@ -7695,7 +7778,12 @@ const crdtsArchiveRouter = router({
         archivedAt: Date.now(),
       });
       if (prev?.traineeCode) {
-        await db.update(workforceAgents).set({ crdts: null }).where(eq(workforceAgents.traineeCode, prev.traineeCode));
+        // Relabel instead of NULLing: archiveAgentCrdts renames the number to
+        // "N (k)" across the previous holder's row AND every history table, so
+        // the new holder does not inherit the old agent's payroll/performance
+        // rows (which stayed keyed to the bare number when we just cleared it).
+        const { archiveAgentCrdts } = await import("./db");
+        await archiveAgentCrdts(prev.traineeCode);
       }
       return { ok: true };
     }),
@@ -7724,7 +7812,7 @@ const leaveRouter = router({
       return db.select().from(leaveRequests).where(eq(leaveRequests.traineeCode, input.traineeCode)).orderBy(desc(leaveRequests.createdAt));
     }),
   listRequests: staffProcedure
-    .input(z.object({ status: z.enum(["pending", "approved", "rejected"]).optional() }).optional())
+    .input(z.object({ status: z.enum(["pending", "approved", "rejected", "cancelled"]).optional() }).optional())
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
       const db = await getDb();
@@ -7739,12 +7827,38 @@ const leaveRouter = router({
     .input(z.object({ id: z.number(), status: z.enum(["approved", "rejected"]), leaveType: z.enum(["casual", "annual", "unpaid"]).optional() }))
     .mutation(async ({ input, ctx }) => {
       const { decideLeaveRequest } = await import("./db");
+      const { LEAVE_DEFAULTS } = await import("@shared/const");
       try {
-        const r = await decideLeaveRequest({ id: input.id, decision: input.status, leaveType: input.leaveType, decidedBy: ctx.user.name ?? ctx.user.email ?? "admin" });
+        const r = await decideLeaveRequest({ id: input.id, decision: input.status, leaveType: input.leaveType, decidedBy: ctx.user.name ?? ctx.user.email ?? "admin", defaults: LEAVE_DEFAULTS });
         await auditEntry(ctx.user, input.status === "approved" ? "leave_approved" : "leave_rejected", "leave_request", String(input.id), JSON.stringify({ leaveType: input.leaveType, traineeCode: r.traineeCode, days: r.days }));
         return { ok: true };
       } catch (e) {
         throw toTrpcError(e, "Failed to decide leave");
+      }
+    }),
+  /** HR cancels a request. Cancelling an APPROVED casual/annual leave re-credits the days. */
+  cancel: roleProcedure("hr", "manager", "ops_manager", "team_lead")
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const { cancelLeaveRequest } = await import("./db");
+      try {
+        const r = await cancelLeaveRequest({ id: input.id, cancelledBy: ctx.user.name ?? ctx.user.email ?? "admin" });
+        await auditEntry(ctx.user, "leave_cancelled", "leave_request", String(input.id), JSON.stringify({ traineeCode: r.traineeCode, days: r.days, reCredited: r.wasApproved }));
+        return { ok: true };
+      } catch (e) {
+        throw toTrpcError(e, "Failed to cancel leave");
+      }
+    }),
+  /** Agent withdraws their OWN still-pending request. */
+  cancelMine: agentProcedure
+    .input(z.object({ id: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const { cancelLeaveRequest } = await import("./db");
+      try {
+        await cancelLeaveRequest({ id: input.id, cancelledBy: ctx.agent.traineeCode, byAgent: ctx.agent.traineeCode });
+        return { ok: true };
+      } catch (e) {
+        throw toTrpcError(e, "Failed to cancel leave");
       }
     }),
   listBalances: staffProcedure
@@ -7845,17 +7959,12 @@ const exitRouter = router({
       .map(a => ({ ...a, exitProcess: epMap.get(a.traineeCode) ?? null }));
   }),
   // Mark salary settled (BEFORE checklist — step 2 in lifecycle)
-  markSettled: staffProcedure
+  markSettled: roleProcedure("finance", "hr", "manager")
     .input(z.object({ traineeCode: z.string(), settled: z.boolean() }))
-    .mutation(async ({ input }) => {
-      const { getDb } = await import("./db");
-      const { eq } = await import("drizzle-orm");
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { workforceAgents, exitProcess } = await import("../drizzle/schema");
-      await db.update(workforceAgents).set({ salarySettled: input.settled }).where(eq(workforceAgents.traineeCode, input.traineeCode));
-      // Mirror into exit_process.settlementDone for the checklist display
-      await db.update(exitProcess).set({ settlementDone: input.settled, updatedAt: Date.now() }).where(eq(exitProcess.traineeCode, input.traineeCode));
+    .mutation(async ({ ctx, input }) => {
+      const { settleAgent } = await import("./db");
+      await settleAgent(input.traineeCode, input.settled);
+      await auditEntry(ctx.user, input.settled ? "mark_settled" : "mark_unsettled", "agent", input.traineeCode, undefined);
       return { ok: true };
     }),
   upsert: staffProcedure
@@ -7872,7 +7981,9 @@ const exitRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { exitProcess } = await import("../drizzle/schema");
-      const { traineeCode, ...rest } = input;
+      const { traineeCode, settlementDone: _ignoreSettle2, ...rest } = input;
+      // settlementDone is written ONLY through settleAgent (markSettled).
+      void _ignoreSettle2;
       const now = Date.now();
       const ex = await db.select().from(exitProcess).where(eq(exitProcess.traineeCode, traineeCode)).limit(1);
       if (ex[0]) await db.update(exitProcess).set({ ...rest, updatedAt: now }).where(eq(exitProcess.traineeCode, traineeCode));
@@ -7901,28 +8012,6 @@ const exitRouter = router({
       }
       return { ok: true };
     }),
-  // Legacy alias kept for backward compat with any existing UI calls
-  settleAndArchive: staffProcedure
-    .input(z.object({ traineeCode: z.string() }))
-    .mutation(async ({ input }) => {
-      const { getDb } = await import("./db");
-      const { eq } = await import("drizzle-orm");
-      const db = await getDb();
-      if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { exitProcess, workforceAgents } = await import("../drizzle/schema");
-      // Mark settled first
-      await db.update(workforceAgents).set({ salarySettled: true }).where(eq(workforceAgents.traineeCode, input.traineeCode));
-      await db.update(exitProcess).set({ settlementDone: true, updatedAt: Date.now() }).where(eq(exitProcess.traineeCode, input.traineeCode));
-      // Then archive if checklist complete
-      const rows = await db.select().from(exitProcess).where(eq(exitProcess.traineeCode, input.traineeCode)).limit(1);
-      const ep = rows[0];
-      const checklistComplete = ep && ep.exitType && ep.exitInterview && ep.clearance && ep.assetsReturned && ep.lastWorkingDay;
-      if (checklistComplete) {
-        await db.update(exitProcess).set({ completedAt: Date.now(), updatedAt: Date.now() }).where(eq(exitProcess.traineeCode, input.traineeCode));
-      }
-      return { ok: true };
-    }),
-
   /** Transfer an agent to a different campaign (and thus potentially a different client) */
   transferCampaign: staffProcedure
     .input(z.object({
@@ -7988,8 +8077,20 @@ const sessionRouter = router({
       if (ctx.user?.role !== "admin" && ctx.user?.role !== "owner") {
         throw new TRPCError({ code: "FORBIDDEN" });
       }
-      const { revokeSessionLog } = await import("./sessionLog");
+      const { revokeSessionLog, getSessionLogById } = await import("./sessionLog");
+      const row = await getSessionLogById(input.id);
       await revokeSessionLog(input.id, ctx.user.name || ctx.user.openId);
+      // Actually enforce it: every Hub token that user holds dies now.
+      if (row?.userId) {
+        const { getDb } = await import("./db");
+        const db = await getDb();
+        if (db) {
+          const { users } = await import("../drizzle/schema");
+          const { eq } = await import("drizzle-orm");
+          await db.update(users).set({ sessionsRevokedAt: Date.now() }).where(eq(users.openId, row.userId));
+        }
+      }
+      await auditEntry(ctx.user, "revoke_session", "user", row?.userId ?? String(input.id), "{}");
       return { ok: true } as const;
     }),
 });
@@ -8114,7 +8215,7 @@ const clientsRouter = router({
       clientId: z.number().int().positive(),
       month: z.string().regex(/^\d{4}-\d{2}$/).optional(),
     }))
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
       const db = await getDb();
       if (!db) throw new Error("DB unavailable");
@@ -8135,12 +8236,22 @@ const clientsRouter = router({
       const activeAgents = await listWorkforceAgentsByClient(input.clientId);
       const allAgents = await listWorkforceAgentsByClient(input.clientId, true);
 
-      // Payroll for this month
+      // Payroll for this month. V2 rows are keyed by CRDTS and agentCode is often
+      // NULL, so match on EITHER key (comma-split crdts included) — matching on
+      // agentCode alone silently dropped most of the month.
       const agentCodes = allAgents.map(a => a.traineeCode).filter((c): c is string => Boolean(c));
+      const payrollCrdts = Array.from(new Set(allAgents.flatMap(a =>
+        String((a as { crdts?: string | null }).crdts ?? "").split(",").map(x => x.trim()).filter(Boolean)
+      )));
       let payroll: typeof payrollRecords.$inferSelect[] = [];
-      if (agentCodes.length > 0) {
+      if (canSeeMoney(ctx.user?.role) && (agentCodes.length > 0 || payrollCrdts.length > 0)) {
+        const { or: orOp } = await import("drizzle-orm");
+        const keyMatch = agentCodes.length && payrollCrdts.length
+          ? orOp(inArray(payrollRecords.agentCode, agentCodes), inArray(payrollRecords.crdts, payrollCrdts))
+          : agentCodes.length ? inArray(payrollRecords.agentCode, agentCodes)
+          : inArray(payrollRecords.crdts, payrollCrdts);
         payroll = await db.select().from(payrollRecords)
-          .where(and(eq(payrollRecords.month, month), inArray(payrollRecords.agentCode, agentCodes)));
+          .where(and(eq(payrollRecords.month, month), keyMatch));
       }
 
       // Adherence for this month. adherence_log has no live writer any more, so the dashboard reads the
@@ -8202,7 +8313,7 @@ const clientsRouter = router({
 // ─── Salary Advances (سلفة) ───────────────────────────────────────────────────
 const advancesRouter = router({
   /** HR: list all advances (optional filter by traineeCode). */
-  list: staffProcedure
+  list: roleProcedure("hr", "finance", "manager")
     .input(z.object({ traineeCode: z.string().optional() }))
     .query(async ({ input }) => {
       const { listAdvances } = await import("./db");
@@ -8210,22 +8321,15 @@ const advancesRouter = router({
     }),
 
   /** Agent portal: list own advances (reads agent JWT cookie). */
-  listMine: publicProcedure
+  listMine: agentProcedure
     .query(async ({ ctx }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) return [];
-      let traineeCode = "";
-      try {
-        const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-        if (payload.type !== "agent") return [];
-        traineeCode = payload.traineeCode;
-      } catch { return []; }
+      const traineeCode = ctx.agent.traineeCode;
       const { listAdvances } = await import("./db");
       return listAdvances(traineeCode);
     }),
 
   /** HR: create a new salary advance. */
-  create: staffProcedure
+  create: roleProcedure("hr", "finance", "manager")
     .input(z.object({
       traineeCode: z.string().min(1),
       amountEgp:   z.string().regex(/^\d+(\.\d{1,2})?$/, "Must be a valid amount"),
@@ -8237,35 +8341,47 @@ const advancesRouter = router({
     .mutation(async ({ ctx, input }) => {
       const { createAdvance } = await import("./db");
       await createAdvance({ ...input, createdBy: ctx.user?.name ?? ctx.user?.email ?? "unknown" });
+      await auditEntry(ctx.user, "advance_create", "agent", input.traineeCode, JSON.stringify({ amountEgp: input.amountEgp, issuedDate: input.issuedDate }));
       return { ok: true } as const;
     }),
 
-  /** HR: mark an advance as deducted (links to pay cycle). */
-  deduct: staffProcedure
+  /** HR: mark an advance as deducted — creates the payroll deduction for that cycle in the same transaction. */
+  deduct: roleProcedure("hr", "finance", "manager")
     .input(z.object({
       id:          z.number().int().positive(),
       deductCycle: z.string().regex(/^\d{4}-\d{2}$/),
     }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const { deductAdvance } = await import("./db");
-      await deductAdvance(input.id, input.deductCycle);
+      try {
+        await deductAdvance(input.id, input.deductCycle, ctx.user?.name ?? ctx.user?.email ?? "unknown");
+      } catch (e) {
+        const err = e as { code?: string; message?: string };
+        throw new TRPCError({ code: err.code === "CONFLICT" ? "CONFLICT" : err.code === "NOT_FOUND" ? "NOT_FOUND" : "INTERNAL_SERVER_ERROR", message: err.message ?? "Failed" });
+      }
+      await auditEntry(ctx.user, "advance_deduct", "advance", String(input.id), JSON.stringify({ deductCycle: input.deductCycle }));
       return { ok: true } as const;
     }),
 
-  /** HR: cancel / write off an advance. */
-  cancel: staffProcedure
+  /** HR: cancel / write off a pending advance. */
+  cancel: roleProcedure("hr", "finance", "manager")
     .input(z.object({ id: z.number().int().positive() }))
-    .mutation(async ({ input }) => {
+    .mutation(async ({ ctx, input }) => {
       const { cancelAdvance } = await import("./db");
-      await cancelAdvance(input.id);
+      try {
+        await cancelAdvance(input.id);
+      } catch (e) {
+        throw new TRPCError({ code: "CONFLICT", message: (e as Error).message });
+      }
+      await auditEntry(ctx.user, "advance_cancel", "advance", String(input.id), "{}");
       return { ok: true } as const;
     }),
 });
 
 // ─── Contracts ────────────────────────────────────────────────────────────────
 const contractsRouter = router({
-  /** Create or update a contract for an agent. Any authenticated user. */
-  upsert: staffProcedure
+  /** Create or update a contract for an agent. */
+  upsert: roleProcedure("hr", "manager")
     .input(z.object({
       traineeCode:        z.string().min(1),
       contractType:       z.enum(["permanent", "fixed_term", "freelance"]),
@@ -8277,7 +8393,15 @@ const contractsRouter = router({
       notes:              z.string().max(2000).nullable().optional(),
     }))
     .mutation(async ({ ctx, input }) => {
-      const { upsertAgentContract } = await import("./db");
+      const { upsertAgentContract, getWorkforceAgentByCode: getWa } = await import("./db");
+      // Validation the table never had: the agent must exist, dates must be ordered,
+      // and a fixed-term contract needs an end date.
+      if (!(await getWa(input.traineeCode))) throw new TRPCError({ code: "NOT_FOUND", message: `No agent with code ${input.traineeCode}` });
+      for (const [label, v] of [["Start date", input.startDate], ["End date", input.endDate], ["Probation end", input.probationEndDate]] as const) {
+        if (v && !/^\d{4}-\d{2}-\d{2}$/.test(v)) throw new TRPCError({ code: "BAD_REQUEST", message: `${label} must be YYYY-MM-DD` });
+      }
+      if (input.startDate && input.endDate && input.endDate < input.startDate) throw new TRPCError({ code: "BAD_REQUEST", message: "End date is before start date" });
+      if (input.contractType === "fixed_term" && !input.endDate) throw new TRPCError({ code: "BAD_REQUEST", message: "A fixed-term contract needs an end date" });
       const actorName = ctx.user?.name ?? ctx.user?.email ?? "unknown";
       await upsertAgentContract({ ...input, actorName });
       await auditEntry(ctx.user, "contract_upsert", "agent", input.traineeCode, JSON.stringify({ contractType: input.contractType }));
@@ -8307,16 +8431,9 @@ const contractsRouter = router({
     }),
 
   /** Agent portal: get own contract (reads agent JWT cookie). */
-  getMine: publicProcedure
+  getMine: agentProcedure
     .query(async ({ ctx }) => {
-      const token = getAgentCookieFromReq(ctx.req);
-      if (!token) return null;
-      let traineeCode = "";
-      try {
-        const payload = jwt.verify(token, ENV.cookieSecret) as { traineeCode: string; type: string };
-        if (payload.type !== "agent") return null;
-        traineeCode = payload.traineeCode;
-      } catch { return null; }
+      const traineeCode = ctx.agent.traineeCode;
       const { getContractByCode } = await import("./db");
       return getContractByCode(traineeCode);
     }),
@@ -8501,7 +8618,7 @@ const timeTrackingRouter = router({
     return rows.map(r => ({
       id: r.id, traineeCode: r.traineeCode, agentName: r.requesterName,
       requestType: r.leaveType ?? (r.reason?.match(/^\[(\w+)/)?.[1] ?? "leave"),
-      startDate: r.startDate, endDate: r.endDate, halfDay: /half day/.test(r.reason ?? ""),
+      startDate: r.startDate, endDate: r.endDate,
       status: r.status, reason: r.reason, reviewedBy: r.decidedBy, reviewedAt: r.decidedAt, createdAt: r.createdAt,
     }));
   }),
@@ -8531,7 +8648,7 @@ const timeTrackingRouter = router({
       return rows.map(r => ({
         id: r.id, traineeCode: r.traineeCode, agentName: r.requesterName,
         requestType: r.leaveType ?? (r.reason?.match(/^\[(\w+)/)?.[1] ?? "leave"),
-        startDate: r.startDate, endDate: r.endDate, halfDay: /half day/.test(r.reason ?? ""),
+        startDate: r.startDate, endDate: r.endDate,
         status: r.status, reason: r.reason, reviewedBy: r.decidedBy, reviewedAt: r.decidedAt, createdAt: r.createdAt,
         days: r.days, leaveType: r.leaveType,
       }));
@@ -8731,13 +8848,20 @@ const timeTrackingRouter = router({
     const { ttDateKey } = await import("./_core/time");
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-    const [open] = await db.select({ id: agentShifts.id }).from(agentShifts)
-      .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut))).limit(1);
-    if (open) throw new TRPCError({ code: "CONFLICT", message: "Already clocked in" });
+    // Race-proof double clock-in: serialize per agent by locking their
+    // workforce row (TiDB pessimistic FOR UPDATE) around the check + insert.
+    const { sql: sqlLock } = await import("drizzle-orm");
     const now = Date.now();
-    const [inserted] = await db.insert(agentShifts).values({ traineeCode, clockIn: now, date: ttDateKey(now), createdAt: now }).$returningId();
+    const shiftId = await db.transaction(async (tx) => {
+      await tx.execute(sqlLock`SELECT id FROM workforce_agents WHERE traineeCode = ${traineeCode} FOR UPDATE`);
+      const [open] = await tx.select({ id: agentShifts.id }).from(agentShifts)
+        .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut))).limit(1);
+      if (open) throw new TRPCError({ code: "CONFLICT", message: "Already clocked in" });
+      const [inserted] = await tx.insert(agentShifts).values({ traineeCode, clockIn: now, date: ttDateKey(now), createdAt: now }).$returningId();
+      return inserted?.id ?? null;
+    });
     await syncPresenceFromState(traineeCode, null);
-    return { ok: true, shiftId: inserted?.id ?? null };
+    return { ok: true, shiftId };
   }),
 
   clockOut: agentProcedure.mutation(async ({ ctx }) => {
@@ -9025,8 +9149,10 @@ export const appRouter = router({
             .filter(a => (lastPing.get(a.traineeCode) ?? 0) < cutoff)
             .map(a => ({ traineeCode: a.traineeCode, fullName: a.fullName, email: a.email }));
         } else {
-          // paymentMethods table not yet implemented — treat all agents as needing payment info ping
-          const withSet = new Set<string>();
+          // Only agents who have NOT saved any payment method get the nag.
+          const { agentPaymentMethods } = await import("../drizzle/schema");
+          const pmRows = await db.select({ traineeCode: agentPaymentMethods.traineeCode }).from(agentPaymentMethods);
+          const withSet = new Set(pmRows.map(r => r.traineeCode));
           targets = activeAgents
             .filter(a => !withSet.has(a.traineeCode) && (credMap.get(a.traineeCode) ?? 0) < cutoff)
             .filter(a => (lastPing.get(a.traineeCode) ?? 0) < cutoff)
@@ -9055,7 +9181,14 @@ export const appRouter = router({
             if (!targetChannel) { skipped++; continue; }
             const finalMsg = channelId ? msgText : `📌 *${t.fullName}* (${t.traineeCode}): ${msgText}`;
             const msg = await fetch("https://slack.com/api/chat.postMessage", { method: "POST", headers: { Authorization: `Bearer ${ENV.slackBotToken}`, "Content-Type": "application/json" }, body: JSON.stringify({ channel: targetChannel, text: finalMsg }) });
-            const msgData = await msg.json() as { ok: boolean; ts?: string };
+            const msgData = await msg.json() as { ok: boolean; error?: string; ts?: string };
+            if (!msgData.ok) {
+              // A failed send must NOT be logged as sent — that started a 5-day
+              // suppression window for a message nobody ever received.
+              console.warn("[slack] reminder send failed for", t.traineeCode, msgData.error);
+              skipped++;
+              continue;
+            }
             await db.insert(slackPingLog).values({ traineeCode: t.traineeCode, reason: input.type, sentAt: Date.now(), messageTs: msgData.ts ?? null });
             sent++;
           } catch { skipped++; }
@@ -9081,7 +9214,6 @@ export const appRouter = router({
   commission: commissionRouter,
   adjustments: adjustmentsRouter,
   trainerSalaries: trainerSalariesRouter,
-  invites: invitesRouter,
   apiKeys: apiKeysRouter,
   bd: bdRouter,
   warnings: warningsRouter,

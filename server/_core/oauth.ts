@@ -1,4 +1,4 @@
-import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { COOKIE_NAME, ONE_YEAR_MS, THIRTY_DAYS_MS } from "@shared/const";
 import type { Express, Request, Response } from "express";
 import * as db from "../db";
 import { getSessionCookieOptions } from "./cookies";
@@ -21,6 +21,21 @@ export function registerOAuthRoutes(app: Express) {
     }
 
     try {
+      // The state is a base64 redirectUri minted by our own login button. Refuse anything
+      // pointing elsewhere — a crafted state must not be able to drive the exchange.
+      try {
+        const decoded = atob(state);
+        const stateOrigin = new URL(decoded).origin;
+        const allowed = (process.env.ALLOWED_ORIGIN ?? "https://hub.tanis-eg.com").split(",").map(o => o.trim());
+        const selfOrigin = `${req.protocol}://${req.get("host")}`;
+        if (process.env.NODE_ENV === "production" && !allowed.includes(stateOrigin) && stateOrigin !== selfOrigin) {
+          res.status(400).json({ error: "Invalid state" });
+          return;
+        }
+      } catch {
+        res.status(400).json({ error: "Invalid state" });
+        return;
+      }
       const tokenResponse = await sdk.exchangeCodeForToken(code, state);
       const userInfo = await sdk.getUserInfo(tokenResponse.accessToken);
 
@@ -39,11 +54,11 @@ export function registerOAuthRoutes(app: Express) {
 
       const sessionToken = await sdk.createSessionToken(userInfo.openId, {
         name: userInfo.name || "",
-        expiresInMs: ONE_YEAR_MS,
+        expiresInMs: THIRTY_DAYS_MS,
       });
 
       const cookieOptions = getSessionCookieOptions(req);
-      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: ONE_YEAR_MS });
+      res.cookie(COOKIE_NAME, sessionToken, { ...cookieOptions, maxAge: THIRTY_DAYS_MS });
 
       // Fire-and-forget session log (never blocks the redirect)
       logSession(req, userInfo.openId, userInfo.name || null).catch(() => {});

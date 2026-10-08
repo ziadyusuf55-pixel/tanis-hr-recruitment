@@ -21,6 +21,11 @@ export type HubRole =
   | "user" | "viewer";
 
 export const FULL_ACCESS_ROLES: readonly HubRole[] = ["owner", "admin"];
+/** Roles that may see salaries, bank details and identity documents (owner's decision, Oct 2026). */
+export const MONEY_ROLES: readonly HubRole[] = ["owner", "admin", "manager", "hr", "finance"];
+export function canSeeMoney(role?: string | null): boolean {
+  return MONEY_ROLES.includes((role ?? "") as HubRole);
+}
 export const NO_ACCESS_ROLES: readonly HubRole[] = ["user", "viewer"];
 
 export function isFullAccess(role?: string | null): boolean {

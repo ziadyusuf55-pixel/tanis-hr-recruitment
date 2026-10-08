@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { cycleOfDate } from "@/lib/cycle";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -52,13 +53,8 @@ export function ViolationTracker({
     (all as ViolationRow[]).forEach(r => { if (r.month) s.add(r.month); });
     return Array.from(s).sort().reverse();
   }, [all]);
-  // Cycle helper: 26→25 boundary
-  const cycleOf = (dateStr: string) => {
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return null;
-    if (d.getDate() >= 26) d.setMonth(d.getMonth() + 1);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-  };
+  // Cycle helper: 26→25 boundary (pure y/m math — Date.setMonth overflows on the 29th–31st)
+  const cycleOf = (dateStr: string) => cycleOfDate(dateStr);
   // Build cycle list from actual violation dates (not month field)
   const cycles = useMemo(() => {
     const s = new Set<string>();

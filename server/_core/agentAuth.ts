@@ -116,11 +116,16 @@ export async function resolveAgentSession(req: Request): Promise<AgentSession | 
   const issuedAt = (payload.iat ?? 0) * 1000;
   const row = await loadAgentRow(payload.traineeCode);
   if (row) {
-    if (row.sessionRevokedAt && issuedAt < row.sessionRevokedAt) {
+    // iat has SECOND precision while sessionRevokedAt has ms precision — a token
+    // issued in the same second as the revocation (changePassword re-issues one
+    // immediately after revoking) must count as issued AFTER it.
+    if (row.sessionRevokedAt && issuedAt + 999 < row.sessionRevokedAt) {
       stripAgentCookie(req);
       return null;
     }
-    if (row.agentStatus && row.agentStatus !== "active") {
+    // Only terminal statuses lose portal access. Frozen / on-notice / inactive agents
+    // keep their login (owner decision): they still need payslips, requests and documents.
+    if (row.agentStatus && ["resigned", "terminated", "blacklisted"].includes(row.agentStatus)) {
       stripAgentCookie(req);
       return null;
     }

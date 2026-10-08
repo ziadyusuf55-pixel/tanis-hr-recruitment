@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { QueryError } from "@/components/QueryError";
 import { trpc } from "@/lib/trpc";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Input } from "@/components/ui/input";
@@ -80,7 +81,7 @@ const STATUS_FILTERS = [
 
 export default function AllDocuments() {
   const utils = trpc.useUtils();
-  const { data: allDocs = [], isLoading } = trpc.documents.listAll.useQuery();
+  const { data: allDocs = [], isLoading, error: docsError, refetch: refetchDocs } = trpc.documents.listAll.useQuery();
   const { data: agents = [] } = trpc.workforce.list.useQuery({});
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "submitted" | "not_submitted" | "pending">("all");
@@ -292,6 +293,7 @@ export default function AllDocuments() {
               const pendingCount = g.docs.filter(d => d.status === "pending").length;
               return (
                 <div key={g.traineeCode}>
+                  <QueryError error={docsError} onRetry={() => refetchDocs()} />
                   <button
                     className="w-full flex items-center gap-3 px-4 py-3 hover:bg-muted/30 transition-colors text-left"
                     onClick={() => { if (docCount > 0) toggleExpand(g.traineeCode); }}

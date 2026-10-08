@@ -44,32 +44,29 @@ const dir = path.resolve(process.cwd(), "drizzle");
 const files = fs.readdirSync(dir).filter(f => /^\d{4}_.*\.sql$/.test(f)).sort();
 const sha = (s) => crypto.createHash("sha256").update(s).digest("hex");
 
-/** Split a .sql file into statements. Honours drizzle's `--> statement-breakpoint`, otherwise `;` at line end. */
-function splitStatements(sqlText) {
-  const noComments = sqlText.split("\n").filter(l => !/^\s*--/.test(l)).join("\n");
-  if (noComments.includes("--> statement-breakpoint")) {
-    return noComments.split("--> statement-breakpoint").map(s => s.trim()).filter(Boolean);
-  }
-  const out = []; let buf = "";
-  for (const line of noComments.split("\n")) {
-    buf += line + "\n";
-    if (/;\s*$/.test(line)) { out.push(buf.trim().replace(/;\s*$/, "")); buf = ""; }
-  }
-  if (buf.trim()) out.push(buf.trim().replace(/;\s*$/, ""));
-  return out.filter(Boolean);
-}
+import { splitStatements } from "./sqlSplit.mjs";
 
 const conn = await mysql.createConnection({ uri: url, multipleStatements: false });
-await conn.query(`CREATE TABLE IF NOT EXISTS _hub_migrations (
+// A dry run must not write anything — not even the ledger table.
+if (!DRY) {
+  await conn.query(`CREATE TABLE IF NOT EXISTS _hub_migrations (
   id INT AUTO_INCREMENT PRIMARY KEY,
   filename VARCHAR(255) NOT NULL UNIQUE,
   sha256 CHAR(64) NOT NULL,
   applied_at BIGINT NOT NULL,
   baseline TINYINT(1) NOT NULL DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`);
+}
 
-const [rows] = await conn.query("SELECT filename, sha256 FROM _hub_migrations");
-const applied = new Map(rows.map(r => [r.filename, r.sha256]));
+let applied = new Map();
+try {
+  const [rows] = await conn.query("SELECT filename, sha256 FROM _hub_migrations");
+  applied = new Map(rows.map(r => [r.filename, r.sha256]));
+} catch (e) {
+  if (DRY && /doesn't exist/.test(e.message)) {
+    console.log("(_hub_migrations does not exist yet — a real run would create it)");
+  } else throw e;
+}
 
 let ran = 0, skipped = 0, baselined = 0;
 for (const f of files) {

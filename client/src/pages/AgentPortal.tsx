@@ -2740,7 +2740,7 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
   const totalOTHours = (ot as Record<string,unknown>[]).reduce((s: number, r: Record<string,unknown>) => s + parseFloat(String(r.hours ?? 0)), 0);
   const totalOTEgp = (ot as Record<string,unknown>[]).reduce((s: number, r: Record<string,unknown>) => s + parseFloat(String(r.egpAmount ?? 0)), 0);
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateKey();
 
   return (
     <div className="space-y-6">
@@ -2970,7 +2970,8 @@ function MonthlyLogsView({ theme, monthKey }: { theme: Theme; monthKey: string }
 }
 
 function AgentCommentsTab({ theme }: { theme: Theme }) {
-  const { data: comments = [], isLoading } = trpc.agentComments.listMine.useQuery();
+  const { data: comments = [], isLoading, refetch } = trpc.agentComments.listMine.useQuery();
+  const acknowledge = trpc.agentComments.acknowledge.useMutation({ onSuccess: () => refetch() });
 
   if (isLoading) {
     return (
@@ -3019,6 +3020,22 @@ function AgentCommentsTab({ theme }: { theme: Theme }) {
               </span>
             </div>
             <p className="text-sm whitespace-pre-wrap" style={{ color: theme.text }}>{c.content}</p>
+            {tag === "warning" && (
+              (c as { acknowledgedAt?: number | null }).acknowledgedAt ? (
+                <p className="text-xs mt-2" style={{ color: theme.textMuted }}>
+                  ✓ Acknowledged on {new Date(Number((c as { acknowledgedAt?: number | null }).acknowledgedAt)).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                </p>
+              ) : (
+                <button
+                  className="mt-2 text-xs font-medium px-3 py-1.5 rounded-lg border transition-colors"
+                  style={{ borderColor: theme.cardBorder, color: theme.text }}
+                  disabled={acknowledge.isPending}
+                  onClick={() => acknowledge.mutate({ id: c.id })}
+                >
+                  {acknowledge.isPending ? "Saving…" : "I acknowledge this warning"}
+                </button>
+              )
+            )}
           </div>
         );
       })}
@@ -4458,7 +4475,7 @@ function EnglishLevelQuiz({ theme, traineeCode }: { theme: Theme; traineeCode?: 
       <p className="text-sm font-semibold" style={{ color: theme.text }}>English Level Assessment</p>
       <p className="text-xs max-w-sm mx-auto" style={{ color: theme.textMuted }}>
         60 questions across 4 skills: Grammar, Vocabulary, Reading, and Listening/Context.
-        Takes 15–20 minutes. Your CEFR level (A1 → C2) appears at the end.
+        Takes 15–20 minutes. Your indicative CEFR-aligned level (A1 → C2) appears at the end — a self-assessment, not an official certificate.
       </p>
       <div className="flex justify-center gap-2 flex-wrap">
         {skills.map(s => <span key={s} className="text-[11px] px-2.5 py-1 rounded-full" style={{ background: theme.inputBg, color: theme.textMuted }}>{SKILL_LABELS[s]}</span>)}
@@ -4937,7 +4954,7 @@ function MilestoneBanner({ wfProfile, theme }: { wfProfile: Record<string,unknow
     ? { emoji: "🎂", title: `Happy Birthday, ${String(wfProfile.alias ?? wfProfile.fullName ?? "Champ")}!`, sub: "Wishing you a wonderful day from the Tanis team! 🎉", color: "#f59e0b" }
     : anniversaryYears
     ? { emoji: "🎊", title: `${anniversaryYears} Year${anniversaryYears > 1 ? "s" : ""} at Tanis!`, sub: `Congratulations on ${anniversaryYears} year${anniversaryYears > 1 ? "s" : ""} with us — thank you for everything you bring to the team.`, color: BRAND }
-    : { emoji: "⭐", title: "6 Months Strong!", sub: "You've hit your 6-month milestone at Tanis — you're officially eligible for annual leave. Keep it up!", color: "#16a34a" };
+    : { emoji: "⭐", title: "6 Months Strong!", sub: "You've hit your 6-month milestone at Tanis — thank you for being part of the team. Keep it up!", color: "#16a34a" };
 
   return (
     <div className="rounded-2xl p-4 flex items-start gap-3 mb-4"

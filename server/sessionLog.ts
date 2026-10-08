@@ -41,10 +41,9 @@ function parseUA(ua: string): { browser: string; os: string; deviceType: "deskto
 // ─── IP extraction ────────────────────────────────────────────────────────────
 
 function extractIp(req: Request): string {
-  const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string") return forwarded.split(",")[0].trim();
-  if (Array.isArray(forwarded)) return forwarded[0].trim();
-  return req.socket?.remoteAddress ?? "unknown";
+  // req.ip respects Express "trust proxy" (1 hop) — unlike raw X-Forwarded-For,
+  // a client cannot spoof it past the real proxy.
+  return req.ip ?? req.socket?.remoteAddress ?? "unknown";
 }
 
 // ─── Geolocation via ip-api.com (free, no key) ───────────────────────────────
@@ -63,17 +62,18 @@ async function geolocate(ip: string): Promise<GeoResult> {
     return blank;
   }
   try {
-    const res = await fetch(`http://ip-api.com/json/${ip}?fields=status,country,city,lat,lon`, {
+    // HTTPS endpoint — staff IPs must not transit in cleartext.
+    const res = await fetch(`https://ipwho.is/${ip}?fields=success,country,city,latitude,longitude`, {
       signal: AbortSignal.timeout(3000),
     });
     if (!res.ok) return blank;
-    const data = (await res.json()) as { status: string; country?: string; city?: string; lat?: number; lon?: number };
-    if (data.status !== "success") return blank;
+    const data = (await res.json()) as { success?: boolean; country?: string; city?: string; latitude?: number; longitude?: number };
+    if (!data.success) return blank;
     return {
       country: data.country ?? null,
       city: data.city ?? null,
-      lat: data.lat ?? null,
-      lng: data.lon ?? null,
+      lat: data.latitude ?? null,
+      lng: data.longitude ?? null,
     };
   } catch {
     return blank;
@@ -118,6 +118,13 @@ export async function listSessionLogs() {
     .limit(200);
   // Sort newest first
   return rows.sort((a, b) => (b.loggedInAt ?? 0) - (a.loggedInAt ?? 0));
+}
+
+export async function getSessionLogById(id: number) {
+  const db = await getDb();
+  if (!db) return null;
+  const [row] = await db.select().from(sessionLogs).where(eq(sessionLogs.id, id)).limit(1);
+  return row ?? null;
 }
 
 export async function revokeSessionLog(id: number, revokedBy: string) {

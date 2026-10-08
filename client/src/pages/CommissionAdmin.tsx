@@ -1,4 +1,5 @@
 import { useState, useRef, useMemo, useCallback } from "react";
+import { currentCycleMonth, recentCycles } from "@/lib/cycle";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -67,10 +68,7 @@ export default function CommissionAdmin() {
   const [activeTab, setActiveTab] = useState<"records" | "leaderboard" | "upload">("records");
 
   // Leaderboard tab state
-  const [lbCycle, setLbCycle] = useState<string>(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  });
+  const [lbCycle, setLbCycle] = useState<string>(() => currentCycleMonth());
   const [lbCampaign, setLbCampaign] = useState<string>("all");
   const { data: lbData = [], isLoading: lbLoading } = trpc.commission.getFullLeaderboard.useQuery(
     { cycleKey: lbCycle },
@@ -133,10 +131,8 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
   );
 
   // Records tab state
-  const [viewMonth, setViewMonth] = useState<string>(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  });
+  // Commission records are keyed by PAYMENT CYCLE (26th→25th), not calendar month.
+  const [viewMonth, setViewMonth] = useState<string>(() => currentCycleMonth());
 
   const { data: commRecords = [], isLoading: loadingRecords, refetch: refetchRecords } =
     trpc.commission.getForMonth.useQuery({ month: viewMonth });
@@ -822,8 +818,10 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
                     <tbody>
                       {lbFiltered.map((row, idx) => {
                         const medal = row.rank === 1 ? "🥇" : row.rank === 2 ? "🥈" : row.rank === 3 ? "🥉" : null;
+                        // NaN-safe: profit arrives as a string and can be null/"N/A" from the sheet.
+                        const safeN = (v: unknown) => { const x = Number(v ?? 0); return Number.isFinite(x) ? x : 0; };
                         const fmtMoney = (v: number) => v < 0 ? `-$${Math.abs(v).toLocaleString()}` : `$${v.toLocaleString()}`;
-                        const commAmt = Number(row.commissionEgp ?? 0);
+                        const profitN = safeN(row.profit);
                         return (
                           <tr key={`${row.crdts}-${row.campaignName}`}
                             className={`border-b last:border-0 ${
@@ -836,8 +834,8 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
                             <td className="px-4 py-3 font-mono text-xs text-muted-foreground">{row.crdts}</td>
                             <td className="px-4 py-3 text-muted-foreground">{row.campaignName}</td>
                             <td className={`px-4 py-3 text-right font-semibold ${
-                              Number(row.profit) < 0 ? "text-red-600" : "text-emerald-600"
-                            }`}>{fmtMoney(Number(row.profit))}</td>
+                              profitN < 0 ? "text-red-600" : "text-emerald-600"
+                            }`}>{fmtMoney(profitN)}</td>
                           </tr>
                         );
                       })}
@@ -846,7 +844,7 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
                       <tr className="border-t bg-muted/30 font-semibold">
                         <td colSpan={4} className="px-4 py-3 text-right text-sm text-muted-foreground">{lbFiltered.length} agents</td>
                         <td className="px-4 py-3 text-right text-sm text-emerald-600">
-                          {(() => { const t = lbFiltered.reduce((s, r) => s + Number(r.profit), 0); return t < 0 ? `-$${Math.abs(t).toLocaleString()}` : `$${t.toLocaleString()}`; })()}
+                          {(() => { const t = lbFiltered.reduce((s, r) => { const x = Number(r.profit ?? 0); return s + (Number.isFinite(x) ? x : 0); }, 0); return t < 0 ? `-$${Math.abs(t).toLocaleString()}` : `$${t.toLocaleString()}`; })()}
                         </td>
                       </tr>
                     </tfoot>

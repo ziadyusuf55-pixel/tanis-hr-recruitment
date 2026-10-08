@@ -1,5 +1,8 @@
 import { useState, useMemo } from "react";
+import { currentCycleMonth, recentCycles } from "@/lib/cycle";
 import { trpc } from "@/lib/trpc";
+import { toast } from "sonner";
+import { useAuth } from "@/_core/hooks/useAuth";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -39,24 +42,14 @@ const CAT_COLOR: Record<string, string> = {
  */
 export default function CoachingAdmin() {
   const now = new Date();
-  // Cycle runs 26th → 25th, so before the 26th we're still in the previous cycle's key.
-  const cycleOf = (d: Date) => {
-    const dd = new Date(d);
-    if (dd.getDate() >= 26) dd.setMonth(dd.getMonth() + 1);
-    return `${dd.getFullYear()}-${String(dd.getMonth() + 1).padStart(2, "0")}`;
-  };
+  // Cycle runs 26th → 25th (shared lib — pure y/m math, no setMonth overflow).
   const [viewMode, setViewMode] = useState<"cycle" | "month">("cycle");
-  const [cycle, setCycle] = useState(cycleOf(now));
+  const [cycle, setCycle] = useState(currentCycleMonth());
   const [month, setMonth] = useState(() => `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
   const [q, setQ] = useState("");
 
   // Offer the last 8 cycles in the picker.
-  const cycles = useMemo(() => {
-    const out: string[] = [];
-    const d = new Date(now);
-    for (let i = 0; i < 8; i++) { out.push(cycleOf(d)); d.setMonth(d.getMonth() - 1); }
-    return out;
-  }, []);
+  const cycles = useMemo(() => recentCycles(8), []);
 
   // Past 8 months for month picker
   const months = useMemo(() => {
@@ -70,7 +63,14 @@ export default function CoachingAdmin() {
   }, []);
 
   const activePeriod = viewMode === "cycle" ? cycle : month;
-  const { data: all = [], isLoading } = trpc.coaching.listByCycle.useQuery({ cycleKey: activePeriod, viewMode });
+  const { data: all = [], isLoading, refetch } = trpc.coaching.listByCycle.useQuery({ cycleKey: activePeriod, viewMode });
+  const updateStatus = trpc.coaching.updateStatus.useMutation({
+    onSuccess: () => refetch(),
+    onError: (e) => toast.error(e.message),
+  });
+  // Approving pays a bonus — only money roles may decide (server enforces the same).
+  const { user: _cu } = useAuth();
+  const canDecide = ["owner", "admin", "manager", "hr", "finance"].includes((_cu as { role?: string } | null)?.role ?? "");
   const { data: agents = [] } = trpc.workforce.list.useQuery({});
   const { data: allForDisplay = [] } = trpc.workforce.listForDisplay.useQuery();
   const statusBadge = (status: string | null | undefined) => {
@@ -232,6 +232,7 @@ export default function CoachingAdmin() {
                     <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground hidden md:table-cell">Notes</th>
                     <th className="text-right px-3 py-2 text-xs font-medium text-muted-foreground">Hrs</th>
                     <th className="text-right px-3 py-2 text-xs font-medium text-muted-foreground">EGP</th>
+                    <th className="text-center px-3 py-2 text-xs font-medium text-muted-foreground">Status</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -250,6 +251,28 @@ export default function CoachingAdmin() {
                         <td className="px-3 py-2 text-xs text-muted-foreground hidden md:table-cell max-w-xs truncate" title={r.notes || ""}>{r.notes || "—"}</td>
                         <td className="px-3 py-2 text-right">{n(r.coachingHours).toFixed(2)}</td>
                         <td className="px-3 py-2 text-right font-semibold text-emerald-600">{n(r.bonusAmount).toLocaleString()}</td>
+                        <td className="px-3 py-2 text-center whitespace-nowrap">
+                          {(r.status || "").toLowerCase() === "approved" ? (
+                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Approved</span>
+                          ) : (r.status || "").toLowerCase() === "rejected" ? (
+                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-200">Rejected</span>
+                          ) : !canDecide ? (
+                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">Pending</span>
+                          ) : (
+                            <span className="inline-flex gap-1">
+                              <button
+                                className="text-[11px] px-2 py-0.5 rounded-md border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
+                                disabled={updateStatus.isPending}
+                                onClick={() => updateStatus.mutate({ id: r.id, status: "approved" })}
+                              >Approve</button>
+                              <button
+                                className="text-[11px] px-2 py-0.5 rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50"
+                                disabled={updateStatus.isPending}
+                                onClick={() => updateStatus.mutate({ id: r.id, status: "rejected" })}
+                              >Reject</button>
+                            </span>
+                          )}
+                        </td>
                       </tr>
                     );
                   })}

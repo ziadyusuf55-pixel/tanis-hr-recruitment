@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { QueryError } from "@/components/QueryError";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { getErrorMessage } from "@/lib/errorMessage";
@@ -40,24 +41,19 @@ type FormerRow = {
 };
 
 export default function FormerAgents() {
-  const { data = [], isLoading } = trpc.separation.listFormerAgents.useQuery();
+  const { data = [], isLoading, error: listError, refetch: refetchList } = trpc.separation.listFormerAgents.useQuery();
   const rows = data as FormerRow[];
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | "resigned" | "terminated" | "blacklisted">("all");
   const utils = trpc.useUtils();
-  const restoreMutation = trpc.workforce.update.useMutation({
-    onSuccess: (_data, vars) => {
+  const restoreMutation = trpc.workforce.rehire.useMutation({
+    onSuccess: (data) => {
       utils.separation.listFormerAgents.invalidate();
-      fetch(`/api/check-agent-creds?code=${encodeURIComponent(vars.traineeCode)}`)
-        .then(r => r.json())
-        .then((d: { hasCredentials: boolean }) => {
-          if (d.hasCredentials) {
-            toast.success("Agent restored. They can log in with their existing credentials.");
-          } else {
-            toast.success("Agent restored. ⚠️ No portal credentials — go to Training → Generate Credentials before they can log in.", { duration: 8000 });
-          }
-        })
-        .catch(() => toast.success("Agent restored to active status."));
+      if (data.hasCredentials) {
+        toast.success("Agent rehired. They can log in with their existing credentials.");
+      } else {
+        toast.success("Agent rehired. \u26a0\ufe0f No portal credentials \u2014 go to Training \u2192 Generate Credentials before they can log in.", { duration: 8000 });
+      }
     },
     onError: (e: unknown) => toast.error(getErrorMessage(e)),
   });
@@ -82,6 +78,7 @@ export default function FormerAgents() {
 
   return (
     <div className="p-4 md:p-6 space-y-5 max-w-5xl mx-auto">
+      <QueryError error={listError} onRetry={() => refetchList()} />
       <div className="flex items-center gap-3">
         <UserX className="w-5 h-5 text-muted-foreground" />
         <div>
@@ -139,12 +136,12 @@ export default function FormerAgents() {
                       className="shrink-0 text-xs px-3 py-1.5 rounded-lg border border-emerald-200 text-emerald-700 hover:bg-emerald-50 font-medium transition-colors"
                       onClick={e => {
                         e.stopPropagation();
-                        if (confirm(`Restore ${String(a.fullName ?? "this agent")} to active status?`)) {
-                          restoreMutation.mutate({ traineeCode: code, agentStatus: "active", isActive: true });
+                        if (confirm(`Rehire ${String(a.fullName ?? "this agent")} and set them active again?`)) {
+                          restoreMutation.mutate({ traineeCode: code });
                         }
                       }}
                     >
-                      ↩ Restore
+                      ↩ Rehire
                     </button>
                     {isOpen ? <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" /> : <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />}
                   </div>

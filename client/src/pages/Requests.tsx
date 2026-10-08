@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { QueryError } from "@/components/QueryError";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
@@ -71,7 +72,7 @@ const BRAND = "oklch(0.32 0.18 28)";
 
 export default function Requests() {
   const utils = trpc.useUtils();
-  const { data: requests = [], isLoading } = trpc.requests.listAll.useQuery();
+  const { data: requests = [], isLoading, error: requestsError, refetch: refetchRequests } = trpc.requests.listAll.useQuery();
   const markAllReadMutation = trpc.requests.markAllRead.useMutation({
     onSuccess: () => utils.requests.countUnread.invalidate(),
   });
@@ -148,9 +149,10 @@ export default function Requests() {
 
   // Analytics: avg resolution time (resolved requests)
   const avgResolutionHours = useMemo(() => {
-    const resolved = reqs.filter((r) => r.status === "resolved");
+    // Measure to resolvedAt (when it was decided), not updatedAt (bumped by any edit).
+    const resolved = reqs.filter((r) => r.status === "resolved" && (r as { resolvedAt?: number | null }).resolvedAt);
     if (resolved.length === 0) return null;
-    const totalMs = resolved.reduce((sum, r) => sum + (new Date(r.updatedAt).getTime() - new Date(r.createdAt).getTime()), 0);
+    const totalMs = resolved.reduce((sum, r) => sum + (Number((r as { resolvedAt?: number | null }).resolvedAt) - new Date(r.createdAt).getTime()), 0);
     return Math.round(totalMs / resolved.length / 3600000);
   }, [reqs]);
 
@@ -163,6 +165,7 @@ export default function Requests() {
 
   return (
     <div className="p-6 space-y-6">
+      <QueryError error={requestsError} onRetry={() => refetchRequests()} />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">

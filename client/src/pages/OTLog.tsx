@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { currentCycleMonth, recentCycles } from "@/lib/cycle";
 import { trpc } from "@/lib/trpc";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -17,8 +18,7 @@ type OT = { id: number; crdts: string; alias: string | null; date: string; cycle
  * DISPLAY ONLY: payroll is calculated in Python from the same sheet.
  */
 export default function OTLog() {
-  const now = new Date();
-  const [month, setMonth] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
+  const [month, setMonth] = useState(() => currentCycleMonth());
   const [q, setQ] = useState("");
 
   const { data: all = [], isLoading } = trpc.ot.list.useQuery({});

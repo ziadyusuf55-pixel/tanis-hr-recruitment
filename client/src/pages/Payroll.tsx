@@ -1,4 +1,6 @@
 import { useState, useRef } from "react";
+import { QueryError } from "@/components/QueryError";
+import { currentCycleMonth } from "@/lib/cycle";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -113,16 +115,16 @@ export default function PayrollPage() {
   const [trainerEditId, setTrainerEditId] = useState<number | null>(null);
   const [trainerForm, setTrainerForm] = useState<{ crdts: string; trainerName: string; salaryEgp: string; notes: string }>({ crdts: "", trainerName: "", salaryEgp: "", notes: "" });
 
-  const [bulkMonth, setBulkMonth] = useState<string>(() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}`; });
-  const [statsMonth, setStatsMonth] = useState<string>(() => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,"0")}`; });
+  const [bulkMonth, setBulkMonth] = useState<string>(() => currentCycleMonth());
+  const [statsMonth, setStatsMonth] = useState<string>(() => currentCycleMonth());
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [partialId, setPartialId] = useState<number | null>(null);
   const [bulkPartialAmt, setBulkPartialAmt] = useState("");
   const [showBulkPartial, setShowBulkPartial] = useState(false);
   const [partialAmt, setPartialAmt] = useState("");
 
-  type BulkRow = { id: number; crdts: string | null; alias: string | null; agentCode: string | null; netPay: string | null; paymentStatus: string; paidAt: number | null; paidBy: string | null; amountPaid: string | null };
-  const { data: bulkRows = [], isLoading: bulkLoading, refetch: refetchBulk } = trpc.payrollV2.getStatusPage.useQuery({ month: bulkMonth }, { enabled: activeTab === "bulk" });
+  type BulkRow = { id: number; crdts: string | null; alias: string | null; agentCode: string | null; netPay: string | null; commissionEgp?: string | null; adjustments?: Array<{ type: string; amount: string | null }>; paymentStatus: string; paidAt: number | null; paidBy: string | null; amountPaid: string | null };
+  const { data: bulkRows = [], isLoading: bulkLoading, error: bulkError, refetch: refetchBulk } = trpc.payrollV2.getStatusPage.useQuery({ month: bulkMonth }, { enabled: activeTab === "bulk" });
   const { data: statsData, isLoading: statsLoading } = trpc.payrollV2.statsForMonth.useQuery({ month: statsMonth }, { enabled: activeTab === "stats" });
   const bulkTyped = bulkRows as unknown as BulkRow[];
   const pending = bulkTyped.filter(r => r.paymentStatus !== "paid");
@@ -481,6 +483,7 @@ export default function PayrollPage() {
 
   return (
     <div className="space-y-6">
+      <QueryError error={bulkError} onRetry={() => refetchBulk()} />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -779,6 +782,16 @@ export default function PayrollPage() {
                                           <span>Final Total</span><span>{fmtEGP(rowTotal(r))}</span>
                                         </div>
                                       )}
+                                      {n((r as StatusRecord & { amountPaid?: string | null }).amountPaid) > 0 && r.paymentStatus !== "paid" && (
+                                        <>
+                                          <div className="flex justify-between text-blue-600 mt-1">
+                                            <span>Paid so far</span><span>{fmtEGP(n((r as StatusRecord & { amountPaid?: string | null }).amountPaid))}</span>
+                                          </div>
+                                          <div className="flex justify-between text-amber-600 font-medium">
+                                            <span>Remaining</span><span>{fmtEGP(Math.max(0, rowTotal(r) - n((r as StatusRecord & { amountPaid?: string | null }).amountPaid)))}</span>
+                                          </div>
+                                        </>
+                                      )}
                                       {r.paidAt && (
                                         <div className="flex justify-between text-muted-foreground mt-1">
                                           <span>Paid</span><span>{new Date(r.paidAt).toLocaleDateString("en-EG")}</span>
@@ -876,11 +889,12 @@ export default function PayrollPage() {
               <table className="w-full text-sm">
                 <thead><tr className="border-b bg-muted/30">
                   <th className="px-3 py-2 w-8"><input type="checkbox" checked={selectedIds.size === pending.length && pending.length > 0} onChange={e => setSelectedIds(e.target.checked ? new Set(pending.map((r: BulkRow) => r.id)) : new Set())} /></th>
-                  <th className="px-3 py-2 text-left">Agent</th><th className="px-3 py-2 text-right">Net Pay</th><th className="px-3 py-2 text-right">Paid So Far</th><th className="px-3 py-2 text-center">Status</th><th className="px-3 py-2 text-left">Paid By</th><th className="px-3 py-2"></th>
+                  <th className="px-3 py-2 text-left">Agent</th><th className="px-3 py-2 text-right">Total Owed</th><th className="px-3 py-2 text-right">Paid So Far</th><th className="px-3 py-2 text-center">Status</th><th className="px-3 py-2 text-left">Paid By</th><th className="px-3 py-2"></th>
                 </tr></thead>
                 <tbody>
                   {bulkTyped.map((r: BulkRow) => {
-                    const net = parseFloat(String(r.netPay ?? 0));
+                    // What bulk "Mark paid" will actually record: net + commission + adjustments.
+                    const net = finalPay(r, r.adjustments ?? []);
                     const amtPaid = parseFloat(String(r.amountPaid ?? "0"));
                     const partial = amtPaid > 0 && r.paymentStatus !== "paid";
                     return (

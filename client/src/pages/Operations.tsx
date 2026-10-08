@@ -71,7 +71,11 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
     onError: (e) => toast.error(e.message),
   });
   const { data: docs = [] } = trpc.documents.listByAgent.useQuery({ traineeCode: agent.traineeCode });
-  const { data: allPayments = [] } = trpc.paymentMethods.listAll.useQuery();
+  // Bank/wallet details are financial PII — fetched and shown only to money roles
+  // (the server rejects everyone else anyway; don't fire a doomed query).
+  const { user: _payUser } = useAuth();
+  const canSeePayments = ["owner", "admin", "manager", "hr", "finance"].includes((_payUser as { role?: string } | null)?.role ?? "");
+  const { data: allPayments = [] } = trpc.paymentMethods.listAll.useQuery(undefined, { enabled: canSeePayments });
   const payments = (allPayments as Array<{ traineeCode?: string } & Record<string, unknown>>).filter(p => p.traineeCode === agent.traineeCode);
   const [activeSection, setActiveSection] = useState<"docs" | "payments">("docs");
   const [docComment, setDocComment] = useState<Record<number, string>>({});
@@ -277,7 +281,9 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
 
         {activeSection === "payments" && (
           <div className="space-y-3">
-            {(payments as Payment[]).length === 0 ? (
+            {!canSeePayments ? (
+              <p className="text-sm text-muted-foreground text-center py-8">Payment details are visible to HR, Finance and Managers only.</p>
+            ) : (payments as Payment[]).length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-8">No payment methods added yet</p>
             ) : (payments as Payment[]).map(pay => (
               <div key={pay.id} className="rounded-lg border p-3">
@@ -578,13 +584,19 @@ function BreakScheduleTab({
   const campaignAgents = breakCampaignId
     ? agents.filter(a => a.campaignId === breakCampaignId && a.isActive)
     : [];
-  const { data: existingBreaks = [] } = trpc.breakSchedule.getByAgent.useQuery(
+  const { data: existingBreaks = [], isFetching: breaksFetching, isSuccess: breaksLoaded } = trpc.breakSchedule.getByAgent.useQuery(
     { agentCode: breakAgentCode!, startDate: activeStart, endDate: activeEnd },
     { enabled: !!breakAgentCode }
   );
   const [synced, setSynced] = useState<string | null>(null);
   const syncKey = `${breakAgentCode}-${activeStart}-${viewMode}`;
-  if (synced !== syncKey) {
+  // Sync the editor ONLY after the server data for THIS key has arrived.
+  // The old render-time sync ran while the query was still loading, filled the
+  // grid from an empty array, and a Save then wiped the agent's real breaks.
+  useEffect(() => {
+    if (!breakAgentCode) return;
+    if (breaksFetching || !breaksLoaded) return;
+    if (synced === syncKey) return;
     setSynced(syncKey);
     const merged: MultiBreakEntries = {};
     for (const b of existingBreaks as Array<{ date: string; breakStart: string; breakEnd: string }>) {
@@ -592,7 +604,9 @@ function BreakScheduleTab({
       merged[b.date].push({ start: b.breakStart, end: b.breakEnd });
     }
     setBreakEntries(merged);
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncKey, breaksFetching, breaksLoaded, existingBreaks, breakAgentCode]);
+  const editorReady = !breakAgentCode || (synced === syncKey && !breaksFetching);
   const addBreakToDay = (date: string) => {
     const existing = breakEntries[date] ?? [];
     setBreakEntries({ ...breakEntries, [date]: [...existing, { start: "", end: "" }] });
@@ -762,7 +776,7 @@ function BreakScheduleTab({
             })}
           </div>
           <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={upsertBreaks.isPending} className="gap-1.5">
+            <Button onClick={handleSave} disabled={upsertBreaks.isPending || !editorReady} className="gap-1.5">
               <CheckCircle2 className="h-4 w-4" />
               {upsertBreaks.isPending ? "Saving..." : `Save Break Schedule${totalSlots > 0 ? ` (${totalSlots} slot${totalSlots !== 1 ? "s" : ""})` : ""}`}
             </Button>
@@ -1020,7 +1034,8 @@ export default function Operations() {
   const bulkGenerateCreds = trpc.workforce.bulkGenerateCredentials.useMutation({
     onSuccess: (data) => {
       setBulkCredResults(data.credentials);
-      toast.success(`Generated credentials for ${data.generated} agent(s)`);
+      const skipped = (data as { skippedExisting?: number }).skippedExisting ?? 0;
+      toast.success(`Generated credentials for ${data.generated} agent(s)${skipped ? ` — ${skipped} skipped (already have a login)` : ""}`);
     },
     onError: (e) => toast.error(getErrorMessage(e)),
   });
@@ -2264,6 +2279,7 @@ export default function Operations() {
                 onClick={() => {
                   const sel = document.getElementById('bulk-cred-campaign') as HTMLSelectElement;
                   const cid = sel.value ? parseInt(sel.value) : undefined;
+                  if (!confirm("Generate portal credentials for every agent WITHOUT a login" + (cid ? " in this campaign" : "") + "? Agents who already have one are skipped.")) return;
                   bulkGenerateCreds.mutate({ campaignId: cid });
                 }}
                 disabled={bulkGenerateCreds.isPending}

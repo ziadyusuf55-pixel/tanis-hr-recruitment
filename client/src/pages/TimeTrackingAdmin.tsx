@@ -17,7 +17,6 @@ type PtoReq = {
   requestType: string;
   startDate: string;
   endDate: string;
-  halfDay: boolean | null;
   reason: string | null;
   status: string;
 };
@@ -243,7 +242,7 @@ export default function TimeTrackingAdmin() {
                           <div className="text-xs text-muted-foreground font-mono">{req.traineeCode}</div>
                         </TableCell>
                         <TableCell className="capitalize">
-                          {req.requestType}{req.halfDay ? " (½)" : ""}
+                          {req.requestType}
                         </TableCell>
                         <TableCell className="text-sm">{req.startDate} → {req.endDate}</TableCell>
                         <TableCell className="text-sm text-muted-foreground max-w-[180px] truncate">

@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { localDateKey } from "@/lib/cycle";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -55,7 +56,8 @@ export default function BusinessDevelopment() {
   const { data: contacts = [] } = trpc.bd.listContacts.useQuery();
   // listCompanies also auto-backfills companies from legacy contact rows on first call
   const { data: companies = [] } = trpc.bd.listCompanies.useQuery();
-  const { data: stale = [] } = trpc.bd.staleDeals.useQuery();
+  const { data: stale = [], refetch: refetchStale } = trpc.bd.staleDeals.useQuery();
+  const ignoreStale = trpc.bd.ignoreStale.useMutation({ onSuccess: () => refetchStale() });
   const typedDeals = deals as Deal[];
   const typedContacts = contacts as Contact[];
   const typedCompanies = companies as Company[];
@@ -91,7 +93,7 @@ export default function BusinessDevelopment() {
   };
   const daysInStage = (d: Deal) => Math.floor((Date.now() - (d.stageChangedAt ?? d.createdAt ?? Date.now())) / 86400000);
   const reminderOverdue = (d: Deal) => d.reminderDate ? new Date(d.reminderDate + "T23:59:59").getTime() < Date.now() : false;
-  const todayISO = new Date().toISOString().slice(0, 10);
+  const todayISO = localDateKey();
   const dueReminders = typedDeals
     .filter(d => d.reminderDate && d.stage !== "closed_won" && d.stage !== "closed_lost" && d.reminderDate <= todayISO)
     .sort((a, b) => (a.reminderDate! < b.reminderDate! ? -1 : 1));
@@ -197,7 +199,7 @@ export default function BusinessDevelopment() {
                     <span className="flex items-center gap-2 shrink-0">
                       <Badge variant="outline" className="text-[10px]">{ownerName(d.ownerId)}</Badge>
                       <span className="text-[10px] text-red-600 font-semibold">{d.daysStale}d silent</span>
-                      <button onClick={() => setIgnoredStale(prev => new Set(Array.from(prev).concat(d.id)))}
+                      <button onClick={() => { setIgnoredStale(prev => new Set(Array.from(prev).concat(d.id))); ignoreStale.mutate({ id: d.id }); }}
                         className="text-[10px] px-2 py-0.5 rounded border text-muted-foreground hover:bg-muted/50">Ignore</button>
                       <button onClick={() => { if (confirm(`Delete "${d.title}"?`)) deleteDeal.mutate({ id: d.id }); }}
                         className="text-[10px] px-2 py-0.5 rounded border text-red-600 hover:bg-red-50">Delete</button>
@@ -742,7 +744,7 @@ function DealTasks({ dealId }: { dealId: number }) {
   const add = trpc.bd.addTask.useMutation({ onSuccess: () => { setTitle(""); setDue(""); utils.bd.listTasks.invalidate({ dealId }); }, onError: (e) => toast.error(e.message) });
   const toggle = trpc.bd.toggleTask.useMutation({ onSuccess: () => utils.bd.listTasks.invalidate({ dealId }), onError: (e) => toast.error(e.message) });
   const del = trpc.bd.deleteTask.useMutation({ onSuccess: () => utils.bd.listTasks.invalidate({ dealId }), onError: (e) => toast.error(e.message) });
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateKey();
   return (
     <div className="space-y-1.5">
       <p className="text-xs font-semibold flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> Tasks</p>

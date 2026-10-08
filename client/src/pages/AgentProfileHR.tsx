@@ -101,9 +101,9 @@ function Profile({ agent }: { agent: Agent }) {
   const { data: exitData } = trpc.exit.get.useQuery({ traineeCode: code });
   const { data: full } = trpc.employees.profileFull.useQuery({ crdts, traineeCode: code }, { enabled: !!crdts });
 
-  // Money sections (salary + commission) visible to everyone EXCEPT BD.
+  // Money sections (salary + commission): finance + HR + managers + owner/admin only.
   const { user } = useAuth();
-  const canSeeMoney = user?.role !== "bd";
+  const canSeeMoney = ["owner", "admin", "manager", "hr", "finance"].includes(user?.role ?? "");
 
   const bal = (balances as { traineeCode: string; casualTotal: number; annualTotal: number; casualUsed: number; annualUsed: number }[]).find(b => b.traineeCode === code);
 

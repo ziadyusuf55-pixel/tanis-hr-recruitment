@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { QueryError } from "@/components/QueryError";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -80,7 +81,7 @@ export default function Training() {
   const [agentSearch, setAgentSearch] = useState("");
 
   // Batch list
-  const { data: batches = [], isLoading } = trpc.batches.list.useQuery();
+  const { data: batches = [], isLoading, error: batchesError, refetch: refetchBatches } = trpc.batches.list.useQuery();
 
   // All agents in training (across all batches)
   const { data: allInTraining = [], isLoading: trainingLoading } = trpc.workforce.allInTraining.useQuery();
@@ -130,11 +131,12 @@ export default function Training() {
   });
   const bulkGenerateMutation = trpc.batches.bulkGenerateCredentials.useMutation({
     onSuccess: (data) => {
+      const skipped = (data as { skippedExisting?: number }).skippedExisting ?? 0;
       if (data.generated === 0) {
-        toast.error("No agents with trainee codes found. Assign trainee codes first.");
+        toast.error(skipped ? `All ${skipped} trainee(s) already have a login — nothing regenerated.` : "No agents with trainee codes found. Assign trainee codes first.");
       } else {
         setBulkCredentials(data.credentials);
-        toast.success(`Credentials generated for ${data.generated} agent(s)`);
+        toast.success(`Credentials generated for ${data.generated} agent(s)${skipped ? ` — ${skipped} skipped (already have a login)` : ""}`);
       }
     },
     onError: (e) => toast.error(getErrorMessage(e)),
@@ -263,7 +265,7 @@ export default function Training() {
               variant="outline"
               size="sm"
               className="gap-1.5 text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 border-indigo-200"
-              onClick={() => bulkGenerateMutation.mutate({ batchId: selectedBatch.id })}
+              onClick={() => { if (confirm("Generate credentials for every trainee in this batch WITHOUT a login? Trainees who already have one are skipped.")) bulkGenerateMutation.mutate({ batchId: selectedBatch.id }); }}
               disabled={bulkGenerateMutation.isPending}
             >
               <KeyRound className="h-4 w-4" /> {bulkGenerateMutation.isPending ? "Generating..." : "Generate All Credentials"}
@@ -706,6 +708,7 @@ export default function Training() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
+      <QueryError error={batchesError} onRetry={() => refetchBatches()} />
       <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">

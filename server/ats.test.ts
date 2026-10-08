@@ -204,7 +204,7 @@ describe("candidates router", () => {
 
   it("deletes a candidate", async () => {
     const result = await caller.candidates.delete({ id: 1 });
-    expect(result).toBeUndefined();
+    expect(result).toEqual({ success: true });
   });
 
   it("bulk imports candidates without throwing", async () => {

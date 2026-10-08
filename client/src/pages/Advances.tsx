@@ -39,6 +39,12 @@ function agentName(a: Advance) {
 export default function Advances() {
   const utils = trpc.useUtils();
   const { data: advances = [], isLoading } = trpc.advances.list.useQuery({});
+  // Active agents for the picker — a typed code with a typo used to create an
+  // advance for a non-existent agent that no payroll row would ever match.
+  const { data: _agents = [] } = trpc.workforce.list.useQuery({});
+  const pickerAgents = (_agents as Array<{ traineeCode: string; fullName?: string | null; alias?: string | null; agentStatus?: string | null; isDemo?: boolean | null }>)
+    .filter(a => a.traineeCode && !a.isDemo && !["resigned", "terminated", "blacklisted"].includes(a.agentStatus ?? ""))
+    .sort((a, b) => String(a.fullName ?? a.alias ?? a.traineeCode).localeCompare(String(b.fullName ?? b.alias ?? b.traineeCode)));
 
   // ── Modals
   const [showCreate, setShowCreate] = useState(false);
@@ -167,9 +173,19 @@ export default function Advances() {
           <DialogHeader><DialogTitle>New Salary Advance</DialogTitle></DialogHeader>
           <div className="space-y-3 py-2">
             <div>
-              <label className="text-xs font-medium text-muted-foreground block mb-1">Agent Trainee Code *</label>
-              <Input placeholder="e.g. TC-0123" value={form.traineeCode}
-                onChange={e => setForm(f => ({ ...f, traineeCode: e.target.value }))} />
+              <label className="text-xs font-medium text-muted-foreground block mb-1">Agent *</label>
+              <select
+                className="h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
+                value={form.traineeCode}
+                onChange={e => setForm(f => ({ ...f, traineeCode: e.target.value }))}
+              >
+                <option value="">Select agent…</option>
+                {pickerAgents.map(a => (
+                  <option key={a.traineeCode} value={a.traineeCode}>
+                    {String(a.fullName ?? a.alias ?? a.traineeCode)} ({a.traineeCode})
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
               <label className="text-xs font-medium text-muted-foreground block mb-1">Amount (EGP) *</label>

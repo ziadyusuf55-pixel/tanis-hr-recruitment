@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { recentCycles } from "@/lib/cycle";
 import DashboardLayout from "@/components/DashboardLayout";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -164,12 +165,8 @@ export default function ClientLogoutsAdmin() {
     return acc;
   }, {} as Record<string, { alias: string | null; agentCode: string | null; dates: string[] }>);
 
-  // Cycle options (last 12 months)
-  const cycleOptions = Array.from({ length: 12 }, (_, i) => {
-    const d = new Date();
-    d.setMonth(d.getMonth() - i);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-  });
+  // Cycle options (last 12 pay cycles, 26th→25th)
+  const cycleOptions = recentCycles(12);
 
   return (
     <DashboardLayout>

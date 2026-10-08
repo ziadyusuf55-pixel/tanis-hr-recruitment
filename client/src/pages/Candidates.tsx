@@ -1,4 +1,5 @@
 import { useState, useRef } from "react";
+import { localDateKey } from "@/lib/cycle";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
 import { getErrorMessage } from "@/lib/errorMessage";
@@ -309,12 +310,22 @@ export default function Candidates() {
 
   const handleBulkDelete = async () => {
     const ids = Array.from(selected);
+    let deleted = 0;
+    const failures: string[] = [];
     for (const id of ids) {
-      await deleteCandidate.mutateAsync({ id });
+      try {
+        await deleteCandidate.mutateAsync({ id });
+        deleted++;
+      } catch (e) {
+        // Keep going — one guarded row (e.g. promoted to Operations) must not
+        // abort the batch and silently leave the rest selected.
+        failures.push(getErrorMessage(e));
+      }
     }
     clearSelection();
     setBulkDeleteOpen(false);
-    toast.success(`Deleted ${ids.length} candidate${ids.length > 1 ? "s" : ""}`);
+    if (deleted) toast.success(`Deleted ${deleted} candidate${deleted > 1 ? "s" : ""}`);
+    if (failures.length) toast.error(`${failures.length} could not be deleted — ${failures[0]}`, { duration: 8000 });
   };
 
   const [view, setView] = useState<"board" | "list">("board");
@@ -1860,7 +1871,7 @@ function CalendarImportPanel({
   onImported: () => void;
 }) {
   // Date range state
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateKey();
   const [datePreset, setDatePreset] = useState<"tomorrow" | "today" | "yesterday" | "2days" | "7days" | "30days" | "custom">("2days");
   const [customFrom, setCustomFrom] = useState(today);
   const [customTo, setCustomTo] = useState(today);

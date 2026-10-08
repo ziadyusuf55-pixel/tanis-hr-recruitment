@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { localDateKey } from "@/lib/cycle";
 import { trpc } from "@/lib/trpc";
 import { STAGE_LABELS, STAGE_DOT, STAGE_BADGE, type PipelineStage, ACTIVE_STAGES } from "@/lib/pipeline";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -48,7 +49,7 @@ export default function Dashboard() {
   const { data: candidates, isLoading: candidatesLoading } = trpc.candidates.list.useQuery();
 
   // ── Attention feeds (all existing endpoints) ──
-  const { data: unreadRequests = 0 } = trpc.requests.countUnread.useQuery(undefined, { refetchInterval: 60000 });
+  const { data: openRequests = 0 } = trpc.requests.countOpen.useQuery(undefined, { refetchInterval: 60000 });
   const { data: _allAgentsRaw = [] } = trpc.workforce.list.useQuery({});
   // Demo/test accounts never count in compliance lists.
   const allAgents = (_allAgentsRaw as Array<Record<string, unknown>>).filter(a => !a.isDemo);
@@ -82,11 +83,13 @@ export default function Dashboard() {
     const end = a.contractEndDate as string | null;
     if (!end) return false;
     const ms = new Date(end).getTime();
-    return ms > 0 && ms < thirtyDaysFromNow;
+    // Lower bound: already-expired contracts have their own tile — without it
+    // every expired contract was counted twice.
+    return ms >= Date.now() && ms < thirtyDaysFromNow;
   }).map(a => String(a.traineeCode ?? ""));
   const expiringContracts = expiringContractsList.length;
 
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateKey();
   const expiredContractsList = (allAgents as Array<Record<string,unknown>>).filter(a => {
     if (a.agentStatus !== "active") return false;
     const end = a.contractEndDate as string | null;
@@ -110,17 +113,17 @@ export default function Dashboard() {
 
   // Only show cards for pages this role can actually open.
   const attention = [
-    { count: Number(unreadRequests), label: "Requests to review", sub: "Agent requests waiting", icon: Inbox, tint: "amber", path: "/requests" },
+    { count: Number(openRequests), label: "Requests to review", sub: "Open agent requests", icon: Inbox, tint: "amber", path: "/requests" },
     { count: (pendingLeave as unknown[]).length, label: "Leave approvals", sub: "Awaiting HR classification", icon: CalendarDays, tint: "violet", path: "/leave-management" },
     { count: (bdDue as unknown[]).length, label: "BD follow-ups due", sub: "Deals to chase today", icon: Building2, tint: "blue", path: "/business-development" },
     { count: pendingDeletion, label: "Former agents pending payout", sub: "Still owed final pay", icon: Wallet, tint: "red", path: "/operations" },
     { count: incompleteAgents, label: "Incomplete agent profiles", sub: "Missing ID or DOB", icon: Users, tint: "amber", path: `/operations?highlight=${encodeURIComponent(incompleteAgentsList.join(","))}` },
-    { count: unsignedContracts, label: "Contracts not signed", sub: "Active agents without signed contract", icon: AlertCircle, tint: "red", path: "/documents" },
-    { count: expiringIds, label: "National IDs expiring soon", sub: "Within the next 30 days", icon: AlertCircle, tint: "red", path: `/operations?highlight=${encodeURIComponent(expiringIdsList.join(","))}` },
+    { count: unsignedContracts, label: "Contracts not signed", sub: "Active agents without signed contract", icon: AlertCircle, tint: "red", path: "/contracts" },
+    { count: expiringIds, label: "National IDs expiring soon", sub: "Expired or expiring within 30 days", icon: AlertCircle, tint: "red", path: `/operations?highlight=${encodeURIComponent(expiringIdsList.join(","))}` },
     { count: expiringContracts, label: "Contracts ending soon", sub: "Within the next 30 days", icon: AlertCircle, tint: "amber", path: `/operations?highlight=${encodeURIComponent(expiringContractsList.join(","))}` },
     { count: expiredContracts, label: "Contracts already expired", sub: "Active agents with expired contracts", icon: AlertCircle, tint: "red", path: `/operations?highlight=${encodeURIComponent(expiredContractsList.join(","))}` },
     { count: onProbationCount, label: "Agents on probation", sub: "Probation period active", icon: Users, tint: "amber", path: `/operations?highlight=${encodeURIComponent(onProbationList.join(","))}` },
-  ].filter(a => a.count > 0 && canAccessPath(role, "/operations"));
+  ].filter(a => a.count > 0 && canAccessPath(role, a.path.split("?")[0]));
 
   const funnelData = kpis
     ? ACTIVE_STAGES.map((stage) => ({

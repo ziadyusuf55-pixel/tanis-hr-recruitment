@@ -1,4 +1,4 @@
-import { AXIOS_TIMEOUT_MS, COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
+import { AXIOS_TIMEOUT_MS, COOKIE_NAME, ONE_YEAR_MS, THIRTY_DAYS_MS } from "@shared/const";
 import { ForbiddenError } from "@shared/_core/errors";
 import axios, { type AxiosInstance } from "axios";
 import { parse as parseCookieHeader } from "cookie";
@@ -183,7 +183,8 @@ class SDKServer {
     options: { expiresInMs?: number } = {}
   ): Promise<string> {
     const issuedAt = Date.now();
-    const expiresInMs = options.expiresInMs ?? ONE_YEAR_MS;
+    // 30 days, not a year: a leaked staff token should not outlive a month.
+    const expiresInMs = options.expiresInMs ?? THIRTY_DAYS_MS;
     const expirationSeconds = Math.floor((issuedAt + expiresInMs) / 1000);
     const secretKey = this.getSessionSecret();
 
@@ -193,13 +194,14 @@ class SDKServer {
       name: payload.name,
     })
       .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+      .setIssuedAt(Math.floor(issuedAt / 1000))
       .setExpirationTime(expirationSeconds)
       .sign(secretKey);
   }
 
   async verifySession(
     cookieValue: string | undefined | null
-  ): Promise<{ openId: string; appId: string; name: string } | null> {
+  ): Promise<{ openId: string; appId: string; name: string; iat?: number } | null> {
     if (!cookieValue) {
       console.warn("[Auth] Missing session cookie");
       return null;
@@ -225,6 +227,7 @@ class SDKServer {
         openId,
         appId,
         name,
+        iat: typeof (payload as { iat?: unknown }).iat === "number" ? (payload as { iat: number }).iat : undefined,
       };
     } catch (error) {
       console.warn("[Auth] Session verification failed", String(error));
@@ -290,6 +293,14 @@ class SDKServer {
 
     if (!user) {
       throw ForbiddenError("User not found");
+    }
+
+    // Session revocation: tokens issued before users.sessionsRevokedAt are dead.
+    // Tokens from before this feature carry no iat and are rejected once a revocation is set.
+    const revokedAt = (user as { sessionsRevokedAt?: number | null }).sessionsRevokedAt;
+    // iat is second-precision; a token issued in the same second as the revocation counts as after it.
+    if (revokedAt && (!session.iat || session.iat * 1000 + 999 < revokedAt)) {
+      throw ForbiddenError("Session revoked — please sign in again");
     }
 
     await db.upsertUser({

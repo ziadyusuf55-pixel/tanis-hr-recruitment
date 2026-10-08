@@ -23,6 +23,8 @@ export const users = mysqlTable("users", {
   email: varchar("email", { length: 320 }),
   loginMethod: varchar("loginMethod", { length: 64 }),
   role: mysqlEnum("role", ["user", "admin", "owner", "manager", "hr", "ops_manager", "team_lead", "finance", "bd", "viewer"]).default("user").notNull(),
+  /** Hub JWTs issued BEFORE this instant are rejected — set by "revoke sessions" / password events. */
+  sessionsRevokedAt: bigint("sessionsRevokedAt", { mode: "number" }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
@@ -44,6 +46,7 @@ export const PIPELINE_STAGES = [
   "interview_scheduled",
   "accepted",
   "whatsapp_group_added",
+  "hired",
   "rejected",
   "blacklisted",
   // Separation statuses — ID permanently retired, never reusable
@@ -74,6 +77,7 @@ export const candidates = mysqlTable("candidates", {
     "interview_scheduled",
     "accepted",
     "whatsapp_group_added",
+    "hired",
     "rejected",
     "blacklisted",
     // Separation statuses — ID permanently retired, never reusable
@@ -99,7 +103,10 @@ export const candidates = mysqlTable("candidates", {
   acceptedAt: bigint("acceptedAt", { mode: "number" }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  phoneIdx: index("idx_cand_phone").on(t.phone),
+  statusIdx: index("idx_cand_status").on(t.status),
+}));
 
 export type Candidate = typeof candidates.$inferSelect;
 export type InsertCandidate = typeof candidates.$inferInsert;
@@ -119,6 +126,7 @@ export const stageNotes = mysqlTable("stage_notes", {
     "interview_scheduled",
     "accepted",
     "whatsapp_group_added",
+    "hired",
     "rejected",
     "blacklisted",
     "resigned",
@@ -197,7 +205,11 @@ export const batchCandidates = mysqlTable("batch_candidates", {
   traineeCode: varchar("traineeCode", { length: 100 }),
   slackJoined: boolean("slackJoined").default(false).notNull(),
   assignedAt: timestamp("assignedAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  batchIdx: index("idx_bc_batch").on(t.batchId),
+  candidateIdx: index("idx_bc_candidate").on(t.candidateId),
+  uqBatchCandidate: uniqueIndex("uq_bc_batch_candidate").on(t.batchId, t.candidateId),
+}));
 
 export type BatchCandidate = typeof batchCandidates.$inferSelect;
 export type InsertBatchCandidate = typeof batchCandidates.$inferInsert;
@@ -267,6 +279,7 @@ export const payrollRecords = mysqlTable("payroll_records", {
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
 }, (t) => ({
   uqAgentCodeMonth: uniqueIndex("uq_payroll_agentcode_month").on(t.agentCode, t.month),
+  crdtsMonth: index("idx_payroll_crdts_month").on(t.crdts, t.month),
 }));
 export type PayrollRecord = typeof payrollRecords.$inferSelect;
 export type InsertPayrollRecord = typeof payrollRecords.$inferInsert;
@@ -338,7 +351,11 @@ export const agentRequests = mysqlTable("agent_requests", {
   resolvedAt: bigint("resolvedAt", { mode: "number" }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  traineeCreated: index("idx_req_trainee_created").on(t.traineeCode, t.createdAt),
+  statusCreated: index("idx_req_status_created").on(t.status, t.createdAt),
+  slackTs: index("idx_req_slack_ts").on(t.slackMessageTs),
+}));
 export type AgentRequest = typeof agentRequests.$inferSelect;
 export type InsertAgentRequest = typeof agentRequests.$inferInsert;
 
@@ -387,7 +404,9 @@ export const loginAttempts = mysqlTable("login_attempts", {
   attemptType: mysqlEnum("attemptType", ["agent", "admin"]).notNull(),
   failedAt: bigint("failedAt", { mode: "number" }).notNull(), // UTC ms
   ipAddress: varchar("ipAddress", { length: 64 }),
-});
+}, (t) => ({
+  identTypeAt: index("idx_login_ident_type_at").on(t.identifier, t.attemptType, t.failedAt),
+}));
 export type LoginAttempt = typeof loginAttempts.$inferSelect;
 
 /**
@@ -419,7 +438,9 @@ export const agentNotifications = mysqlTable("agent_notifications", {
   relatedId: int("relatedId"), // requestId or referralId
   isRead: boolean("isRead").default(false).notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-});
+}, (t) => ({
+  candRead: index("idx_notif_cand_read").on(t.candidateId, t.isRead),
+}));
 export type AgentNotification = typeof agentNotifications.$inferSelect;
 export type InsertAgentNotification = typeof agentNotifications.$inferInsert;
 
@@ -532,7 +553,11 @@ export const workforceAgents = mysqlTable("workforce_agents", {
   promotedAt: bigint("promotedAt", { mode: "number" }),               // set when agent is promoted to a Hub role — removes from roster, revokes portal access
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  candidateIdx: index("idx_wa_candidate").on(t.candidateId),
+  campaignStatus: index("idx_wa_campaign_status").on(t.campaignId, t.agentStatus),
+  openIdIdx: index("idx_wa_openid").on(t.openId),
+}));
 export type WorkforceAgent = typeof workforceAgents.$inferSelect;
 export type InsertWorkforceAgent = typeof workforceAgents.$inferInsert;
 
@@ -556,7 +581,9 @@ export const agentPaymentMethods = mysqlTable("agent_payment_methods", {
   adminComment: text("adminComment"),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  traineeIdx: index("idx_apm_trainee").on(t.traineeCode),
+}));
 export type AgentPaymentMethod = typeof agentPaymentMethods.$inferSelect;
 export type InsertAgentPaymentMethod = typeof agentPaymentMethods.$inferInsert;
 
@@ -574,7 +601,9 @@ export const agentDocuments = mysqlTable("agent_documents", {
   adminComment: text("adminComment"),
   uploadedAt: timestamp("uploadedAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
-});
+}, (t) => ({
+  traineeIdx: index("idx_adoc_trainee").on(t.traineeCode),
+}));
 export type AgentDocument = typeof agentDocuments.$inferSelect;
 export type InsertAgentDocument = typeof agentDocuments.$inferInsert;
 
@@ -633,6 +662,7 @@ export const agentComments = mysqlTable("agent_comments", {
   content: text("content").notNull(),
   tag: mysqlEnum("tag", ["note", "warning", "resolved"]).default("note").notNull(),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
+  acknowledgedAt: bigint("acknowledgedAt", { mode: "number" }),   // agent tapped "Acknowledge" on a warning
 });
 export type AgentComment = typeof agentComments.$inferSelect;
 export type InsertAgentComment = typeof agentComments.$inferInsert;
@@ -974,7 +1004,9 @@ export const integrationsTokens = mysqlTable("integrations_tokens", {
   scope:        text("scope"),
   createdAt:    bigint("created_at", { mode: "number" }).notNull(),
   updatedAt:    bigint("updated_at", { mode: "number" }).notNull(),
-});
+}, (t) => ({
+  uqProviderUser: uniqueIndex("uq_integration_provider_user").on(t.provider, t.userId),
+}));
 export type IntegrationsToken = typeof integrationsTokens.$inferSelect;
 
 /**
@@ -1040,7 +1072,9 @@ export const payrollAdjustments = mysqlTable("payroll_adjustments", {
   amount:      decimal("amount", { precision: 10, scale: 2 }).notNull(),
   createdAt:   bigint("createdAt", { mode: "number" }).notNull(),
   createdBy:   varchar("createdBy", { length: 255 }),       // admin name
-});
+}, (t) => ({
+  crdtsMonth: index("idx_padj_crdts_month").on(t.crdts, t.month),
+}));
 export type PayrollAdjustment = typeof payrollAdjustments.$inferSelect;
 export type InsertPayrollAdjustment = typeof payrollAdjustments.$inferInsert;
 
@@ -1206,7 +1240,9 @@ export const leaveBalances = mysqlTable("leave_balances", {
   casualUsed: int("casualUsed").default(0).notNull(),
   annualUsed: int("annualUsed").default(0).notNull(),
   updatedAt: bigint("updatedAt", { mode: "number" }).notNull(),
-});
+}, (t) => ({
+  uqTraineeYear: uniqueIndex("uq_leave_balance").on(t.traineeCode, t.year),
+}));
 export type LeaveBalance = typeof leaveBalances.$inferSelect;
 
 export const leaveRequests = mysqlTable("leave_requests", {
@@ -1218,13 +1254,16 @@ export const leaveRequests = mysqlTable("leave_requests", {
   days: int("days").default(1).notNull(),
   reason: text("reason"),
   leaveType: mysqlEnum("leaveType", ["casual", "annual", "unpaid"]),    // NULL until HR classifies; "unpaid" = no balance deduction
-  status: mysqlEnum("status", ["pending", "approved", "rejected"]).default("pending").notNull(),
+  status: mysqlEnum("status", ["pending", "approved", "rejected", "cancelled"]).default("pending").notNull(),
   decidedBy: varchar("decidedBy", { length: 255 }),
   createdAt: bigint("createdAt", { mode: "number" }).notNull(),
   decidedAt: bigint("decidedAt", { mode: "number" }),
   /** When the request originated in the agent portal's request centre, the agent_requests.id it mirrors. */
   agentRequestId: int("agentRequestId"),
-});
+}, (t) => ({
+  traineeStatus: index("idx_leave_trainee_status").on(t.traineeCode, t.status),
+  agentRequest: index("idx_leave_agent_request").on(t.agentRequestId),
+}));
 export type LeaveRequest = typeof leaveRequests.$inferSelect;
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1359,7 +1398,9 @@ export const sessionLogs = mysqlTable("session_logs", {
   lastSeenAt: bigint("lastSeenAt", { mode: "number" }),
   revokedAt: bigint("revokedAt", { mode: "number" }),
   revokedBy: varchar("revokedBy", { length: 255 }),
-});
+}, (t) => ({
+  userIdx: index("idx_session_user").on(t.userId),
+}));
 
 // ─── App Settings (key-value feature flags) ───────────────────────────────────
 export const appSettings = mysqlTable("app_settings", {
@@ -1392,7 +1433,10 @@ export const auditLog = mysqlTable("audit_log", {
   targetId: varchar("targetId", { length: 100 }),                // traineeCode / id
   detail: text("detail"),                                        // JSON or description
   createdAt: bigint("createdAt", { mode: "number" }).notNull(),
-});
+}, (t) => ({
+  createdIdx: index("idx_audit_created").on(t.createdAt),
+  actionCreated: index("idx_audit_action_created").on(t.action, t.createdAt),
+}));
 export type AuditLogEntry = typeof auditLog.$inferSelect;
 
 // ─── Slack Notifications Queue ────────────────────────────────────────────────
@@ -1421,7 +1465,7 @@ export type AgentWarning = typeof agentWarnings.$inferSelect;
 
 // ─── Agent Presence ───────────────────────────────────────────────────────────
 export const agentPresence = mysqlTable("agent_presence", {
-  traineeCode: varchar("traineeCode", { length: 50 }).primaryKey(),
+  traineeCode: varchar("traineeCode", { length: 100 }).primaryKey(),
   alias:       varchar("alias", { length: 100 }),
   fullName:    varchar("fullName", { length: 255 }),
   avatarUrl:   varchar("avatarUrl", { length: 1024 }),
@@ -1429,7 +1473,9 @@ export const agentPresence = mysqlTable("agent_presence", {
   customNote:  varchar("customNote", { length: 30 }),
   lastSeen:    bigint("lastSeen", { mode: "number" }).notNull(),
   campaignId:  int("campaignId"),
-});
+}, (t) => ({
+  lastSeenIdx: index("idx_presence_lastseen").on(t.lastSeen),
+}));
 export type AgentPresence = typeof agentPresence.$inferSelect;
 
 // ─── Agent Contracts ─────────────────────────────────────────────────────────
@@ -1528,7 +1574,9 @@ export const attendanceExceptions = mysqlTable("attendance_exceptions", {
   status: mysqlEnum("exStatus", ["pending", "reviewed"]).default("pending").notNull(),
   reviewedBy: varchar("reviewedBy", { length: 255 }),
   createdAt: bigint("createdAt", { mode: "number" }).notNull(),
-});
+}, (t) => ({
+  traineeDateType: index("idx_attx_trainee_date_type").on(t.traineeCode, t.date, t.exceptionType),
+}));
 export type AttendanceException = typeof attendanceExceptions.$inferSelect;
 export type InsertAttendanceException = typeof attendanceExceptions.$inferInsert;
 
@@ -1547,11 +1595,13 @@ export const agentShifts = mysqlTable(
     /** YYYY-MM-DD — used for day-based grouping */
     date: varchar("date", { length: 10 }).notNull(),
     /** Milliseconds of shift duration; populated on clockOut */
-    durationMs: int("durationMs"),
+    durationMs: bigint("durationMs", { mode: "number" }),
     createdAt: bigint("createdAt", { mode: "number" }).notNull(),
   },
   (t) => ({
     traineeDate: index("idx_agent_shifts_trainee_date").on(t.traineeCode, t.date),
+    openOnly: index("idx_shift_open").on(t.clockOut),
+    traineeClockIn: index("idx_shift_trainee_clockin").on(t.traineeCode, t.clockIn),
   })
 );
 export type AgentShift = typeof agentShifts.$inferSelect;

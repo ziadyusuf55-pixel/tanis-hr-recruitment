@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { QueryError } from "@/components/QueryError";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -16,7 +17,7 @@ type Agent = { traineeCode: string; fullName: string | null; alias: string | nul
 
 export default function LeaveManagement() {
   const utils = trpc.useUtils();
-  const { data: requests = [] } = trpc.leave.listRequests.useQuery({});
+  const { data: requests = [], error: requestsError, refetch: refetchRequests } = trpc.leave.listRequests.useQuery({});
   const { data: balances = [] } = trpc.leave.listBalances.useQuery({});
   const { data: agents = [] } = trpc.workforce.list.useQuery({});
   const { data: allAgentsDisplay = [] } = trpc.workforce.listForDisplay.useQuery();
@@ -83,6 +84,7 @@ export default function LeaveManagement() {
 
   return (
     <div className="p-4 sm:p-6 space-y-4">
+      <QueryError error={requestsError} onRetry={() => refetchRequests()} />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold flex items-center gap-2"><CalendarDays className="w-5 h-5" style={{ color: BRAND }} /> Leave Management</h1>
