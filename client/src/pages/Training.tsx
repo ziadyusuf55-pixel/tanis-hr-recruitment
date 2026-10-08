@@ -381,8 +381,16 @@ export default function Training() {
                           variant="ghost"
                           size="sm"
                           className="h-7 w-7 p-0 text-muted-foreground hover:text-amber-600 hover:bg-amber-50"
-                          onClick={() => resetPasswordMutation.mutate({ candidateId: c.id })}
-                          title="Reset password"
+                          onClick={() => {
+                            // Pass the trainee code too: first-time generation has
+                            // no credential row yet, and candidateId alone cannot
+                            // resolve the code server-side (used to fail with
+                            // "traineeCode is required").
+                            if (!c.traineeCode) { toast.error("Generate this trainee's agent ID first (Trainee Code column)."); return; }
+                            if (!confirm(`Generate a login for ${c.name}?\nIf they already have one, it will be RESET (old password stops working).`)) return;
+                            resetPasswordMutation.mutate({ candidateId: c.id, traineeCode: c.traineeCode });
+                          }}
+                          title={c.traineeCode ? "Generate / reset login for this agent" : "Assign an agent ID first"}
                           disabled={resetPasswordMutation.isPending}
                         >
                           <RotateCcw className="h-3.5 w-3.5" />

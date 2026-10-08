@@ -1067,10 +1067,16 @@ Check your commission details on the *Tanis Hub Agent Portal* 👉 hub.tanis-eg.
                   <Button
                     onClick={async () => {
                       if (!performanceMonthKey) { toast.error("Select a performance month"); return; }
-                      // Upload leaderboard rows first (if any)
+                      // Upload leaderboard rows first (if any). Keyed by the PAY
+                      // CYCLE — the same key the payment rows, the admin viewer
+                      // (defaults to currentCycleMonth) and the portal ranking
+                      // card use. Keying by performance month left the viewer
+                      // empty after upload and showed two different periods
+                      // under one label in the portal. The performance month
+                      // still travels in each row's performanceMonth label.
                       if (parsedLeaderboard.length > 0) {
                         await uploadLeaderboardMutation.mutateAsync({
-                          cycleKey: performanceMonthKey || payCycle,
+                          cycleKey: payCycle || performanceMonthKey,
                           rows: parsedLeaderboard.map(r => ({
                             campaignName: r.campaignName,
                             crdts: r.crdts,

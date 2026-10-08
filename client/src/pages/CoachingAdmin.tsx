@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { currentCycleMonth, recentCycles } from "@/lib/cycle";
+import { currentCycleMonth, recentCycles, recentMonths } from "@/lib/cycle";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 import { useAuth } from "@/_core/hooks/useAuth";
@@ -52,15 +52,9 @@ export default function CoachingAdmin() {
   const cycles = useMemo(() => recentCycles(8), []);
 
   // Past 8 months for month picker
-  const months = useMemo(() => {
-    const out: string[] = [];
-    const d = new Date(now);
-    for (let i = 0; i < 8; i++) {
-      out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
-      d.setMonth(d.getMonth() - 1);
-    }
-    return out;
-  }, []);
+  // Pure y/m math — Date.setMonth overflowed on the 29th-31st, duplicating /
+  // skipping months in this dropdown on month-end days.
+  const months = useMemo(() => recentMonths(8, `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`), []);
 
   const activePeriod = viewMode === "cycle" ? cycle : month;
   const { data: all = [], isLoading, refetch } = trpc.coaching.listByCycle.useQuery({ cycleKey: activePeriod, viewMode });

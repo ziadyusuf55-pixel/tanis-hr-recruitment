@@ -42,6 +42,18 @@ export function prevCycle(key: string): string {
   return recentCycles(2, key)[1];
 }
 
+/** The current CALENDAR month key (local clock), YYYY-MM. */
+export function currentLocalMonth(now: Date = new Date()): string {
+  return `${now.getFullYear()}-${z(now.getMonth() + 1)}`;
+}
+
+/** The n most recent CALENDAR month keys, newest first — pure y/m math, no
+ * Date.setMonth (which overflows on the 29th–31st and duplicated/skipped
+ * months in dropdowns on month-end days). */
+export function recentMonths(n: number, from: string = currentLocalMonth()): string[] {
+  return recentCycles(n, from);
+}
+
 /** YYYY-MM-DD of "now" on the user's own clock (toISOString gives UTC —
  *  between midnight and 2-3am Cairo that is still YESTERDAY). */
 export function localDateKey(d: Date = new Date()): string {

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { recentMonths } from "@/lib/cycle";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -127,7 +128,7 @@ export default function PerformanceReports() {
   const [monthKey, setMonthKey] = useState<string>(() => new Date().toISOString().slice(0, 7));
   const [tlFilter, setTlFilter] = useState<string>("all");
   // Comparison mode: compare two periods side by side
-  const [compareA, setCompareA] = useState<string>(() => { const d = new Date(); d.setMonth(d.getMonth()-1); return d.toISOString().slice(0,7); });
+  const [compareA, setCompareA] = useState<string>(() => recentMonths(2)[1]); // last month, overflow-safe
   const [compareB, setCompareB] = useState<string>(() => new Date().toISOString().slice(0,7));
   const [compareType, setCompareType] = useState<"month" | "cycle">("month");
   const [expandedCrdts, setExpandedCrdts] = useState<Set<string>>(new Set());
@@ -181,11 +182,7 @@ export default function PerformanceReports() {
       pastCycles.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
     }
   }
-  const pastMonths: string[] = [];
-  for (let i = 0; i < 6; i++) {
-    const d = new Date(); d.setMonth(d.getMonth() - i);
-    pastMonths.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
-  }
+  const pastMonths: string[] = recentMonths(6); // pure y/m math — setMonth overflowed on the 29th-31st
 
   // Previous period for comparison
   const prevCycleKey = (() => {

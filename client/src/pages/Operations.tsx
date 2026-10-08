@@ -186,8 +186,8 @@ function AgentDetailDialog({ agent, onClose }: { agent: WorkforceAgent; onClose:
           )}
         </div>
 
-        {/* Separation action buttons — only show if agent is still active/inactive */}
-        {agent.agentStatus !== "resigned" && agent.agentStatus !== "terminated" && (
+        {/* Separation action buttons — hidden for ALL terminal statuses (the server now rejects re-separation too) */}
+        {agent.agentStatus !== "resigned" && agent.agentStatus !== "terminated" && agent.agentStatus !== "blacklisted" && (
           <div className="flex gap-2 mb-3">
             <Button
               variant="outline"
@@ -845,7 +845,10 @@ export default function Operations() {
     campaignId: selectedCampaignId === "all" ? undefined : selectedCampaignId,
   });
   // Demo/test accounts (isDemo) stay visible in the table (so credentials can be generated) but NEVER count in headcount.
-  const headcountAgents = useMemo(() => (agents as WorkforceAgent[]).filter(a => !a.isDemo), [agents]);
+  // Headcount = WORKING agents: agentStatus "active" too, not just isActive —
+  // frozen/on-notice agents made the chips disagree by one with the server's
+  // positions table (isActive && agentStatus === "active") on the same page.
+  const headcountAgents = useMemo(() => (agents as WorkforceAgent[]).filter(a => !a.isDemo && a.agentStatus === "active"), [agents]);
   const [forecastCampaignId, setForecastCampaignId] = useState<number | null>(null);
   const { data: forecast = [], isLoading: loadingForecast } = trpc.campaigns.headcountForecast.useQuery(
     { campaignId: forecastCampaignId! },

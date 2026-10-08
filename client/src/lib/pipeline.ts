@@ -137,3 +137,27 @@ export function getNextStage(current: PipelineStage): PipelineStage | null {
   if (idx === -1 || idx === forward.length - 1) return null;
   return forward[idx + 1];
 }
+
+// ─── Statuses beyond the active pipeline columns ─────────────────────────────
+// Candidates can also hold these (schema has 12 stages; the kanban shows 9).
+// Without them, a hired/resigned/terminated candidate rendered a BLANK badge
+// (`STAGE_LABELS[status]` → undefined) anywhere a raw status was displayed.
+export const EXTRA_STATUS_LABELS: Record<string, string> = {
+  hired: "Hired — in Operations",
+  resigned: "Resigned",
+  terminated: "Terminated",
+};
+export const EXTRA_STATUS_BADGE: Record<string, string> = {
+  hired: "bg-indigo-50 text-indigo-700 border-indigo-200",
+  resigned: "bg-orange-50 text-orange-700 border-orange-200",
+  terminated: "bg-red-100 text-red-800 border-red-300",
+};
+/** Label for ANY candidate status — falls back to the raw value, never blank. */
+export function stageLabel(status: string | null | undefined): string {
+  if (!status) return "—";
+  return (STAGE_LABELS as Record<string, string>)[status] ?? EXTRA_STATUS_LABELS[status] ?? status;
+}
+/** Badge classes for ANY candidate status — always a visible style. */
+export function stageBadge(status: string | null | undefined): string {
+  return (STAGE_BADGE as Record<string, string>)[status ?? ""] ?? EXTRA_STATUS_BADGE[status ?? ""] ?? "bg-muted text-muted-foreground border-border";
+}

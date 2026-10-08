@@ -799,7 +799,7 @@ export default function AgentProfilePage() {
                       <tr key={i} className="border-b border-border/50">
                         <td className="py-2 pr-4 font-medium text-foreground">{String(p.month ?? "")}</td>
                         <td className="py-2 pr-4 text-right">{moneyEGP(p.baseSalary)}</td>
-                        <td className="py-2 pr-4 text-right text-green-700">{moneyEGP(p.commissionEgp)}</td>
+                        <td className="py-2 pr-4 text-right text-green-700">{moneyEGP(p.commissionEgp ?? p.commission)}</td>
                         <td className="py-2 pr-4 text-right text-red-600">{moneyEGP(p.totalDeductions)}</td>
                         <td className="py-2 pr-4 text-right font-semibold text-foreground">{moneyEGP(p.netPay)}</td>
                         <td className="py-2 text-right">
@@ -857,7 +857,7 @@ export default function AgentProfilePage() {
       {activeTab === "commission" && (
         <Card className="border-0 shadow-sm">
           <CardContent className="p-6">
-            {(payroll as Array<Record<string, unknown>>).filter(p => Number(p.commissionEgp ?? 0) > 0).length > 0 ? (
+            {(payroll as Array<Record<string, unknown>>).filter(p => Number(p.commissionEgp ?? p.commission ?? 0) > 0).length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
@@ -867,10 +867,10 @@ export default function AgentProfilePage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(payroll as Array<Record<string, unknown>>).filter(p => Number(p.commissionEgp ?? 0) > 0).map((p, i) => (
+                    {(payroll as Array<Record<string, unknown>>).filter(p => Number(p.commissionEgp ?? p.commission ?? 0) > 0).map((p, i) => (
                       <tr key={i} className="border-b border-border/50">
                         <td className="py-2 pr-4 font-medium text-foreground">{String(p.month ?? "")}</td>
-                        <td className="py-2 text-right font-semibold" style={{ color: BRAND }}>{moneyEGP(p.commissionEgp)}</td>
+                        <td className="py-2 text-right font-semibold" style={{ color: BRAND }}>{moneyEGP(p.commissionEgp ?? p.commission)}</td>
                       </tr>
                     ))}
                   </tbody>

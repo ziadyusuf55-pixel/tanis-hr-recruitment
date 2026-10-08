@@ -1914,17 +1914,23 @@ export async function getSeparationsByAgent(agentCode: string) {
 
 /**
  * Mark agent as resigned on-spot:
- * 1. Stores separation record
- * 2. Deletes candidate record (cascades to workforce row, credentials, breaks, etc.)
+ * 1. Stores an applied separation record
+ * 2. Sets workforce status resigned (row KEPT for history), deletes portal
+ *    credentials, revokes sessions, labels the candidate resigned, archives CRDTS
  */
 export async function markAgentResignedOnSpot(agentCode: string, reason: string, adminName: string) {
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const { workforceAgents, agentSeparations, agentCredentials, exitProcess } = await import("../drizzle/schema");
-  // Get agent to find candidateId
-  const agent = await db.select({ candidateId: workforceAgents.candidateId })
+  // Get agent to find candidateId + guard against double separation (an agent
+  // already resigned/terminated/blacklisted must not be re-separated: it would
+  // re-open settlement and stack duplicate separation rows).
+  const agent = await db.select({ candidateId: workforceAgents.candidateId, agentStatus: workforceAgents.agentStatus })
     .from(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode)).limit(1);
   if (!agent[0]) throw new Error("Agent not found");
+  if (["resigned", "terminated", "blacklisted"].includes(agent[0].agentStatus ?? "")) {
+    throw Object.assign(new Error(`Agent is already ${agent[0].agentStatus} — nothing to resign.`), { code: "BAD_REQUEST" });
+  }
   const now = Date.now();
   // Store separation record
   await db.insert(agentSeparations).values({
@@ -1957,10 +1963,15 @@ export async function terminateAgent(agentCode: string, reason: string, adminNam
   if (!db) throw new Error("Database not available");
   const { workforceAgents, agentSeparations, agentCredentials, exitProcess } = await import("../drizzle/schema");
   const now = Date.now();
-  // Fetch candidateId
-  const agent = await db.select({ candidateId: workforceAgents.candidateId })
+  // Fetch candidateId + guard: terminating an agent who already LEFT would
+  // re-open settlement (salarySettled→false), overwrite the candidate label and
+  // stack a duplicate separation row (same guard approveResignationRequest has).
+  const agent = await db.select({ candidateId: workforceAgents.candidateId, agentStatus: workforceAgents.agentStatus })
     .from(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode)).limit(1);
   if (!agent[0]) throw new Error("Agent not found");
+  if (["resigned", "terminated", "blacklisted"].includes(agent[0].agentStatus ?? "")) {
+    throw Object.assign(new Error(`Agent is already ${agent[0].agentStatus} — cannot terminate again.`), { code: "BAD_REQUEST" });
+  }
   // Store separation record
   await db.insert(agentSeparations).values({
     agentCode, type: "termination", reason,
@@ -2021,9 +2032,13 @@ export async function approveResignationRequest(agentCode: string, lastWorkingDa
     await db.update(candidates).set({ status: "resigned", updatedAt: new Date() }).where(eq(candidates.id, agent[0].candidateId));
     await archiveAgentCrdts(agentCode);
   } else {
-    // NOTICE PERIOD: the agent keeps working until the LWD — keep portal access,
-    // credentials and candidate label; processDueSeparations runs the cascade on the day.
-    await db.update(workforceAgents).set({ agentStatus: "inactive", isActive: true, updatedAt: new Date() })
+    // NOTICE PERIOD: the agent keeps working until the LWD — they stay fully
+    // ACTIVE (schedule, headcount, portal) exactly like the Request-Center path
+    // (scheduleResignation). Setting "inactive" here used to make them vanish
+    // from the operation plan weeks before their last day while the other
+    // approval path kept them on it. The pending agentSeparations row is the
+    // single marker of the notice; processDueSeparations runs the cascade on the day.
+    await db.update(workforceAgents).set({ agentStatus: "active", isActive: true, updatedAt: new Date() })
       .where(eq(workforceAgents.traineeCode, agentCode));
   }
   // Exit checklist row so the agent appears in the Settle & Exit flow either way.
@@ -2152,12 +2167,15 @@ export async function createScheduleChangeRequest(data: {
   const db = await getDb();
   if (!db) return;
   const { scheduleChangeRequests } = await import("../drizzle/schema");
-  // Default swapWeekOf to next Monday if not specified
+  // Default swapWeekOf to next Monday — computed from the CAIRO business date,
+  // not server-local time (around midnight Cairo the two disagree and the swap
+  // could pin to the wrong week, letting the hourly revert job undo it early).
   const swapWeekOf = data.swapWeekOf ?? (() => {
-    const d = new Date();
-    const day = d.getDay();
+    const todayKey = _businessDateKey();
+    const d = new Date(`${todayKey}T00:00:00Z`); // pure calendar math on the Cairo date
+    const day = d.getUTCDay();
     const daysToMonday = day === 0 ? 1 : (8 - day) % 7 || 7;
-    d.setDate(d.getDate() + daysToMonday);
+    d.setUTCDate(d.getUTCDate() + daysToMonday);
     return d.toISOString().slice(0, 10);
   })();
   await db.insert(scheduleChangeRequests).values({ ...data, swapWeekOf, status: "pending_peer" });
@@ -2223,6 +2241,7 @@ export async function getHeadcountForecast(campaignId: number, days = 30) {
     offDay2: workforceAgents.offDay2,
   }).from(workforceAgents)
     .where(and(eq(workforceAgents.campaignId, campaignId), eq(workforceAgents.isActive, true),
+      eq(workforceAgents.agentStatus, "active"), // frozen/on-notice-inactive agents are not available capacity
       or(isNull(workforceAgents.isDemo), eq(workforceAgents.isDemo, false))));
 
   const today = new Date();
@@ -2574,10 +2593,13 @@ export async function getPayrollRecordWithAdjustments(id: number) {
   const { payrollRecords, payrollAdjustments } = await import("../drizzle/schema");
   const [rec] = await db.select().from(payrollRecords).where(eq(payrollRecords.id, id)).limit(1);
   if (!rec) return null;
-  const cands = crdtsCandidates(rec.crdts ?? "");
-  const adjustments = cands.length
-    ? await db.select().from(payrollAdjustments).where(and(inArray(payrollAdjustments.crdts, cands), eq(payrollAdjustments.month, rec.month)))
+  // ONE matching rule everywhere: widen through the workforce roster so a bonus
+  // stored under a sibling dialer id of the same agent still counts here.
+  const identity = new Set(await expandCrdtsIdentity(rec.crdts ?? ""));
+  const monthAdj = identity.size
+    ? await db.select().from(payrollAdjustments).where(eq(payrollAdjustments.month, rec.month))
     : [];
+  const adjustments = monthAdj.filter(a => adjMatchesIdentity(a.crdts, identity));
   return { record: rec, adjustments };
 }
 
@@ -2667,15 +2689,11 @@ export async function getPayrollStatusPage(month: string) {
     .from(sepT).where(isNull(sepT.appliedAt));
   const pendMap = new Map(pend.map(p => [p.agentCode, p]));
   // Attach manual adjustments (bonuses / deductions) so the admin status view can
-  // fold them into each agent's adjusted total. Keyed by primary CRDTS.
-  const { payrollAdjustments: adjT } = await import("../drizzle/schema");
+  // fold them into each agent's adjusted total — widened-identity rule, the SAME
+  // one the mark-paid math and the payslip use, so all three agree.
+  const { payrollAdjustments: adjT, workforceAgents: waT } = await import("../drizzle/schema");
   const allAdj = await db.select().from(adjT).where(eq(adjT.month, month));
-  const adjByCrdts = new Map<string, Array<typeof allAdj[number]>>();
-  for (const a of allAdj) {
-    const k = String(a.crdts).split(",")[0].trim();
-    if (!adjByCrdts.has(k)) adjByCrdts.set(k, []);
-    adjByCrdts.get(k)!.push(a);
-  }
+  const rosterCrdts = (await db.select({ crdts: waT.crdts }).from(waT).where(isNotNull(waT.crdts))).map(a => a.crdts);
   // Salary advances scheduled against THIS pay cycle (or still pending from earlier) are a TAG for the
   // inputter — nothing is deducted automatically. Payroll shows "Took salary advance · EGP X" on the row.
   const { agentAdvances: advT } = await import("../drizzle/schema");
@@ -2687,12 +2705,12 @@ export async function getPayrollStatusPage(month: string) {
   const advByCode = new Map<string, Array<typeof advRows[number]>>();
   for (const a of advRows) { if (!advByCode.has(a.traineeCode)) advByCode.set(a.traineeCode, []); advByCode.get(a.traineeCode)!.push(a); }
   return rows.map(r => {
-    const primary = String(r.crdts ?? "").split(",")[0].trim();
+    const identity = widenCrdtsAgainst(String(r.crdts ?? ""), rosterCrdts);
     const advances = (r.traineeCode ? advByCode.get(r.traineeCode) : undefined) ?? [];
     return {
       ...r,
       pendingLeave: r.traineeCode ? (pendMap.get(r.traineeCode) ?? null) : null,
-      adjustments: adjByCrdts.get(primary) ?? [],
+      adjustments: allAdj.filter(a => adjMatchesIdentity(a.crdts, identity)),
       advances: advances.map(a => ({ id: a.id, amountEgp: a.amountEgp, issuedDate: a.issuedDate, deductCycle: a.deductCycle, reason: a.reason })),
       advanceTotalEgp: advances.reduce((s, a) => s + Number(a.amountEgp || 0), 0),
     };
@@ -2723,9 +2741,11 @@ export async function getMyPayrollRecordByCrdts(crdts: string, month: string) {
     : [];
   const record = rows[0] ?? null;
   if (!record) return null;
-  // Attach this agent's manual adjustments (bonuses / deductions) for the pay cycle, under any of the ids.
-  const adjustments = await db.select().from(payrollAdjustments)
-    .where(and(inArray(payrollAdjustments.crdts, cands), eq(payrollAdjustments.month, month)));
+  // Attach this agent's manual adjustments (bonuses / deductions) for the pay cycle —
+  // same widened-identity rule as every other payroll↔adjustment join.
+  const identity = new Set(await expandCrdtsIdentity(crdts));
+  const monthAdj = await db.select().from(payrollAdjustments).where(eq(payrollAdjustments.month, month));
+  const adjustments = monthAdj.filter(a => adjMatchesIdentity(a.crdts, identity));
   return { ...record, adjustments };
 }
 
@@ -2733,6 +2753,47 @@ export async function getMyPayrollRecordByCrdts(crdts: string, month: string) {
 export function crdtsCandidates(crdts: string): string[] {
   const parts = String(crdts).split(",").map(x => x.trim()).filter(Boolean);
   return Array.from(new Set([String(crdts).trim(), ...parts].filter(Boolean)));
+}
+
+/**
+ * Widen a CRDTS string to the agent's FULL identity using the workforce roster:
+ * its own candidate forms plus the candidate forms of any workforce agent that
+ * shares an id with it. This bridges the multi-id case — payroll row stored
+ * under "114070", bonus stored under "114063", agent is "114063,114070" — where
+ * the two strings alone never overlap. EVERY payroll↔adjustment join must use
+ * this ONE rule so the payslip, the admin table, statsForMonth, and the
+ * mark-paid math all agree on which adjustments belong to a record.
+ */
+export function widenCrdtsAgainst(crdts: string, agentCrdtsList: Array<string | null>): Set<string> {
+  const set = new Set(crdtsCandidates(crdts));
+  if (!set.size) return set;
+  for (const a of agentCrdtsList) {
+    if (!a) continue;
+    const ac = crdtsCandidates(String(a));
+    if (ac.some(x => set.has(x))) ac.forEach(x => set.add(x));
+  }
+  return set;
+}
+
+/** widenCrdtsAgainst with the roster fetched for you. Best-effort: on DB trouble it falls back to the plain candidates. */
+export async function expandCrdtsIdentity(crdts: string, exec?: DbExec): Promise<string[]> {
+  const base = crdtsCandidates(crdts);
+  if (!base.length) return base;
+  const db = exec ?? await getDb();
+  if (!db) return base;
+  try {
+    const { workforceAgents } = await import("../drizzle/schema");
+    const agents = await db.select({ crdts: workforceAgents.crdts }).from(workforceAgents).where(isNotNull(workforceAgents.crdts));
+    return Array.from(widenCrdtsAgainst(crdts, agents.map(a => a.crdts)));
+  } catch {
+    return base;
+  }
+}
+
+/** Does this adjustment row belong to this identity set? (Adjustment may itself be stored under a comma string.) */
+export function adjMatchesIdentity(adjCrdts: string | null | undefined, identity: Set<string>): boolean {
+  if (!adjCrdts) return false;
+  return crdtsCandidates(String(adjCrdts)).some(x => identity.has(x));
 }
 
 export async function getMyPayrollMonthsByCrdts(crdts: string) {
@@ -3150,7 +3211,9 @@ export async function getCycleTrackerForAgent(crdts: string, cycleKey: string) {
   if (!db) return { stats: [], deductions: [], ot: [] };
   const crdtsList = String(crdts).split(",").map(x => x.trim()).filter(Boolean);
   if (!crdtsList.length) return { stats: [], todayStats: [], deductions: [], ot: [] };
-  const today = new Date().toISOString().slice(0, 10);
+  // "Today" on the portal card is the CAIRO business day — UTC lagged it by 2-3h
+  // after midnight, showing yesterday's numbers labeled "today".
+  const today = _businessDateKey();
   const [stats, deductions, ot] = await Promise.all([
     db.select().from(cycleStats)
       .where(and(inArray(cycleStats.crdts, crdtsList), eq(cycleStats.cycleKey, cycleKey)))
@@ -3369,7 +3432,10 @@ export async function getPendingDeletionAgents() {
   if (!db) return [];
   const { workforceAgents } = await import("../drizzle/schema");
   const { and, eq, isNull, or } = await import("drizzle-orm");
-  // Only count agents who have left AND salary is not yet settled
+  // Only count agents who have left AND salary is not yet settled.
+  // Blacklisted leavers can be owed money too — leaving them out made them
+  // visible in Operations' banner but absent from this Dashboard count and the
+  // Settle & Exit queues, i.e. un-settleable through the normal flow.
   return db.select({
     traineeCode: workforceAgents.traineeCode,
     fullName: workforceAgents.fullName,
@@ -3378,7 +3444,7 @@ export async function getPendingDeletionAgents() {
     updatedAt: workforceAgents.updatedAt,
   }).from(workforceAgents)
     .where(and(
-      sql`${workforceAgents.agentStatus} IN ('resigned', 'terminated')`,
+      sql`${workforceAgents.agentStatus} IN ('resigned', 'terminated', 'blacklisted')`,
       or(eq(workforceAgents.salarySettled, false), isNull(workforceAgents.salarySettled))
     ));
 }
@@ -3852,7 +3918,7 @@ export async function upsertAgentContract(data: {
   // probation / contract-expiry jobs (which read these columns) stay in step.
   {
     const { workforceAgents } = await import("../drizzle/schema");
-    const todayKey = new Date().toISOString().slice(0, 10);
+    const todayKey = _businessDateKey(); // Cairo — same clock the hourly job that CLEARS the flag uses
     await db.update(workforceAgents).set({
       contractStartDate: data.startDate ?? null,
       contractEndDate: data.endDate ?? null,
@@ -3987,9 +4053,18 @@ export async function deductAdvance(id: number, deductCycle: string, actorName: 
     const [adv] = await tx.select().from(agentAdvances).where(eq(agentAdvances.id, id)).for("update").limit(1);
     if (!adv) throw Object.assign(new Error("Advance not found"), { code: "NOT_FOUND" });
     if (adv.status !== "pending") throw Object.assign(new Error(`Advance is already ${adv.status} — nothing to deduct.`), { code: "CONFLICT" });
-    // Adjustments are keyed by CRDTS; fall back to the trainee code when the agent has none.
+    // Adjustments are keyed by CRDTS. An agent with NO crdts has no payroll
+    // records at all, so a trainee-code-keyed adjustment would match NOTHING —
+    // the advance would read "deducted" while no payslip or paid total ever
+    // dropped. Refuse instead of lying.
     const [wa] = await tx.select({ crdts: workforceAgents.crdts }).from(workforceAgents).where(eq(workforceAgents.traineeCode, adv.traineeCode)).limit(1);
-    const crdts = (wa?.crdts ?? "").split(",")[0]?.trim() || adv.traineeCode;
+    const crdts = (wa?.crdts ?? "").split(",")[0]?.trim();
+    if (!crdts) {
+      throw Object.assign(
+        new Error(`${adv.traineeCode} has no CRDTS, so this deduction cannot reach any payroll record. Set the agent's CRDTS first, or settle the advance outside payroll and cancel it here.`),
+        { code: "BAD_REQUEST" },
+      );
+    }
     await tx.insert(payrollAdjustments).values({
       crdts, month: deductCycle, type: "deduction",
       label: `Salary advance #${id} (${adv.issuedDate})`,
@@ -4157,6 +4232,24 @@ export async function cancelLeaveRequest(input: { id: number; cancelledBy: strin
     await tx.update(leaveRequests)
       .set({ status: "cancelled", decidedBy: input.cancelledBy, decidedAt: now })
       .where(eq(leaveRequests.id, input.id));
+    // Mirror the cancellation to the linked Request-Center row, exactly like
+    // decideLeaveRequest mirrors approve/reject. Without this the agent's
+    // Request Center keeps showing "approved" (HR cancel) or keeps the request
+    // open in the pending tile + Slack feed (agent cancel) — and resolving that
+    // ghost later told the agent a no-longer-existing leave was "approved".
+    if (req.agentRequestId) {
+      const { agentRequests: arT } = await import("../drizzle/schema");
+      await tx.update(arT)
+        .set({
+          status: "resolved",
+          adminReply: input.byAgent
+            ? "Request cancelled by the agent."
+            : `Leave cancelled by ${input.cancelledBy}${req.status === "approved" ? " — the approved days were re-credited to the balance" : ""}.`,
+          resolvedBy: input.cancelledBy,
+          resolvedAt: now,
+        })
+        .where(eq(arT.id, req.agentRequestId));
+    }
     return { ok: true as const, traineeCode: req.traineeCode, days: req.days, wasApproved: req.status === "approved" };
   });
 }
@@ -4164,18 +4257,38 @@ export async function cancelLeaveRequest(input: { id: number; cancelledBy: strin
 export async function createLeaveRequestRow(input: {
   traineeCode: string; requesterName?: string | null; startDate: string; endDate: string;
   days?: number; reason?: string | null; agentRequestId?: number | null;
+  /** The EXACT dates requested (portal multi-date picker). When given, days =
+   * number of distinct valid dates — NOT the calendar span. Mon+Fri selected is
+   * 2 days, not 5. The dates themselves are validated and re-derive start/end,
+   * so this is no more spoofable than the span: the dates ARE the request. */
+  dates?: string[];
 }) {
   const db = await getDb();
   if (!db) throw new Error("DB unavailable");
   const { leaveRequests } = await import("../drizzle/schema");
-  // Days are ALWAYS computed server-side from the dates — the client's number is
-  // display-only and was spoofable (request 10 days, send days:1, burn 1 from balance).
-  const startMs = Date.parse(input.startDate), endMs = Date.parse(input.endDate);
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) throw new Error("Invalid leave dates");
-  if (endMs < startMs) throw new Error("End date is before start date");
-  const span = Math.round((endMs - startMs) / 86_400_000) + 1;
-  if (span > 60) throw new Error("Leave requests are capped at 60 days");
-  const days = Math.max(1, span);
+  // Days are ALWAYS computed server-side — never trusted from a bare client
+  // number (request 10 days, send days:1, burn 1 from balance).
+  let days: number;
+  if (input.dates && input.dates.length > 0) {
+    const uniq = Array.from(new Set(
+      input.dates.map(d => {
+        const ms = Date.parse(d);
+        if (!Number.isFinite(ms)) throw new Error("Invalid leave dates");
+        return new Date(ms).toISOString().slice(0, 10);
+      }),
+    )).sort();
+    input.startDate = uniq[0];
+    input.endDate = uniq[uniq.length - 1];
+    days = uniq.length;
+    if (days > 60) throw new Error("Leave requests are capped at 60 days");
+  } else {
+    const startMs = Date.parse(input.startDate), endMs = Date.parse(input.endDate);
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) throw new Error("Invalid leave dates");
+    if (endMs < startMs) throw new Error("End date is before start date");
+    const span = Math.round((endMs - startMs) / 86_400_000) + 1;
+    if (span > 60) throw new Error("Leave requests are capped at 60 days");
+    days = Math.max(1, span);
+  }
   const [r] = await db.insert(leaveRequests).values({
     traineeCode: input.traineeCode,
     requesterName: input.requesterName ?? null,

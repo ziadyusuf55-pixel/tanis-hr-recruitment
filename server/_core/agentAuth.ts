@@ -5,7 +5,8 @@
  *   1. reads the `tanis_agent_session` cookie,
  *   2. verifies the JWT signature and `type === "agent"`,
  *   3. enforces `workforce_agents.sessionRevokedAt` (terminate / resign / reset),
- *   4. enforces `workforce_agents.agentStatus === "active"`,
+ *   4. blocks TERMINAL statuses only (resigned/terminated/blacklisted) — frozen
+ *      and inactive agents KEEP portal access (owner decision),
  *   5. blocks demo/test accounts (`isDemo`) from the live portal,
  *   6. honours the global portal lock.
  *
@@ -96,9 +97,14 @@ export async function resolveAgentSession(req: Request): Promise<AgentSession | 
   const token = readAgentCookie(req);
   if (!token) return null;
 
-  if (ENV.agentPortalLocked) {
-    stripAgentCookie(req);
-    return null;
+  // DB-backed lock (same source the admin toggle writes and /api/portal-status
+  // reads) — the env-only check here used to let open sessions keep mutating
+  // after an admin locked the portal. The cookie is KEPT: a lock is temporary,
+  // the session resumes when the portal unlocks.
+  {
+    const { getPortalLock } = await import("./portalLock");
+    const { locked } = await getPortalLock();
+    if (locked) return null;
   }
 
   let payload: { candidateId?: number; traineeCode?: string; type?: string; iat?: number };

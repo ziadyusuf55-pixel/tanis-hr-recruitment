@@ -430,7 +430,7 @@ export default function PayrollPage() {
       "Commission (EGP)": r.commissionEgp ?? "",
       "Total Deductions (EGP)": r.totalDeductions ?? "",
       "Net Pay (EGP)": r.netPay ?? "",
-      "Final Total (Net + Commission + Adjustments) (EGP)": (finalPay(r, (r as StatusRecord).adjustments ?? []) || "").toString() || "",
+      "Final Total (Net + Commission + Adjustments) (EGP)": finalPay(r, (r as StatusRecord).adjustments ?? []).toString(), // a legitimate 0 exports as "0", not blank
       Status: r.paymentStatus ?? "pending",
       "Paid By": (r as Record<string,unknown>).paidBy as string ?? "",
       "Paid At": r.paidAt ? new Date(r.paidAt).toLocaleDateString("en-EG") : "",
@@ -470,8 +470,15 @@ export default function PayrollPage() {
   const paidCount = records.filter(r => r.paymentStatus === "paid").length;
   const pendingCount = records.length - paidCount;
   const totalNetPay = records.reduce((sum, r) => sum + rowTotal(r), 0);
-  const totalPaidNetPay = records.filter(r => r.paymentStatus === "paid").reduce((sum, r) => sum + rowTotal(r), 0);
-  const totalPendingNetPay = records.filter(r => r.paymentStatus !== "paid").reduce((sum, r) => sum + rowTotal(r), 0);
+  // Money that actually LEFT — partial payments included, same math as the
+  // server stats panel (the two used to differ by every partial payment).
+  const paidOf = (r: StatusRecord) => {
+    const paid = n((r as Record<string, unknown>).amountPaid as string | undefined);
+    if (paid > 0) return paid; // what actually left, partials included
+    return r.paymentStatus === "paid" ? rowTotal(r) : 0; // legacy paid rows with no recorded amount
+  };
+  const totalPaidNetPay = records.reduce((sum, r) => sum + paidOf(r), 0);
+  const totalPendingNetPay = Math.max(0, totalNetPay - totalPaidNetPay);
   // Breakdown totals
   const totalBaseSalary = records.reduce((sum, r) => sum + n(r.baseSalary), 0);
   const totalOtPay = records.reduce((sum, r) => sum + n(r.ot1x5Pay) + n(r.ot2xPay) + n(r.ot3xPay), 0);
@@ -1526,15 +1533,17 @@ export default function PayrollPage() {
                 );
               })}
             </div>
-            {/* Final total preview including commission */}
+            {/* Final total preview — SAME formula as the table's Total column (net + commission + adjustments) */}
             {(() => {
               const nf = (v: unknown) => parseFloat(String(v ?? "0")) || 0;
               const netPay = nf(editValues.netPay);
               const commission = nf(editValues.commissionEgp);
-              const finalTotal = netPay + commission;
-              return commission > 0 ? (
+              const editRec = editingRow != null ? records.find(r => r.id === editingRow) : undefined;
+              const adjustmentsNet = editRec ? sumAdjustments(editRec.adjustments ?? []) : 0;
+              const finalTotal = netPay + commission + adjustmentsNet;
+              return commission > 0 || adjustmentsNet !== 0 ? (
                 <div className="rounded-lg px-4 py-3 flex items-center justify-between bg-blue-50 border border-blue-200">
-                  <span className="text-xs font-medium text-muted-foreground">Final Total (incl. commission)</span>
+                  <span className="text-xs font-medium text-muted-foreground">Final Total (net + commission{adjustmentsNet !== 0 ? " + adjustments" : ""})</span>
                   <span className="text-sm font-bold text-blue-700">EGP {finalTotal.toLocaleString("en-EG", { maximumFractionDigits: 2 })}</span>
                 </div>
               ) : null;

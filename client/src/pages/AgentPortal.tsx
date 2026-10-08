@@ -5,6 +5,7 @@ import { finalPay, calcNet } from "@shared/pay";
 import { getErrorMessage } from "@/lib/errorMessage";
 import { useLocation } from "wouter";
 import { trpc } from "@/lib/trpc";
+import { recentMonths } from "@/lib/cycle";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -1347,11 +1348,17 @@ function getStatusLabel(status: string) {
 
 function getMinDateStr(type?: string) {
   const d = new Date();
-  // Unpaid day off / attendance exceptions can be for any day (including today or past days)
-  if (type === "day_off") return d.toISOString().split("T")[0];
-  if (type === "late_arrival" || type === "early_departure") return "2020-01-01";
+  // Unpaid day off can be any day from today; attendance exceptions and SICK
+  // NOTES are reported after the fact (the 14-day rule made sick notes
+  // impossible to file for today — the server never required it for them).
+  if (type === "day_off") return localDateStr(d);
+  if (type === "late_arrival" || type === "early_departure" || type === "sick_note") return "2020-01-01";
   d.setDate(d.getDate() + 14);
-  return d.toISOString().split("T")[0];
+  return localDateStr(d);
+}
+/** YYYY-MM-DD in the AGENT'S local time — toISOString() is UTC and lags Cairo by 2-3h after midnight. */
+function localDateStr(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 function ScheduleSwapSection({ theme }: { theme: Theme }) {
@@ -1385,7 +1392,7 @@ function ScheduleSwapSection({ theme }: { theme: Theme }) {
   const outgoing = rows.filter(r => r.requesterCode === myCode);
 
   const dayLabel = (d: number | null | undefined) => (d == null ? "—" : DAY_NAMES_FULL[d]);
-  const statusLabel: Record<string, string> = { pending_peer: "Waiting on colleague", pending_manager: "Waiting on admin", approved: "Approved", rejected: "Declined" };
+  const statusLabel: Record<string, string> = { pending_peer: "Waiting on colleague", pending_manager: "Waiting on admin", approved: "Approved", rejected: "Declined", reverted: "Week over — reverted" };
   const selected = cols.find(c => c.traineeCode === form.targetCode);
   const inputStyle = { background: theme.inputBg, border: `1px solid ${theme.inputBorder}`, color: theme.text };
   const DAYS = [0, 1, 2, 3, 4, 5, 6];
@@ -1659,7 +1666,7 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
           {needsDate && isMultiDate && (
             <div className="space-y-1.5">
               <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>
-                Select Dates <span className="normal-case" style={{ color: theme.textFaint }}>{form.type === "day_off" ? "(any date — pick multiple)" : "(min. 2 weeks from today — pick multiple)"}</span>
+                Select Dates <span className="normal-case" style={{ color: theme.textFaint }}>{form.type === "day_off" ? "(any date — pick multiple)" : form.type === "sick_note" ? "(the days you were sick — pick multiple)" : "(min. 2 weeks from today — pick multiple)"}</span>
               </Label>
               <MultiDatePicker selectedDates={form.requestedDates} onToggle={toggleDate} minDate={getMinDateStr(form.type)} theme={theme} />
               {form.requestedDates.length > 0 && (
@@ -1726,7 +1733,7 @@ function RequestCenterTab({ candidateId: _candidateId, theme }: { candidateId: n
 
           <div className="space-y-1.5">
             <Label className="text-xs uppercase tracking-wider" style={{ color: theme.textMuted }}>
-              Attachment <span className="normal-case" style={{ color: theme.textFaint }}>(optional — any file, max 16MB)</span>
+              Attachment <span className="normal-case" style={{ color: theme.textFaint }}>(optional — image or PDF, max 16MB)</span>
             </Label>
             <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileSelect} />
             {form.attachmentUrl ? (
@@ -2194,15 +2201,26 @@ function DocumentsTab({ theme }: { theme: Theme }) {
   });
   const [uploading, setUploading] = useState<string | null>(null);
   async function handleUpload(docType: string, file: File) {
+    // Pre-check the server's 5MB cap — a rejected upload used to fail in
+    // silence (spinner stopped, nothing saved, no message).
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("File is too large — maximum size is 5MB.");
+      return;
+    }
     setUploading(docType);
     try {
       const formData = new FormData();
       formData.append("file", file);
       const res = await fetch("/api/upload-doc", { method: "POST", body: formData });
-      const { url } = await res.json() as { url: string };
-      await uploadMutation.mutateAsync({ docType, fileUrl: url });
+      const body = await res.json().catch(() => null) as { url?: string; error?: string } | null;
+      if (!res.ok || !body?.url) {
+        toast.error(body?.error || "Upload failed — please try a clear JPG, PNG or PDF under 5MB.");
+        return;
+      }
+      await uploadMutation.mutateAsync({ docType, fileUrl: body.url });
+      toast.success("Document uploaded — HR will review it.");
     } catch {
-      // ignore
+      toast.error("Upload failed — check your connection and try again.");
     } finally {
       setUploading(null);
     }
@@ -2705,11 +2723,7 @@ function CycleTrackerTab({ theme }: { theme: Theme }) {
   }
 
   // Build past months list for month selector
-  const pastLogMonths: string[] = [];
-  for (let i = 0; i < 6; i++) {
-    const d = new Date(); d.setMonth(d.getMonth() - i);
-    pastLogMonths.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`);
-  }
+  const pastLogMonths: string[] = recentMonths(6); // pure y/m math — setMonth overflowed on the 29th-31st
 
   if (!data && logViewMode === "cycle") {
     return (
@@ -3306,11 +3320,7 @@ function CommissionTrackerTab({ theme }: { theme: Theme }) {
                     <option key={c.cycleKey} value={c.cycleKey}>{c.performanceMonth || formatMonthLabel(c.cycleKey)}</option>
                   ));
                 })()
-              : Array.from({ length: 6 }, (_, i) => {
-                  const d = new Date(); d.setMonth(d.getMonth() - i);
-                  const k = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
-                  return <option key={k} value={k}>{formatMonthLabel(k)}</option>;
-                })
+              : recentMonths(6).map(k => <option key={k} value={k}>{formatMonthLabel(k)}</option>)
             }
           </select>
         </div>
@@ -4035,15 +4045,22 @@ function MyRecords({ theme, view }: { theme: Theme; view: "cycle" | "month" | "a
   //   month = the calendar month
   //   all   = everything
   const now = new Date();
-  const cycleStart = new Date(now.getFullYear(), now.getMonth() - (now.getDate() >= 26 ? 0 : 1), 26);
-  const cycleEnd = new Date(cycleStart.getFullYear(), cycleStart.getMonth() + 1, 25);
-  const thisMonth = now.toISOString().slice(0, 7);
+  // String-key math: comparing Date objects dropped the 25th (the last day of
+  // every cycle) because local-midnight cycleEnd < the row's UTC-parsed date.
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const cs = now.getDate() >= 26
+    ? { y: now.getFullYear(), m: now.getMonth() }
+    : (now.getMonth() === 0 ? { y: now.getFullYear() - 1, m: 11 } : { y: now.getFullYear(), m: now.getMonth() - 1 });
+  const ce = cs.m === 11 ? { y: cs.y + 1, m: 0 } : { y: cs.y, m: cs.m + 1 };
+  const cycleStartKey = `${cs.y}-${pad(cs.m + 1)}-26`;
+  const cycleEndKey = `${ce.y}-${pad(ce.m + 1)}-25`;
+  const thisMonth = `${now.getFullYear()}-${pad(now.getMonth() + 1)}`;
   const inRange = (d: string) => {
     if (!d) return false;
+    const key = d.slice(0, 10);
     if (view === "all") return true;
-    if (view === "month") return d.slice(0, 7) === thisMonth;
-    const dt = new Date(d);
-    return dt >= cycleStart && dt <= cycleEnd;
+    if (view === "month") return key.slice(0, 7) === thisMonth;
+    return key >= cycleStartKey && key <= cycleEndKey;
   };
   type V = { id: number; date: string; type: string; hours: string | null; deduction: string | null; description: string | null };
   type O = { id: number; date: string; otType: string; hours: string | null; egpAmount: string | null };

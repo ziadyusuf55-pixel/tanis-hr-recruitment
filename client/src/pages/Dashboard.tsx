@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { localDateKey } from "@/lib/cycle";
 import { trpc } from "@/lib/trpc";
-import { STAGE_LABELS, STAGE_DOT, STAGE_BADGE, type PipelineStage, ACTIVE_STAGES } from "@/lib/pipeline";
+import { STAGE_LABELS, STAGE_DOT, STAGE_BADGE, type PipelineStage, ACTIVE_STAGES, stageLabel, stageBadge } from "@/lib/pipeline";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import {
@@ -407,9 +407,9 @@ export default function Dashboard() {
                     <td className="px-4 py-3 font-medium text-foreground">{c.name}</td>
                     <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell">{c.phone || "—"}</td>
                     <td className="px-4 py-3">
-                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border ${STAGE_BADGE[c.status as PipelineStage]}`}>
+                      <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium border ${stageBadge(c.status)}`}>
                         <span className={`w-1.5 h-1.5 rounded-full ${STAGE_DOT[c.status as PipelineStage]}`} />
-                        {STAGE_LABELS[c.status as PipelineStage]}
+                        {stageLabel(c.status)}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground text-xs hidden md:table-cell">

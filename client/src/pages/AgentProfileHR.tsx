@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { useAuth } from "@/_core/hooks/useAuth";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, ReferenceLine } from "recharts";
 import { trpc } from "@/lib/trpc";
+import { cycleOfDate, currentCycleMonth, currentLocalMonth, recentCycles, recentMonths } from "@/lib/cycle";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -76,21 +77,27 @@ function Profile({ agent }: { agent: Agent }) {
 
   // Cycle/month view toggle for adherence, quality, coaching
   const [logView, setLogView] = useState<"cycle" | "month">("cycle");
-  const [logPeriod, setLogPeriod] = useState<string>(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  });
-  const logMonths = Array.from({ length: 6 }, (_, i) => {
-    const d = new Date(); d.setMonth(d.getMonth() - i);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-  });
+  const [logPeriod, setLogPeriod] = useState<string>(() => currentCycleMonth());
+  // Pure y/m math (Date.setMonth overflows on the 29th-31st); cycle view starts
+  // at the current PAY CYCLE, month view at the current calendar month.
+  const logMonths = logView === "cycle" ? recentCycles(6) : recentMonths(6);
 
   // Deductions live in agent_violations (the payslip source), keyed by CRDTS, split by category.
   // Pass both identifiers — violations may be stored under CRDTS or traineeCode.
   const vKey = { crdts: crdts || undefined, agentCode: code || undefined };
-  const vMonth = logView === "month" ? logPeriod : undefined;
-  const { data: adherence = [] } = trpc.violations.list.useQuery({ ...vKey, category: "attendance", month: vMonth });
-  const { data: quality = [] } = trpc.violations.list.useQuery({ ...vKey, category: "quality", month: vMonth });
+  // Fetch ALL and bucket client-side from the violation DATE: the server's
+  // `month` column holds PAY-CYCLE keys, so filtering it under a "Calendar
+  // Month" label buckets by cycle — and the cycle view ignored the period
+  // selector entirely.
+  const { data: adherenceAll = [] } = trpc.violations.list.useQuery({ ...vKey, category: "attendance" });
+  const { data: qualityAll = [] } = trpc.violations.list.useQuery({ ...vKey, category: "quality" });
+  const inPeriod = (v: Viol) => {
+    const d = String(v.date ?? "").slice(0, 10);
+    if (!d) return false;
+    return logView === "cycle" ? cycleOfDate(d) === logPeriod : d.slice(0, 7) === logPeriod;
+  };
+  const adherence = (adherenceAll as Viol[]).filter(inPeriod);
+  const quality = (qualityAll as Viol[]).filter(inPeriod);
   const { data: coaching = [] } = trpc.coaching.listByCycle.useQuery(
     { cycleKey: logPeriod, viewMode: logView },
     { enabled: !!crdts, select: (rows) => (rows as Array<Record<string,unknown>>).filter(r => r.crdts === crdts || r.agentCode === code) }
@@ -183,8 +190,8 @@ function Profile({ agent }: { agent: Agent }) {
       {/* Cycle / Month toggle */}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="inline-flex rounded-lg border overflow-hidden">
-          <button onClick={() => setLogView("cycle")} className={`px-3 py-1.5 text-xs font-medium ${logView === "cycle" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Pay Cycle</button>
-          <button onClick={() => setLogView("month")} className={`px-3 py-1.5 text-xs font-medium ${logView === "month" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Calendar Month</button>
+          <button onClick={() => { setLogView("cycle"); setLogPeriod(currentCycleMonth()); }} className={`px-3 py-1.5 text-xs font-medium ${logView === "cycle" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Pay Cycle</button>
+          <button onClick={() => { setLogView("month"); setLogPeriod(currentLocalMonth()); }} className={`px-3 py-1.5 text-xs font-medium ${logView === "month" ? "bg-foreground text-background" : "text-muted-foreground"}`}>Calendar Month</button>
         </div>
         <select value={logPeriod} onChange={e => setLogPeriod(e.target.value)} className="border rounded-md px-2 py-1.5 text-xs bg-background">
           {logMonths.map(m => <option key={m} value={m}>{new Date(m + "-01").toLocaleString("en-US", { month: "long", year: "numeric" })}{logView === "cycle" ? " cycle" : ""}</option>)}

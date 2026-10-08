@@ -48,9 +48,12 @@ export function ViolationTracker({
     return m;
   }, [agents]);
 
+  // The `month` COLUMN holds PAY-CYCLE keys (nightly ingest writes cycleKeyFor),
+  // so "Calendar Month" derives from the violation DATE instead — before this,
+  // the Calendar Month and Pay Cycle views returned identical cycle-bucketed data.
   const months = useMemo(() => {
     const s = new Set<string>();
-    (all as ViolationRow[]).forEach(r => { if (r.month) s.add(r.month); });
+    (all as ViolationRow[]).forEach(r => { if (r.date) s.add(r.date.slice(0, 7)); });
     return Array.from(s).sort().reverse();
   }, [all]);
   // Cycle helper: 26→25 boundary (pure y/m math — Date.setMonth overflows on the 29th–31st)
@@ -65,7 +68,7 @@ export function ViolationTracker({
   const rows = useMemo(() => {
     let r = all as ViolationRow[];
     if (viewMode === "month") {
-      r = r.filter(x => x.month === month);
+      r = r.filter(x => x.date && x.date.slice(0, 7) === month); // true calendar month, from the date
     } else if (viewMode === "cycle") {
       r = r.filter(x => x.date && cycleOf(x.date) === cycle);
     }

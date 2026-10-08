@@ -498,6 +498,7 @@ const SC_STATUS_LABELS: Record<string, { label: string; color: string }> = {
   pending_manager: { label: "Awaiting Admin",  color: "bg-blue-50 text-blue-700 border-blue-200" },
   approved:        { label: "Approved",         color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
   rejected:        { label: "Rejected",         color: "bg-red-50 text-red-700 border-red-200" },
+  reverted:        { label: "Week over — reverted", color: "bg-slate-50 text-slate-600 border-slate-200" },
 };
 
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

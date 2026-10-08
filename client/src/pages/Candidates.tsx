@@ -28,6 +28,8 @@ import {
   PIPELINE_STAGES,
   ACTIVE_STAGES,
   STAGE_LABELS,
+  stageLabel,
+  stageBadge,
   STAGE_DOT,
   STAGE_BG,
   STAGE_BADGE,
@@ -224,7 +226,7 @@ export default function Candidates() {
   });
   const [blacklistId, setBlacklistId] = useState<number | null>(null);
   const [blacklistReason, setBlacklistReason] = useState("");
-  const [separatedStatusFilter, setSeparatedStatusFilter] = useState<"all" | "resigned" | "terminated">("all");
+  const [separatedStatusFilter, setSeparatedStatusFilter] = useState<"all" | "resigned" | "terminated" | "blacklisted">("all");
 
   // Bulk stage move state
   const [bulkStageOpen, setBulkStageOpen] = useState(false);
@@ -372,9 +374,10 @@ export default function Candidates() {
   // Derive unique wave numbers from all candidates for the filter dropdown
   const waveNumbers = Array.from(new Set(allCandidates.map((c) => (c as unknown as { wave?: number }).wave).filter(Boolean) as number[])).sort((a, b) => a - b);
   const filtered = allCandidates.filter((c) => {
-    // If showSeparated is active, show resigned + terminated only
+    // If showSeparated is active, show all three terminal statuses — an
+    // ex-agent relabeled blacklisted used to appear only under "Rejected".
     if (showSeparated) {
-      if (c.status !== "resigned" && c.status !== "terminated") return false;
+      if (c.status !== "resigned" && c.status !== "terminated" && c.status !== "blacklisted") return false;
       if (separatedStatusFilter !== "all" && c.status !== separatedStatusFilter) return false;
       const q = search.toLowerCase();
       if (!q) return true;
@@ -777,7 +780,7 @@ export default function Candidates() {
           {/* Separated filter bar */}
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex gap-1">
-              {(["all", "resigned", "terminated"] as const).map(f => (
+              {(["all", "resigned", "terminated", "blacklisted"] as const).map(f => (
                 <button key={f} onClick={() => setSeparatedStatusFilter(f)}
                   className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
                     separatedStatusFilter === f
@@ -791,7 +794,7 @@ export default function Candidates() {
             <span className="text-xs text-muted-foreground ml-auto">{filtered.length} record{filtered.length !== 1 ? "s" : ""}</span>
           </div>
           {filtered.length === 0 ? (
-            <div className="py-16 text-center text-sm text-muted-foreground">No {separatedStatusFilter === "all" ? "resigned or terminated" : separatedStatusFilter} candidates.</div>
+            <div className="py-16 text-center text-sm text-muted-foreground">No {separatedStatusFilter === "all" ? "separated" : separatedStatusFilter} candidates.</div>
           ) : (
             <div className="rounded-xl border overflow-hidden">
               <table className="w-full text-sm">
@@ -1623,9 +1626,9 @@ function CandidateList({
               </td>
               <td className="px-4 py-3 text-muted-foreground text-xs hidden sm:table-cell">{c.phone || "—"}</td>
               <td className="px-4 py-3">
-                <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium ${STAGE_BADGE[c.status as PipelineStage] ?? ""}`}>
+                <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-medium ${stageBadge(c.status)}`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${STAGE_DOT[c.status as PipelineStage]}`} />
-                  {STAGE_LABELS[c.status as PipelineStage]}
+                  {stageLabel(c.status)}
                 </span>
               </td>
               <td className="px-4 py-3 text-muted-foreground text-xs hidden md:table-cell">

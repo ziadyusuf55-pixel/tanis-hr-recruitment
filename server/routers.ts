@@ -523,6 +523,23 @@ const candidatesRouter = router({
         // display-only (a stale tab used to skip or mis-log the batch cascade).
         const current = await getCandidateById(input.id);
         const fromStage = (current?.status as string | undefined) ?? input.fromStage;
+        // A candidate who became a LIVE agent is managed from Operations, not the
+        // pipeline. Relabeling them here (e.g. "rejected"/"blacklisted") left the
+        // workforce row active — portal access, payroll, headcount — while the
+        // ATS claimed they were gone, and nothing could set 'hired' back.
+        if (fromStage === "hired") {
+          const { getDb } = await import("./db");
+          const dbg = await getDb();
+          if (dbg) {
+            const { workforceAgents } = await import("../drizzle/schema");
+            const { eq: eqOp } = await import("drizzle-orm");
+            const [wf] = await dbg.select({ traineeCode: workforceAgents.traineeCode, agentStatus: workforceAgents.agentStatus })
+              .from(workforceAgents).where(eqOp(workforceAgents.candidateId, input.id)).limit(1);
+            if (wf && !["resigned", "terminated", "blacklisted"].includes(wf.agentStatus ?? "")) {
+              throw new TRPCError({ code: "BAD_REQUEST", message: `This candidate is a live agent (${wf.traineeCode}). Use Operations (terminate / resign / blacklist) — that updates both sides.` });
+            }
+          }
+        }
         await updateCandidateStatus(input.id, input.status);
         // Cascade: remove from batch when moving away from whatsapp_group_added OR when rejected/blacklisted
         const removeFromBatchStages = ["whatsapp_group_added"];
@@ -583,6 +600,22 @@ const candidatesRouter = router({
     blacklist: roleProcedure("hr", "manager")
       .input(z.object({ id: z.number(), reason: z.string().min(1) }))
       .mutation(async ({ input, ctx }) => {
+        // Same guard as updateStatus: a live agent is blacklisted from Operations
+        // (full cascade: status, credentials, sessions, candidate label) — doing
+        // it here would blacklist the ATS label while the agent stays active.
+        {
+          const { getDb } = await import("./db");
+          const dbg = await getDb();
+          if (dbg) {
+            const { workforceAgents } = await import("../drizzle/schema");
+            const { eq: eqOp } = await import("drizzle-orm");
+            const [wf] = await dbg.select({ traineeCode: workforceAgents.traineeCode, agentStatus: workforceAgents.agentStatus })
+              .from(workforceAgents).where(eqOp(workforceAgents.candidateId, input.id)).limit(1);
+            if (wf && !["resigned", "terminated", "blacklisted"].includes(wf.agentStatus ?? "")) {
+              throw new TRPCError({ code: "BAD_REQUEST", message: `This candidate is a live agent (${wf.traineeCode}). Blacklist them from Operations instead — that updates both sides.` });
+            }
+          }
+        }
         await blacklistCandidate(input.id, input.reason);
         await logActivity({
           candidateId: input.id,
@@ -927,28 +960,11 @@ const dashboardRouter = router({
 /// ─── Agent Portal Router ─────────────────────────────────────────────────────
 const AGENT_COOKIE = "tanis_agent_session";
 // Helper: parse a named cookie from req.headers.cookie (no cookie-parser needed)
-// In-memory cache for portal lock — refreshed every 30s from DB
-let _portalLocked: boolean = process.env.AGENT_PORTAL_LOCKED === "true";
-let _lockMessage: string = "The agent portal is temporarily locked. Please contact your manager.";
-let _lockLastCheck: number = 0;
+// Portal lock: ONE truth in _core/portalLock (DB-backed, 30s cache) shared with
+// agentAuth session resolution and /api/portal-status.
 async function isPortalLocked(): Promise<{ locked: boolean; message: string }> {
-  const now = Date.now();
-  if (now - _lockLastCheck > 30_000) {
-    _lockLastCheck = now;
-    try {
-      const { getDb } = await import("./db");
-      const { appSettings } = await import("../drizzle/schema");
-      const { eq } = await import("drizzle-orm");
-      const db = await getDb();
-      if (db) {
-        const [row] = await db.select().from(appSettings).where(eq(appSettings.key, "portal_locked")).limit(1);
-        if (row) { _portalLocked = row.value === "true"; }
-        const [msgRow] = await db.select().from(appSettings).where(eq(appSettings.key, "portal_lock_message")).limit(1);
-        if (msgRow) { _lockMessage = msgRow.value; }
-      }
-    } catch { /* use cached value */ }
-  }
-  return { locked: _portalLocked, message: _lockMessage };
+  const { getPortalLock } = await import("./_core/portalLock");
+  return getPortalLock();
 }
 
 /** Validate a base64-uploaded file: size cap, MIME whitelist, magic-byte sniff.
@@ -1466,6 +1482,17 @@ export async function applyAgentRequestDecision(opts: {
   if (!req) throw Object.assign(new Error("Request not found"), { code: "NOT_FOUND" });
   const final = opts.status === "resolved" || opts.status === "rejected";
   const alreadyFinal = req.status === "resolved" || req.status === "rejected";
+  // A decided request with SIDE EFFECTS (leave balance burned, separation
+  // scheduled) must not be re-decided or re-opened one-sided from here — that
+  // used to flip the request to "rejected" while the approved leave and the
+  // burned balance stood. Same status again (reply edit) is fine.
+  const sideEffectType = ["leave", "paid_leave", "day_off", "sick_note", "resignation"].includes(req.type);
+  if (alreadyFinal && sideEffectType && opts.status !== req.status) {
+    throw Object.assign(
+      new Error(`This ${req.type.replace(/_/g, " ")} request was already decided. To undo it, cancel the leave in Leave Management (or manage the separation in Operations) — that updates both sides.`),
+      { code: "CONFLICT" },
+    );
+  }
   const { getDb } = await import("./db");
   const db = await getDb();
 
@@ -1474,6 +1501,15 @@ export async function applyAgentRequestDecision(opts: {
     const { leaveRequests } = await import("../drizzle/schema");
     const { eq } = await import("drizzle-orm");
     const [lr] = await db.select().from(leaveRequests).where(eq(leaveRequests.agentRequestId, req.id)).limit(1);
+    // The leave row is the source of truth. If it was already decided or
+    // cancelled elsewhere, do NOT silently resolve the request and tell the
+    // agent "approved" for a leave that no longer exists.
+    if (lr && lr.status !== "pending") {
+      throw Object.assign(
+        new Error(`This leave was already ${lr.status} in Leave Management — nothing to decide here.`),
+        { code: "CONFLICT" },
+      );
+    }
     if (lr && lr.status === "pending") {
       // day_off and sick_note never consume casual/annual balance → unpaid unless HR explicitly picks a type.
       const leaveType = opts.leaveType ?? (req.type === "day_off" || req.type === "sick_note" ? "unpaid" as const : undefined);
@@ -1577,15 +1613,17 @@ const requestsRouter = router({
         if (!hasDates) throw new TRPCError({ code: "BAD_REQUEST", message: "Please select the date(s) for this request" });
         // Unpaid day off and sick notes can be for any date (no advance notice required)
         if (input.type !== "day_off" && input.type !== "sick_note") {
-          // Check the earliest selected date is at least 14 calendar days from today
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const minDate = new Date(today);
-          minDate.setDate(minDate.getDate() + 14);
-          const checkDate = input.requestedDates?.[0]
-            ? new Date(input.requestedDates[0])
-            : input.requestedDate ? new Date(input.requestedDate) : null;
-          if (checkDate && checkDate < minDate) {
+          // Earliest selected date must be ≥14 CAIRO calendar days from the Cairo
+          // business "today" — string math, no server-TZ off-by-one after midnight.
+          const { businessDateKey } = await import("./_core/time");
+          const todayKey = businessDateKey();
+          const t = new Date(`${todayKey}T00:00:00Z`);
+          t.setUTCDate(t.getUTCDate() + 14);
+          const minKey = t.toISOString().slice(0, 10);
+          const rawCheck = input.requestedDates?.slice().sort()[0] ?? input.requestedDate ?? null;
+          const checkKey = rawCheck && Number.isFinite(Date.parse(String(rawCheck)))
+            ? new Date(Date.parse(String(rawCheck))).toISOString().slice(0, 10) : null;
+          if (checkKey && checkKey < minKey) {
             throw new TRPCError({ code: "BAD_REQUEST", message: "Date must be at least 2 weeks from today" });
           }
         }
@@ -1616,7 +1654,10 @@ const requestsRouter = router({
           await createLeaveRequestRow({
             traineeCode: payload.traineeCode,
             startDate, endDate,
-            days: dates.length || 1,
+            // Pass the EXACT dates: days = count of picked dates (Mon+Fri = 2),
+            // not the calendar span (5) — the span was over-burning balances
+            // on non-contiguous selections.
+            dates: dates.length ? dates : undefined,
             reason: `${tag}${input.subject}${input.message ? ` — ${input.message}` : ""}`.slice(0, 2000),
             agentRequestId: newId,
           });
@@ -2311,17 +2352,18 @@ const workforceRouter = router({
         }
       }
       await createWorkforceAgent(input);
-      // Auto-create leave balance for new agent (default: 6 casual, 21 annual)
+      // Auto-create leave balance for new agent (shared day-one defaults)
       try {
         const { getDb: getDbLb } = await import("./db");
         const { leaveBalances: lbTable } = await import("../drizzle/schema");
         const { eq: eqLb, and: andLb } = await import("drizzle-orm");
+        const { LEAVE_DEFAULTS: lbDefaults } = await import("@shared/const");
         const dbLb = await getDbLb();
         const year = new Date().getFullYear();
         if (dbLb) {
           const existing = await dbLb.select({ id: lbTable.id }).from(lbTable).where(andLb(eqLb(lbTable.traineeCode, input.traineeCode), eqLb(lbTable.year, year))).limit(1);
           if (!existing[0]) {
-            await dbLb.insert(lbTable).values({ traineeCode: input.traineeCode, year, casualTotal: 6, annualTotal: 21, casualUsed: 0, annualUsed: 0, updatedAt: Date.now() });
+            await dbLb.insert(lbTable).values({ traineeCode: input.traineeCode, year, casualTotal: lbDefaults.casualTotal, annualTotal: lbDefaults.annualTotal, casualUsed: 0, annualUsed: 0, updatedAt: Date.now() });
           }
         }
       } catch (e) { console.error("[LeaveBalance] Auto-init failed:", e); }
@@ -2492,8 +2534,14 @@ const workforceRouter = router({
     .input(z.object({ campaignId: z.number() }))
     .query(async ({ input }) => {
       // agentOrStaffProcedure already guarantees a staff login or a verified agent session.
-      // Return limited fields only — no national ID, DOB, salary, emergency contacts
-      const agents = await listWorkforceAgents(input.campaignId) as Array<Record<string,unknown>>;
+      // Return limited fields only — no national ID, DOB, salary, emergency contacts.
+      // Same roster filter as the admin operation plan: no demo accounts, no one
+      // who has left the floor (agents could see resigned ex-colleagues here).
+      const agents = (await listWorkforceAgents(input.campaignId) as Array<Record<string,unknown>>)
+        .filter(a => {
+          const st = a.agentStatus as string | null;
+          return !a.isDemo && st !== "resigned" && st !== "terminated" && st !== "blacklisted" && st !== "frozen" && st !== "inactive" && a.isActive !== false;
+        });
       return agents.map(a => ({
         traineeCode: a.traineeCode,
         alias: a.alias,
@@ -2546,23 +2594,35 @@ const workforceRouter = router({
         getPaymentMethodsByCode(resolvedCode),
         getCommentsByCode(resolvedCode),
       ]);
-      const [candidate, payroll] = await Promise.all([
-        agent.candidateId ? getCandidateById(agent.candidateId) : Promise.resolve(undefined),
-        agent.candidateId ? getPayrollByCandidateId(agent.candidateId) : Promise.resolve([]),
-      ]);
+      // Payroll: the live v2 pipeline inserts rows with candidateId NULL and keys
+      // them by CRDTS — fetching by candidateId only returned dead v1 rows, so
+      // the profile's Payroll/Commission tabs said "no records" while the History
+      // tab (crdts-keyed) listed every month. Union both sources, dedupe by id.
+      const candidate = agent.candidateId ? await getCandidateById(agent.candidateId) : undefined;
+      let payroll = agent.candidateId ? await getPayrollByCandidateId(agent.candidateId) : [];
       // Fetch manual adjustments (bonus/deduction entries) for this agent
       let adjustments: Array<{ id: number; crdts: string; month: string; type: string; amount: string; label: string; createdAt: number; createdBy: string | null }> = [];
-      if (agent.crdts) {
-        try {
-          const { getDb } = await import("./db");
-          const { payrollAdjustments } = await import("../drizzle/schema");
-          const { eq } = await import("drizzle-orm");
-          const db = await getDb();
-          if (db) {
-            adjustments = await db.select().from(payrollAdjustments).where(eq(payrollAdjustments.crdts, agent.crdts));
+      try {
+        const { getDb, expandCrdtsIdentity, adjMatchesIdentity } = await import("./db");
+        const { payrollRecords, payrollAdjustments } = await import("../drizzle/schema");
+        const { inArray, desc } = await import("drizzle-orm");
+        const db = await getDb();
+        if (db && agent.crdts) {
+          const identity = new Set(await expandCrdtsIdentity(agent.crdts));
+          const ids = Array.from(identity);
+          if (ids.length) {
+            const v2rows = await db.select().from(payrollRecords)
+              .where(inArray(payrollRecords.crdts, ids)).orderBy(desc(payrollRecords.month));
+            payroll = [...payroll.filter(p => !v2rows.some(v => v.id === p.id)), ...v2rows]
+              .sort((a, b) => String(b.month ?? "").localeCompare(String(a.month ?? "")));
+            // Adjustments under ANY of the agent's identity forms — same widened
+            // rule as the payslip and the mark-paid math (exact-string match
+            // showed ZERO adjustments for every multi-CRDTS agent).
+            adjustments = (await db.select().from(payrollAdjustments))
+              .filter(a => adjMatchesIdentity(a.crdts, identity)) as typeof adjustments;
           }
-        } catch { /* non-fatal */ }
-      }
+        }
+      } catch { /* non-fatal */ }
       // Identity documents, bank details and pay only leave for MONEY_ROLES.
       if (!canSeeMoney(ctx.user?.role)) {
         return {
@@ -2616,7 +2676,13 @@ const workforceRouter = router({
       const me = await getWorkforceAgentByCode(_code);
       if (!me || !me.campaignId) return null;
       const campaignId = me.campaignId as number;
-      const agents = await listWorkforceAgents(campaignId);
+      // Same roster filter as the admin operation plan — the agent-facing grid
+      // used to include demo accounts, frozen agents and unsettled leavers.
+      const agents = (await listWorkforceAgents(campaignId) as Array<Record<string, unknown>>)
+        .filter(a => {
+          const st = a.agentStatus as string | null;
+          return !a.isDemo && st !== "resigned" && st !== "terminated" && st !== "blacklisted" && st !== "frozen" && st !== "inactive" && a.isActive !== false;
+        }) as Awaited<ReturnType<typeof listWorkforceAgents>>;
       const campaign = await getCampaignById(campaignId);
       const now = new Date();
       const dayOfWeek = now.getDay();
@@ -2895,11 +2961,10 @@ const documentsRouter = router({
         await db.insert(appSettings).values({ key: "portal_lock_message", value: input.message, updatedAt: now, updatedBy: ctx.user?.name ?? ctx.user?.email ?? "admin" })
           .onDuplicateKeyUpdate({ set: { value: input.message, updatedAt: now } });
       }
-      // Reset the 30s cache so the lock takes effect on the NEXT poll, not
-      // up to half a minute later (and unlock doesn't keep kicking agents).
-      _portalLocked = input.locked;
-      if (input.message !== undefined) _lockMessage = input.message;
-      _lockLastCheck = Date.now();
+      // Bust the shared 30s cache so the lock takes effect on the NEXT request,
+      // not up to half a minute later (and unlock doesn't keep kicking agents).
+      const { invalidatePortalLockCache } = await import("./_core/portalLock");
+      invalidatePortalLockCache();
       await auditEntry(ctx.user, input.locked ? "portal_locked" : "portal_unlocked", "system", "portal", JSON.stringify({ message: input.message, by: ctx.user?.name }));
       return { ok: true };
     }),
@@ -3125,16 +3190,22 @@ const scheduleChangeRouter = router({
         const _db = await _scDb();
         // The swap week is pinned AT APPROVAL: without a swapWeekOf the revert job
         // never fires (permanent swap), and one already in the past reverts instantly.
+        // All week math on the CAIRO business date (string math, UTC-safe) —
+        // the hourly revert job compares against businessDateKey too, so an
+        // approval just after midnight Cairo no longer pins last week's Monday
+        // and gets reverted the same morning.
+        const { businessDateKey: _bdk } = await import("./_core/time");
+        const _todayKey = _bdk();
         const mondayOfCurrentWeek = (() => {
-          const d = new Date();
-          const dow = d.getDay();
-          d.setDate(d.getDate() + (dow === 0 ? -6 : 1 - dow));
+          const d = new Date(`${_todayKey}T00:00:00Z`);
+          const dow = d.getUTCDay();
+          d.setUTCDate(d.getUTCDate() + (dow === 0 ? -6 : 1 - dow));
           return d.toISOString().slice(0, 10);
         })();
         const weekStale = !req.swapWeekOf || (() => {
-          const end = new Date(req.swapWeekOf);
-          end.setDate(end.getDate() + 7);
-          return end.toISOString().slice(0, 10) <= new Date().toISOString().slice(0, 10);
+          const end = new Date(`${String(req.swapWeekOf).slice(0, 10)}T00:00:00Z`);
+          end.setUTCDate(end.getUTCDate() + 7);
+          return end.toISOString().slice(0, 10) <= _todayKey;
         })();
         // Store original off days for revert (+ repaired swap week when needed)
         if (_db) {
@@ -3217,7 +3288,7 @@ const breakScheduleRouter = router({
 
 // ─── Separation Router ────────────────────────────────────────────
 const separationRouter = router({
-  // Admin: mark agent as resigned on-spot (also blacklists candidate)
+  // Admin: mark agent as resigned on-spot (status resigned; candidate labeled resigned)
   resignOnSpot: roleProcedure("hr", "manager")
     .input(z.object({ agentCode: z.string(), reason: z.string().min(1) }))
     .mutation(async ({ input, ctx }) => {
@@ -3355,7 +3426,18 @@ const separationRouter = router({
           violations: violByCode[a.traineeCode] ?? [],
           coaching: coachByCode[a.traineeCode] ?? [],
           logouts: logoutsByCrdts[a.crdts ?? ""] ?? [],
-          totalPaidEgp: money ? pay.filter(p => p.paymentStatus === "paid").reduce((s, p) => s + parseFloat(String(p.netPay ?? 0)), 0) : 0,
+          // "Total paid" = money that actually LEFT: amountPaid when recorded
+          // (full finalPay incl. commission/adjustments, and partials count),
+          // falling back to net+commission for legacy paid rows with no amount.
+          totalPaidEgp: money ? pay.reduce((s, p) => {
+            const paid = parseFloat(String(p.amountPaid ?? 0)) || 0;
+            if (paid > 0) return s + paid;
+            if (p.paymentStatus === "paid") {
+              return s + (parseFloat(String(p.netPay ?? 0)) || 0)
+                + (parseFloat(String((p as { commissionEgp?: string | null; commission?: string | null }).commissionEgp ?? (p as { commission?: string | null }).commission ?? 0)) || 0);
+            }
+            return s;
+          }, 0) : 0,
           totalCycles: (crdtsCycles[a.crdts ?? ""] ?? []).length,
           totalRevenue: (crdtsCycles[a.crdts ?? ""] ?? []).reduce((s, r) => s + parseFloat(String(r.revenue ?? 0)), 0),
           totalProfit: (crdtsCycles[a.crdts ?? ""] ?? []).reduce((s, r) => s + parseFloat(String(r.profit ?? 0)), 0),
@@ -3762,16 +3844,18 @@ const payrollV2Router = router({
       const totalQualityDeductions = rows.reduce((s, r) => s + n(r.qualityDeductions), 0);
       const totalAttendanceDeductions = rows.reduce((s, r) => s + n(r.attendanceDeductions), 0);
       const paidByMap = paid.reduce((m, r) => { const raw = (r as Record<string, unknown>).paidBy as string | null; const k = raw && raw.trim() ? raw.trim() : "Bulk Import / Legacy"; m[k] = (m[k] ?? 0) + 1; return m; }, {} as Record<string, number>);
-      // Final totals = net + commission + manual adjustments (what is actually owed/paid)
-      const { payrollAdjustments: adjT } = await import("../drizzle/schema");
+      // Final totals = net + commission + manual adjustments (what is actually
+      // owed/paid). Adjustments join by the ONE widened-identity rule (same as
+      // the payslip, the status table, and the mark-paid math).
+      const { payrollAdjustments: adjT, workforceAgents: waT } = await import("../drizzle/schema");
+      const { isNotNull: notNullOp } = await import("drizzle-orm");
       const allAdj = await db.select().from(adjT).where(eq(adjT.month, input.month));
-      const adjByCrdts = new Map<string, Array<typeof allAdj[number]>>();
-      for (const a of allAdj) {
-        const k = String(a.crdts).split(",")[0].trim();
-        if (!adjByCrdts.has(k)) adjByCrdts.set(k, []);
-        adjByCrdts.get(k)!.push(a);
-      }
-      const adjFor = (r: typeof rows[number]) => adjByCrdts.get(String(r.crdts ?? "").split(",")[0].trim()) ?? [];
+      const { widenCrdtsAgainst, adjMatchesIdentity } = await import("./db");
+      const rosterCrdts = (await db.select({ crdts: waT.crdts }).from(waT).where(notNullOp(waT.crdts))).map(a => a.crdts);
+      const adjFor = (r: typeof rows[number]) => {
+        const identity = widenCrdtsAgainst(String(r.crdts ?? ""), rosterCrdts);
+        return allAdj.filter(a => adjMatchesIdentity(a.crdts, identity));
+      };
       const totalFinalPay = rows.reduce((s, r) => s + calcFinalPay(r, adjFor(r)), 0);
       const totalPaidAmount = rows.reduce((s, r) => s + (r.paymentStatus === "paid" ? calcFinalPay(r, adjFor(r)) : n((r as Record<string, unknown>).amountPaid)), 0);
       const totalOutstanding = Math.max(0, totalFinalPay - totalPaidAmount);
@@ -4849,7 +4933,7 @@ const cycleTrackerRouter = router({
       const { getDb } = await import("./db");
       const dbConn = await getDb();
       if (!dbConn) return null;
-      const { eq, and, inArray } = await import("drizzle-orm");
+      const { eq } = await import("drizzle-orm");
       const agent = await dbConn.select({ crdts: workforceAgents.crdts })
         .from(workforceAgents).where(eq(workforceAgents.traineeCode, traineeCode)).limit(1);
       const crdts = agent[0]?.crdts;
@@ -4857,14 +4941,14 @@ const cycleTrackerRouter = router({
       const dateRange = getCycleDateRange(input.cycleKey);
       const data = await getCycleTrackerForAgent(crdts, input.cycleKey);
       // Manual payroll adjustments (admin-added) for this cycle -> shown to the
-      // agent as "Other Bonuses" / "Other Deductions". Split CRDTS on commas so an
-      // agent with more than one dialer ID picks up all of them.
+      // agent as "Other Bonuses" / "Other Deductions". Same widened-identity
+      // matching rule as every other payroll↔adjustment join.
       const { payrollAdjustments } = await import("../drizzle/schema");
-      const crdtsList = String(crdts).split(",").map(x => x.trim()).filter(Boolean);
-      const adjustments = crdtsList.length
-        ? await dbConn.select().from(payrollAdjustments)
-            .where(and(inArray(payrollAdjustments.crdts, crdtsList), eq(payrollAdjustments.month, input.cycleKey)))
-        : [];
+      const { expandCrdtsIdentity, adjMatchesIdentity } = await import("./db");
+      const identity = new Set(await expandCrdtsIdentity(crdts));
+      const monthAdj = await dbConn.select().from(payrollAdjustments)
+        .where(eq(payrollAdjustments.month, input.cycleKey));
+      const adjustments = monthAdj.filter(a => adjMatchesIdentity(a.crdts, identity));
       return { ...data, adjustments, cycleKey: input.cycleKey, dateRange };
     }),
 
@@ -6826,7 +6910,15 @@ const hrRouter = router({
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { leaveBalances, workforceAgents } = await import("../drizzle/schema");
-      const agents = await db.select({ traineeCode: workforceAgents.traineeCode }).from(workforceAgents).where(eq(workforceAgents.agentStatus, "active"));
+      // SAME set as leave.massAdd: non-terminal employees (frozen/on-notice
+      // included), demo excluded — active-only used to skip frozen agents that
+      // massAdd credited, so the two endpoints disagreed on who exists.
+      const { notInArray: nin3, or: or3, isNull: isNull3 } = await import("drizzle-orm");
+      const agents = await db.select({ traineeCode: workforceAgents.traineeCode }).from(workforceAgents)
+        .where(and(
+          nin3(workforceAgents.agentStatus, ["resigned", "terminated", "blacklisted"]),
+          or3(isNull3(workforceAgents.isDemo), eq(workforceAgents.isDemo, false)),
+        ));
       const now = Date.now();
       let updated = 0;
       const skipped: string[] = [];
@@ -6923,8 +7015,12 @@ const hrRouter = router({
     .input(z.object({ id: z.number(), decision: z.enum(["approved", "rejected"]), leaveType: z.enum(["casual", "annual", "unpaid"]).optional() }))
     .mutation(async ({ ctx, input }) => {
       const { decideLeaveRequest } = await import("./db");
+      const { LEAVE_DEFAULTS } = await import("@shared/const");
       try {
-        await decideLeaveRequest({ id: input.id, decision: input.decision, leaveType: input.leaveType, decidedBy: ctx.user.name ?? ctx.user.email ?? "admin" });
+        // Same day-one defaults as every other decide path — passing none made
+        // this path fail with "No casual leave balance on file" where the others
+        // auto-create the 6/21 balance.
+        await decideLeaveRequest({ id: input.id, decision: input.decision, leaveType: input.leaveType, decidedBy: ctx.user.name ?? ctx.user.email ?? "admin", defaults: LEAVE_DEFAULTS });
       } catch (e) {
         throw toTrpcError(e, "Failed to decide leave");
       }
@@ -6946,8 +7042,9 @@ const hrRouter = router({
     .input(z.object({ id: z.number(), decision: z.enum(["approved", "rejected"]), leaveType: z.enum(["casual", "annual", "unpaid"]).optional(), decidedBy: z.string().optional() }))
     .mutation(async ({ input, ctx }) => {
       const { decideLeaveRequest } = await import("./db");
+      const { LEAVE_DEFAULTS } = await import("@shared/const");
       try {
-        const r = await decideLeaveRequest({ id: input.id, decision: input.decision, leaveType: input.leaveType, decidedBy: ctx.user.name ?? input.decidedBy ?? ctx.user.email ?? "admin", defaults: { casualTotal: 6, annualTotal: 21 } });
+        const r = await decideLeaveRequest({ id: input.id, decision: input.decision, leaveType: input.leaveType, decidedBy: ctx.user.name ?? input.decidedBy ?? ctx.user.email ?? "admin", defaults: LEAVE_DEFAULTS });
         await auditEntry(ctx.user, input.decision === "approved" ? "leave_approved" : "leave_rejected", "leave_request", String(input.id), JSON.stringify({ decidedBy: ctx.user?.name, leaveType: input.leaveType, traineeCode: r.traineeCode }));
         return { ok: true };
       } catch (e) {
@@ -7076,7 +7173,8 @@ const bdRouter = router({
     if (!db) return [];
     const { bdDeals, bdUsers } = await import("../drizzle/schema");
     const { eq, and, lte, notInArray, isNotNull } = await import("drizzle-orm");
-    const today = new Date().toISOString().slice(0, 10);
+    const { businessDateKey: _bdkBd } = await import("./_core/time");
+    const today = _bdkBd(); // Cairo — same "today" the BD page uses
     const openId = (ctx.user as { openId?: string })?.openId ?? "";
     let ownerFilter: number | null = null;
     if (openId) {
@@ -7558,7 +7656,8 @@ const bdRouter = router({
       if (!db) return { count: 0, items: [] as { kind: string; dealId: number; title: string; due: string }[] };
       const { bdDeals, bdDealTasks: bdTasks } = await import("../drizzle/schema");
       const { eq } = await import("drizzle-orm");
-      const today = new Date().toISOString().slice(0, 10);
+      const { businessDateKey: _bdkBd2 } = await import("./_core/time");
+      const today = _bdkBd2(); // Cairo — the bell and the BD page now agree on "due today"
       const deals = input?.ownerId ? await db.select().from(bdDeals).where(eq(bdDeals.ownerId, input.ownerId)) : await db.select().from(bdDeals);
       const dealIds = new Set(deals.map(d => d.id));
       const open = deals.filter(d => d.stage !== "closed_won" && d.stage !== "closed_lost");
@@ -7891,8 +7990,15 @@ const leaveRouter = router({
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { leaveBalances, workforceAgents } = await import("../drizzle/schema");
       const year = new Date().getFullYear();
+      // SAME set as leave.massSetBalances: every non-terminal employee (frozen /
+      // on-notice agents are still employees and keep accruing), demo accounts
+      // excluded — the two mass endpoints used to disagree on who exists.
+      const { or: orOp2, isNull: isNull2, eq: eq2 } = await import("drizzle-orm");
       const agents = await db.select({ traineeCode: workforceAgents.traineeCode }).from(workforceAgents)
-        .where(notInArray(workforceAgents.agentStatus, ["resigned", "terminated", "blacklisted"]));
+        .where(and(
+          notInArray(workforceAgents.agentStatus, ["resigned", "terminated", "blacklisted"]),
+          orOp2(isNull2(workforceAgents.isDemo), eq2(workforceAgents.isDemo, false)),
+        ));
       let created = 0, updated = 0;
       for (const a of agents) {
         if (!a.traineeCode) continue;
@@ -7931,7 +8037,9 @@ const exitRouter = router({
       salarySettled: workforceAgents.salarySettled,
       crdts: workforceAgents.crdts,
     }).from(workforceAgents)
-      .where(inArray(workforceAgents.agentStatus, ["resigned", "terminated"]));
+      // Blacklisted leavers can be owed money too — all three terminal statuses
+      // go through the same Settle & Exit flow (matches Operations' banner).
+      .where(inArray(workforceAgents.agentStatus, ["resigned", "terminated", "blacklisted"]));
     if (!agents.length) return [];
     const settled = agents.filter(a => a.salarySettled);
     if (!settled.length) return [];
@@ -7958,7 +8066,8 @@ const exitRouter = router({
       agentStatus: workforceAgents.agentStatus,
       salarySettled: workforceAgents.salarySettled,
     }).from(workforceAgents)
-      .where(inArray(workforceAgents.agentStatus, ["resigned", "terminated"]));
+      // Same three terminal statuses as pendingChecklist / the Dashboard count.
+      .where(inArray(workforceAgents.agentStatus, ["resigned", "terminated", "blacklisted"]));
     if (!agents.length) return [];
     const codes = agents.map(a => a.traineeCode);
     const eps = await db.select().from(exitProcess).where(inArray(exitProcess.traineeCode, codes));
@@ -8207,8 +8316,11 @@ const clientsRouter = router({
       if (input.isActive === false && row.isActive) {
         const camps = await db.select({ id: campaigns.id }).from(campaigns).where(eq(campaigns.clientId, row.clientId));
         if (camps.length) {
+          // Same predicate as the positions headcount column (isActive AND
+          // agentStatus active) — isActive alone let a frozen agent block
+          // retiring a position whose displayed headcount was already 0.
           const [held] = await db.select({ id: workforceAgents.id }).from(workforceAgents)
-            .where(and(inArray(workforceAgents.campaignId, camps.map(c => c.id)), eq(workforceAgents.isActive, true), sqlOp`LOWER(TRIM(${workforceAgents.jobTitle})) = LOWER(${row.name})`)).limit(1);
+            .where(and(inArray(workforceAgents.campaignId, camps.map(c => c.id)), eq(workforceAgents.isActive, true), eq(workforceAgents.agentStatus, "active"), sqlOp`LOWER(TRIM(${workforceAgents.jobTitle})) = LOWER(${row.name})`)).limit(1);
           if (held) throw new TRPCError({ code: "CONFLICT", message: `"${row.name}" still has active agents — move them to another position first.` });
         }
       }
@@ -8229,7 +8341,11 @@ const clientsRouter = router({
       const db = await getDb();
       if (!db) throw new Error("DB unavailable");
 
-      const month = input.month || new Date().toISOString().slice(0, 7);
+      // Default to the CURRENT PAY CYCLE (26th→25th Cairo) — payroll rows are
+      // keyed by cycle, so a UTC calendar-month default showed last cycle's
+      // payroll as "current" from the 26th to month-end.
+      const { cycleKeyFor: ckf, businessDateKey: bdk, businessDayBounds: bdb } = await import("./_core/time");
+      const month = input.month || ckf(bdk());
       const { clients, campaigns, payrollRecords, adherenceLog } = await import("../drizzle/schema");
       const { eq, and, inArray } = await import("drizzle-orm");
 
@@ -8261,6 +8377,20 @@ const clientsRouter = router({
           : inArray(payrollRecords.crdts, payrollCrdts);
         payroll = await db.select().from(payrollRecords)
           .where(and(eq(payrollRecords.month, month), keyMatch));
+      }
+      // Per-row FINAL total (net + commission + adjustments) computed with the
+      // shared formula — the client renders these instead of re-deriving money.
+      let payrollWithTotals: Array<typeof payrollRecords.$inferSelect & { finalTotal: number }> = [];
+      if (payroll.length) {
+        const { payrollAdjustments: adjT2, workforceAgents: waT2 } = await import("../drizzle/schema");
+        const { isNotNull: nn2 } = await import("drizzle-orm");
+        const { widenCrdtsAgainst, adjMatchesIdentity } = await import("./db");
+        const allAdj2 = await db.select().from(adjT2).where(eq(adjT2.month, month));
+        const roster2 = (await db.select({ crdts: waT2.crdts }).from(waT2).where(nn2(waT2.crdts))).map(a => a.crdts);
+        payrollWithTotals = payroll.map(r => {
+          const identity = widenCrdtsAgainst(String(r.crdts ?? ""), roster2);
+          return { ...r, finalTotal: calcFinalPay(r, allAdj2.filter(a => adjMatchesIdentity(a.crdts, identity))) };
+        });
       }
 
       // Adherence for this month. adherence_log has no live writer any more, so the dashboard reads the
@@ -8294,9 +8424,12 @@ const clientsRouter = router({
       if (agentCodesList.length > 0) {
         const { agentSeparations } = await import("../drizzle/schema");
         const { like, or, isNull, gte, lt } = await import("drizzle-orm");
-        const monthStartMs = new Date(`${month}-01T00:00:00Z`).getTime();
+        // Cairo month bounds — same clock as getTurnoverRate, so the two
+        // attrition numbers bucket a midnight-boundary separation identically.
         const [y, m] = month.split("-").map(Number);
-        const monthEndMs = Date.UTC(y!, m!, 1);
+        const nextKey = m === 12 ? `${y! + 1}-01` : `${y}-${String(m! + 1).padStart(2, "0")}`;
+        const monthStartMs = bdb(`${month}-01`).start;
+        const monthEndMs = bdb(`${nextKey}-01`).start;
         const seps = await db.select({ agentCode: agentSeparations.agentCode }).from(agentSeparations)
           .where(and(inArray(agentSeparations.agentCode, agentCodesList),
             or(like(agentSeparations.lastWorkingDay, `${month}-%`), and(isNull(agentSeparations.lastWorkingDay), gte(agentSeparations.effectiveAt, monthStartMs), lt(agentSeparations.effectiveAt, monthEndMs)))));
@@ -8310,7 +8443,7 @@ const clientsRouter = router({
         campaigns: clientCampaigns,
         activeAgents,
         allAgents,
-        payroll,
+        payroll: payrollWithTotals.length ? payrollWithTotals : payroll,
         adherence,
         month,
         separationsThisMonth,

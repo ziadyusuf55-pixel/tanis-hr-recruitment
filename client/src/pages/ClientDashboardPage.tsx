@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "wouter";
 import { trpc } from "@/lib/trpc";
+import { currentCycleMonth } from "@/lib/cycle";
 import { etMonthKey } from "@/lib/tz";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -60,9 +61,13 @@ type PayrollRecord = {
   id: number;
   agentCode: string | null;
   month: string | null;
-  baseSalaryEgp: string | null;
-  incentivesEgp: string | null;
-  netPayEgp: string | null;
+  // REAL server fields (payroll_records) — the old baseSalaryEgp/incentivesEgp/
+  // netPayEgp names never existed, so every amount rendered 0 EGP.
+  baseSalary: string | null;
+  commissionEgp: string | null;
+  netPay: string | null;
+  /** net + commission + adjustments, computed server-side with the shared finalPay formula */
+  finalTotal?: number;
 };
 
 type AdherenceEntry = {
@@ -78,8 +83,11 @@ export default function ClientDashboardPage() {
   const [, navigate] = useLocation();
   const [tab, setTab] = useState("overview");
 
-  const currentMonth = etMonthKey();
+  // Payroll & violations are keyed by the 26th→25th Cairo PAY CYCLE — defaulting
+  // to the ET calendar month showed last cycle as "current" from the 26th on.
+  const currentMonth = currentCycleMonth();
   const [selectedMonth, setSelectedMonth] = useState(currentMonth);
+  const monthTouched = useRef(false);
 
   const { data, isLoading, error } = trpc.clients.getDashboard.useQuery(
     { clientId, month: selectedMonth },
@@ -87,6 +95,16 @@ export default function ClientDashboardPage() {
   );
   // Time-tracking clients (Quantum): hours / AUX / attendance come from the shift + AUX records.
   const dashClient = (data as { client?: { timeTrackingEnabled?: boolean; positionBased?: boolean } } | undefined)?.client;
+  // A time-tracking client's dashboard is mostly hours/AUX, which live on the
+  // CALENDAR month — once we know the client type, snap the untouched default
+  // there instead (between the 26th and month-end the two labels differ).
+  useEffect(() => {
+    if (dashClient?.timeTrackingEnabled && !monthTouched.current) {
+      const et = etMonthKey();
+      setSelectedMonth(prev => (prev === currentMonth && prev !== et ? et : prev));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dashClient?.timeTrackingEnabled]);
   const monthFrom = `${selectedMonth}-01`;
   const monthTo = (() => { const [y, m] = selectedMonth.split("-").map(Number); return `${selectedMonth}-${String(new Date(Date.UTC(y!, m!, 0)).getUTCDate()).padStart(2, "0")}`; })();
   const { data: hours = [], error: hoursError } = trpc.timeTracking.workedSummary.useQuery(
@@ -163,7 +181,7 @@ export default function ClientDashboardPage() {
 
   const lateEvents = adherence.filter(a => a.type === "late" || a.type === "early_departure").length;
 
-  const totalPayroll = payroll.reduce((sum, p) => sum + parseFloat(p.netPayEgp ?? "0"), 0);
+  const totalPayroll = payroll.reduce((sum, p) => sum + (p.finalTotal ?? parseFloat(p.netPay ?? "0")), 0);
 
   const adherenceByType = adherence.reduce<Record<string, number>>((acc, a) => {
     const t = a.type ?? "other";
@@ -270,7 +288,7 @@ export default function ClientDashboardPage() {
             <input
               type="month"
               value={selectedMonth}
-              onChange={e => setSelectedMonth(e.target.value)}
+              onChange={e => { monthTouched.current = true; setSelectedMonth(e.target.value); }}
               className="rounded-md border px-2.5 py-1.5 text-sm bg-background"
             />
           </div>
@@ -487,8 +505,8 @@ export default function ClientDashboardPage() {
                   <TableRow>
                     <TableHead>Agent Code</TableHead>
                     <TableHead className="text-right">Base Salary</TableHead>
-                    <TableHead className="text-right">Incentives</TableHead>
-                    <TableHead className="text-right">Net Pay</TableHead>
+                    <TableHead className="text-right">Commission</TableHead>
+                    <TableHead className="text-right">Final Total</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -502,9 +520,9 @@ export default function ClientDashboardPage() {
                     payroll.map(p => (
                       <TableRow key={p.id}>
                         <TableCell className="font-mono text-xs">{p.agentCode}</TableCell>
-                        <TableCell className="text-right">{parseFloat(p.baseSalaryEgp ?? "0").toLocaleString("en-EG")} EGP</TableCell>
-                        <TableCell className="text-right">{parseFloat(p.incentivesEgp ?? "0").toLocaleString("en-EG")} EGP</TableCell>
-                        <TableCell className="text-right font-semibold">{parseFloat(p.netPayEgp ?? "0").toLocaleString("en-EG")} EGP</TableCell>
+                        <TableCell className="text-right">{parseFloat(p.baseSalary ?? "0").toLocaleString("en-EG")} EGP</TableCell>
+                        <TableCell className="text-right">{parseFloat(p.commissionEgp ?? "0").toLocaleString("en-EG")} EGP</TableCell>
+                        <TableCell className="text-right font-semibold">{(p.finalTotal ?? parseFloat(p.netPay ?? "0")).toLocaleString("en-EG")} EGP</TableCell>
                       </TableRow>
                     ))
                   )}

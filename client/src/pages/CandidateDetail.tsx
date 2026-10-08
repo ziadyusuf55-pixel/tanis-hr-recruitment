@@ -36,6 +36,8 @@ import {
   STAGE_DESCRIPTIONS,
   PipelineStage,
   getNextStage,
+  stageLabel,
+  stageBadge,
 } from "@/lib/pipeline";
 import {
   ArrowLeft,
@@ -711,9 +713,9 @@ export default function CandidateDetail() {
                   <h1 className="text-xl font-semibold tracking-tight text-foreground">{candidate.name}</h1>
                   <p className="text-sm text-muted-foreground mt-0.5">{candidate.positionApplied}</p>
                 </div>
-                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${STAGE_BADGE[candidate.status as PipelineStage]}`}>
+                <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border ${stageBadge(candidate.status)}`}>
                   <span className={`w-1.5 h-1.5 rounded-full ${STAGE_DOT[candidate.status as PipelineStage]}`} />
-                  {STAGE_LABELS[candidate.status as PipelineStage]}
+                  {stageLabel(candidate.status)}
                 </span>
               </div>
               <div className="flex items-center gap-4 mt-3 flex-wrap">
@@ -825,8 +827,8 @@ export default function CandidateDetail() {
                 : new Date(candidate.createdAt).toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" })
             } />
             <InfoRow label="Current Stage" value={
-              <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border ${STAGE_BADGE[candidate.status as PipelineStage]}`}>
-                {STAGE_LABELS[candidate.status as PipelineStage]}
+              <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium border ${stageBadge(candidate.status)}`}>
+                {stageLabel(candidate.status)}
               </span>
             } />
             {(c.resumeLink as string | null) && (

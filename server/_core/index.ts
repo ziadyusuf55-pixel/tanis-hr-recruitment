@@ -591,14 +591,9 @@ async function startServer() {
   // ─── Public portal lock status — no auth needed, polled by agent portal ────
   app.get("/api/portal-status", async (_req, res) => {
     try {
-      const { getDb } = await import("../db");
-      const { appSettings } = await import("../../drizzle/schema");
-      const { eq } = await import("drizzle-orm");
-      const db = await getDb();
-      if (!db) { res.json({ locked: false, message: "" }); return; }
-      const [row] = await db.select().from(appSettings).where(eq(appSettings.key, "portal_locked")).limit(1);
-      const [msgRow] = await db.select().from(appSettings).where(eq(appSettings.key, "portal_lock_message")).limit(1);
-      res.json({ locked: row?.value === "true", message: msgRow?.value ?? "" });
+      const { getPortalLock } = await import("./portalLock");
+      const { locked, message } = await getPortalLock();
+      res.json({ locked, message });
     } catch { res.json({ locked: false, message: "" }); }
   });
 
@@ -1007,8 +1002,17 @@ async function startServer() {
       if (keyRow.revokedAt) { res.status(401).json({ error: "API key has been revoked" }); return; }
       await db.update(apiKeys).set({ lastUsedAt: Date.now() }).where(eq(apiKeys.id, keyRow.id));
 
-      const { listWorkforceAgents } = await import("../db");
-      const agents = await listWorkforceAgents();
+      // Query the table DIRECTLY: listWorkforceAgents hides settled former
+      // agents, so the analysis sheet could never classify them as inactive —
+      // and demo accounts were reported as live. This endpoint's contract is
+      // "one row per CRDTS with its CURRENT status", leavers included.
+      const { workforceAgents: waT, campaigns: campT } = await import("../../drizzle/schema");
+      const allRows = await db.select({
+        traineeCode: waT.traineeCode, fullName: waT.fullName, alias: waT.alias,
+        campaignId: waT.campaignId, campaignName: campT.name,
+        agentStatus: waT.agentStatus, isActive: waT.isActive, isDemo: waT.isDemo, crdts: waT.crdts,
+      }).from(waT).leftJoin(campT, eq(waT.campaignId, campT.id));
+      const agents = allRows.filter(a => !a.isDemo);
       const out: Array<Record<string, unknown>> = [];
       for (const a of agents as Array<Record<string, unknown>>) {
         const active = a.agentStatus === "active" && a.isActive !== false;
@@ -1050,8 +1054,13 @@ async function startServer() {
       if (!keyRow || keyRow.revokedAt) { res.status(401).json({ error: "Invalid or revoked API key" }); return; }
       const { listWorkforceAgents } = await import("../db");
       const agents = await listWorkforceAgents();
-      const now = new Date();
-      const todayMd = `${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+      // "Today" is the CAIRO calendar day, and a joinDate timestamp is read as a
+      // Cairo date too — server-local getters announced birthdays a day early
+      // (or late) around midnight and shifted Cairo-midnight join anniversaries
+      // permanently by one day.
+      const { businessDateKey } = await import("./time");
+      const todayKey = businessDateKey();              // YYYY-MM-DD in Cairo
+      const todayMd = todayKey.slice(5);               // MM-DD
       const birthdays: Array<Record<string, unknown>> = [];
       const anniversaries: Array<Record<string, unknown>> = [];
       for (const a of agents as Array<Record<string, unknown>>) {
@@ -1060,14 +1069,14 @@ async function startServer() {
         const dob = a.dateOfBirth ? String(a.dateOfBirth) : "";
         if (dob.length >= 10 && dob.slice(5, 10) === todayMd) birthdays.push({ name, traineeCode: a.traineeCode });
         if (a.joinDate) {
-          const jd = new Date(Number(a.joinDate));
-          if (`${String(jd.getMonth() + 1).padStart(2, "0")}-${String(jd.getDate()).padStart(2, "0")}` === todayMd) {
-            const years = now.getFullYear() - jd.getFullYear();
+          const jdKey = businessDateKey(Number(a.joinDate)); // Cairo date of the join moment
+          if (jdKey.slice(5) === todayMd) {
+            const years = Number(todayKey.slice(0, 4)) - Number(jdKey.slice(0, 4));
             if (years >= 1) anniversaries.push({ name, traineeCode: a.traineeCode, years });
           }
         }
       }
-      res.json({ ok: true, date: `${now.getFullYear()}-${todayMd}`, birthdays, anniversaries });
+      res.json({ ok: true, date: todayKey, birthdays, anniversaries });
     } catch (err) {
       res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
     }

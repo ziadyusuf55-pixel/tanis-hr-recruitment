@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { currentCycleMonth, prevCycle } from "@/lib/cycle";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,10 +14,9 @@ const formatMonthLabel = (m: string) => {
 };
 
 export default function AdminAudit() {
-  const [auditMonth, setAuditMonth] = useState(() => {
-    const d = new Date(); d.setMonth(d.getMonth() - 1);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-  });
+  // Payroll months are PAY-CYCLE keys; default to the previous cycle with pure
+  // y/m math (setMonth overflowed on the 31st and defaulted to the WRONG month).
+  const [auditMonth, setAuditMonth] = useState(() => prevCycle(currentCycleMonth()));
   const [runPayroll, setRunPayroll] = useState(false);
   const [runPortal, setRunPortal] = useState(false);
 
@@ -36,8 +36,11 @@ export default function AdminAudit() {
   type PortalRow = { traineeCode: string; alias: string | null; fullName: string | null; agentStatus: string; isActive: boolean | null };
 
   const discrepancies = (payrollAudit as PayrollRow[]).filter(r => r.discrepancy);
+  // Unexpected portal access = TERMINAL statuses only. Frozen and inactive
+  // agents keep portal access by owner decision (agentAuth blocks terminal
+  // statuses only) — flagging frozen here invited "fixing" intended behavior.
   const formerWithAccess = (portalAudit as PortalRow[]).filter(r =>
-    r.agentStatus !== "active" && r.agentStatus !== "inactive"
+    ["resigned", "terminated", "blacklisted"].includes(r.agentStatus)
   );
 
   const STATUS_COLOR: Record<string, string> = {

@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
+import { currentCycleMonth } from "@/lib/cycle";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -300,7 +301,7 @@ export default function CycleTrackerAdmin() {
   async function processCoachingSheet(ws: XLSX.WorkSheet): Promise<TabResult> {
     const { raw, fmt } = readRows(ws);
     const rej = new RowRejects();
-    const cycleKey = cycleInfo?.cycleKey ?? new Date().toISOString().slice(0, 7);
+    const cycleKey = cycleInfo?.cycleKey ?? currentCycleMonth(); // fallback = current PAY CYCLE, not the UTC calendar month
     const sessions = raw.map((r, i) => ({
       crdts: parseString(r["CRDTS"] ?? r["crdts"] ?? r["Agent Code"] ?? r["agent_code"] ?? ""),
       agentCode: parseString(r["Agent Code"] ?? r["agent_code"] ?? ""),
