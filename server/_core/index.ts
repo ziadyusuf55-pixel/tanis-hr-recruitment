@@ -276,8 +276,10 @@ async function startServer() {
     next();
   });
 
-  // ── Health check for the load balancer / uptime monitor: no auth, touches the DB ──
-  app.get("/healthz", async (_req, res) => {
+  // ── Health check for the load balancer / uptime monitor: no auth, touches the DB.
+  // Registered at BOTH paths: the hosting edge only forwards /api/* to Node, so
+  // bare /healthz 404s at the edge in production — use /api/healthz there. ──
+  app.get(["/healthz", "/api/healthz"], async (_req, res) => {
     try {
       const { getDb } = await import("../db");
       const { sql: sqlTag } = await import("drizzle-orm");
