@@ -290,12 +290,15 @@ const authRouter = router({
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { users } = await import("../drizzle/schema");
+      const { users, bdUsers } = await import("../drizzle/schema");
       const { users: _ruUsers } = await import("../drizzle/schema");
       const [_ruTarget] = await db.select({ role: _ruUsers.role, email: _ruUsers.email }).from(_ruUsers).where(eq(_ruUsers.openId, input.openId)).limit(1);
       if (_ruTarget?.role === "owner" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN", message: "Only an owner can remove an owner." });
-      // Set to "viewer" (no access) — preserves login history and audit trail
+      // Set to "viewer" (no access) — preserves login history and audit trail.
+      // Also deactivate any bd_users row so a re-linked openId cannot re-elevate
+      // the demoted account back to "bd" role on next request.
       await db.update(users).set({ role: "viewer" }).where(eq(users.openId, input.openId));
+      await db.update(bdUsers).set({ active: false }).where(eq(bdUsers.openId!, input.openId));
       await auditEntry(ctx.user, "remove_user", "user", input.openId, JSON.stringify({ hadRole: _ruTarget?.role ?? null, email: _ruTarget?.email ?? null }));
       return { ok: true } as const;
     }),
@@ -1323,12 +1326,14 @@ const agentRouter = router({
   }),
 
   // Payroll — agent can read their own, admin can read/write any
-  getPayroll: publicProcedure
+  getPayroll: agentOrStaffProcedure
     .input(z.object({ candidateId: z.number() }))
     .query(async ({ input, ctx }) => {
       // The agent reading THEIR OWN record, or a MONEY role (finance/hr/manager/
       // owner/admin). "Any staff" was too broad: team leads and BD must not be
       // able to pull another employee's pay through the API (owner decision).
+      // agentOrStaffProcedure already rejects unauthenticated callers; this guard
+      // narrows further to own-record or money-role only.
       const isOwnRecord = ctx.agent?.candidateId === input.candidateId;
       if (!isOwnRecord && !canSeeMoney((ctx.user as { role?: string } | null)?.role)) throw new TRPCError({ code: "UNAUTHORIZED" });
       return getPayrollByCandidateId(input.candidateId);
@@ -2433,6 +2438,14 @@ const workforceRouter = router({
       if (input.agentStatus && ["resigned", "terminated", "blacklisted"].includes(input.agentStatus)) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Use the Separation flow (resign/terminate) to set this status — a plain edit skips settlement and exit steps." });
       }
+      // Reactivating a terminal agent is equally guarded — it must go through workforce.rehire
+      // so the reinstatement is audited and a new hire-date / CRDTS suffix is applied.
+      if (input.agentStatus === "active" || input.isActive === true) {
+        const currentAgent = await getWorkforceAgentByCode(input.traineeCode);
+        if (currentAgent && ["resigned", "terminated", "blacklisted"].includes(currentAgent.agentStatus ?? "")) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Cannot reactivate a ${currentAgent.agentStatus} agent via profile edit — use the Rehire flow instead.` });
+        }
+      }
       const { traineeCode, ...rest } = input;
       // Clearing a text field in the dialog sends "" — store NULL, not an empty
       // string (an "" crdts or team leader broke lookups and groupings).
@@ -3521,6 +3534,36 @@ const payrollV2Router = router({
       }
 
       // Commission is NEVER auto-attached during payroll upload — HR enters it in the Salary tab.
+      // Warn if a re-upload would silently overwrite coaching or commission that was already
+      // entered manually — the uploader should be aware before proceeding.
+      const uploadWarnings: Array<{ crdts: string; alias?: string | null; type: string; message: string }> = [];
+      {
+        const { getDb: _uwGetDb } = await import("./db");
+        const _uwDb = await _uwGetDb();
+        if (_uwDb) {
+          const { payrollRecords: _uwPr } = await import("../drizzle/schema");
+          const { inArray: _uwIn, and: _uwAnd, eq: _uwEq, sql: _uwSql } = await import("drizzle-orm");
+          const uploadCrdts = input.rows.map(r => r.crdts).filter(Boolean);
+          if (uploadCrdts.length > 0) {
+            const existing = await _uwDb.select({
+              crdts: _uwPr.crdts, alias: _uwPr.alias,
+              coachingBonus: _uwPr.coachingBonus,
+              commissionEgp: _uwPr.commissionEgp,
+            }).from(_uwPr)
+              .where(_uwAnd(_uwSql`${_uwPr.crdts} IN (${_uwSql.raw(uploadCrdts.map(() => "?").join(","))})` as ReturnType<typeof _uwEq>,
+                _uwEq(_uwPr.month as Parameters<typeof _uwEq>[0], input.month)));
+            for (const ex of existing) {
+              const coaching = parseFloat(String(ex.coachingBonus ?? "0"));
+              const commission = parseFloat(String(ex.commissionEgp ?? "0"));
+              if (coaching > 0 || commission > 0) {
+                const parts = [coaching > 0 ? `coaching bonus ${coaching.toFixed(2)} EGP` : null, commission > 0 ? `commission ${commission.toFixed(2)} EGP` : null].filter(Boolean).join(" and ");
+                uploadWarnings.push({ crdts: ex.crdts ?? "?", alias: ex.alias, type: "overwrite_protected_fields", message: `Existing ${parts} for ${ex.alias ?? ex.crdts} in ${input.month} — re-upload will NOT overwrite these; they remain intact.` });
+              }
+            }
+          }
+        }
+      }
+
       // One transaction: either the whole month lands or none of it does.
       const { upsertPayrollRecordsV2Batch } = await import("./db");
       const batch = await upsertPayrollRecordsV2Batch(input.rows.map(row => ({ ...row, month: input.month, uploadedBy, uploadedAt })));
@@ -3554,7 +3597,7 @@ const payrollV2Router = router({
       if ((batch as { skippedPaid?: number }).skippedPaid) {
         warnings.push({ crdts: "—", type: "skipped_paid", message: `${(batch as { skippedPaid?: number }).skippedPaid} row(s) skipped: already marked PAID. Unmark them first if a correction is intended.` });
       }
-      return { success: true, count: input.rows.length, commissionCycle: "", commissionAttached: 0, warnings: [...dupWarnings, ...warnings] };
+      return { success: true, count: input.rows.length, commissionCycle: "", commissionAttached: 0, warnings: [...dupWarnings, ...uploadWarnings, ...warnings] };
     }),
 
   getStatusPage: roleProcedure("finance", "hr", "manager")
@@ -3767,36 +3810,46 @@ const payrollV2Router = router({
     .input(z.object({ id: z.number(), amountPaid: z.number().positive() }))
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
-      const { eq } = await import("drizzle-orm");
+      const { and: andOp, eq, sql: sqlLock } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const { payrollRecords } = await import("../drizzle/schema");
-      const { getPayrollRecordWithAdjustments } = await import("./db");
-      const full = await getPayrollRecordWithAdjustments(input.id);
-      const rec = full?.record;
-      if (!rec) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
-      const owed = calcFinalPay(rec, full!.adjustments); // net + commission + adjustments
-      const prevPaid = parseFloat(String((rec as Record<string, unknown>).amountPaid ?? "0"));
-      const stillOwed = remainingOwed(rec, full!.adjustments);
-      // Cap: never record more than what is owed.
-      if (input.amountPaid > stillOwed + 0.005) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: `Amount exceeds the remaining balance (EGP ${stillOwed.toFixed(2)}).` });
-      }
-      const totalPaid = prevPaid + input.amountPaid;
+      const { payrollRecords, payrollAdjustments } = await import("../drizzle/schema");
       const paidBy = ctx.user.name ?? ctx.user.email ?? "Unknown Admin";
       const paidAt = Date.now();
-      const fullyPaid = totalPaid >= owed - 0.005;
-      await db.update(payrollRecords)
-        .set({
-          amountPaid: String(totalPaid.toFixed(2)),
-          paidBy,
-          paidAt,
-          paymentStatus: fullyPaid ? "paid" : "pending",
-        } as never)
-        .where(eq(payrollRecords.id, input.id));
-      const remaining = Math.max(0, owed - totalPaid);
-      await auditEntry(ctx.user, "partial_pay", "payroll", String(input.id), JSON.stringify({ amountPaid: input.amountPaid, totalPaid, remaining, fullyPaid, paidBy }));
-      return { ok: true, totalPaid, remaining, fullyPaid, paidBy };
+
+      const result = await db.transaction(async (tx) => {
+        // Lock the row first so concurrent partial-pay calls are serialised.
+        const locked = await tx.select().from(payrollRecords)
+          .where(eq(payrollRecords.id, input.id)).for("update").limit(1);
+        const rec = locked[0];
+        if (!rec) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
+        const adjs = rec.crdts && rec.month
+          ? await tx.select().from(payrollAdjustments)
+              .where(andOp(eq(payrollAdjustments.crdts, rec.crdts), eq(payrollAdjustments.month, rec.month)))
+          : [];
+        const owed = calcFinalPay(rec, adjs);
+        const prevPaid = parseFloat(String((rec as Record<string, unknown>).amountPaid ?? "0"));
+        const stillOwed = Math.max(0, owed - prevPaid);
+        // Cap: never record more than what is owed.
+        if (input.amountPaid > stillOwed + 0.005) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: `Amount exceeds the remaining balance (EGP ${stillOwed.toFixed(2)}).` });
+        }
+        const totalPaid = prevPaid + input.amountPaid;
+        const fullyPaid = totalPaid >= owed - 0.005;
+        await tx.update(payrollRecords)
+          .set({
+            amountPaid: String(totalPaid.toFixed(2)),
+            paidBy,
+            paidAt,
+            paymentStatus: fullyPaid ? "paid" : "pending",
+          } as never)
+          .where(eq(payrollRecords.id, input.id));
+        return { totalPaid, owed, fullyPaid };
+      });
+
+      const remaining = Math.max(0, result.owed - result.totalPaid);
+      await auditEntry(ctx.user, "partial_pay", "payroll", String(input.id), JSON.stringify({ amountPaid: input.amountPaid, totalPaid: result.totalPaid, remaining, fullyPaid: result.fullyPaid, paidBy }));
+      return { ok: true, totalPaid: result.totalPaid, remaining, fullyPaid: result.fullyPaid, paidBy };
     }),
 
   /** Pay the remaining balance on a partially-paid record. */
@@ -6519,6 +6572,10 @@ const commissionRouter = router({
           await db.update(payrollRecords)
             .set({ commissionEgp: String(input.commissionEgp) })
             .where(sqlFn`${payrollRecords.crdts} = ${crdts} AND ${payrollRecords.month} = ${paymentCycle}`);
+          // Recompute payment status now that commissionEgp changed — the total owed
+          // may have changed, potentially flipping a "paid" record back to "pending".
+          const { recomputePaymentStatusByCrdtsMonth } = await import("./db");
+          await recomputePaymentStatusByCrdtsMonth(crdts, paymentCycle);
         }
       }
       return { ok: true };

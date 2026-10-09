@@ -1138,12 +1138,13 @@ function PayrollTab({ theme }: { payroll?: unknown; theme: Theme }) {
             onClick={() => {
               const win = window.open("", "_blank");
               if (!win) return;
-              win.document.write(`<!DOCTYPE html><html><head><title>Payslip - ${formatMonthLabel(activeMonth ?? "")}</title>
+              const escHtml = (s: string) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+              win.document.write(`<!DOCTYPE html><html><head><title>Payslip - ${escHtml(formatMonthLabel(activeMonth ?? ""))}</title>
               <style>body{font-family:sans-serif;max-width:600px;margin:40px auto;color:#111}h1{font-size:22px;margin-bottom:4px}h2{font-size:14px;font-weight:500;color:#666;margin-bottom:24px}.row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f0f0f0}.row.total{font-weight:700;font-size:16px;border-top:2px solid #111;border-bottom:none;padding-top:12px;margin-top:8px}.label{color:#555}.logo{font-weight:800;font-size:18px;color:#c84b31;margin-bottom:2px}@media print{button{display:none}}</style>
               </head><body>
               <div class="logo">Tanis Connect</div>
-              <h1>${formatMonthLabel(activeMonth ?? "")} Payslip</h1>
-              <h2>${String(r.alias ?? r.crdts ?? "")}</h2>
+              <h1>${escHtml(formatMonthLabel(activeMonth ?? ""))} Payslip</h1>
+              <h2>${escHtml(String(r.alias ?? r.crdts ?? ""))}</h2>
               <div class="row"><span class="label">Base Salary</span><span>${fmtEGP(r.baseSalary)}</span></div>
               <div class="row"><span class="label">Working Hours</span><span>${fmtNum(r.workingHours, "h")}</span></div>
               ${parseFloat(String(r.ot1x5Pay ?? 0)) > 0 ? `<div class="row"><span class="label">OT 1.5x Pay</span><span>${fmtEGP(r.ot1x5Pay)}</span></div>` : ""}
