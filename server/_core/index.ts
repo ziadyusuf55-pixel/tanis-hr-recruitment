@@ -59,7 +59,7 @@ const runDueSeparations = async () => {
     const { processDueSeparations } = await import("../db");
     const n = await processDueSeparations();
     if (n > 0) console.log(`[separations] Applied ${n} due separation(s)`);
-  } catch (e) { console.error("[separations] processDueSeparations error:", e); }
+  } catch (e) { console.error("[separations] processDueSeparations error:", e); throw e; /* F15: let the scheduler see it */ }
 };
 
 // 2. Auto-clear probation when probationEndDate has passed
@@ -69,7 +69,7 @@ const runProbationCheck = async () => {
     const { workforceAgents } = await import("../../drizzle/schema");
     const { and, eq, lte, isNotNull } = await import("drizzle-orm");
     const db = await getDb();
-    if (!db) return;
+    if (!db) throw new Error("Database unavailable"); // F15: an outage is a failure, not a no-op
     const { businessDateKey } = await import("./time");
     const today = businessDateKey(Date.now()); // Cairo calendar day, not server UTC
     // Find agents still flagged as on probation but whose probation end date has passed
@@ -89,7 +89,7 @@ const runProbationCheck = async () => {
       }
       console.log(`[probation] Auto-cleared ${expired.length} agent(s) from probation`);
     }
-  } catch (e) { console.error("[probation] probation check error:", e); }
+  } catch (e) { console.error("[probation] probation check error:", e); throw e; /* F15: let the scheduler see it */ }
 };
 
 // 3. Flag agents with expired contracts (mark contractSigned as needing renewal)
@@ -99,7 +99,7 @@ const runContractExpiryCheck = async () => {
     const { workforceAgents, appSettings } = await import("../../drizzle/schema");
     const { and, eq, lte, isNotNull, ne } = await import("drizzle-orm");
     const db = await getDb();
-    if (!db) return;
+    if (!db) throw new Error("Database unavailable"); // F15: an outage is a failure, not a no-op
     const { businessDateKey } = await import("./time");
     const today = businessDateKey(Date.now()); // Cairo calendar day
     // Find active agents whose contract has expired
@@ -119,7 +119,7 @@ const runContractExpiryCheck = async () => {
       await db.insert(appSettings).values({ key: "expired_contracts", value: "[]", updatedAt: Date.now(), updatedBy: "system" })
         .onDuplicateKeyUpdate({ set: { value: "[]", updatedAt: Date.now() } });
     }
-  } catch (e) { console.error("[contracts] contract expiry check error:", e); }
+  } catch (e) { console.error("[contracts] contract expiry check error:", e); throw e; /* F15: let the scheduler see it */ }
 };
 
 // 4. Auto-revert one-time schedule swaps after the swap week ends
@@ -129,7 +129,7 @@ const runScheduleSwapRevert = async () => {
     const { scheduleChangeRequests, workforceAgents } = await import("../../drizzle/schema");
     const { and, eq, isNull, lte, isNotNull } = await import("drizzle-orm");
     const db = await getDb();
-    if (!db) return;
+    if (!db) throw new Error("Database unavailable"); // F15: an outage is a failure, not a no-op
     const { businessDateKey } = await import("./time");
     const today = businessDateKey(Date.now()); // Cairo calendar day
     // Find approved swaps whose swapWeekOf + 7 days has passed and haven't been reverted yet
@@ -161,7 +161,7 @@ const runScheduleSwapRevert = async () => {
         .where(eq(scheduleChangeRequests.id, swap.id));
       console.log(`[schedule] Reverted swap #${swap.id} (${swap.requesterCode} ↔ ${swap.targetCode}) — swap week ended`);
     }
-  } catch (e) { console.error("[schedule] swap revert error:", e); }
+  } catch (e) { console.error("[schedule] swap revert error:", e); throw e; /* F15: let the scheduler see it */ }
 };
 
 // Run all hourly jobs on startup then every hour.
@@ -183,6 +183,17 @@ const runHourlyJobs = async () => {
   } finally {
     _jobsRunning = false;
   }
+  // F15: persist last run so freshness is visible (app_settings.background_jobs_status).
+  try {
+    const { getDb } = await import("../db");
+    const { appSettings } = await import("../../drizzle/schema");
+    const db = await getDb();
+    if (db) {
+      const value = JSON.stringify({ at: Date.now(), ok: failures.length === 0, failures });
+      await db.insert(appSettings).values({ key: "background_jobs_status", value, updatedAt: Date.now(), updatedBy: "system" })
+        .onDuplicateKeyUpdate({ set: { value, updatedAt: Date.now() } });
+    }
+  } catch { /* status write is best-effort */ }
   // Surface repeated silent failures where someone will see them.
   if (failures.length) {
     const hook = process.env.SLACK_MANAGEMENT_WEBHOOK || process.env.SLACK_ADMIN_WEBHOOK;

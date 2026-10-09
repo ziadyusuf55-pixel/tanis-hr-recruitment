@@ -5,49 +5,70 @@ import NotFound from "@/pages/NotFound";
 import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
-import Dashboard from "./pages/Dashboard";
-import Candidates from "./pages/Candidates";
-import CandidateDetail from "./pages/CandidateDetail";
-import Training from "./pages/Training";
-import Requests from "./pages/Requests";
-import Settings from "./pages/Settings";
-import AdminInviteAccept from "./pages/AdminInviteAccept";
 import Login from "./pages/Login";
-import AgentPortal from "./pages/AgentPortal";
-import Operations from "./pages/Operations";
-import FormerAgents from "./pages/FormerAgents";
-import Payroll from "./pages/Payroll";
-import AdminAudit from "./pages/AdminAudit";
-import PerformanceDashboard from "./pages/PerformanceDashboard";
-import AdherenceLog from "./pages/AdherenceLog";
-import QualityLog from "./pages/QualityLog";
-import PaymentPreferences from "./pages/PaymentPreferences";
-import AllDocuments from "./pages/AllDocuments";
-import CycleTrackerAdmin from "./pages/CycleTrackerAdmin";
-import AgentProfilePage from "./pages/AgentProfilePage";
-import PerformanceReports from "./pages/PerformanceReports";
-import CoachingAdmin from "./pages/CoachingAdmin";
-import CommissionAdmin from "./pages/CommissionAdmin";
-import BusinessDevelopment from "./pages/BusinessDevelopment";
-import AgentProfileHR from "./pages/AgentProfileHR";
-import LeaveManagement from "./pages/LeaveManagement";
-import Contracts from "./pages/Contracts";
-import Advances from "./pages/Advances";
-import OTLog from "./pages/OTLog";
-import MyProfile from "./pages/MyProfile";
-import Academy from "./pages/Academy";
-import Clients from "./pages/Clients";
-import ClientDashboardPage from "./pages/ClientDashboardPage";
-import TimeTrackingAdmin from "./pages/TimeTrackingAdmin";
-import TimeTrackerPage from "./pages/TimeTrackerPage"; // focused clock-in / AUX / PTO screen for time-tracking clients
 import { trpc as trpcClient } from "@/lib/trpc";
-import ClientLogoutsAdmin from "./pages/ClientLogoutsAdmin";
-import ChangePasswordPage from "./pages/ChangePasswordPage";
 import { useAuth } from "./_core/hooks/useAuth";
 import { getLoginUrl } from "./const";
-import { useEffect } from "react";
+import { useEffect, lazy, Suspense } from "react";
 import { useLocation } from "wouter";
 import DashboardLayout from "./components/DashboardLayout";
+
+// F19: every page is its own chunk — the browser only downloads the screen being opened.
+// After a redeploy, an open tab may ask for a chunk that no longer exists: reload once to pick up
+// the new build instead of landing on the error screen.
+function lazyPage<T extends React.ComponentType<any>>(load: () => Promise<{ default: T }>) {
+  return lazy(() => load().then(
+    (m) => { try { sessionStorage.removeItem("chunk-reload"); } catch { /* storage blocked */ } return m; },
+    (err) => {
+      let reloaded = false;
+      try { reloaded = sessionStorage.getItem("chunk-reload") === "1"; sessionStorage.setItem("chunk-reload", "1"); } catch { /* storage blocked */ }
+      if (!reloaded) { window.location.reload(); return new Promise<{ default: T }>(() => {}); }
+      throw err;
+    },
+  ));
+}
+const Dashboard = lazyPage(() => import("./pages/Dashboard"));
+const Candidates = lazyPage(() => import("./pages/Candidates"));
+const CandidateDetail = lazyPage(() => import("./pages/CandidateDetail"));
+const Training = lazyPage(() => import("./pages/Training"));
+const Requests = lazyPage(() => import("./pages/Requests"));
+const Settings = lazyPage(() => import("./pages/Settings"));
+const AdminInviteAccept = lazyPage(() => import("./pages/AdminInviteAccept"));
+const AgentPortal = lazyPage(() => import("./pages/AgentPortal"));
+const Operations = lazyPage(() => import("./pages/Operations"));
+const FormerAgents = lazyPage(() => import("./pages/FormerAgents"));
+const Payroll = lazyPage(() => import("./pages/Payroll"));
+const AdminAudit = lazyPage(() => import("./pages/AdminAudit"));
+const PerformanceDashboard = lazyPage(() => import("./pages/PerformanceDashboard"));
+const AdherenceLog = lazyPage(() => import("./pages/AdherenceLog"));
+const QualityLog = lazyPage(() => import("./pages/QualityLog"));
+const PaymentPreferences = lazyPage(() => import("./pages/PaymentPreferences"));
+const AllDocuments = lazyPage(() => import("./pages/AllDocuments"));
+const CycleTrackerAdmin = lazyPage(() => import("./pages/CycleTrackerAdmin"));
+const AgentProfilePage = lazyPage(() => import("./pages/AgentProfilePage"));
+const PerformanceReports = lazyPage(() => import("./pages/PerformanceReports"));
+const CoachingAdmin = lazyPage(() => import("./pages/CoachingAdmin"));
+const CommissionAdmin = lazyPage(() => import("./pages/CommissionAdmin"));
+const BusinessDevelopment = lazyPage(() => import("./pages/BusinessDevelopment"));
+const AgentProfileHR = lazyPage(() => import("./pages/AgentProfileHR"));
+const LeaveManagement = lazyPage(() => import("./pages/LeaveManagement"));
+const Contracts = lazyPage(() => import("./pages/Contracts"));
+const Advances = lazyPage(() => import("./pages/Advances"));
+const OTLog = lazyPage(() => import("./pages/OTLog"));
+const MyProfile = lazyPage(() => import("./pages/MyProfile"));
+const Academy = lazyPage(() => import("./pages/Academy"));
+const Clients = lazyPage(() => import("./pages/Clients"));
+const ClientDashboardPage = lazyPage(() => import("./pages/ClientDashboardPage"));
+const TimeTrackingAdmin = lazyPage(() => import("./pages/TimeTrackingAdmin"));
+const TimeTrackerPage = lazyPage(() => import("./pages/TimeTrackerPage"));
+const ClientLogoutsAdmin = lazyPage(() => import("./pages/ClientLogoutsAdmin"));
+const ChangePasswordPage = lazyPage(() => import("./pages/ChangePasswordPage"));
+
+const PageFallback = () => (
+  <div className="min-h-[50vh] flex items-center justify-center">
+    <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+  </div>
+);
 
 function ProtectedRoute({ component: Component }: { component: React.ComponentType }) {
   const { isAuthenticated, loading, user } = useAuth();
@@ -89,13 +110,16 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
 
   return (
     <DashboardLayout>
-      <Component />
+      <Suspense fallback={<PageFallback />}>
+        <Component />
+      </Suspense>
     </DashboardLayout>
   );
 }
 
 function Router() {
   return (
+    <Suspense fallback={<PageFallback />}>
     <Switch>
       <Route path="/login" component={Login} />
       <Route path="/" component={() => <ProtectedRoute component={Dashboard} />} />
@@ -139,6 +163,7 @@ function Router() {
       <Route path="/404" component={NotFound} />
       <Route component={NotFound} />
     </Switch>
+    </Suspense>
   );
 }
 

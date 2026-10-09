@@ -33,7 +33,16 @@ export function businessDayBounds(dateKey: string): { start: number; end: number
   // Two passes handle DST transitions on the day itself.
   let start = guess - tzOffsetMs(guess);
   start = guess - tzOffsetMs(start);
-  return { start, end: start + 86_400_000 };
+  // F18: DST days are 23h/25h — the end is the start of the NEXT local day, not start + 24h.
+  const next = Date.UTC(y!, m! - 1, d! + 1, 0, 0, 0);
+  let end = next - tzOffsetMs(next);
+  end = next - tzOffsetMs(end);
+  return { start, end };
+}
+
+/** F18: the last millisecond of business-time day `YYYY-MM-DD` (DST-aware, Cairo is +02/+03). */
+export function businessDayEndMs(dateKey: string): number {
+  return businessDayBounds(dateKey).end - 1;
 }
 
 // ─── Time-tracking day (Quantum shifts / AUX) ────────────────────────────────

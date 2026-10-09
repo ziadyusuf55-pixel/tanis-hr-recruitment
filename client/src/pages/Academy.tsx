@@ -423,7 +423,7 @@ function EnglishAssessmentAdmin() {
     <div className="space-y-5">
       <Card><CardContent className="p-4 flex items-center justify-between gap-4">
         <div>
-          <p className="text-sm font-semibold flex items-center gap-2"><Globe className="w-4 h-4" style={{color:BRAND}}/> English Level Assessment</p>
+          <p className="text-sm font-semibold flex items-center gap-2"><Globe className="w-4 h-4" style={{color:BRAND}}/> English Level Assessment <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Self-assessed · not verified</span></p>
           <p className="text-xs text-muted-foreground mt-0.5">{enabled?"Agents can take the assessment from the Academy tab.":"Assessment is disabled — agents see a locked message."}</p>
         </div>
         <button onClick={()=>toggle.mutate({enabled:!enabled})} disabled={toggle.isPending}

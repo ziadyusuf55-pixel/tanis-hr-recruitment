@@ -1,6 +1,6 @@
 import { COOKIE_NAME, AUX_TYPES } from "@shared/const";
 import { finalPay as calcFinalPay, remainingOwed, validatePayrollRow } from "@shared/pay";
-import { and, isNull } from "drizzle-orm";
+import { and, isNull, sql as drizzleSql } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
@@ -277,6 +277,15 @@ const authRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: "You can't remove your own full access. Ask another owner to change your role." });
       }
       await db.update(users).set({ role: input.role }).where(eq(users.openId, input.openId));
+      if (input.role === "viewer") {
+        // F01: explicit demotion to viewer revokes any BD link too.
+        const { bdUsers: _srBd } = await import("../drizzle/schema");
+        await db.update(_srBd).set({ active: false }).where(eq(_srBd.openId, input.openId));
+      } else if (input.role === "bd") {
+        // Reinstating someone as BD re-activates the BD profile that removal switched off.
+        const { bdUsers: _srBd } = await import("../drizzle/schema");
+        await db.update(_srBd).set({ active: true }).where(eq(_srBd.openId, input.openId));
+      }
       await auditEntry(ctx.user, "set_user_role", "user", input.openId, JSON.stringify({ from: target?.role ?? null, to: input.role, email: target?.email ?? null }));
       return { ok: true } as const;
     }),
@@ -294,8 +303,13 @@ const authRouter = router({
       const { users: _ruUsers } = await import("../drizzle/schema");
       const [_ruTarget] = await db.select({ role: _ruUsers.role, email: _ruUsers.email }).from(_ruUsers).where(eq(_ruUsers.openId, input.openId)).limit(1);
       if (_ruTarget?.role === "owner" && ctx.user?.role !== "owner") throw new TRPCError({ code: "FORBIDDEN", message: "Only an owner can remove an owner." });
-      // Set to "viewer" (no access) — preserves login history and audit trail
-      await db.update(users).set({ role: "viewer" }).where(eq(users.openId, input.openId));
+      // Set to "viewer" (no access) — preserves login history and audit trail.
+      // F01: also deactivate any BD link in the same transaction so removal fully revokes access.
+      const { bdUsers: _ruBd } = await import("../drizzle/schema");
+      await db.transaction(async (tx) => {
+        await tx.update(users).set({ role: "viewer" }).where(eq(users.openId, input.openId));
+        await tx.update(_ruBd).set({ active: false }).where(eq(_ruBd.openId, input.openId));
+      });
       await auditEntry(ctx.user, "remove_user", "user", input.openId, JSON.stringify({ hadRole: _ruTarget?.role ?? null, email: _ruTarget?.email ?? null }));
       return { ok: true } as const;
     }),
@@ -1620,15 +1634,16 @@ const requestsRouter = router({
           const t = new Date(`${todayKey}T00:00:00Z`);
           t.setUTCDate(t.getUTCDate() + 14);
           const minKey = t.toISOString().slice(0, 10);
-          const rawCheck = input.requestedDates?.slice().sort()[0] ?? input.requestedDate ?? null;
-          const checkKey = rawCheck && Number.isFinite(Date.parse(String(rawCheck)))
-            ? new Date(Date.parse(String(rawCheck))).toISOString().slice(0, 10) : null;
-          if (checkKey && checkKey < minKey) {
+          // F14: normalise BOTH input forms (epoch-ms timestamp or YYYY-MM-DD list) to one Cairo
+          // date key. A malformed date is REJECTED, never silently skipped.
+          const checkKey = earliestRequestDateKey(input.requestedDates, input.requestedDate);
+          if (!checkKey) throw new TRPCError({ code: "BAD_REQUEST", message: "Invalid date" });
+          if (checkKey < minKey) {
             throw new TRPCError({ code: "BAD_REQUEST", message: "Date must be at least 2 weeks from today" });
           }
         }
       }
-      const created = await createAgentRequest({
+      const reqData = {
         candidateId: payload.candidateId,
         traineeCode: payload.traineeCode,
         type: input.type,
@@ -1639,29 +1654,34 @@ const requestsRouter = router({
         attachmentUrl: input.attachmentUrl ?? null,
         hrLetterPurpose: input.hrLetterPurpose ?? null,
         hrLetterLanguage: input.hrLetterLanguage ?? null,
-      });
+      };
       // Leave requests ALSO land in leave_requests so Leave Management + balances see them
-      // (one leave system). The request-centre row stays for the agent's own view/replies.
+      // (one leave system). F11: both rows are written in ONE transaction — an overlap or bad
+      // date rolls back the request-centre row too, and Slack is only notified after commit.
+      let leave: Parameters<typeof import("./db").createAgentRequestWithLeave>[1] = null;
       if (input.type === "leave" || input.type === "paid_leave" || input.type === "day_off" || input.type === "sick_note") {
+        const { businessDateKey } = await import("./_core/time");
         const dates = (input.requestedDates ?? []).filter(Boolean).sort();
-        const single = input.requestedDate ? new Date(input.requestedDate).toISOString().slice(0, 10) : null;
+        const single = input.requestedDate ? businessDateKey(input.requestedDate) : null;
         const startDate = dates[0] ?? single;
         const endDate = dates[dates.length - 1] ?? single;
         if (startDate && endDate) {
-          const newId = (created as unknown as Array<{ insertId?: number }>)[0]?.insertId ?? null;
-          const { createLeaveRequestRow } = await import("./db");
           const tag = input.type === "day_off" ? "[unpaid] " : input.type === "sick_note" ? "[sick] " : "";
-          await createLeaveRequestRow({
+          leave = {
             traineeCode: payload.traineeCode,
             startDate, endDate,
-            // Pass the EXACT dates: days = count of picked dates (Mon+Fri = 2),
-            // not the calendar span (5) — the span was over-burning balances
-            // on non-contiguous selections.
-            dates: dates.length ? dates : undefined,
+            // EXACT dates: days = count of picked dates (Mon+Fri = 2), not the calendar span (5).
+            dates: dates.length ? dates : [startDate],
             reason: `${tag}${input.subject}${input.message ? ` — ${input.message}` : ""}`.slice(0, 2000),
-            agentRequestId: newId,
-          });
+          };
         }
+      }
+      const { createAgentRequestWithLeave } = await import("./db");
+      try {
+        await createAgentRequestWithLeave(reqData, leave);
+      } catch (e) {
+        if (e instanceof TRPCError) throw e;
+        throw new TRPCError({ code: "BAD_REQUEST", message: e instanceof Error ? e.message : "Could not submit request" });
       }
       return { success: true };
     }),
@@ -2150,7 +2170,8 @@ const workforceRouter = router({
 
   // Manual "Mark as settled" — flips salarySettled; used when final pay is confirmed (exit checklist gates the full archive)
   // Unified HR profile: update address + emergency contact
-  updateHrInfo: staffProcedure
+  // F03: same profile-write policy as workforce.update (HR / manager / ops manager; owner/admin always).
+  updateHrInfo: roleProcedure("hr", "manager", "ops_manager")
     .input(z.object({ traineeCode: z.string(), address: z.string().optional(), emergencyContactName: z.string().optional(), emergencyContactPhone: z.string().optional(), emergencyContactRelation: z.string().optional() }))
     .mutation(async ({ ctx, input }) => {
       const { getDb } = await import("./db");
@@ -3471,7 +3492,39 @@ const separationRouter = router({
       return { success: true };
     }),
 });
+/** F14: earliest requested date as a Cairo YYYY-MM-DD key, from either input form; null if malformed. */
+function earliestRequestDateKey(dates: string[] | undefined, ts: number | undefined): string | null {
+  const keys: string[] = [];
+  for (const d of dates ?? []) {
+    const k = String(d).trim().slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(k) || !Number.isFinite(Date.parse(`${k}T00:00:00Z`))) return null;
+    keys.push(k);
+  }
+  if (ts !== undefined) {
+    if (!Number.isFinite(ts) || ts <= 0) return null;
+    // Same Cairo calendar day the rest of the app uses (DST-aware).
+    keys.push(new Intl.DateTimeFormat("en-CA", { timeZone: "Africa/Cairo", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(ts)));
+  }
+  return keys.sort()[0] ?? null;
+}
+
 // ─── Payroll v2 Router ───────────────────────────────────────────────────────
+/** F07: every payroll mutation advances the edit version so open edit forms detect it. */
+async function payrollVersionBump() {
+  const { sql } = await import("drizzle-orm");
+  const { payrollRecords } = await import("../drizzle/schema");
+  return sql`GREATEST(COALESCE(${payrollRecords.recordUpdatedAt}, 0) + 1, ${Date.now()})`;
+}
+/** F08: strict money/number parsing — "100abc", "EGP 10000", "Infinity", "#VALUE!" are all rejected. */
+function strictNumber(raw: string): number | null {
+  const clean = raw.replace(/[,\s]/g, "");
+  if (!/^-?\d+(\.\d+)?$/.test(clean)) return null;
+  const n = Number(clean);
+  return Number.isFinite(n) ? n : null;
+}
+const finiteMoney = () => z.number().finite();
+
+const sqlFnVer = drizzleSql;
 const payrollV2Router = router({
   uploadPayrollV2: roleProcedure("finance", "hr", "manager")
     .input(z.object({
@@ -3480,20 +3533,20 @@ const payrollV2Router = router({
         crdts: z.string(),
         alias: z.string().optional(),
         agentCode: z.string().optional(),
-        baseSalary: z.number().optional(),
-        workingHours: z.number().optional(),
-        ot1x5Hours: z.number().optional(),
-        ot1x5Pay: z.number().optional(),
-        ot2xHours: z.number().optional(),
-        ot2xPay: z.number().optional(),
-        ot3xHours: z.number().optional(),
-        ot3xPay: z.number().optional(),
-        coachingBonus: z.number().optional(),
-        commissionEgp: z.number().optional(),
-        qualityDeductions: z.number().optional(),
-        attendanceDeductions: z.number().optional(),
-        totalDeductions: z.number().optional(),
-        netPay: z.number().optional(),
+        baseSalary: finiteMoney().optional(),
+        workingHours: finiteMoney().optional(),
+        ot1x5Hours: finiteMoney().optional(),
+        ot1x5Pay: finiteMoney().optional(),
+        ot2xHours: finiteMoney().optional(),
+        ot2xPay: finiteMoney().optional(),
+        ot3xHours: finiteMoney().optional(),
+        ot3xPay: finiteMoney().optional(),
+        coachingBonus: finiteMoney().optional(),
+        commissionEgp: finiteMoney().optional(),
+        qualityDeductions: finiteMoney().optional(),
+        attendanceDeductions: finiteMoney().optional(),
+        totalDeductions: finiteMoney().optional(),
+        netPay: finiteMoney().optional(),
         qualityDetail: z.string().optional(),
         attendanceDetail: z.string().optional(),
       })),
@@ -3513,6 +3566,8 @@ const payrollV2Router = router({
       const problems: Array<{ crdts: string; problems: string[] }> = [];
       for (const row of input.rows) {
         const p = validatePayrollRow(row);
+        // F08: Base Salary is mandatory — a missing/unreadable salary must reject the batch, not store null.
+        if (row.baseSalary == null) p.push("Base Salary is missing or not a number");
         if (p.length) problems.push({ crdts: row.crdts, problems: p });
       }
       if (problems.length) {
@@ -3569,16 +3624,23 @@ const payrollV2Router = router({
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { payrollRecords } = await import("../drizzle/schema");
       const { eq } = await import("drizzle-orm");
-      const rec = await getPayrollRecordWithAdjustments(input.id);
-      if (!rec) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
-      // "Paid" means the FULL amount owed (net + commission + adjustments) has been paid.
-      const total = calcFinalPay(rec.record, rec.adjustments);
-      await db.update(payrollRecords).set({
-        paymentStatus: input.status,
-        paidAt: input.status === "paid" ? Date.now() : null,
-        paidBy: input.status === "paid" ? (ctx.user.name ?? ctx.user.email ?? "admin") : null,
-        amountPaid: input.status === "paid" ? total.toFixed(2) : null,
-      }).where(eq(payrollRecords.id, input.id));
+      const ver = await payrollVersionBump();
+      const total = await db.transaction(async (tx) => {
+        const lk = await tx.select({ id: payrollRecords.id }).from(payrollRecords).where(eq(payrollRecords.id, input.id)).for("update").limit(1);
+        if (!lk[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
+        const rec = await getPayrollRecordWithAdjustments(input.id, tx as never);
+        if (!rec) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
+        // "Paid" means the FULL amount owed (net + commission + adjustments) has been paid.
+        const t = calcFinalPay(rec.record, rec.adjustments);
+        await tx.update(payrollRecords).set({
+          paymentStatus: input.status,
+          paidAt: input.status === "paid" ? Date.now() : null,
+          paidBy: input.status === "paid" ? (ctx.user.name ?? ctx.user.email ?? "admin") : null,
+          amountPaid: input.status === "paid" ? t.toFixed(2) : null,
+          recordUpdatedAt: ver,
+        } as never).where(eq(payrollRecords.id, input.id));
+        return t;
+      });
       await auditEntry(ctx.user, input.status === "paid" ? "mark_paid" : "mark_unpaid", "payroll", String(input.id), JSON.stringify({ total }));
       return { ok: true };
     }),
@@ -3609,53 +3671,49 @@ const payrollV2Router = router({
       const { eq } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      // Optimistic locking — recordUpdatedAt is stamped on every edit so it
-      // protects BOTH paid and unpaid records (paidAt=null was blind to unpaid)
-      if (input.lastKnownRecordUpdatedAt !== undefined && input.lastKnownRecordUpdatedAt !== null) {
-        const [cur] = await db.select({ rua: payrollRecords.recordUpdatedAt } as never)
-          .from(payrollRecords).where(eq(payrollRecords.id, input.id)).limit(1) as Array<{ rua: number | null }>;
-        if (cur && cur.rua !== null && cur.rua !== input.lastKnownRecordUpdatedAt) {
-          throw new TRPCError({ code: "CONFLICT", message: "Record was updated by someone else — please refresh and try again." });
-        }
-      } else if (input.lastKnownPaidAt !== undefined) {
-        // Legacy fallback for clients that only send lastKnownPaidAt
-        const [cur] = await db.select({ paidAt: payrollRecords.paidAt }).from(payrollRecords).where(eq(payrollRecords.id, input.id)).limit(1);
-        if (cur && cur.paidAt !== null && cur.paidAt !== input.lastKnownPaidAt) {
-          throw new TRPCError({ code: "CONFLICT", message: "Record was updated by someone else — please refresh and try again." });
-        }
-      }
+      // F08: validate every number BEFORE touching the database.
       const updates: Record<string, string | null> = {};
       const NUMERIC_FIELDS = ["baseSalary","ot1x5Hours","ot1x5Pay","ot2xHours","ot2xPay","ot3xHours","ot3xPay","coachingBonus","commissionEgp","totalDeductions","netPay","workingHours"];
       for (const [k, v] of Object.entries(input.data)) {
-        if (v !== undefined) {
-          const val = v === "" ? null : v;
-          if (val !== null && NUMERIC_FIELDS.includes(k)) {
-            const clean = val.replace(/,/g, ""); // strip formatting commas
-            const num = parseFloat(clean);
-            if (isNaN(num)) throw new TRPCError({ code: "BAD_REQUEST", message: `${k} must be a valid number` });
-            if (num < 0) throw new TRPCError({ code: "BAD_REQUEST", message: `${k} cannot be negative` });
-            updates[k] = clean;
-          } else {
-            updates[k] = val;
-          }
+        if (v === undefined) continue;
+        const val = v.trim() === "" ? null : v;
+        if (val !== null && NUMERIC_FIELDS.includes(k)) {
+          const num = strictNumber(val);
+          if (num === null) throw new TRPCError({ code: "BAD_REQUEST", message: `${k} must be a plain number (got "${val}")` });
+          if (num < 0) throw new TRPCError({ code: "BAD_REQUEST", message: `${k} cannot be negative` });
+          updates[k] = String(num);
+        } else {
+          updates[k] = val;
         }
       }
-      // Auto-recalculate netPay if not explicitly set but other fields changed
-      if (!updates.netPay) {
-        const existing = await db.select().from(payrollRecords).where(eq(payrollRecords.id, input.id)).limit(1);
-        if (existing[0]) {
-          const r = { ...existing[0], ...updates };
+      // F07: check-and-write happen under ONE row lock, so two saves from the same version
+      // can't both pass. A version is always advanced (never null after the first edit).
+      await db.transaction(async (tx) => {
+        const [cur] = await tx.select().from(payrollRecords).where(eq(payrollRecords.id, input.id)).for("update").limit(1);
+        if (!cur) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
+        const curVer = (cur as { recordUpdatedAt?: number | null }).recordUpdatedAt ?? null;
+        if (input.lastKnownRecordUpdatedAt !== undefined) {
+          if (curVer !== (input.lastKnownRecordUpdatedAt ?? null)) {
+            throw new TRPCError({ code: "CONFLICT", message: "Record was updated by someone else — please refresh and try again." });
+          }
+        } else if (input.lastKnownPaidAt !== undefined && (cur.paidAt ?? null) !== (input.lastKnownPaidAt ?? null)) {
+          // Legacy fallback for clients that only send lastKnownPaidAt
+          throw new TRPCError({ code: "CONFLICT", message: "Record was updated by someone else — please refresh and try again." });
+        }
+        // Auto-recalculate netPay if not explicitly set but other fields changed
+        if (!updates.netPay) {
+          const r = { ...cur, ...updates };
           const n = (v: string | null) => parseFloat(String(v || "0")) || 0;
           const calcNet = n(r.baseSalary) + n(r.ot1x5Pay) + n(r.ot2xPay) + n(r.ot3xPay) + n(r.coachingBonus) - n(r.totalDeductions);
           updates.netPay = calcNet.toFixed(2);
         }
-      }
-      // Stamp the edit timestamp — used as optimistic lock token on next edit
-      (updates as Record<string, unknown>).recordUpdatedAt = Date.now();
-      await db.update(payrollRecords).set(updates).where(eq(payrollRecords.id, input.id));
-      // Amounts may have changed on a record already marked paid — re-derive status.
-      const { recomputePaymentStatus } = await import("./db");
-      await recomputePaymentStatus(input.id);
+        const nextVer = Math.max((curVer ?? 0) + 1, Date.now());
+        (updates as Record<string, unknown>).recordUpdatedAt = nextVer;
+        await tx.update(payrollRecords).set(updates).where(eq(payrollRecords.id, input.id));
+        // Amounts may have changed on a record already marked paid — re-derive status (same tx).
+        const { recomputePaymentStatus } = await import("./db");
+        await recomputePaymentStatus(input.id, tx as never);
+      });
       await auditEntry(ctx.user, "edit_payroll_record", "payroll", String(input.id), JSON.stringify({ changes: updates }));
       return { success: true };
     }),
@@ -3702,19 +3760,19 @@ const payrollV2Router = router({
       const paidAt = Date.now();
       const { getPayrollRecordWithAdjustments } = await import("./db");
       const { eq } = await import("drizzle-orm");
-      // Prefetch OUTSIDE the transaction: helper reads open their own pool
-      // connection, and doing that inside an open tx can exhaust the pool.
-      const prefetched = [] as Array<{ id: number; total: number }>;
-      for (const id of input.ids) {
-        const rec = await getPayrollRecordWithAdjustments(id);
-        if (!rec) continue;
-        prefetched.push({ id, total: calcFinalPay(rec.record, rec.adjustments) });
-      }
+      // F05/F06: lock each row and compute its total on the SAME transaction connection.
+      const ver = await payrollVersionBump();
+      const ids = Array.from(new Set(input.ids)).sort((a, b) => a - b); // fixed lock order avoids deadlocks
       await db.transaction(async (tx) => {
-        for (const { id, total } of prefetched) {
+        for (const id of ids) {
+          const lk = await tx.select({ id: payrollRecords.id }).from(payrollRecords).where(eq(payrollRecords.id, id)).for("update").limit(1);
+          if (!lk[0]) continue;
+          const rec = await getPayrollRecordWithAdjustments(id, tx as never);
+          if (!rec) continue;
+          const total = calcFinalPay(rec.record, rec.adjustments);
           // Marking paid records the full amount owed so "remaining" is 0 and reports reconcile.
           await tx.update(payrollRecords)
-            .set({ paymentStatus: "paid", paidAt, paidBy, amountPaid: total.toFixed(2) } as never)
+            .set({ paymentStatus: "paid", paidAt, paidBy, amountPaid: total.toFixed(2), recordUpdatedAt: ver } as never)
             .where(eq(payrollRecords.id, id));
         }
       });
@@ -3735,30 +3793,34 @@ const payrollV2Router = router({
       const paidBy = ctx.user.name ?? ctx.user.email ?? "Unknown Admin";
       const paidAt = Date.now();
       let count = 0;
-      // Prefetch OUTSIDE the transaction (see bulkMarkPaid) — and de-dupe ids so
-      // a double-included row can't be paid twice in one call.
+      // F05/F06: read amountPaid UNDER a row lock on the transaction connection, so two
+      // operators paying at once both land (1,000 + 1,000 = 2,000, never 1,000).
       const { getPayrollRecordWithAdjustments } = await import("./db");
-      const prefetched = [] as Array<{ id: number; totalPaid: number; fullyPaid: boolean }>;
-      for (const id of Array.from(new Set(input.ids))) {
-        const full = await getPayrollRecordWithAdjustments(id);
-        const rec = full?.record;
-        if (!rec || rec.paymentStatus === "paid") continue;
-        const owed = calcFinalPay(rec, full!.adjustments); // net + commission + adjustments
-        const prevPaid = parseFloat(String((rec as Record<string, unknown>).amountPaid ?? "0"));
-        const totalPaid = Math.min(prevPaid + input.amountEach, owed);
-        prefetched.push({ id, totalPaid, fullyPaid: totalPaid >= owed - 0.005 });
-      }
+      const ver = await payrollVersionBump();
+      const ids = Array.from(new Set(input.ids)).sort((a, b) => a - b); // de-dupe + fixed lock order
+      const applied: Array<{ id: number; applied: number }> = [];
       await db.transaction(async (tx) => {
-        for (const { id, totalPaid, fullyPaid } of prefetched) {
+        for (const id of ids) {
+          const lk = await tx.select({ amountPaid: payrollRecords.amountPaid, paymentStatus: payrollRecords.paymentStatus })
+            .from(payrollRecords).where(eq(payrollRecords.id, id)).for("update").limit(1);
+          if (!lk[0] || lk[0].paymentStatus === "paid") continue;
+          const full = await getPayrollRecordWithAdjustments(id, tx as never);
+          if (!full) continue;
+          const owed = calcFinalPay(full.record, full.adjustments); // net + commission + adjustments
+          const prevPaid = parseFloat(String(lk[0].amountPaid ?? "0")) || 0;
+          const totalPaid = Math.min(prevPaid + input.amountEach, owed);
+          if (totalPaid <= prevPaid + 0.005) continue;
           await tx.update(payrollRecords).set({
             amountPaid: String(totalPaid.toFixed(2)), paidBy, paidAt,
-            paymentStatus: fullyPaid ? "paid" : "pending",
+            paymentStatus: totalPaid >= owed - 0.005 ? "paid" : "pending",
+            recordUpdatedAt: ver,
           } as never).where(eq(payrollRecords.id, id));
+          applied.push({ id, applied: Math.round((totalPaid - prevPaid) * 100) / 100 });
           count++;
         }
       });
-      await auditEntry(ctx.user, "bulk_partial_pay", "payroll", input.month, JSON.stringify({ ids: input.ids, amountEach: input.amountEach, count, paidBy }));
-      return { ok: true, count, paidBy };
+      await auditEntry(ctx.user, "bulk_partial_pay", "payroll", input.month, JSON.stringify({ ids: input.ids, amountEach: input.amountEach, count, paidBy, applied }));
+      return { ok: true, count, paidBy, applied };
     }),
 
   /** Partial pay: record a partial amount paid and who paid it.
@@ -3773,6 +3835,7 @@ const payrollV2Router = router({
       const { payrollRecords } = await import("../drizzle/schema");
       const { getPayrollRecordWithAdjustments } = await import("./db");
 
+      const ver = await payrollVersionBump();
       // M-14: wrap in a transaction with SELECT … FOR UPDATE so two concurrent
       // partial-pay calls can't both read the same prevPaid and each add their
       // amount, resulting in only one payment being recorded.
@@ -3785,7 +3848,8 @@ const payrollV2Router = router({
           .limit(1);
         if (!locked[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
 
-        const full = await getPayrollRecordWithAdjustments(input.id);
+        // F06: nested reads on the transaction connection, never the global pool.
+        const full = await getPayrollRecordWithAdjustments(input.id, tx as never);
         const rec = full?.record;
         if (!rec) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
         const owed = calcFinalPay(rec, full!.adjustments); // net + commission + adjustments
@@ -3806,6 +3870,7 @@ const payrollV2Router = router({
             paidBy,
             paidAt,
             paymentStatus: fullyPaid ? "paid" : "pending",
+            recordUpdatedAt: ver,
           } as never)
           .where(eq(payrollRecords.id, input.id));
         return { ok: true, totalPaid, remaining: Math.max(0, owed - totalPaid), fullyPaid, paidBy };
@@ -3825,13 +3890,19 @@ const payrollV2Router = router({
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { payrollRecords } = await import("../drizzle/schema");
       const { getPayrollRecordWithAdjustments } = await import("./db");
-      const full = await getPayrollRecordWithAdjustments(input.id);
-      if (!full) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
       const paidBy = ctx.user.name ?? ctx.user.email ?? "Unknown Admin";
-      const total = calcFinalPay(full.record, full.adjustments);
-      await db.update(payrollRecords)
-        .set({ amountPaid: total.toFixed(2), paidBy, paidAt: Date.now(), paymentStatus: "paid" } as never)
-        .where(eq(payrollRecords.id, input.id));
+      const ver = await payrollVersionBump();
+      const total = await db.transaction(async (tx) => {
+        const lk = await tx.select({ id: payrollRecords.id }).from(payrollRecords).where(eq(payrollRecords.id, input.id)).for("update").limit(1);
+        if (!lk[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
+        const full = await getPayrollRecordWithAdjustments(input.id, tx as never);
+        if (!full) throw new TRPCError({ code: "NOT_FOUND", message: "Record not found" });
+        const t = calcFinalPay(full.record, full.adjustments);
+        await tx.update(payrollRecords)
+          .set({ amountPaid: t.toFixed(2), paidBy, paidAt: Date.now(), paymentStatus: "paid", recordUpdatedAt: ver } as never)
+          .where(eq(payrollRecords.id, input.id));
+        return t;
+      });
       await auditEntry(ctx.user, "pay_remaining", "payroll", String(input.id), JSON.stringify({ paidBy, total }));
       return { ok: true, paidBy };
     }),
@@ -4206,6 +4277,14 @@ const academyRouter = router({
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
       const { academyProgress, academyModules, academyAssignments } = await import("../drizzle/schema");
 
+      // F16: the module must belong to the course, and the course must be assigned to THIS agent.
+      const [mod] = await db.select({ id: academyModules.id }).from(academyModules)
+        .where(and(eq(academyModules.id, input.moduleId), eq(academyModules.courseId, input.courseId))).limit(1);
+      if (!mod) throw new TRPCError({ code: "BAD_REQUEST", message: "That module is not part of this course." });
+      const [assigned] = await db.select({ id: academyAssignments.id }).from(academyAssignments)
+        .where(and(eq(academyAssignments.traineeCode, traineeCode), eq(academyAssignments.courseId, input.courseId))).limit(1);
+      if (!assigned) throw new TRPCError({ code: "FORBIDDEN", message: "This course is not assigned to you." });
+
       const already = await db.select().from(academyProgress).where(and(
         eq(academyProgress.traineeCode, traineeCode),
         eq(academyProgress.moduleId, input.moduleId),
@@ -4223,7 +4302,10 @@ const academyRouter = router({
           eq(academyProgress.courseId, input.courseId),
         )),
       ]);
-      if (mods.length > 0 && done.length >= mods.length) {
+      // F16: completion = every module ID of the course is in the agent's progress (a set check,
+      // not a row count that unrelated/duplicate rows could inflate).
+      const doneIds = new Set(done.filter(d => d.courseId === input.courseId).map(d => d.moduleId));
+      if (mods.length > 0 && mods.every(m => doneIds.has(m.id))) {
         // If the course has a quiz (passMark > 0 AND questions exist), finishing
         // modules only unlocks the assessment — completion happens in submitQuiz.
         const { academyCourses, academyQuizQuestions } = await import("../drizzle/schema");
@@ -4278,15 +4360,24 @@ const academyRouter = router({
     }),
   /** Agent submits their CEFR result (called after they see their score). */
   submitCefrScore: agentProcedure
-    .input(z.object({ level: z.string(), score: z.number().int().min(0).max(60), totalQuestions: z.number().int().default(60) }))
+    .input(z.object({ level: z.string().optional(), score: z.number().int().min(0).max(60), totalQuestions: z.number().int().optional() }))
     .mutation(async ({ ctx, input }) => {
       const traineeCode = ctx.agent.traineeCode;
       const { getDb } = await import("./db");
       const { englishScores } = await import("../drizzle/schema");
+      const { and, eq, gte } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      await db.insert(englishScores).values({ traineeCode, level: input.level, score: input.score, totalQuestions: input.totalQuestions, takenAt: Date.now() });
-      return { ok: true };
+      // F16: this is an unproctored SELF-ASSESSMENT. The level is derived on the server from the
+      // score (same thresholds as the portal) — a client-sent level is ignored — and at most one
+      // attempt per 24h is stored. Never treat it as verified hiring evidence.
+      const sc = input.score;
+      const level = sc >= 57 ? "C2" : sc >= 47 ? "C1" : sc >= 37 ? "B2" : sc >= 27 ? "B1" : sc >= 17 ? "A2" : "A1";
+      const recent = await db.select({ id: englishScores.id }).from(englishScores)
+        .where(and(eq(englishScores.traineeCode, traineeCode), gte(englishScores.takenAt, Date.now() - 24 * 3600_000))).limit(1);
+      if (recent[0]) throw new TRPCError({ code: "TOO_MANY_REQUESTS", message: "You can take the English assessment once every 24 hours." });
+      await db.insert(englishScores).values({ traineeCode, level, score: sc, totalQuestions: 60, takenAt: Date.now() });
+      return { ok: true, level };
     }),
   /** Admin: all CEFR scores (latest per agent). */
   listCefrScores: staffProcedure.query(async () => {
@@ -6056,13 +6147,13 @@ const integrationsRouter = router({
     }
 
     // Fetch calendar events — use provided date range or default to last 90 days + next 30 days
-    // Use explicit +03:00 offset (Cairo/GMT+3) so date boundaries are correct for the user's timezone
-    const TZ_OFFSET = "+03:00";
+    // F18: real Cairo day bounds (UTC+2 in winter, UTC+3 in summer) instead of a fixed +03:00.
+    const { businessDayBounds: _cairoDay } = await import("./_core/time");
     const timeMin = input?.dateFrom
-      ? new Date(input.dateFrom + "T00:00:00" + TZ_OFFSET).toISOString()
+      ? new Date(_cairoDay(input.dateFrom).start).toISOString()
       : new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
     const timeMax = input?.dateTo
-      ? new Date(input.dateTo + "T23:59:59" + TZ_OFFSET).toISOString()
+      ? new Date(_cairoDay(input.dateTo).end - 1000).toISOString()
       : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
     // Step 1: List all calendars the user has access to
     const calListRes = await fetch("https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=50", {
@@ -6341,10 +6432,15 @@ const adjustmentsRouter = router({
       if (!db) return [];
       const agent = await getWorkforceAgentByCode(ctx.agent.traineeCode);
       const crdts = agent?.crdts || ctx.agent.traineeCode;
-      return db.select().from(payrollAdjustments)
-        .where(and(eq(payrollAdjustments.crdts, crdts), eq(payrollAdjustments.month, input.month)));
+      // F10: same roster-widened identity rule as the payslip, not exact string equality.
+      const { expandCrdtsIdentity, adjMatchesIdentity } = await import("./db");
+      const identity = new Set(await expandCrdtsIdentity(crdts));
+      void and;
+      const monthAdj = await db.select().from(payrollAdjustments).where(eq(payrollAdjustments.month, input.month));
+      return monthAdj.filter(a => adjMatchesIdentity(a.crdts, identity));
     }),
-  getForMonth: staffProcedure
+  // F02: salary adjustments are money data — MONEY_ROLES only (owner/admin/manager/hr/finance).
+  getForMonth: roleProcedure("finance", "hr", "manager")
     .input(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/) }))
     .query(async ({ input }) => {
       const { getDb } = await import("./db");
@@ -6498,7 +6594,7 @@ const commissionRouter = router({
             const { payrollRecords } = await import("../drizzle/schema");
             const { sql: sqlFn } = await import("drizzle-orm");
             await db.update(payrollRecords)
-              .set({ commissionEgp: String(row.commissionEgp) })
+              .set({ commissionEgp: String(row.commissionEgp), recordUpdatedAt: sqlFnVer`GREATEST(COALESCE(${payrollRecords.recordUpdatedAt}, 0) + 1, ${Date.now()})` } as never)
               .where(sqlFn`${payrollRecords.crdts} = ${rowCrdts} AND ${payrollRecords.month} = ${input.paymentCycle}`);
             const { recomputePaymentStatusByCrdtsMonth } = await import("./db");
             await recomputePaymentStatusByCrdtsMonth(rowCrdts, input.paymentCycle);
@@ -6533,7 +6629,7 @@ const commissionRouter = router({
         if (crdts && paymentCycle) {
           const { sql: sqlFn } = await import("drizzle-orm");
           await db.update(payrollRecords)
-            .set({ commissionEgp: String(input.commissionEgp) })
+            .set({ commissionEgp: String(input.commissionEgp), recordUpdatedAt: sqlFnVer`GREATEST(COALESCE(${payrollRecords.recordUpdatedAt}, 0) + 1, ${Date.now()})` } as never)
             .where(sqlFn`${payrollRecords.crdts} = ${crdts} AND ${payrollRecords.month} = ${paymentCycle}`);
         }
       }
@@ -6561,7 +6657,7 @@ const commissionRouter = router({
       if (crdts && oldCycle) {
         const { sql: sqlFn } = await import("drizzle-orm");
         await db.update(payrollRecords)
-          .set({ commissionEgp: "0" })
+          .set({ commissionEgp: "0", recordUpdatedAt: sqlFnVer`GREATEST(COALESCE(${payrollRecords.recordUpdatedAt}, 0) + 1, ${Date.now()})` } as never)
           .where(sqlFn`${payrollRecords.crdts} = ${crdts} AND ${payrollRecords.month} = ${oldCycle}`);
       }
       // Update commission record to new cycle
@@ -6573,7 +6669,7 @@ const commissionRouter = router({
       if (crdts) {
         const { sql: sqlFn } = await import("drizzle-orm");
         await db.update(payrollRecords)
-          .set({ commissionEgp: commissionEgp ?? "0" })
+          .set({ commissionEgp: commissionEgp ?? "0", recordUpdatedAt: sqlFnVer`GREATEST(COALESCE(${payrollRecords.recordUpdatedAt}, 0) + 1, ${Date.now()})` } as never)
           .where(sqlFn`${payrollRecords.crdts} = ${crdts} AND ${payrollRecords.month} = ${input.newPaymentCycle}`);
       }
       return { ok: true };
@@ -6601,7 +6697,7 @@ const commissionRouter = router({
       await db.transaction(async (tx) => {
         // 2. Clear commission off the OLD cycle's payroll records
         for (const rec of recs) {
-          await tx.update(payrollRecords).set({ commissionEgp: "0" })
+          await tx.update(payrollRecords).set({ commissionEgp: "0", recordUpdatedAt: sqlFnVer`GREATEST(COALESCE(${payrollRecords.recordUpdatedAt}, 0) + 1, ${Date.now()})` } as never)
             .where(and(eq(payrollRecords.crdts, rec.crdts), eq(payrollRecords.month, input.fromCycle)));
         }
         // 3. Move the commission records to the new pay cycle
@@ -6614,7 +6710,7 @@ const commissionRouter = router({
           .where(eq(commissionLeaderboard.cycleKey, input.fromCycle));
         // 5. Apply commission onto the NEW cycle's payroll records (if that payroll exists yet)
         for (const rec of recs) {
-          await tx.update(payrollRecords).set({ commissionEgp: rec.commissionEgp ?? "0" })
+          await tx.update(payrollRecords).set({ commissionEgp: rec.commissionEgp ?? "0", recordUpdatedAt: sqlFnVer`GREATEST(COALESCE(${payrollRecords.recordUpdatedAt}, 0) + 1, ${Date.now()})` } as never)
             .where(and(eq(payrollRecords.crdts, rec.crdts), eq(payrollRecords.month, input.toCycle)));
         }
       });
@@ -6717,7 +6813,7 @@ const commissionRouter = router({
       if (rec) {
         // Clear commission from matching payroll record
         await db.update(payrollRecords)
-          .set({ commissionEgp: "0" })
+          .set({ commissionEgp: "0", recordUpdatedAt: sqlFnVer`GREATEST(COALESCE(${payrollRecords.recordUpdatedAt}, 0) + 1, ${Date.now()})` } as never)
           .where(and(
             eq(payrollRecords.crdts, rec.crdts),
             eq(payrollRecords.month, rec.paymentCycle)
@@ -6741,7 +6837,7 @@ const commissionRouter = router({
         // Clear commission ONLY on this cycle's payroll month — never across every month the agent has.
         for (const rec of recs) {
           await tx.update(payrollRecords)
-            .set({ commissionEgp: "0" })
+            .set({ commissionEgp: "0", recordUpdatedAt: sqlFnVer`GREATEST(COALESCE(${payrollRecords.recordUpdatedAt}, 0) + 1, ${Date.now()})` } as never)
             .where(and(eq(payrollRecords.crdts, rec.crdts), eq(payrollRecords.month, input.cycleKey)));
         }
         await tx.delete(commissions).where(eq(commissions.paymentCycle, input.cycleKey));
@@ -8537,6 +8633,16 @@ const advancesRouter = router({
 });
 
 // ─── Contracts ────────────────────────────────────────────────────────────────
+/** F02: contract PII (free-text notes, insurance flags) only for owner/admin/hr/manager. */
+function redactContract<T extends Record<string, unknown>>(row: T, role: string | null | undefined): T {
+  if (role === "owner" || role === "admin" || role === "hr" || role === "manager") return row;
+  const out: Record<string, unknown> = { ...row };
+  if ("notes" in out) out.notes = null;
+  if ("isMedicallyInsured" in out) out.isMedicallyInsured = null;
+  if ("isSociallyInsured" in out) out.isSociallyInsured = null;
+  return out as T;
+}
+
 const contractsRouter = router({
   /** Create or update a contract for an agent. */
   upsert: roleProcedure("hr", "manager")
@@ -8566,23 +8672,26 @@ const contractsRouter = router({
       return { ok: true } as const;
     }),
 
-  /** Get contract for a specific agent (by traineeCode). */
-  getByCode: staffProcedure
+  /** Get contract for a specific agent (by traineeCode).
+   *  F02: HR/manager see everything; team leads get dates/status only (notes + insurance redacted). */
+  getByCode: roleProcedure("hr", "manager", "team_lead")
     .input(z.object({ traineeCode: z.string() }))
-    .query(async ({ input }) => {
+    .query(async ({ ctx, input }) => {
       const { getContractByCode } = await import("./db");
-      return getContractByCode(input.traineeCode);
+      const c = await getContractByCode(input.traineeCode);
+      return c ? redactContract(c, ctx.user.role) : c;
     }),
 
   /** List all contracts with agent info joined. */
-  listAll: staffProcedure
-    .query(async () => {
+  listAll: roleProcedure("hr", "manager", "team_lead")
+    .query(async ({ ctx }) => {
       const { listAllContracts } = await import("./db");
-      return listAllContracts();
+      const rows = await listAllContracts();
+      return rows.map((r) => redactContract(r, ctx.user.role));
     }),
 
   /** List active agents who have no contract yet. */
-  listMissing: staffProcedure
+  listMissing: roleProcedure("hr", "manager", "team_lead")
     .query(async () => {
       const { listAgentsWithoutContracts } = await import("./db");
       return listAgentsWithoutContracts();
@@ -8628,6 +8737,13 @@ async function closeStaleOpenRows(traineeCode: string) {
     .where(and(eq(agentAuxLogs.traineeCode, traineeCode), isNull(agentAuxLogs.endTime), lt(agentAuxLogs.startTime, now - AUX_MAX_OPEN_MS)));
 }
 
+/** F17: every shift/AUX transition for one agent is serialised on their workforce row
+ *  (same lock clockIn uses), so two tabs can never interleave start/change/end/clock-out. */
+async function lockAgentRow(tx: { execute: (q: never) => Promise<unknown> }, traineeCode: string) {
+  const { sql } = await import("drizzle-orm");
+  await tx.execute(sql`SELECT id FROM workforce_agents WHERE traineeCode = ${traineeCode} FOR UPDATE` as never);
+}
+
 /** Set the agent_presence status to mirror the current AUX state. */
 async function syncPresenceFromState(traineeCode: string, auxType: string | null) {
   const { getDb } = await import("./db");
@@ -8662,16 +8778,20 @@ const timeTrackingRouter = router({
       const { eq, and, isNull } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      // Must be clocked in.
-      const [shift] = await db.select({ id: agentShifts.id }).from(agentShifts)
-        .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut))).limit(1);
-      if (!shift) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Clock in before starting AUX." });
-      // Exactly one open AUX at a time — a double-click or second tab must not create a second row.
-      const [open] = await db.select({ id: agentAuxLogs.id, auxType: agentAuxLogs.auxType }).from(agentAuxLogs)
-        .where(and(eq(agentAuxLogs.traineeCode, traineeCode), isNull(agentAuxLogs.endTime))).limit(1);
-      if (open) throw new TRPCError({ code: "CONFLICT", message: `You are already in ${open.auxType}. End it first.` });
       const now = Date.now();
-      const [row] = await db.insert(agentAuxLogs).values({ traineeCode, auxType: input.auxType, startTime: now, note: input.note ?? null, createdAt: now }).$returningId();
+      const row = await db.transaction(async (tx) => {
+        await lockAgentRow(tx as never, traineeCode); // F17
+        // Must be clocked in (checked under the lock).
+        const [shift] = await tx.select({ id: agentShifts.id }).from(agentShifts)
+          .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut))).limit(1);
+        if (!shift) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Clock in before starting AUX." });
+        // Exactly one open AUX at a time — a double-click or second tab must not create a second row.
+        const [open] = await tx.select({ id: agentAuxLogs.id, auxType: agentAuxLogs.auxType }).from(agentAuxLogs)
+          .where(and(eq(agentAuxLogs.traineeCode, traineeCode), isNull(agentAuxLogs.endTime))).limit(1);
+        if (open) throw new TRPCError({ code: "CONFLICT", message: `You are already in ${open.auxType}. End it first.` });
+        const [r] = await tx.insert(agentAuxLogs).values({ traineeCode, auxType: input.auxType, startTime: now, note: input.note ?? null, createdAt: now }).$returningId();
+        return r;
+      });
       await syncPresenceFromState(traineeCode, input.auxType);
       return { ok: true, id: row?.id ?? null };
     }),
@@ -8691,12 +8811,13 @@ const timeTrackingRouter = router({
       const { eq, and, isNull, desc } = await import("drizzle-orm");
       const db = await getDb();
       if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-      const [shift] = await db.select({ id: agentShifts.id }).from(agentShifts)
-        .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut))).limit(1);
-      if (!shift) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Clock in first." });
       const now = Date.now();
       // Transaction + row lock: two quick taps must never leave two open AUX rows.
       const changed = await db.transaction(async (tx) => {
+        await lockAgentRow(tx as never, traineeCode); // F17: same lock as clockIn/clockOut
+        const [shift] = await tx.select({ id: agentShifts.id }).from(agentShifts)
+          .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut))).limit(1);
+        if (!shift) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Clock in first." });
         const open = await tx.select().from(agentAuxLogs)
           .where(and(eq(agentAuxLogs.traineeCode, traineeCode), isNull(agentAuxLogs.endTime))).orderBy(desc(agentAuxLogs.startTime)).for("update");
         const current = open[0];
@@ -8726,11 +8847,15 @@ const timeTrackingRouter = router({
       const where = input?.id
         ? and(eq(agentAuxLogs.id, input.id), eq(agentAuxLogs.traineeCode, traineeCode), isNull(agentAuxLogs.endTime))
         : and(eq(agentAuxLogs.traineeCode, traineeCode), isNull(agentAuxLogs.endTime));
-      const [active] = await db.select().from(agentAuxLogs).where(where).orderBy(desc(agentAuxLogs.startTime)).limit(1);
-      if (!active) return { ok: true, durationMs: 0 };
-      const endTime = Date.now();
-      const durationMs = Math.max(0, Math.min(endTime - active.startTime, AUX_MAX_OPEN_MS));
-      await db.update(agentAuxLogs).set({ endTime, durationMs }).where(and(eq(agentAuxLogs.id, active.id), isNull(agentAuxLogs.endTime)));
+      const durationMs = await db.transaction(async (tx) => {
+        await lockAgentRow(tx as never, traineeCode); // F17
+        const [active] = await tx.select().from(agentAuxLogs).where(where).orderBy(desc(agentAuxLogs.startTime)).limit(1);
+        if (!active) return 0;
+        const endTime = Date.now();
+        const d = Math.max(0, Math.min(endTime - active.startTime, AUX_MAX_OPEN_MS));
+        await tx.update(agentAuxLogs).set({ endTime, durationMs: d }).where(and(eq(agentAuxLogs.id, active.id), isNull(agentAuxLogs.endTime)));
+        return d;
+      });
       await syncPresenceFromState(traineeCode, null);
       return { ok: true, durationMs };
     }),
@@ -9029,17 +9154,24 @@ const timeTrackingRouter = router({
     const { eq, and, isNull, desc } = await import("drizzle-orm");
     const db = await getDb();
     if (!db) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "DB unavailable" });
-    const [active] = await db.select().from(agentShifts)
-      .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut)))
-      .orderBy(desc(agentShifts.clockIn)).limit(1);
-    if (!active) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Not clocked in" });
-    const clockOut = Date.now();
-    // Clocking out also ends any open AUX so nothing dangles overnight.
-    const [openAux] = await db.select().from(agentAuxLogs)
-      .where(and(eq(agentAuxLogs.traineeCode, traineeCode), isNull(agentAuxLogs.endTime))).orderBy(desc(agentAuxLogs.startTime)).limit(1);
-    if (openAux) await db.update(agentAuxLogs).set({ endTime: clockOut, durationMs: Math.max(0, clockOut - openAux.startTime) }).where(eq(agentAuxLogs.id, openAux.id));
-    const durationMs = Math.max(0, clockOut - active.clockIn);
-    await db.update(agentShifts).set({ clockOut, durationMs }).where(eq(agentShifts.id, active.id));
+    // F17: one locked transaction — close EVERY open AUX and the shift together.
+    const durationMs = await db.transaction(async (tx) => {
+      await lockAgentRow(tx as never, traineeCode);
+      const [active] = await tx.select().from(agentShifts)
+        .where(and(eq(agentShifts.traineeCode, traineeCode), isNull(agentShifts.clockOut)))
+        .orderBy(desc(agentShifts.clockIn)).limit(1);
+      if (!active) throw new TRPCError({ code: "PRECONDITION_FAILED", message: "Not clocked in" });
+      const clockOut = Date.now();
+      // Clocking out also ends any open AUX so nothing dangles overnight.
+      const openAux = await tx.select().from(agentAuxLogs)
+        .where(and(eq(agentAuxLogs.traineeCode, traineeCode), isNull(agentAuxLogs.endTime)));
+      for (const a of openAux) {
+        await tx.update(agentAuxLogs).set({ endTime: clockOut, durationMs: Math.max(0, Math.min(clockOut - a.startTime, AUX_MAX_OPEN_MS)) }).where(eq(agentAuxLogs.id, a.id));
+      }
+      const d = Math.max(0, clockOut - active.clockIn);
+      await tx.update(agentShifts).set({ clockOut, durationMs: d }).where(eq(agentShifts.id, active.id));
+      return d;
+    });
     await syncPresenceFromState(traineeCode, null);
     return { ok: true, durationMs };
   }),
@@ -9162,13 +9294,7 @@ const timeTrackingRouter = router({
         return count;
       }
 
-      /** Working days (excluding the agent's off days) of an approved leave that fall inside [from, to]. */
-      function leaveDaysInRange(startDate: string, endDate: string, offDay1: number | null, offDay2: number | null): number {
-        const from = startDate > input.from ? startDate : input.from;
-        const to = endDate < input.to ? endDate : input.to;
-        if (to < from) return 0;
-        return countWorkingDays(from, to, offDay1, offDay2);
-      }
+      const { leaveWorkingDaysInRange } = await import("./leaveDates");
 
       const now = Date.now();
       const rowsOut = agents.map(agent => {
@@ -9188,7 +9314,8 @@ const timeTrackingRouter = router({
         // A former agent whose last day is unknown and who has no activity this month: also drop (they left earlier).
         if (isFormer && !lastKey && !hadActivity) return null;
         const dailyHrsForPto = parseDailyHours(agent.shiftHours);
-        const ptoDays = leaves.filter(l => l.traineeCode === agent.traineeCode).reduce((s, l) => s + leaveDaysInRange(l.startDate, l.endDate, agent.offDay1, agent.offDay2), 0);
+        // F12: count only the dates actually requested (Mon+Fri = 2 days, not the Mon–Fri span).
+        const ptoDays = leaves.filter(l => l.traineeCode === agent.traineeCode).reduce((s, l) => s + leaveWorkingDaysInRange(l, input.from, input.to, agent.offDay1, agent.offDay2), 0);
         const ptoHrs = Math.round(ptoDays * dailyHrsForPto * 100) / 100;
         const lateEarly = excs.filter(e => e.traineeCode === agent.traineeCode).length;
         // Open (forgotten) shifts count at most one scheduled day, never days of phantom hours.

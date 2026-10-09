@@ -91,6 +91,23 @@ function AuxBadge({ type }: { type: string }) {
   );
 }
 
+/** Hours → "H:MM" (7.53 → "7:32"). Every hour value on this page uses this format. */
+function hhmm(hours: number | null | undefined): string {
+  const totalMin = Math.max(0, Math.round((hours ?? 0) * 60));
+  return `${Math.floor(totalMin / 60)}:${String(totalMin % 60).padStart(2, "0")}`;
+}
+const minToHhmm = (min: number) => hhmm(min / 60);
+
+/** Small two-line column header: name + what it means. */
+function ColHead({ title, hint, className }: { title: React.ReactNode; hint: string; className?: string }) {
+  return (
+    <TableHead className={className}>
+      <div className="leading-tight">{title}</div>
+      <div className="text-[10px] font-normal text-muted-foreground leading-tight">{hint}</div>
+    </TableHead>
+  );
+}
+
 export default function TimeTrackingAdmin() {
   const utils = trpc.useUtils();
   const [tab, setTab] = useState("pto");
@@ -226,9 +243,9 @@ export default function TimeTrackingAdmin() {
                           <TableHead>Agent</TableHead>
                           <TableHead>Role</TableHead>
                           <TableHead>Clocked in</TableHead>
-                          <TableHead className="text-right">Total on shift</TableHead>
+                          <ColHead className="text-right" title="Shift so far" hint="clock-in → now (H:MM)" />
                           <TableHead>Current state</TableHead>
-                          <TableHead className="text-right">In state</TableHead>
+                          <ColHead className="text-right" title="In state" hint="time in current state" />
                           <TableHead></TableHead>
                         </TableRow>
                       </TableHeader>
@@ -249,7 +266,7 @@ export default function TimeTrackingAdmin() {
                               <TableCell className="text-sm">{sft.jobTitle ?? "—"}</TableCell>
                               <TableCell className="text-sm font-mono">{fmtEtDateTime(sft.clockIn)} {TT_TZ_LABEL}</TableCell>
                               <TableCell className="text-right text-sm font-semibold tabular-nums">
-                                {totalHrs.toFixed(1)}h
+                                {hhmm(totalHrs)}
                                 {totalHrs > 14 && <span className="ml-1 text-xs text-amber-600 font-normal">· likely forgot</span>}
                               </TableCell>
                               <TableCell>
@@ -263,7 +280,7 @@ export default function TimeTrackingAdmin() {
                                 )}
                               </TableCell>
                               <TableCell className="text-right text-sm tabular-nums text-muted-foreground">
-                                {inStateMin != null ? `${inStateMin}m` : "—"}
+                                {inStateMin != null ? minToHhmm(inStateMin) : "—"}
                               </TableCell>
                               <TableCell>
                                 <Button size="sm" variant="outline" className="gap-1" disabled={adminClockOut.isPending}
@@ -500,10 +517,10 @@ export default function TimeTrackingAdmin() {
 
             const exportDay = () => {
               const esc = (v: unknown) => { const t = String(v ?? ""); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
-              const header = ["Employee", "Quantum Client", "Role", "Date", "Shift (hrs)", "Worked (hrs)", "Break (min)", "Lunch (min)", "Other AUX (min)", "Productivity %"];
+              const header = ["Employee", "Quantum Client", "Role", "Date", "Shift (H:MM)", "Working (H:MM)", "Shift (decimal hrs)", "Working (decimal hrs)", "Break (min)", "Lunch (min)", "Other AUX (min)", "Productivity %"];
               const lines = [header.join(","), ...rows.map(r => [
                 esc(r.name), esc(r.clientName ?? ""), esc(r.role ?? ""), auxDate,
-                r.shiftHrs.toFixed(2), r.workedHrs.toFixed(2),
+                hhmm(r.shiftHrs), hhmm(r.workedHrs), r.shiftHrs.toFixed(2), r.workedHrs.toFixed(2),
                 auxMin(r, "break"), auxMin(r, "lunch"), otherAuxMin(r), pct(r) ?? "",
               ].join(","))];
               const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
@@ -517,7 +534,9 @@ export default function TimeTrackingAdmin() {
                     <div>
                       <h3 className="text-sm font-semibold">Productivity — {auxDate}</h3>
                       <p className="text-xs text-muted-foreground">
-                        Working time = shift − all AUX.
+                        All times are <span className="font-medium text-foreground">H:MM</span>.
+                        <span className="font-medium text-foreground"> Shift</span> = total clocked time (clock-in → clock-out).
+                        <span className="font-medium text-foreground"> Working</span> = shift − all AUX (break, lunch, bathroom, …).
                         Productivity % = working ÷ (shift − lunch) — <span className="font-medium text-foreground">lunch is not counted as lost time</span>.
                       </p>
                     </div>
@@ -533,14 +552,14 @@ export default function TimeTrackingAdmin() {
                       <TableRow>
                         <TableHead>Agent</TableHead>
                         <TableHead>Role</TableHead>
-                        <TableHead className="text-right">Shift (hrs)</TableHead>
+                        <ColHead className="text-right" title="Shift" hint="clocked in → out" />
                         <TableHead className="text-right">
                           <span className="flex items-center justify-end gap-1"><Coffee className="w-3 h-3 text-amber-500" /> Break</span>
                         </TableHead>
                         <TableHead className="text-right">
                           <span className="flex items-center justify-end gap-1"><UtensilsCrossed className="w-3 h-3 text-emerald-600" /> Lunch</span>
                         </TableHead>
-                        <TableHead className="text-right">Working (hrs)</TableHead>
+                        <ColHead className="text-right" title="Working" hint="shift − all AUX" />
                         <TableHead className="text-right">Productivity</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -560,14 +579,14 @@ export default function TimeTrackingAdmin() {
                                   <div className="text-[11px] text-muted-foreground font-mono">{r.traineeCode}</div>
                                 </TableCell>
                                 <TableCell className="text-sm">{r.role ?? <span className="text-muted-foreground">—</span>}</TableCell>
-                                <TableCell className="text-right text-sm tabular-nums">{r.shiftHrs.toFixed(2)}</TableCell>
+                                <TableCell className="text-right text-sm tabular-nums">{hhmm(r.shiftHrs)}</TableCell>
                                 <TableCell className="text-right text-sm tabular-nums">
-                                  <span className="text-amber-700">{auxMin(r, "break")}m</span>
+                                  <span className="text-amber-700">{minToHhmm(auxMin(r, "break"))}</span>
                                 </TableCell>
                                 <TableCell className="text-right text-sm tabular-nums">
-                                  <span className="text-emerald-700">{auxMin(r, "lunch")}m</span>
+                                  <span className="text-emerald-700">{minToHhmm(auxMin(r, "lunch"))}</span>
                                 </TableCell>
-                                <TableCell className="text-right text-sm tabular-nums font-semibold">{r.workedHrs.toFixed(2)}</TableCell>
+                                <TableCell className="text-right text-sm tabular-nums font-semibold">{hhmm(r.workedHrs)}</TableCell>
                                 <TableCell className="text-right text-sm tabular-nums">
                                   {p == null
                                     ? <span className="text-muted-foreground">—</span>
@@ -578,10 +597,10 @@ export default function TimeTrackingAdmin() {
                           })}
                           <TableRow className="bg-muted/40 font-semibold">
                             <TableCell colSpan={2} className="text-sm">Total ({rows.length} agent{rows.length !== 1 ? "s" : ""})</TableCell>
-                            <TableCell className="text-right text-sm tabular-nums">{tot.shift.toFixed(2)}</TableCell>
-                            <TableCell className="text-right text-sm tabular-nums text-amber-700">{tot.breakMin}m</TableCell>
-                            <TableCell className="text-right text-sm tabular-nums text-emerald-700">{tot.lunchMin}m</TableCell>
-                            <TableCell className="text-right text-sm tabular-nums">{tot.worked.toFixed(2)}</TableCell>
+                            <TableCell className="text-right text-sm tabular-nums">{hhmm(tot.shift)}</TableCell>
+                            <TableCell className="text-right text-sm tabular-nums text-amber-700">{minToHhmm(tot.breakMin)}</TableCell>
+                            <TableCell className="text-right text-sm tabular-nums text-emerald-700">{minToHhmm(tot.lunchMin)}</TableCell>
+                            <TableCell className="text-right text-sm tabular-nums">{hhmm(tot.worked)}</TableCell>
                             <TableCell className="text-right text-sm tabular-nums">
                               {tot.shift > 0
                                 ? (() => { const d = tot.shift - tot.lunchMin / 60; return d > 0 ? Math.round((tot.worked / d) * 100) + "%" : "—"; })()
@@ -768,11 +787,12 @@ export default function TimeTrackingAdmin() {
               onClick={() => {
                 const rows = hoursSummary as HoursSummaryRow[];
                 const esc = (v: unknown) => { const t = String(v ?? ""); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
-                const header = ["Employee", "Quantum Client", "Role", "Start Date", "Sched. Hrs", "Worked Hrs", "PTO Hrs", "Unplanned Hrs", "Late / Early", "Status"];
+                const header = ["Employee", "Quantum Client", "Role", "Start Date", "Scheduled (H:MM)", "Shift (H:MM)", "Worked (H:MM)", "PTO (H:MM)", "Unplanned (H:MM)", "Sched. Hrs (decimal)", "Shift Hrs (decimal)", "Worked Hrs (decimal)", "PTO Hrs (decimal)", "Unplanned Hrs (decimal)", "Late / Early", "Status"];
                 const sorted = [...rows].sort((a, b) => (a.role ?? "zzz").localeCompare(b.role ?? "zzz") || a.name.localeCompare(b.name));
                 const csvRows = [header.join(","), ...sorted.map(r => [
                   esc(r.name), esc(r.clientName ?? ""), esc(r.role ?? ""), esc(fmtUS(r.startDate)),
-                  r.scheduledHrs, r.workedHrs, r.ptoHrs, r.unplannedHrs, r.lateEarly, esc(r.status),
+                  hhmm(r.scheduledHrs), hhmm(r.shiftHrs), hhmm(r.workedHrs), hhmm(r.ptoHrs), hhmm(r.unplannedHrs),
+                  r.scheduledHrs, r.shiftHrs, r.workedHrs, r.ptoHrs, r.unplannedHrs, r.lateEarly, esc(r.status),
                 ].join(","))];
                 const blob = new Blob(["﻿" + csvRows.join("\n")], { type: "text/csv;charset=utf-8" });
                 const url = URL.createObjectURL(blob);
@@ -791,6 +811,7 @@ export default function TimeTrackingAdmin() {
           {!hoursLoading && (hoursSummary as HoursSummaryRow[]).length > 0 && (() => {
             const rows = hoursSummary as HoursSummaryRow[];
             const totalSched  = rows.reduce((s, r) => s + r.scheduledHrs, 0);
+            const totalShift  = rows.reduce((s, r) => s + r.shiftHrs, 0);
             const totalWorked = rows.reduce((s, r) => s + r.workedHrs, 0);
             const totalPto    = rows.reduce((s, r) => s + r.ptoHrs, 0);
             const totalUnplan = rows.reduce((s, r) => s + r.unplannedHrs, 0);
@@ -804,17 +825,17 @@ export default function TimeTrackingAdmin() {
                 </div>
                 <div className="rounded-lg border bg-blue-50 border-blue-200 p-3">
                   <div className="text-xs text-blue-600 mb-1">Scheduled</div>
-                  <div className="text-2xl font-bold text-blue-700">{totalSched.toFixed(0)}<span className="text-sm font-normal ml-1">hrs</span></div>
+                  <div className="text-2xl font-bold text-blue-700 tabular-nums">{hhmm(totalSched)}</div>
                   {utilPct != null && <div className="text-[11px] text-blue-500 mt-0.5">{utilPct}% utilized</div>}
                 </div>
                 <div className="rounded-lg border bg-emerald-50 border-emerald-200 p-3">
-                  <div className="text-xs text-emerald-600 mb-1">Worked</div>
-                  <div className="text-2xl font-bold text-emerald-700">{totalWorked.toFixed(0)}<span className="text-sm font-normal ml-1">hrs</span></div>
-                  <div className="text-[11px] text-emerald-500 mt-0.5">{totalPto.toFixed(0)} hrs PTO</div>
+                  <div className="text-xs text-emerald-600 mb-1">Worked <span className="text-emerald-500">(shift − AUX)</span></div>
+                  <div className="text-2xl font-bold text-emerald-700 tabular-nums">{hhmm(totalWorked)}</div>
+                  <div className="text-[11px] text-emerald-500 mt-0.5">of {hhmm(totalShift)} on shift · {hhmm(totalPto)} PTO</div>
                 </div>
                 <div className={`rounded-lg border p-3 ${totalUnplan > 0 ? "bg-red-50 border-red-200" : "bg-card"}`}>
                   <div className={`text-xs mb-1 ${totalUnplan > 0 ? "text-red-600" : "text-muted-foreground"}`}>Unplanned Absent</div>
-                  <div className={`text-2xl font-bold ${totalUnplan > 0 ? "text-red-700" : "text-foreground"}`}>{totalUnplan.toFixed(0)}<span className="text-sm font-normal ml-1">hrs</span></div>
+                  <div className={`text-2xl font-bold tabular-nums ${totalUnplan > 0 ? "text-red-700" : "text-foreground"}`}>{hhmm(totalUnplan)}</div>
                   <div className={`text-[11px] mt-0.5 ${totalUnplan > 0 ? "text-red-500" : "text-muted-foreground"}`}>unplanned absences</div>
                 </div>
               </div>
@@ -831,19 +852,20 @@ export default function TimeTrackingAdmin() {
                     <TableHead>Quantum Client</TableHead>
                     <TableHead>Role</TableHead>
                     <TableHead>Start Date</TableHead>
-                    <TableHead className="text-right">Sched.</TableHead>
-                    <TableHead className="text-right">Worked</TableHead>
-                    <TableHead className="text-right">PTO</TableHead>
-                    <TableHead className="text-right">Unplanned</TableHead>
+                    <ColHead className="text-right" title="Scheduled" hint="shift length × work days" />
+                    <ColHead className="text-right" title="Shift" hint="clocked in → out" />
+                    <ColHead className="text-right" title="Worked" hint="shift − all AUX" />
+                    <ColHead className="text-right" title="PTO" hint="approved leave" />
+                    <ColHead className="text-right" title="Unplanned" hint="sched − worked − PTO" />
                     <TableHead className="text-right">Late/Early</TableHead>
                     <TableHead>Status</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {hoursLoading ? (
-                    <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-8">Loading…</TableCell></TableRow>
                   ) : (hoursSummary as HoursSummaryRow[]).length === 0 ? (
-                    <TableRow><TableCell colSpan={10} className="text-center text-muted-foreground py-8">No data for {hoursMonth}.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-8">No data for {hoursMonth}.</TableCell></TableRow>
                   ) : (() => {
                     const rows = [...(hoursSummary as HoursSummaryRow[])].sort((a, b) => (a.role ?? "zzz").localeCompare(b.role ?? "zzz") || a.name.localeCompare(b.name));
                     const groups: Array<[string, HoursSummaryRow[]]> = hoursGroupByRole
@@ -867,9 +889,10 @@ export default function TimeTrackingAdmin() {
                           <TableCell className="text-sm">{row.clientName ?? "—"}</TableCell>
                           <TableCell className="text-sm">{row.role ?? <span className="text-amber-600 text-xs font-medium">not set</span>}</TableCell>
                           <TableCell className="text-sm font-mono text-muted-foreground">{fmtUS(row.startDate)}</TableCell>
-                          <TableCell className="text-right font-mono text-sm">{row.scheduledHrs}</TableCell>
+                          <TableCell className="text-right font-mono text-sm">{hhmm(row.scheduledHrs)}</TableCell>
+                          <TableCell className="text-right font-mono text-sm text-muted-foreground">{hhmm(row.shiftHrs)}</TableCell>
                           <TableCell className="text-right">
-                            <div className="font-mono text-sm">{row.workedHrs}</div>
+                            <div className="font-mono text-sm font-semibold">{hhmm(row.workedHrs)}</div>
                             {utilPct !== null && (
                               <div className={`text-xs ${utilPct >= 90 ? "text-emerald-600" : utilPct >= 75 ? "text-amber-500" : "text-red-500"}`}>
                                 {utilPct}%
@@ -877,10 +900,10 @@ export default function TimeTrackingAdmin() {
                             )}
                           </TableCell>
                           <TableCell className="text-right font-mono text-sm">
-                            {row.ptoHrs > 0 ? <span className="text-blue-600">{row.ptoHrs}</span> : <span className="text-muted-foreground">0</span>}
+                            {row.ptoHrs > 0 ? <span className="text-blue-600">{hhmm(row.ptoHrs)}</span> : <span className="text-muted-foreground">0:00</span>}
                           </TableCell>
                           <TableCell className="text-right font-mono text-sm">
-                            {row.unplannedHrs > 0 ? <span className="text-red-600 font-semibold">{row.unplannedHrs}</span> : <span className="text-muted-foreground">0</span>}
+                            {row.unplannedHrs > 0 ? <span className="text-red-600 font-semibold">{hhmm(row.unplannedHrs)}</span> : <span className="text-muted-foreground">0:00</span>}
                           </TableCell>
                           <TableCell className="text-right font-mono text-sm">
                             {row.lateEarly > 0 ? <span className="text-amber-600">{row.lateEarly}</span> : <span className="text-muted-foreground">0</span>}
@@ -896,6 +919,7 @@ export default function TimeTrackingAdmin() {
 
                     return groups.flatMap(([role, list]) => {
                       const groupWorked = list.reduce((s, r) => s + r.workedHrs, 0);
+                      const groupShift  = list.reduce((s, r) => s + r.shiftHrs, 0);
                       const groupSched  = list.reduce((s, r) => s + r.scheduledHrs, 0);
                       const groupUtil   = groupSched > 0 ? Math.round((groupWorked / groupSched) * 100) : null;
                       return [
@@ -904,8 +928,9 @@ export default function TimeTrackingAdmin() {
                             <TableCell colSpan={5} className="py-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                               {role} <span className="font-normal text-muted-foreground/70">· {list.length} agent{list.length !== 1 ? "s" : ""}</span>
                             </TableCell>
+                            <TableCell className="py-2 text-right"><span className="text-xs font-mono text-muted-foreground">{hhmm(groupShift)}</span></TableCell>
                             <TableCell className="py-2 text-right">
-                              <span className="text-xs font-mono font-semibold">{groupWorked.toFixed(0)}h</span>
+                              <span className="text-xs font-mono font-semibold">{hhmm(groupWorked)}</span>
                               {groupUtil != null && <span className={`ml-1 text-xs ${groupUtil >= 90 ? "text-emerald-600" : groupUtil >= 75 ? "text-amber-500" : "text-red-500"}`}>({groupUtil}%)</span>}
                             </TableCell>
                             <TableCell colSpan={4} />
@@ -918,7 +943,7 @@ export default function TimeTrackingAdmin() {
                 </TableBody>
               </Table>
               <p className="text-[11px] text-muted-foreground mt-3">
-                Worked = clocked time minus AUX. PTO = approved leave days × scheduled daily hours. Unplanned = scheduled − worked − PTO. Late / Early = attendance exceptions in the month.
+                All times are H:MM. Scheduled = daily shift length × scheduled work days. Shift = total clocked time (clock-in → clock-out). Worked = Shift minus all AUX (break, lunch, bathroom, …); the % under it is Worked ÷ Scheduled. PTO = approved leave days × daily shift length. Unplanned = Scheduled − Worked − PTO. Late / Early = attendance exceptions in the month.
               </p>
             </CardContent>
           </Card>

@@ -336,10 +336,27 @@ export default function PayrollPage() {
             const found = Object.keys(fr).find(k => norm(k) === norm(key));
             return found ? fr[found] : null;
           };
-          const num = (v: unknown): number | undefined => {
+          // F08: strict money parsing. A non-blank cell that is not a plain number ("EGP 10000",
+          // "#VALUE!", "100abc") REJECTS the upload instead of silently becoming a blank salary.
+          const crdtsLabel = String(get("CRDTS") ?? "");
+          const num = (v: unknown, label = "money"): number | undefined => {
             if (v == null || v === "") return undefined;
-            const n = Number(String(v).replace(/,/g, ""));
-            return isNaN(n) ? undefined : n;
+            if (typeof v === "number") {
+              if (Number.isFinite(v)) return v;
+              rejects.push(`row ${i + 2} (${crdtsLabel}): ${label} is not a finite number`);
+              return undefined;
+            }
+            const clean = String(v).replace(/[,\s]/g, "");
+            if (clean === "") return undefined;
+            if (!/^-?\d+(\.\d+)?$/.test(clean)) {
+              rejects.push(`row ${i + 2} (${crdtsLabel}): unreadable ${label} "${String(v)}"`);
+              return undefined;
+            }
+            return Number(clean);
+          };
+          const money = (...keys: string[]) => {
+            for (const k of keys) { const raw = get(k); if (raw != null && raw !== "") return num(raw, k); }
+            return undefined;
           };
           // Hours: "166:48", 166.8, time-cells — all handled. Unreadable → row rejected (never silently dropped).
           const hrs = (key: string): number | undefined => {
@@ -356,25 +373,28 @@ export default function PayrollPage() {
             // If alias is missing, look it up from workforce list by CRDTS
             agentName: String(get("Alias") ?? get("alias") ?? get("Agent Name") ?? get("agent name") ?? "").trim() || undefined,
             workingHours: hrs("Working Hours"),
-            baseSalary: num(get("Base Salary (EGP)")),
+            baseSalary: money("Base Salary (EGP)"),
             ot1x5Hours: hrs("OT 1.5x Hours"),
-            ot1x5Pay: num(get("OT 1.5x Pay (EGP)")),
+            ot1x5Pay: money("OT 1.5x Pay (EGP)"),
             ot2xHours: hrs("OT 2x Hours"),
-            ot2xPay: num(get("OT 2x Pay (EGP)")),
+            ot2xPay: money("OT 2x Pay (EGP)"),
             ot3xHours: hrs("OT 3x Hours"),
-            ot3xPay: num(get("OT 3x Pay (EGP)")),
-            coachingBonus: num(get("Coaching Bonus (EGP)")),
-            qualityDeductions: num(get("Quality/Attendance Deductions (EGP)")) ?? num(get("Quality Deductions (EGP)")),
-            attendanceDeductions: num(get("Attendance Deductions (EGP)")),
-            totalDeductions: num(get("Total Deductions (EGP)")),
-            netPay: num(get("NET PAY (EGP)")) ?? num(get("Net Pay (EGP)")),
+            ot3xPay: money("OT 3x Pay (EGP)"),
+            coachingBonus: money("Coaching Bonus (EGP)"),
+            qualityDeductions: money("Quality/Attendance Deductions (EGP)", "Quality Deductions (EGP)"),
+            attendanceDeductions: money("Attendance Deductions (EGP)"),
+            totalDeductions: money("Total Deductions (EGP)"),
+            netPay: money("NET PAY (EGP)", "Net Pay (EGP)"),
             qualityDetail: String(get("Quality Detail") ?? "").trim(),
             attendanceDetail: String(get("Attendance Detail") ?? "").trim(),
           };
         }).filter(r => r.crdts !== "");
 
+        for (const r of rows) {
+          if (r.baseSalary == null) rejects.push(`CRDTS ${r.crdts}: Base Salary is missing`);
+        }
         if (rejects.length > 0) {
-          setParseError(`${rejects.length} row(s) have unreadable hours — nothing was loaded. Fix the sheet and re-upload. ${rejects.slice(0, 6).join("; ")}${rejects.length > 6 ? ` … +${rejects.length - 6} more` : ""}`);
+          setParseError(`${rejects.length} problem(s) found (unreadable hours/amounts or missing salary) — nothing was loaded. Fix the sheet and re-upload. ${rejects.slice(0, 6).join("; ")}${rejects.length > 6 ? ` … +${rejects.length - 6} more` : ""}`);
           return;
         }
         if (rows.length === 0) {
@@ -1554,7 +1574,7 @@ export default function PayrollPage() {
             <Button
               onClick={() => {
                 if (editingRow === null) return;
-                updateRecordMutation.mutate({ id: editingRow, lastKnownPaidAt: editingPaidAt ?? undefined, lastKnownRecordUpdatedAt: editingRecordUpdatedAt ?? undefined, data: editValues as { baseSalary?: string; workingHours?: string; ot1x5Hours?: string; ot1x5Pay?: string; ot2xHours?: string; ot2xPay?: string; ot3xHours?: string; ot3xPay?: string; coachingBonus?: string; commissionEgp?: string; totalDeductions?: string; netPay?: string; } });
+                updateRecordMutation.mutate({ id: editingRow, lastKnownPaidAt: editingPaidAt ?? undefined, lastKnownRecordUpdatedAt: editingRecordUpdatedAt ?? null, data: editValues as { baseSalary?: string; workingHours?: string; ot1x5Hours?: string; ot1x5Pay?: string; ot2xHours?: string; ot2xPay?: string; ot3xHours?: string; ot3xPay?: string; coachingBonus?: string; commissionEgp?: string; totalDeductions?: string; netPay?: string; } });
               }}
               disabled={updateRecordMutation.isPending}
             >

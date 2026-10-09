@@ -4472,7 +4472,10 @@ function EnglishLevelQuiz({ theme, traineeCode }: { theme: Theme; traineeCode?: 
   const [submitted, setSubmitted] = useState(false);
 
   const { data: cefrEnabled = true } = trpc.academy.getCefrEnabled.useQuery();
-  const submitScore = trpc.academy.submitCefrScore.useMutation();
+  const submitScore = trpc.academy.submitCefrScore.useMutation({
+    // The result is still shown, but say clearly when it was NOT recorded (e.g. retake within 24h).
+    onError: (e) => toast.error(`Your result was not saved: ${e.message}`),
+  });
 
   const score = answers.filter((a, i) => a === questions[i]?.a).length;
   const cefr = getCefrLevel(score);

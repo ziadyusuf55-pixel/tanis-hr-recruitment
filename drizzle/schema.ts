@@ -1260,6 +1260,8 @@ export const leaveRequests = mysqlTable("leave_requests", {
   decidedAt: bigint("decidedAt", { mode: "number" }),
   /** When the request originated in the agent portal's request centre, the agent_requests.id it mirrors. */
   agentRequestId: int("agentRequestId"),
+  /** F12 (migration 0025): JSON array of the EXACT YYYY-MM-DD dates requested. NULL = legacy contiguous span. */
+  leaveDates: text("leaveDates"),
 }, (t) => ({
   traineeStatus: index("idx_leave_trainee_status").on(t.traineeCode, t.status),
   agentRequest: index("idx_leave_agent_request").on(t.agentRequestId),

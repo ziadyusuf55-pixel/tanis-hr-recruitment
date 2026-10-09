@@ -33,9 +33,11 @@ export type AgentSession = {
   issuedAt: number;
 };
 
-type AgentRow = { sessionRevokedAt: number | null; agentStatus: string | null; isDemo: boolean | null };
+type AgentRow = { sessionRevokedAt: number | null; agentStatus: string | null; isDemo: boolean | null; candidateId: number | null };
+/** F04: a lookup either finds the row, proves it is MISSING, or FAILS (DB down). Only "found" is authorised. */
+type AgentLookup = { kind: "found"; row: AgentRow } | { kind: "missing" } | { kind: "error" };
 const REVOCATION_TTL_MS = 15_000;
-const _agentCache = new Map<string, { row: AgentRow | null; at: number }>();
+const _agentCache = new Map<string, { lookup: AgentLookup; at: number }>();
 
 /** Drop the cached row for one agent (call after terminate/resign/reset). */
 export function invalidateAgentSessionCache(traineeCode?: string) {
@@ -43,33 +45,44 @@ export function invalidateAgentSessionCache(traineeCode?: string) {
   else _agentCache.clear();
 }
 
-async function loadAgentRow(traineeCode: string): Promise<AgentRow | null> {
+async function loadAgentRow(traineeCode: string): Promise<AgentLookup> {
   const hit = _agentCache.get(traineeCode);
   const now = Date.now();
-  if (hit && now - hit.at < REVOCATION_TTL_MS) return hit.row;
-  let row: AgentRow | null = null;
+  if (hit && now - hit.at < REVOCATION_TTL_MS) return hit.lookup;
+  let lookup: AgentLookup;
   try {
     const { getDb } = await import("../db");
     const { eq } = await import("drizzle-orm");
     const db = await getDb();
-    if (db) {
-      const { workforceAgents } = await import("../../drizzle/schema");
-      const [r] = await db
-        .select({
-          sessionRevokedAt: workforceAgents.sessionRevokedAt,
-          agentStatus: workforceAgents.agentStatus,
-          isDemo: workforceAgents.isDemo,
-        })
-        .from(workforceAgents)
-        .where(eq(workforceAgents.traineeCode, traineeCode))
-        .limit(1);
-      row = r ?? null;
+    if (!db) return { kind: "error" }; // never cache an outage
+    const { workforceAgents } = await import("../../drizzle/schema");
+    const [r] = await db
+      .select({
+        sessionRevokedAt: workforceAgents.sessionRevokedAt,
+        agentStatus: workforceAgents.agentStatus,
+        isDemo: workforceAgents.isDemo,
+        candidateId: workforceAgents.candidateId,
+      })
+      .from(workforceAgents)
+      .where(eq(workforceAgents.traineeCode, traineeCode))
+      .limit(1);
+    if (r) {
+      lookup = { kind: "found", row: r };
+    } else {
+      // Trainees get portal credentials (Academy, training) BEFORE HR creates their workforce row.
+      // They are authorised by their agent_credentials row; a deleted credential revokes them.
+      const { agentCredentials } = await import("../../drizzle/schema");
+      const [cred] = await db.select({ candidateId: agentCredentials.candidateId })
+        .from(agentCredentials).where(eq(agentCredentials.traineeCode, traineeCode)).limit(1);
+      lookup = cred
+        ? { kind: "found", row: { sessionRevokedAt: null, agentStatus: null, isDemo: false, candidateId: cred.candidateId } }
+        : { kind: "missing" };
     }
   } catch {
-    // DB unavailable → fall through with no row (token-only trust, same as before)
+    return { kind: "error" }; // F04: fail CLOSED on DB errors (not cached, so it retries next request)
   }
-  _agentCache.set(traineeCode, { row, at: now });
-  return row;
+  _agentCache.set(traineeCode, { lookup, at: now });
+  return lookup;
 }
 
 /** Read the raw agent cookie off a request (no verification). */
@@ -120,8 +133,24 @@ export async function resolveAgentSession(req: Request): Promise<AgentSession | 
   }
 
   const issuedAt = (payload.iat ?? 0) * 1000;
-  const row = await loadAgentRow(payload.traineeCode);
-  if (row) {
+  const lookup = await loadAgentRow(payload.traineeCode);
+  // F04: fail closed. A deleted workforce row revokes the session for good (cookie stripped);
+  // a DB outage denies this request but KEEPS the cookie so the agent resumes once the DB is back.
+  if (lookup.kind === "missing") {
+    stripAgentCookie(req);
+    return null;
+  }
+  if (lookup.kind === "error") {
+    stripAgentCookie(req); // downstream legacy readers must not see it this request
+    return null;
+  }
+  const row = lookup.row;
+  {
+    // Token and workforce row must describe the same person. Logged (not enforced) because
+    // older credentials may carry a different candidateId; see Batch 5 notes.
+    if (row.candidateId && row.candidateId !== payload.candidateId) {
+      console.warn(`[agentAuth] candidateId mismatch for ${payload.traineeCode}: token=${payload.candidateId} row=${row.candidateId}`);
+    }
     // iat has SECOND precision while sessionRevokedAt has ms precision — a token
     // issued in the same second as the revocation (changePassword re-issues one
     // immediately after revoking) must count as issued AFTER it.

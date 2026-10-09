@@ -26,7 +26,8 @@ export async function createContext(
 
   // A BD teammate is identified by a bd_users link, not only by users.role. If their Hub role is still
   // the unassigned default, treat them as role "bd" for this request so the staff gate lets them in.
-  if (user && (user.role === "user" || user.role === "viewer")) {
+  // F01: "viewer" is the REVOKED state (removeUser / explicit demotion) and is never promoted.
+  if (user && user.role === "user") {
     try {
       const { getDb } = await import("../db");
       const db = await getDb();
