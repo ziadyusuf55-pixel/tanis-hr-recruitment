@@ -176,7 +176,7 @@ export default function CoachingAdmin() {
         <p className="text-sm text-muted-foreground py-8 text-center">Loading…</p>
       ) : rows.length === 0 ? (
         <Card><CardContent className="p-8 text-center">
-          <p className="text-sm font-medium">No sessions in the {mLabel(cycle)} cycle.</p>
+          <p className="text-sm font-medium">No sessions in {mLabel(activePeriod)}{viewMode === "cycle" ? " cycle" : ""}.</p>
           <p className="text-xs text-muted-foreground mt-1">Data syncs nightly from the Coaching sheet.</p>
         </CardContent></Card>
       ) : (
@@ -250,21 +250,8 @@ export default function CoachingAdmin() {
                             <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">Approved</span>
                           ) : (r.status || "").toLowerCase() === "rejected" ? (
                             <span className="text-[11px] px-2 py-0.5 rounded-full bg-red-50 text-red-600 border border-red-200">Rejected</span>
-                          ) : !canDecide ? (
-                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">Pending</span>
                           ) : (
-                            <span className="inline-flex gap-1">
-                              <button
-                                className="text-[11px] px-2 py-0.5 rounded-md border border-emerald-300 text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
-                                disabled={updateStatus.isPending}
-                                onClick={() => updateStatus.mutate({ id: r.id, status: "approved" })}
-                              >Approve</button>
-                              <button
-                                className="text-[11px] px-2 py-0.5 rounded-md border border-red-200 text-red-600 hover:bg-red-50 disabled:opacity-50"
-                                disabled={updateStatus.isPending}
-                                onClick={() => updateStatus.mutate({ id: r.id, status: "rejected" })}
-                              >Reject</button>
-                            </span>
+                            <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200">Pending</span>
                           )}
                         </td>
                       </tr>

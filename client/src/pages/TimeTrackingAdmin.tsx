@@ -1,5 +1,14 @@
 import { useState } from "react";
 import { etDateKey, etMonthKey, etToInput, etFromInput, fmtEtTime, fmtEtDateTime, fmtEtDate, fmtEtFull, TT_TZ_LABEL } from "@/lib/tz";
+
+function fmtHM(dec: number): string {
+  if (!isFinite(dec)) return "—";
+  const sign = dec < 0 ? "-" : "";
+  const abs = Math.abs(dec);
+  const h = Math.floor(abs);
+  const m = Math.round((abs - h) * 60);
+  return `${sign}${h}:${String(m).padStart(2, "0")}`;
+}
 import { trpc } from "@/lib/trpc";
 import { AUX_TYPE_OPTIONS } from "@shared/const";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -180,7 +189,7 @@ export default function TimeTrackingAdmin() {
                         </TableCell>
                         <TableCell className="text-sm">{sft.jobTitle ?? "—"}</TableCell>
                         <TableCell className="text-sm font-mono">{fmtEtDateTime(sft.clockIn)} {TT_TZ_LABEL}</TableCell>
-                        <TableCell className="text-sm">{hrs.toFixed(1)}h{hrs > 14 && <span className="ml-1 text-xs text-amber-600">· likely forgot</span>}</TableCell>
+                        <TableCell className="text-sm">{fmtHM(hrs)}{hrs > 14 && <span className="ml-1 text-xs text-amber-600">· likely forgot</span>}</TableCell>
                         <TableCell>
                           <Badge variant={sft.state === "available" ? "default" : "secondary"} className="capitalize text-xs">
                             {sft.state.replace(/_/g, " ")}{sft.auxSince ? ` · ${Math.floor((Date.now() - sft.auxSince) / 60000)}m` : ""}
@@ -430,18 +439,18 @@ export default function TimeTrackingAdmin() {
                               <TableRow key={r.traineeCode}>
                                 <TableCell><div className="font-medium text-sm">{r.name}</div><div className="text-[11px] text-muted-foreground font-mono">{r.traineeCode}</div></TableCell>
                                 <TableCell className="text-sm">{r.role ?? <span className="text-muted-foreground">—</span>}</TableCell>
-                                <TableCell className="text-right text-sm tabular-nums">{r.shiftHrs.toFixed(2)}</TableCell>
+                                <TableCell className="text-right text-sm tabular-nums">{fmtHM(r.shiftHrs)}</TableCell>
                                 <TableCell className="text-right text-sm tabular-nums">{auxMin(r)}</TableCell>
-                                <TableCell className="text-right text-sm tabular-nums font-semibold">{r.workedHrs.toFixed(2)}</TableCell>
+                                <TableCell className="text-right text-sm tabular-nums font-semibold">{fmtHM(r.workedHrs)}</TableCell>
                                 <TableCell className="text-right text-sm tabular-nums">{p == null ? <span className="text-muted-foreground">—</span> : <span className={p >= 85 ? "text-emerald-600" : p >= 70 ? "text-amber-600" : "text-red-600"}>{p}%</span>}</TableCell>
                               </TableRow>
                             );
                           })}
                           <TableRow className="bg-muted/40 font-semibold">
                             <TableCell colSpan={2} className="text-sm">Total ({rows.length} agent{rows.length !== 1 ? "s" : ""})</TableCell>
-                            <TableCell className="text-right text-sm tabular-nums">{tot.shift.toFixed(2)}</TableCell>
+                            <TableCell className="text-right text-sm tabular-nums">{fmtHM(tot.shift)}</TableCell>
                             <TableCell className="text-right text-sm tabular-nums">{tot.aux}</TableCell>
-                            <TableCell className="text-right text-sm tabular-nums">{tot.worked.toFixed(2)}</TableCell>
+                            <TableCell className="text-right text-sm tabular-nums">{fmtHM(tot.worked)}</TableCell>
                             <TableCell className="text-right text-sm tabular-nums">{tot.shift > 0 ? Math.round((tot.worked / tot.shift) * 100) + "%" : "—"}</TableCell>
                           </TableRow>
                         </>

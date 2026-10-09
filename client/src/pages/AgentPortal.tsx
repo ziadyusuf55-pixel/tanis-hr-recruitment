@@ -2926,7 +2926,7 @@ function MonthlyLogsView({ theme, monthKey }: { theme: Theme; monthKey: string }
         {[
           { label: "Revenue",     value: `$${totalRevenue.toLocaleString(undefined,{maximumFractionDigits:2})}`, color: totalRevenue > 0 ? "oklch(0.55 0.18 145)" : theme.textMuted },
           { label: "Profit",      value: `$${totalProfit.toLocaleString(undefined,{maximumFractionDigits:2})}`,  color: totalProfit >= 0 ? "oklch(0.55 0.18 145)" : "#ef4444" },
-          { label: "Login Hours", value: `${totalHours.toFixed(1)}h`, color: theme.text },
+          { label: "Login Hours", value: fmtHM(totalHours), color: theme.text },
           { label: "Total Calls", value: totalCalls.toString(), color: theme.text },
         ].map(c => (
           <div key={c.label} className="rounded-xl p-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
@@ -4219,13 +4219,13 @@ function ThisMonthView({ theme }: { theme: Theme }) {
           <div className="rounded-2xl p-4" style={{ background: theme.cardBg, border: `1px solid ${theme.cardBorder}` }}>
             <div className="flex items-center justify-between mb-2">
               <p className="text-sm font-semibold" style={{ color: theme.text }}>OT This Month</p>
-              <p className="text-sm font-bold" style={{ color: "#16a34a" }}>+{hrs.toFixed(2)} hrs &middot; EGP {egp.toLocaleString()}</p>
+              <p className="text-sm font-bold" style={{ color: "#16a34a" }}>+{fmtHM(hrs)} &middot; EGP {egp.toLocaleString()}</p>
             </div>
             <div className="space-y-1">
               {otM.map(o => (
                 <div key={o.id} className="flex items-center justify-between text-xs">
                   <span style={{ color: theme.textMuted }}>{o.date} &middot; OT {o.otType}</span>
-                  <span style={{ color: theme.text }}>{Number(o.hours || 0).toFixed(2)} hrs &middot; +{Number(o.egpAmount || 0).toLocaleString()}</span>
+                  <span style={{ color: theme.text }}>{fmtHM(Number(o.hours || 0))} &middot; +{Number(o.egpAmount || 0).toLocaleString()}</span>
                 </div>
               ))}
             </div>
