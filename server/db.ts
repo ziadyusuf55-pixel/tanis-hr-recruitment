@@ -2675,6 +2675,7 @@ export async function getPayrollStatusPage(month: string) {
     month: payrollRecords.month,
     uploadedBy: payrollRecords.uploadedBy,
     uploadedAt: payrollRecords.uploadedAt,
+    recordUpdatedAt: payrollRecords.recordUpdatedAt, // M-13: required for optimistic-lock in updateRecord
     traineeCode: workforceAgents.traineeCode,
     agentStatus: workforceAgents.agentStatus,
     fullName: workforceAgents.fullName,
@@ -3533,16 +3534,10 @@ export async function upsertCommissionLeaderboard(
 }
 
 // ─── Get next available T- trainee code ─────────────────────────────────────
-// Finds the lowest T-{N} not already used across workforce_agents AND agent_credentials.
-// Starts at T-1 and increments until a free slot is found.
+// Returns the next sequential T-{N} code (MAX+1 from ledger). Preview only —
+// the Operations dialog shows it; allocateTraineeCode claims it atomically.
 export async function getNextAvailableTraineeCode(): Promise<string> {
-  // Sequential IDs are gone. This is a PREVIEW only (nothing reserved): the Operations dialog shows it,
-  // and workforce.create claims it atomically via reserveTraineeCode — a lost race surfaces as CONFLICT.
-  for (let attempt = 0; attempt < 50; attempt++) {
-    const code = randomTraineeCode();
-    if (!(await traineeCodeInUse(code))) return code;
-  }
-  throw new Error("Could not find a free agent ID — please try again");
+  return nextTraineeCode();
 }
 
 // ─── Generate unique trainee code (6-digit, not already in use) ───────────────
@@ -3551,8 +3546,22 @@ export async function getNextAvailableTraineeCode(): Promise<string> {
 // hand and never reused: `trainee_code_ledger` holds every code ever issued (PK), so allocation is atomic
 // and a released code can never be handed out again.
 
-function randomTraineeCode(): string {
-  return `T-${Math.floor(10000 + Math.random() * 90000)}`;
+/** Sequential trainee code: T-1, T-2, T-3 … based on the highest
+ *  numeric suffix already in the ledger.  Existing codes are preserved.
+ *  Falls back to T-1 when the ledger is empty.                          */
+async function nextTraineeCode(): Promise<string> {
+  const db = await getDb();
+  if (!db) throw new Error("Database not available");
+  const { traineeCodeLedger } = await import("../drizzle/schema");
+  const { sql } = await import("drizzle-orm");
+  // MAX() of the numeric suffix from codes matching 'T-<digits>' pattern.
+  const [row] = await db.execute(sql`
+    SELECT MAX(CAST(SUBSTRING(code, 3) AS UNSIGNED)) AS maxNum
+    FROM ${traineeCodeLedger}
+    WHERE code REGEXP '^T-[0-9]+$'
+  `) as unknown as Array<{ maxNum: number | null }>;
+  const next = (row?.maxNum ?? 0) + 1;
+  return `T-${next}`;
 }
 
 /** Codes present in ANY table (defensive — the ledger should already cover them after 0021). */
@@ -3577,9 +3586,10 @@ export async function allocateTraineeCode(candidateId: number | null, source: st
   const db = await getDb();
   if (!db) throw new Error("Database not available");
   const { traineeCodeLedger } = await import("../drizzle/schema");
+  // Sequential: get MAX+1, attempt insert. On a PK collision (concurrent race)
+  // re-query MAX and increment — converges in O(contention) retries.
   for (let attempt = 0; attempt < 50; attempt++) {
-    const code = randomTraineeCode();
-    if (await traineeCodeInUse(code)) continue;
+    const code = await nextTraineeCode();
     try {
       await db.insert(traineeCodeLedger).values({ code, candidateId, source, assignedAt: Date.now() });
       return code; // PK insert succeeded → ours, exclusively
@@ -3587,7 +3597,7 @@ export async function allocateTraineeCode(candidateId: number | null, source: st
       const err = e as { code?: string; errno?: number; cause?: { code?: string; errno?: number } };
       const dup = err?.code === "ER_DUP_ENTRY" || err?.errno === 1062 || err?.cause?.code === "ER_DUP_ENTRY" || err?.cause?.errno === 1062;
       if (!dup) throw e; // real failure (e.g. migration 0021 not applied) — surface it
-      /* lost a race on the PK — try another */
+      /* lost a race on the PK — re-query MAX and try again */
     }
   }
   throw new Error("Could not allocate a unique agent ID — please try again");
@@ -3770,7 +3780,8 @@ export async function scheduleResignation(agentCode: string, effectiveDate: stri
     .from(workforceAgents).where(eq(workforceAgents.traineeCode, agentCode)).limit(1);
   if (!ag[0]) throw new Error("Agent not found");
   const now = Date.now();
-  const effectiveAt = new Date(effectiveDate + "T23:59:59Z").getTime();
+  // M-06: use Cairo local midnight (UTC+2, Egypt has no DST since 2011), not UTC.
+  const effectiveAt = new Date(effectiveDate + "T23:59:59+02:00").getTime();
   // replace any existing pending schedule for this agent
   await db.delete(agentSeparations)
     .where(and(eq(agentSeparations.agentCode, agentCode), isNull(agentSeparations.appliedAt)));
@@ -4289,6 +4300,24 @@ export async function createLeaveRequestRow(input: {
     if (span > 60) throw new Error("Leave requests are capped at 60 days");
     days = Math.max(1, span);
   }
+  // M-03: Reject overlapping pending/approved leave for the same agent.
+  // Two requests overlap when one starts before the other ends.
+  const overlap = await db
+    .select({ id: leaveRequests.id })
+    .from(leaveRequests)
+    .where(
+      and(
+        eq(leaveRequests.traineeCode, input.traineeCode),
+        inArray(leaveRequests.status, ["pending", "approved"]),
+        lte(leaveRequests.startDate, input.endDate),
+        gte(leaveRequests.endDate, input.startDate),
+      ),
+    )
+    .limit(1);
+  if (overlap[0]) {
+    throw new Error("A pending or approved leave request already covers that date range for this agent");
+  }
+
   const [r] = await db.insert(leaveRequests).values({
     traineeCode: input.traineeCode,
     requesterName: input.requesterName ?? null,

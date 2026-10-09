@@ -1,4 +1,4 @@
-// Clients.tsx — Client management page (list, create, edit, assign campaigns)
+// Clients.tsx — Client management page (list, create, edit)
 import { useState } from "react";
 import { trpc } from "@/lib/trpc";
 import { Button } from "@/components/ui/button";
@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { toast } from "sonner";
-import { PlusCircle, Building2, Pencil, Link2, LayoutDashboard } from "lucide-react";
+import { PlusCircle, Building2, Pencil, LayoutDashboard } from "lucide-react";
 import { useLocation } from "wouter";
 
 type Client = {
@@ -37,7 +37,6 @@ export default function Clients() {
   // ── Modals
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<Client | null>(null);
-  const [assigning, setAssigning] = useState<Client | null>(null);
 
   // ── Create / Edit form
   const [form, setForm] = useState({ name: "", shortCode: "", colorHex: DEFAULT_COLOR });
@@ -67,14 +66,6 @@ export default function Clients() {
       utils.clients.list.invalidate();
       setEditing(null);
       toast.success("Client updated");
-    },
-    onError: (e) => toast.error(e.message),
-  });
-
-  const assignMut = trpc.clients.assignCampaign.useMutation({
-    onSuccess: () => {
-      utils.campaigns.list.invalidate();
-      toast.success("Campaign assigned");
     },
     onError: (e) => toast.error(e.message),
   });
@@ -135,9 +126,6 @@ export default function Clients() {
                 <div className="flex items-center gap-2 shrink-0">
                   <Button size="sm" variant="default" className="gap-1" onClick={() => navigate(`/clients/${c.id}`)}>
                     <LayoutDashboard className="w-3.5 h-3.5" /> Dashboard
-                  </Button>
-                  <Button size="sm" variant="outline" className="gap-1" onClick={() => setAssigning(c)}>
-                    <Link2 className="w-3.5 h-3.5" /> Assign Campaign
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => openEdit(c)}>
                     <Pencil className="w-3.5 h-3.5" />
@@ -267,49 +255,6 @@ export default function Clients() {
         </Dialog>
       )}
 
-      {/* ── Assign campaign modal */}
-      {assigning && (
-        <Dialog open onOpenChange={() => setAssigning(null)}>
-          <DialogContent className="max-w-sm">
-            <DialogHeader>
-              <DialogTitle>Assign Campaign to {assigning.name}</DialogTitle>
-            </DialogHeader>
-            <div className="py-3 space-y-2">
-              <p className="text-sm text-muted-foreground">Select a campaign to assign to this client.</p>
-              {(campaigns as Campaign[]).map(cam => {
-                const currentClient = (clients as Client[]).find(cl => cl.id === cam.clientId);
-                const isAssigned = cam.clientId === assigning.id;
-                return (
-                  <div key={cam.id} className="flex items-center justify-between p-2 rounded-lg border">
-                    <div>
-                      <p className="text-sm font-medium">{cam.name}</p>
-                      {currentClient && !isAssigned && (
-                        <p className="text-xs text-muted-foreground">Currently: {currentClient.name}</p>
-                      )}
-                    </div>
-                    <Button
-                      size="sm"
-                      variant={isAssigned ? "secondary" : "outline"}
-                      disabled={assignMut.isPending}
-                      onClick={() => {
-                        if (isAssigned) {
-                          assignMut.mutate({ campaignId: cam.id, clientId: null });
-                        } else {
-                          assignMut.mutate({ campaignId: cam.id, clientId: assigning.id });
-                        }
-                      }}>
-                      {isAssigned ? "Unassign" : "Assign"}
-                    </Button>
-                  </div>
-                );
-              })}
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setAssigning(null)}>Done</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      )}
     </div>
   );
 }

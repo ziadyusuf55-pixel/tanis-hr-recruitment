@@ -21,9 +21,10 @@ const HR_NO_MONEY = ["/candidates", "/performance-reports", "/agent-profiles", "
 const HR_TABS    = [...HR_NO_MONEY, ...MONEY, "/all-documents", "/coaching-admin"];
 const EXTRAS     = ["/requests", "/training"];
 
-// A "manager" can reach everything except /settings and /time-tracking (Quantum-only feature, owner/admin only).
+// A "manager" can reach everything except /settings.
 const EVERYTHING_BUT_SETTINGS = [
   "/", ...OPERATIONS, ...HR_TABS, ...EXTRAS, "/business-development", "/clients", "/my-profile",
+  "/time-tracking",
 ];
 
 const ROLE_PATHS: Record<string, string[]> = {
@@ -64,7 +65,7 @@ export function firstAllowedPath(role?: string | null): string {
 export const ROLE_LABELS: Record<string, string> = {
   owner: "Owner — everything",
   admin: "Admin — everything",
-  manager: "Manager — everything except Settings",
+  manager: "Manager — everything except Settings",  // includes Time Tracking
   hr: "HR",
   ops_manager: "Ops Manager",
   team_lead: "Team Lead",
@@ -83,7 +84,7 @@ export const ASSIGNABLE_ROLES: AppRole[] = [
 export const ROLE_SUMMARY: Record<string, string> = {
   owner: "Everything, including Settings",
   admin: "Everything, including Settings",
-  manager: "Everything except Settings",
+  manager: "Everything except Settings (includes Time Tracking)",
   hr: "Recruitment, Performance Reports, Salary, Commission, Payment Preferences, Documents, Employee Profiles, Leave, Requests, Training, Business Development",
   ops_manager: "Operations, Adherence, Quality, Coaching, Client Logouts, Cycle Tracker, Performance Reports, Requests, Training, Business Development",
   team_lead: "Operations + HR (no salary/commission pages) + Business Development",
